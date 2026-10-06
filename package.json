@@ -1,0 +1,33 @@
+{
+  "name": "a11y-508",
+  "version": "0.1.0",
+  "description": "Zero-dependency Section 508 crawler. Drives the Chrome already on the machine over the DevTools Protocol, runs DHS Trusted Tester checks on every same-origin page, and records violations plus escalations for human review.",
+  "type": "module",
+  "bin": {
+    "a11y-508": "bin/a11y-508.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "e2e:a11y-508": "node bin/a11y-508.mjs",
+    "test": "node test/run.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "accessibility",
+    "a11y",
+    "section-508",
+    "trusted-tester",
+    "wcag",
+    "crawler",
+    "chrome-devtools-protocol"
+  ],
+  "repository": "github:AiFirstDevelopment/a11y-508",
+  "license": "MIT"
+}

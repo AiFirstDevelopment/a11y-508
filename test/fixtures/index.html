@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fixture Home - a11y-508 test site</title>
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  .skip { position: absolute; left: -9999px; }
+  .skip:focus { left: 10px; top: 10px; background: #fff; color: #000; padding: 6px; }
+  .low-contrast { color: #999; background: #fff; }
+  .ok-contrast { color: #222; }
+  .no-focus:focus { outline: none; }
+  .fake-heading { font-size: 1.6em; font-weight: bold; margin: 16px 0 4px; }
+  .pointer { cursor: pointer; display: inline-block; padding: 6px; border: 1px solid #888; }
+  .nowrap { white-space: nowrap; overflow: hidden; border: 1px solid #ccc; }
+  p a { text-decoration: none; color: #0645ad; }
+  .ext { width: 60px; height: 40px; }
+</style>
+</head>
+<body>
+<a href="#main" class="skip">Skip to main content</a>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main id="main">
+  <h1>Fixture home page</h1>
+  <p>This page contains deliberate accessibility defects for the a11y-508 test suite. The <a href="/about.html">about page</a> explains why.</p>
+
+  <h2>Images</h2>
+  <img src="/img/photo.png" width="120" height="80">
+  <img src="/img/chart.png" alt="chart.png" width="120" height="80">
+  <img src="/img/decor.png" alt="" title="Decorative but titled" width="40" height="40">
+  <img src="/img/good.png" alt="Bar chart showing 40% growth in applications from 2024 to 2025" width="120" height="80">
+  <a href="/about.html"><img src="/img/icon.png" alt="" width="24" height="24"></a>
+
+  <h4>Skipped heading level</h4>
+  <p class="fake-heading">Looks like a heading</p>
+  <p>This paragraph follows a bold, large piece of text that is not marked up as a heading. It is long enough to count as body content for the structure check to notice the pattern.</p>
+
+  <h2>Links and keyboard</h2>
+  <p>For more information <a href="/about.html">click here</a>. Generic text with context around it.</p>
+  <a href="/forms.html">click here</a>
+  <a href="/tables.html"></a>
+  <button class="no-focus">No focus indicator</button>
+  <span class="pointer" id="pointer-span">Clickable span</span>
+  <div role="button" id="custom-button">Custom button without tabindex</div>
+  <p class="low-contrast">This text has low contrast against its background.</p>
+  <p class="ok-contrast">This text has fine contrast.</p>
+  <p>Press the <b>green button on the right</b> to continue.</p>
+
+  <h2>Lists</h2>
+  <div>
+    <p>• First item in a fake list</p>
+    <p>• Second item in a fake list</p>
+    <p>• Third item in a fake list</p>
+  </div>
+  <ul><div>Not a list item</div></ul>
+
+  <h2>Zoom</h2>
+  <div class="nowrap">This single line of text does not wrap and is clipped once the viewport is only 640 pixels wide.</div>
+
+  <h2>Disclosure</h2>
+  <button type="button" id="disc" aria-expanded="false" aria-controls="panel">Show details</button>
+  <div id="panel" hidden>
+    <img src="/img/hidden.png" width="60" height="40">
+    <p>Revealed content with an image missing alt text.</p>
+  </div>
+
+  <h2>External asset</h2>
+  <img class="ext" id="ext" alt="External pixel" src="EXTERNAL_IMAGE">
+
+  <iframe src="/about.html" width="300" height="100"></iframe>
+</main>
+<script>
+  document.getElementById('pointer-span').addEventListener('click', function () { this.textContent = 'clicked'; });
+  document.getElementById('disc').addEventListener('click', function () {
+    var open = this.getAttribute('aria-expanded') === 'true';
+    this.setAttribute('aria-expanded', String(!open));
+    document.getElementById('panel').hidden = open;
+  });
+</script>
+</body>
+</html>

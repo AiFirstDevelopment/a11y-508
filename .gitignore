@@ -1,0 +1,4 @@
+node_modules/
+a11y-508-report/
+.DS_Store
+*.log

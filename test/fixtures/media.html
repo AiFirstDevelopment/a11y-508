@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+<meta charset="utf-8">
+<title>Media - a11y-508 test site</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta http-equiv="refresh" content="300">
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  .spin { width: 80px; height: 80px; background: #58a; animation: spin 2s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .generated::before { content: "Important: "; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Media fixture</h1>
+  <video src="/media/clip.mp4" autoplay width="320" height="180"></video>
+  <audio src="/media/track.mp3" controls></audio>
+  <marquee>Scrolling text</marquee>
+  <div class="spin"></div>
+  <p class="generated">read the generated prefix</p>
+  <iframe src="/about.html" title="iframe" width="200" height="80"></iframe>
+  <p lang="x-not-a-lang">Bonjour</p>
+  <div style="display:flex;flex-direction:row-reverse"><span>Second visually</span><span>First visually</span></div>
+</main>
+</body>
+</html>

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tables - a11y-508 test site</title>
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  table { border-collapse: collapse; margin: 12px 0; }
+  td, th { border: 1px solid #999; padding: 4px 8px; }
+  .bold { font-weight: bold; }
+  .trap:focus { outline: 2px solid blue; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Tables fixture</h1>
+
+  <table>
+    <tr><td class="bold">Name</td><td class="bold">Role</td><td class="bold">Office</td></tr>
+    <tr><td>Ada</td><td>Engineer</td><td>Denver</td></tr>
+    <tr><td>Grace</td><td>Admiral</td><td>Arlington</td></tr>
+  </table>
+
+  <table>
+    <tr><th>Quarter</th><th>East</th><th>West</th></tr>
+    <tr><th>Q1</th><td>10</td><td>20</td></tr>
+    <tr><th>Q2</th><td>30</td><td>40</td></tr>
+  </table>
+
+  <table role="presentation">
+    <tr><th>Layout header</th><td>Layout cell</td></tr>
+  </table>
+
+  <table>
+    <caption>Good table</caption>
+    <tr><th scope="col">Item</th><th scope="col">Count</th></tr>
+    <tr><td>Apples</td><td>3</td></tr>
+  </table>
+
+  <table>
+    <tr><th>Fruit</th><th>Count</th></tr>
+    <tr><td headers="nope">Pears</td><td>5</td></tr>
+  </table>
+
+  <h2>Keyboard trap</h2>
+  <input class="trap" id="trap" aria-label="Trap input">
+  <a href="/about.html">After the trap</a>
+</main>
+<script>
+  document.getElementById('trap').addEventListener('keydown', function (e) {
+    if (e.key === 'Tab') { e.preventDefault(); }
+  });
+</script>
+</body>
+</html>

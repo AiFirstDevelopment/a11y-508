@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fixture Home - a11y-508 test site</title>
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  label, input, select, textarea { display: block; margin: 6px 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Forms fixture</h1>
+  <form action="/submit" method="post">
+    <label for="name">Full name <span aria-hidden="true">*</span></label>
+    <input id="name" type="text">
+
+    <input type="text" placeholder="Email address">
+
+    <input type="text" id="phone">
+
+    <label for="missing-field">Label pointing nowhere</label>
+
+    <label for="dup">Duplicate id label</label>
+    <input id="dup" type="text">
+    <input id="dup" type="text">
+
+    <input type="text" aria-describedby="nope" aria-label="Described by a missing id">
+
+    <input type="text" aria-invalid="true" aria-label="Invalid without message">
+
+    <div role="checkbox" tabindex="0">Custom checkbox without aria-checked</div>
+
+    <input type="radio" name="pick" value="a"> A
+    <input type="radio" name="pick" value="b"> B
+
+    <select onchange="this.form.submit()" aria-label="Auto submitting select">
+      <option>One</option>
+      <option>Two</option>
+    </select>
+
+    <label>
+      Credit card number
+      <input type="text" name="card">
+    </label>
+    <button type="submit">Pay now</button>
+  </form>
+</main>
+</body>
+</html>
