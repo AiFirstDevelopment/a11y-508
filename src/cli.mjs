@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchChrome } from './chrome.mjs';
 import { crawl } from './crawler.mjs';
+import { interactiveLogin, loadState, saveState, stateSummary } from './login.mjs';
 import { siteChecks } from './site-checks.mjs';
 import { summarize, shouldFail, writeReports, makeLogger } from './report.mjs';
 import { CATALOG, IMPACTS, TEST_IDS } from './checks/catalog.mjs';
@@ -41,6 +42,10 @@ Options
   --token-storage <key>    Also seed TOKEN into web storage under <key> (repeatable)
   --no-token-storage       Do not seed TOKEN into localStorage/sessionStorage
   --cookie "name=value"    Cookie set on the start origin before the crawl (repeatable)
+  --login                  Open a visible browser to sign in once (works with external
+                           SSO portals), save the session to --state, then crawl with it
+  --state <file>           Session file to crawl with, or to write when used with --login
+                           (default with --login: a11y-508-state.json)
   --no-interact            Skip the keyboard and disclosure-activation passes
   --no-zoom                Skip the 200% zoom pass
   --no-screenshots         Do not capture element screenshots
@@ -75,7 +80,7 @@ export function parseArgs(argv) {
   const o = {
     url: null, maxPages: 200, maxDepth: 10, concurrency: 4, include: [], exclude: [], failOn: ['critical', 'serious'],
     out: 'a11y-508-report', viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
-    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
+    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, stateFile: null, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
     maxTabs: 400, maxActivations: 12, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false,
     listTests: false, help: false, version: false,
   };
@@ -135,6 +140,8 @@ export function parseArgs(argv) {
       case '--auth-origin': o.authOrigins.push(next(a)); break;
       case '--token-storage': o.tokenStorageKeys.push(next(a)); break;
       case '--no-token-storage': o.tokenStorage = false; break;
+      case '--login': o.login = true; break;
+      case '--state': o.stateFile = next(a); break;
       case '--cookie': {
         const v = next(a);
         const i = v.indexOf('=');
@@ -218,10 +225,51 @@ export async function main(argv) {
   opts.cookieOrigins = opts.cookies.length ? [...origins] : [];
   if (opts.cookies.length) log.info(`cookies: setting ${opts.cookies.map((c) => c.name).join(', ')} on ${[...origins].join(', ')}`);
 
+  const launch = (headless) => launchChrome({ chromePath: opts.chrome, viewport: opts.viewport, noSandbox: opts.noSandbox, headless });
+  const closeBrowser = async (b) => {
+    const { removed, userDataDir } = await b.close();
+    if (!removed) log.warn(`could not remove the temporary browser profile ${userDataDir}; delete it by hand`);
+  };
+
+  opts.state = null;
+  if (opts.login) {
+    if (!process.stdin.isTTY) {
+      log.error('--login needs an interactive terminal (stdin is not a TTY); sign in once on a workstation and pass the saved file with --state');
+      return 2;
+    }
+    const file = resolve(opts.stateFile || 'a11y-508-state.json');
+    let headed;
+    try {
+      headed = await launch(false);
+    } catch (e) {
+      log.error(e.message);
+      return 3;
+    }
+    try {
+      opts.state = await interactiveLogin({ browser: headed, startUrl: startUrl.href, origins: [...origins], timeout: opts.timeout, log });
+    } catch (e) {
+      log.error(`login failed: ${e.message}`);
+      await closeBrowser(headed);
+      return 2;
+    }
+    await closeBrowser(headed);
+    saveState(file, opts.state);
+    log.info(`session: saved ${stateSummary(opts.state)} to ${file}`);
+    log.warn(`${file} holds live credentials; keep it out of version control. Reuse it with --state ${opts.stateFile || 'a11y-508-state.json'}`);
+  } else if (opts.stateFile) {
+    try {
+      opts.state = loadState(resolve(opts.stateFile));
+    } catch (e) {
+      log.error(e.message);
+      return 2;
+    }
+    log.info(`session: loaded ${stateSummary(opts.state)} from ${opts.stateFile}`);
+  }
+
   const outDir = resolve(opts.out);
   let browser;
   try {
-    browser = await launchChrome({ chromePath: opts.chrome, viewport: opts.viewport, noSandbox: opts.noSandbox });
+    browser = await launch(true);
   } catch (e) {
     log.error(e.message);
     return 3;
@@ -235,7 +283,7 @@ export async function main(argv) {
   let exitCode = 0;
   const onSignal = async () => {
     log.warn('interrupted; closing browser');
-    await browser.close();
+    await closeBrowser(browser);
     process.exit(130);
   };
   process.once('SIGINT', onSignal);
@@ -244,12 +292,12 @@ export async function main(argv) {
     crawlResult = await crawl({ browser, startUrl: startUrl.href, opts, log, outDir });
   } catch (e) {
     log.error(`crawl failed: ${e.message}`);
-    await browser.close();
+    await closeBrowser(browser);
     return 2;
   }
   process.off('SIGINT', onSignal);
   process.off('SIGTERM', onSignal);
-  await browser.close();
+  await closeBrowser(browser);
 
   const { pages } = crawlResult;
   const site = siteChecks(pages);
@@ -266,6 +314,7 @@ export async function main(argv) {
       failOn: opts.failOn, viewport: opts.viewport, timeout: opts.timeout, interact: opts.interact, zoom: opts.zoom, screenshots: opts.screenshots,
       tokenHeader: opts.auth ? opts.tokenHeader : null, authOrigins: opts.auth ? [...opts.auth.origins] : [],
       tokenStorage: opts.auth && opts.auth.storage ? opts.auth.storage.keys : [], cookies: opts.cookies.map((c) => c.name),
+      session: opts.state ? { cookies: opts.state.cookies.length, origins: Object.keys(opts.state.storage || {}) } : null,
     },
     passed,
     summary,
@@ -278,8 +327,8 @@ export async function main(argv) {
   log.summary(report, files);
   if (opts.json) process.stdout.write(JSON.stringify({ passed, summary, files, baseUrl: report.baseUrl }, null, 2) + '\n');
 
-  if (pages.length === 1 && pages[0].error) {
-    log.error(`the start page could not be audited: ${pages[0].error}`);
+  if (pages.length === 1 && (pages[0].error || pages[0].skipped)) {
+    log.error(`the start page could not be audited: ${pages[0].error || pages[0].skipped}`);
     exitCode = 2;
   } else if (!passed) exitCode = 1;
   return exitCode;

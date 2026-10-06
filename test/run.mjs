@@ -2,11 +2,12 @@
 // request, runs the CLI against it, and asserts on report.json.
 
 import { createServer } from 'node:http';
-import { readFileSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
+import { Page } from '../src/page.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -27,6 +28,7 @@ const externalUrl = `http://127.0.0.1:${external.address().port}/pixel.png`;
 
 const unauthorized = [];
 const cookieHeaders = [];
+let dropsLeft = 2; // the first requests for /forms.html die before any response, like a flaky socket
 const site = createServer((req, res) => {
   if (req.headers.cookie) cookieHeaders.push(req.headers.cookie);
   if (req.headers.authorization !== `Bearer ${TOKEN}`) {
@@ -35,6 +37,10 @@ const site = createServer((req, res) => {
     return res.end('unauthorized');
   }
   let path = new URL(req.url, 'http://x').pathname;
+  if (path === '/forms.html' && dropsLeft > 0) {
+    dropsLeft--;
+    return req.socket.destroy();
+  }
   if (path === '/') path = '/index.html';
   const ext = extname(path);
   if (path.startsWith('/img/')) {
@@ -67,11 +73,19 @@ await new Promise((r) => site.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${site.address().port}/`;
 const out = join(here, '.report');
 rmSync(out, { recursive: true, force: true });
+const origin = new URL(base).origin;
+const stateFile = join(here, '.state.json');
+writeFileSync(stateFile, JSON.stringify({
+  version: 1,
+  origins: [origin],
+  cookies: [{ name: 'state_cookie', value: 'from-state', domain: '127.0.0.1', path: '/', secure: false, httpOnly: true, sameSite: 'Lax', expires: -1 }],
+  storage: { [origin]: { local: { state_key: 'from-state' }, session: { state_session_key: 'from-state' } } },
+}));
 
 console.log(`fixture site at ${base}`);
 const t0 = Date.now();
 const run = await new Promise((resolve) => {
-  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), base, '--out', out, '--concurrency', '2', '--max-screenshots', '5', '--json', '--token-storage', 'fixture_custom_key', '--cookie', `session=${COOKIE}`], {
+  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), base, '--out', out, '--concurrency', '2', '--max-screenshots', '5', '--json', '--token-storage', 'fixture_custom_key', '--cookie', `session=${COOKIE}`, '--state', stateFile], {
     env: { ...process.env, TOKEN, NO_COLOR: '1' },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -85,6 +99,7 @@ const run = await new Promise((resolve) => {
 });
 site.close();
 external.close();
+rmSync(stateFile, { force: true });
 console.log(`cli finished in ${((Date.now() - t0) / 1000).toFixed(1)}s with exit code ${run.status}`);
 if (run.status === null) throw new Error('CLI was killed after 300s');
 
@@ -135,6 +150,15 @@ check('token seeded into web storage gets past a client-side auth guard', () => 
 });
 check('--cookie is sent to the site', () => {
   assert.ok(cookieHeaders.some((c) => new RegExp(`(^|;\\s*)session=${COOKIE}(;|$)`).test(c)), `cookies seen: ${[...new Set(cookieHeaders)].join(' | ') || '(none)'}`);
+});
+check('--state cookie and web storage are applied', () => {
+  assert.ok(cookieHeaders.some((c) => /(^|;\s*)state_cookie=from-state(;|$)/.test(c)), `cookies seen: ${[...new Set(cookieHeaders)].join(' | ') || '(none)'}`);
+  assert.ok(!/reason=state/.test(pages['/app.html'].finalUrl), `app page bounced for missing session storage: ${pages['/app.html'].finalUrl}`);
+  assert.deepEqual(report.options.session, { cookies: 1, origins: [origin] });
+});
+check('dropped sockets on navigation do not fail the page', () => {
+  assert.equal(dropsLeft, 0, 'the server dropped both requests');
+  assert.equal(pages['/forms.html'].error, null, `forms page error: ${pages['/forms.html'].error}`);
 });
 check('report records storage keys and cookie names, not values', () => {
   assert.ok(report.options.tokenStorage.includes('access_token') && report.options.tokenStorage.includes('fixture_custom_key'));
@@ -216,6 +240,46 @@ check('9.C inconsistent identification', () => siteHas('9.C', 'review', /About/)
 check('19.A multiple ways', () => siteHas('19.A', 'review'));
 check('manual checklist present', () => assert.ok(report.manual.some((m) => m.test === '4.B')));
 check('html report written', () => assert.ok(existsSync(join(out, 'report.html')) && existsSync(join(out, 'summary.md'))));
+
+// The navigation retry loop, with the single navigation stubbed out: Chrome
+// absorbs plain socket drops itself, so this is the only way to drive it.
+const stubbed = (outcomes) => {
+  const page = new Page(null, { viewport: { width: 800, height: 600 }, settle: 0 });
+  const attempts = [];
+  page.navigateOnce = async (url) => {
+    const e = outcomes.shift();
+    attempts.push(e);
+    return e ? { error: e } : { status: 200, finalUrl: url, timedOut: false };
+  };
+  return { page, attempts };
+};
+{
+  const { page, attempts } = stubbed(['net::ERR_SOCKET_NOT_CONNECTED', 'net::ERR_CONNECTION_RESET', null]);
+  const r = await page.goto('http://example.test/', 1000);
+  check('transient navigation errors are retried until the page loads', () => {
+    assert.equal(r.status, 200);
+    assert.equal(r.retries, 2);
+    assert.equal(attempts.length, 3);
+  });
+}
+{
+  const { page, attempts } = stubbed(['net::ERR_NAME_NOT_RESOLVED', null]);
+  const r = await page.goto('http://example.test/', 1000);
+  check('non-transient navigation errors are not retried', () => {
+    assert.equal(r.error, 'net::ERR_NAME_NOT_RESOLVED');
+    assert.equal(r.retries, 0);
+    assert.equal(attempts.length, 1);
+  });
+}
+{
+  const { page, attempts } = stubbed(Array(10).fill('net::ERR_SOCKET_NOT_CONNECTED'));
+  const r = await page.goto('http://example.test/', 1000);
+  check('retries give up after three attempts', () => {
+    assert.equal(r.error, 'net::ERR_SOCKET_NOT_CONNECTED');
+    assert.equal(r.retries, 3);
+    assert.equal(attempts.length, 4);
+  });
+}
 
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
 process.exitCode = failures ? 1 : 0;

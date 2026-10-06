@@ -39,6 +39,7 @@ export async function auditPage(page, url, ctx) {
     result.durationMs = Date.now() - t0;
     return result;
   }
+  if (nav.retries) result.navRetries = nav.retries;
   if (nav.error) {
     result.error = nav.error;
     result.durationMs = Date.now() - t0;
@@ -61,6 +62,9 @@ export async function auditPage(page, url, ctx) {
   try {
     if (new URL(nav.finalUrl).origin !== ctx.origin) {
       result.skipped = `redirected off-origin to ${nav.finalUrl}`;
+      if (/login|log-in|signin|sign-in|auth|sso|oauth|oidc|saml|account|session/i.test(nav.finalUrl)) {
+        result.skipped += ' (looks like a sign-in page: run once with --login to sign in and save the session, then crawl with --state)';
+      }
       result.durationMs = Date.now() - t0;
       return result;
     }

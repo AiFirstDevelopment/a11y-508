@@ -50,11 +50,28 @@ export function findChrome(explicit) {
   );
 }
 
-export async function launchChrome({ chromePath, viewport = { width: 1280, height: 800 }, noSandbox = false } = {}) {
+const delay = (ms) => new Promise((r) => setTimeout(r, ms).unref());
+
+// Chrome's child processes can keep files in the profile directory open for a
+// moment after the browser exits (EBUSY / EPERM on Windows), so removal is
+// retried with backoff and reports failure instead of throwing.
+async function removeDir(dir) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      return true;
+    } catch {
+      await delay(Math.min(2000, 250 * 2 ** attempt));
+    }
+  }
+  return !existsSync(dir);
+}
+
+export async function launchChrome({ chromePath, viewport = { width: 1280, height: 800 }, noSandbox = false, headless = true } = {}) {
   const exe = findChrome(chromePath);
   const userDataDir = mkdtempSync(join(tmpdir(), 'a11y-508-'));
   const args = [
-    '--headless=new',
+    ...(headless ? ['--headless=new', '--disable-gpu'] : []),
     '--remote-debugging-pipe',
     `--user-data-dir=${userDataDir}`,
     `--window-size=${viewport.width},${viewport.height}`,
@@ -67,7 +84,6 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
     '--disable-translate',
     '--disable-features=TranslateUI,OptimizationHints,MediaRouter',
     '--disable-dev-shm-usage',
-    '--disable-gpu',
     '--mute-audio',
     '--force-color-profile=srgb',
     '--font-render-hinting=none',
@@ -109,7 +125,7 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
     try {
       proc.kill('SIGKILL');
     } catch {}
-    rmSync(userDataDir, { recursive: true, force: true });
+    await removeDir(userDataDir);
     throw e;
   }
 
@@ -128,16 +144,22 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
     } catch {}
   }
 
+  // Resolves to { userDataDir, removed }. Lets Chrome exit on its own before
+  // killing it, because a killed browser leaves renderer processes that still
+  // hold profile files open.
   async function close() {
-    const delay = (ms) => new Promise((r) => setTimeout(r, ms).unref());
     try {
       await Promise.race([cdp.send('Browser.close'), delay(3000)]);
     } catch {}
-    try {
-      proc.kill('SIGKILL');
-    } catch {}
-    await Promise.race([exited, delay(2000)]);
-    rmSync(userDataDir, { recursive: true, force: true });
+    const exitedCleanly = await Promise.race([exited.then(() => true), delay(5000).then(() => false)]);
+    if (!exitedCleanly) {
+      try {
+        proc.kill('SIGKILL');
+      } catch {}
+      await Promise.race([exited, delay(2000)]);
+    }
+    const removed = await removeDir(userDataDir);
+    return { userDataDir, removed };
   }
 
   return { exe, proc, cdp, version, newPage, closePage, close };

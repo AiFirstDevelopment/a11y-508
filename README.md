@@ -90,6 +90,10 @@ a11y-508 <url> [options]
   --token-storage <key>    Also seed TOKEN into web storage under <key> (repeatable)
   --no-token-storage       Do not seed TOKEN into localStorage/sessionStorage
   --cookie "name=value"    Cookie set on the start origin before the crawl (repeatable)
+  --login                  Open a visible browser to sign in once (works with external
+                           SSO portals), save the session to --state, then crawl with it
+  --state <file>           Session file to crawl with, or to write when used with --login
+                           (default with --login: a11y-508-state.json)
   --no-interact            Skip the keyboard and disclosure-activation passes
   --no-zoom                Skip the 200% zoom pass
   --no-screenshots         Do not capture element screenshots
@@ -113,6 +117,26 @@ Exit codes: `0` no violations at the `--fail-on` impacts, `1` violations found, 
 Most single-page apps never look at the request header: their auth guard reads the token from `localStorage` or `sessionStorage` and redirects to the login page when it is missing. So when `TOKEN` is set the crawler also writes the raw token (scheme stripped) into both storages before any page script runs, on the same origins, under the keys apps most often use: `token`, `access_token`, `accessToken`, `id_token`, `idToken`, `jwt`, `auth_token`, `authToken`. Add the key your app reads with `--token-storage <key>` (repeatable) if it is not in that list; `--no-token-storage` turns the seeding off. A value the app writes itself, such as a refreshed token, is never overwritten.
 
 If the app relies on a session cookie instead, set it with `--cookie "name=value"` (repeatable), for example `--cookie "session=$SESSION"`. Cookies are set on the start origin and any `--auth-origin` before the first navigation. Note that browsers scope cookies by host, not port, so on `localhost` a cookie is visible to every port.
+
+### Sign-in portals and single sign-on
+
+When the app sends the browser to a login page on another domain (an SSO portal, an OpenID Connect provider, a company identity service), no token or cookie you can guess will get past it, and the crawl stops with `redirected off-origin to ...` on the start page. Sign in once interactively instead:
+
+```sh
+a11y-508 https://app.example.gov --login
+```
+
+A browser window opens on the start URL. Sign in there, wait until the app itself has loaded, then press Enter in the terminal. The crawler captures the app's cookies and web storage (only for the app's origins, never the portal's), writes them to `a11y-508-state.json`, closes that window, and runs the normal headless crawl with that session. Reuse the file on later runs until the session expires:
+
+```sh
+a11y-508 https://app.example.gov --state a11y-508-state.json
+```
+
+The file holds live credentials. It is written with owner-only permissions and `a11y-508-state.json` is in this repository's `.gitignore`; keep it out of version control. `--login --state <file>` chooses where to write it. `--login` needs an interactive terminal, so in CI sign in on a workstation and provide the file from the secret store.
+
+### Flaky networks and Windows
+
+Navigation errors that are usually momentary (`net::ERR_SOCKET_NOT_CONNECTED`, `ERR_CONNECTION_RESET`, `ERR_EMPTY_RESPONSE`, `ERR_NETWORK_CHANGED`, and similar) are retried up to three times with backoff before a page is recorded as failed; pages that needed a retry carry `navRetries` in the report. On Windows, Chrome can keep its temporary profile open for a moment after it closes; the crawler waits for the browser to exit, retries the cleanup, and prints the directory to delete by hand if it still cannot remove it, without failing the run.
 
 The crawl stays on the start URL's origin, ignores binary links (PDF, images, archives), closes any pop-up windows, and refuses downloads.
 

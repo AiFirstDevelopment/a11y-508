@@ -6,10 +6,13 @@
 <script>
   // Single-page-app style auth guard: the server already checked the Authorization
   // header, but this script only trusts web storage and bounces to /login.html
-  // (which does not exist) unless the raw token was seeded before it ran.
+  // (which does not exist) unless the raw token was seeded before it ran and the
+  // items from the saved session file (--state) are present as well.
   var t = 'FIXTURE_TOKEN';
   if (localStorage.getItem('access_token') !== t || sessionStorage.getItem('id_token') !== t || localStorage.getItem('fixture_custom_key') !== t) {
     location.replace('/login.html');
+  } else if (localStorage.getItem('state_key') !== 'from-state' || sessionStorage.getItem('state_session_key') !== 'from-state') {
+    location.replace('/login.html?reason=state');
   }
 </script>
 </head>

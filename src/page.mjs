@@ -22,6 +22,25 @@ export const debug = (...a) => {
   if (DEBUG) process.stderr.write('[debug] ' + a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ') + '\n');
 };
 
+// Navigation failures that are usually momentary (a dropped socket on the
+// first request, a server restarting, a network change) and worth retrying.
+const TRANSIENT_NET = /ERR_(SOCKET_NOT_CONNECTED|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_ABORTED|CONNECTION_REFUSED|EMPTY_RESPONSE|NETWORK_CHANGED|NETWORK_IO_SUSPENDED|HTTP2_PROTOCOL_ERROR|QUIC_PROTOCOL_ERROR)\b/;
+const NAV_RETRIES = 3;
+
+// Turns a cookie from Network.getAllCookies, a saved session file, or --cookie
+// into the parameters Network.setCookie accepts.
+export function cookieParam(c) {
+  const p = { name: c.name, value: c.value };
+  if (c.url) p.url = c.url;
+  if (c.domain) p.domain = c.domain;
+  if (c.path) p.path = c.path;
+  if (c.secure) p.secure = true;
+  if (c.httpOnly) p.httpOnly = true;
+  if (c.sameSite) p.sameSite = c.sameSite;
+  if (typeof c.expires === 'number' && c.expires > 0) p.expires = c.expires;
+  return p;
+}
+
 const KEYS = {
   Tab: { key: 'Tab', code: 'Tab', keyCode: 9 },
   Enter: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' },
@@ -36,6 +55,8 @@ export class Page {
     this.opts = opts;
     this.mainFrameId = null;
     this.docResponse = null;
+    this.docRequestId = null;
+    this.docError = null;
     this.lifecycle = [];
     this.viewport = opts.viewport;
     this.closed = false;
@@ -59,10 +80,19 @@ export class Page {
       this.lifecycle.push(e);
       if (this.lifecycle.length > 60) this.lifecycle.shift();
     });
+    s.on('Network.requestWillBeSent', (p) => {
+      if (p.type === 'Document' && p.frameId === this.mainFrameId) {
+        this.docRequestId = p.requestId;
+        this.docError = null;
+      }
+    });
     s.on('Network.responseReceived', (p) => {
       if (p.type === 'Document' && p.frameId === this.mainFrameId) {
         this.docResponse = { status: p.response.status, mimeType: p.response.mimeType, url: p.response.url };
       }
+    });
+    s.on('Network.loadingFailed', (p) => {
+      if (p.requestId === this.docRequestId && !p.canceled) this.docError = p.errorText;
     });
     s.on('Page.javascriptDialogOpening', () => {
       s.send('Page.handleJavaScriptDialog', { accept: false }).catch(() => {});
@@ -89,32 +119,50 @@ export class Page {
       });
     }
 
-    // Single-page apps usually keep the session token in web storage and send
-    // the user to a login page when it is missing, so a header alone does not
-    // get past their auth guard. Seed the raw token before any page script
-    // runs, on the auth origins only, and never overwrite a value the app has
-    // since written (for example a refreshed token).
+    // Single-page apps usually keep the session in web storage and send the
+    // user to a login page when it is missing, so a header alone does not get
+    // past their auth guard. Seed web storage before any page script runs:
+    // the raw TOKEN under the common keys on the auth origins, plus whatever a
+    // saved session (--login / --state) captured. Values are only written
+    // when absent, so a token the app has since refreshed is never clobbered.
+    const seeds = {};
+    const seed = (origin, store, key, value) => {
+      (seeds[origin] ||= { local: {}, session: {} })[store][key] = String(value);
+    };
     if (auth && auth.storage) {
+      for (const origin of auth.origins) for (const k of auth.storage.keys) {
+        seed(origin, 'local', k, auth.storage.value);
+        seed(origin, 'session', k, auth.storage.value);
+      }
+    }
+    const state = this.opts.state;
+    if (state && state.storage) {
+      for (const [origin, st] of Object.entries(state.storage)) {
+        for (const [k, v] of Object.entries(st.local || {})) seed(origin, 'local', k, v);
+        for (const [k, v] of Object.entries(st.session || {})) seed(origin, 'session', k, v);
+      }
+    }
+    if (Object.keys(seeds).length) {
       const source = `(() => {
-  const origins = new Set(${JSON.stringify([...auth.origins])});
-  if (!origins.has(location.origin)) return;
-  const keys = ${JSON.stringify(auth.storage.keys)};
-  const value = ${JSON.stringify(auth.storage.value)};
-  for (const name of ['localStorage', 'sessionStorage']) {
+  const seeds = ${JSON.stringify(seeds)};
+  const mine = seeds[location.origin];
+  if (!mine) return;
+  for (const [name, items] of [['localStorage', mine.local], ['sessionStorage', mine.session]]) {
     try {
       const store = window[name];
-      for (const k of keys) if (store.getItem(k) === null) store.setItem(k, value);
+      for (const k in items) if (store.getItem(k) === null) store.setItem(k, items[k]);
     } catch {}
   }
 })();`;
       await s.send('Page.addScriptToEvaluateOnNewDocument', { source });
     }
 
-    for (const origin of this.opts.cookieOrigins || []) {
-      for (const c of this.opts.cookies || []) {
-        const r = await s.send('Network.setCookie', { name: c.name, value: c.value, url: origin + '/' }).catch(() => ({ success: false }));
-        if (!r.success) debug('setCookie failed', origin, c.name);
-      }
+    const cookies = [];
+    for (const origin of this.opts.cookieOrigins || []) for (const c of this.opts.cookies || []) cookies.push({ name: c.name, value: c.value, url: origin + '/' });
+    for (const c of (state && state.cookies) || []) cookies.push(c);
+    for (const c of cookies) {
+      const r = await s.send('Network.setCookie', cookieParam(c)).catch(() => ({ success: false }));
+      if (!r.success) debug('setCookie failed', c.domain || c.url, c.name);
     }
   }
 
@@ -127,8 +175,23 @@ export class Page {
     });
   }
 
+  // Navigates and waits for load. Momentary network failures are retried a
+  // few times with backoff; the result carries how many retries it took.
   async goto(url, timeout = 30000) {
+    let retries = 0;
+    for (;;) {
+      const r = await this.navigateOnce(url, timeout);
+      if (!r.error || !TRANSIENT_NET.test(r.error) || retries >= NAV_RETRIES) return { ...r, retries };
+      retries++;
+      debug('transient navigation error, retrying', r.error, `(${retries}/${NAV_RETRIES})`);
+      await sleep(500 * 2 ** (retries - 1));
+    }
+  }
+
+  async navigateOnce(url, timeout) {
     this.docResponse = null;
+    this.docRequestId = null;
+    this.docError = null;
     this.lifecycle = [];
     debug('goto', url);
     const res = await this.s.send('Page.navigate', { url });
@@ -146,6 +209,7 @@ export class Page {
     } catch {}
     if (this.opts.settle) await sleep(this.opts.settle);
     const doc = this.docResponse;
+    if (!doc && this.docError) return { error: this.docError };
     debug('loaded', url, doc, timedOut ? 'TIMED OUT' : '');
     let finalUrl = url;
     try {

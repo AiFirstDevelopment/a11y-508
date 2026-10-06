@@ -2,3 +2,6 @@ node_modules/
 a11y-508-report/
 .DS_Store
 *.log
+a11y-508-state.json
+test/.report/
+test/.state.json
