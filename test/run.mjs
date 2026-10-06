@@ -12,6 +12,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const fixtures = join(here, 'fixtures');
 const TOKEN = 'fixture-token-123';
+const COOKIE = 'fixture-cookie-456';
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.png': 'image/png', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg' };
 
@@ -25,7 +26,9 @@ await new Promise((r) => external.listen(0, '127.0.0.1', r));
 const externalUrl = `http://127.0.0.1:${external.address().port}/pixel.png`;
 
 const unauthorized = [];
+const cookieHeaders = [];
 const site = createServer((req, res) => {
+  if (req.headers.cookie) cookieHeaders.push(req.headers.cookie);
   if (req.headers.authorization !== `Bearer ${TOKEN}`) {
     unauthorized.push(req.url);
     res.writeHead(401, { 'content-type': 'text/plain' });
@@ -56,7 +59,7 @@ const site = createServer((req, res) => {
     return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
   }
   let body = readFileSync(file);
-  if (ext === '.html') body = Buffer.from(body.toString('utf8').replace('EXTERNAL_IMAGE', externalUrl));
+  if (ext === '.html') body = Buffer.from(body.toString('utf8').replace('EXTERNAL_IMAGE', externalUrl).replace('FIXTURE_TOKEN', TOKEN));
   res.writeHead(200, { 'content-type': TYPES[ext] || 'application/octet-stream' });
   res.end(body);
 });
@@ -68,7 +71,7 @@ rmSync(out, { recursive: true, force: true });
 console.log(`fixture site at ${base}`);
 const t0 = Date.now();
 const run = await new Promise((resolve) => {
-  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), base, '--out', out, '--concurrency', '2', '--max-screenshots', '5', '--json'], {
+  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), base, '--out', out, '--concurrency', '2', '--max-screenshots', '5', '--json', '--token-storage', 'fixture_custom_key', '--cookie', `session=${COOKIE}`], {
     env: { ...process.env, TOKEN, NO_COLOR: '1' },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -121,6 +124,22 @@ check('token sent to the site, never to the other origin', () => {
   assert.equal(unauthorized.length, 0, `unauthorized requests: ${unauthorized.join(', ')}`);
   assert.ok(externalHits.length > 0, 'external image was requested');
   assert.ok(externalHits.every((h) => h.auth === null), 'external origin must not receive the token');
+});
+check('token seeded into web storage gets past a client-side auth guard', () => {
+  const p = pages['/app.html'];
+  assert.ok(p, '/app.html was crawled');
+  assert.equal(p.error, null, `app page error: ${p.error}`);
+  assert.ok(/\/app\.html$/.test(p.finalUrl), `stayed on /app.html, got ${p.finalUrl}`);
+  assert.equal(p.title, 'Application - a11y-508 test site');
+  assert.ok(!pages['/login.html'], 'login page was never visited');
+});
+check('--cookie is sent to the site', () => {
+  assert.ok(cookieHeaders.some((c) => new RegExp(`(^|;\\s*)session=${COOKIE}(;|$)`).test(c)), `cookies seen: ${[...new Set(cookieHeaders)].join(' | ') || '(none)'}`);
+});
+check('report records storage keys and cookie names, not values', () => {
+  assert.ok(report.options.tokenStorage.includes('access_token') && report.options.tokenStorage.includes('fixture_custom_key'));
+  assert.deepEqual(report.options.cookies, ['session']);
+  assert.ok(!JSON.stringify(report.options).includes(COOKIE) && !JSON.stringify(report.options).includes(TOKEN));
 });
 check('pdf and off-site links not crawled', () => {
   assert.ok(!pages['/report.pdf']);

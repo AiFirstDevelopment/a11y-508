@@ -87,6 +87,9 @@ a11y-508 <url> [options]
   --header "Name: value"   Extra request header, sent to every request (repeatable)
   --token-header <name>    Header that carries TOKEN (default Authorization)
   --auth-origin <origin>   Additional origin that also receives TOKEN (repeatable)
+  --token-storage <key>    Also seed TOKEN into web storage under <key> (repeatable)
+  --no-token-storage       Do not seed TOKEN into localStorage/sessionStorage
+  --cookie "name=value"    Cookie set on the start origin before the crawl (repeatable)
   --no-interact            Skip the keyboard and disclosure-activation passes
   --no-zoom                Skip the 200% zoom pass
   --no-screenshots         Do not capture element screenshots
@@ -106,6 +109,10 @@ Exit codes: `0` no violations at the `--fail-on` impacts, `1` violations found, 
 ### Authentication
 
 `TOKEN` is sent as `Authorization: Bearer <TOKEN>`. If the value already starts with a scheme (`Bearer x`, `Basic x`, `Token x`) it is sent unchanged. The header goes only to the start URL's origin, plus any `--auth-origin`, so a token is never leaked to third-party assets. If the site turns the token into a session cookie on the first request, that cookie is kept for the rest of the crawl.
+
+Most single-page apps never look at the request header: their auth guard reads the token from `localStorage` or `sessionStorage` and redirects to the login page when it is missing. So when `TOKEN` is set the crawler also writes the raw token (scheme stripped) into both storages before any page script runs, on the same origins, under the keys apps most often use: `token`, `access_token`, `accessToken`, `id_token`, `idToken`, `jwt`, `auth_token`, `authToken`. Add the key your app reads with `--token-storage <key>` (repeatable) if it is not in that list; `--no-token-storage` turns the seeding off. A value the app writes itself, such as a refreshed token, is never overwritten.
+
+If the app relies on a session cookie instead, set it with `--cookie "name=value"` (repeatable), for example `--cookie "session=$SESSION"`. Cookies are set on the start origin and any `--auth-origin` before the first navigation. Note that browsers scope cookies by host, not port, so on `localhost` a cookie is visible to every port.
 
 The crawl stays on the start URL's origin, ignores binary links (PDF, images, archives), closes any pop-up windows, and refuses downloads.
 

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Application - a11y-508 test site</title>
+<script>
+  // Single-page-app style auth guard: the server already checked the Authorization
+  // header, but this script only trusts web storage and bounces to /login.html
+  // (which does not exist) unless the raw token was seeded before it ran.
+  var t = 'FIXTURE_TOKEN';
+  if (localStorage.getItem('access_token') !== t || sessionStorage.getItem('id_token') !== t || localStorage.getItem('fixture_custom_key') !== t) {
+    location.replace('/login.html');
+  }
+</script>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Application</h1>
+  <p>This page is only reachable when the token was seeded into web storage before its scripts ran.</p>
+</main>
+</body>
+</html>

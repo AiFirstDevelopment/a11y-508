@@ -11,6 +11,9 @@ import { CATALOG, IMPACTS, TEST_IDS } from './checks/catalog.mjs';
 
 const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
 
+// Web-storage keys that single-page apps commonly read their session token from.
+export const TOKEN_STORAGE_KEYS = ['token', 'access_token', 'accessToken', 'id_token', 'idToken', 'jwt', 'auth_token', 'authToken'];
+
 const HELP = `a11y-508 ${pkg.version} - Section 508 crawler (DHS Trusted Tester checks, no dependencies)
 
 Usage: a11y-508 <url> [options]
@@ -35,6 +38,9 @@ Options
   --header "Name: value"   Extra request header, sent to every request (repeatable)
   --token-header <name>    Header that carries TOKEN (default Authorization)
   --auth-origin <origin>   Additional origin that also receives TOKEN (repeatable)
+  --token-storage <key>    Also seed TOKEN into web storage under <key> (repeatable)
+  --no-token-storage       Do not seed TOKEN into localStorage/sessionStorage
+  --cookie "name=value"    Cookie set on the start origin before the crawl (repeatable)
   --no-interact            Skip the keyboard and disclosure-activation passes
   --no-zoom                Skip the 200% zoom pass
   --no-screenshots         Do not capture element screenshots
@@ -53,6 +59,11 @@ Options
 Environment
   TOKEN         Sent on same-origin requests as "<token-header>: Bearer <TOKEN>".
                 If TOKEN already contains a scheme ("Bearer x", "Basic x") it is sent as-is.
+                The raw token is also written to localStorage and sessionStorage on those
+                origins before any page script runs, under the keys most single-page apps
+                read (token, access_token, accessToken, id_token, idToken, jwt, auth_token,
+                authToken, plus any --token-storage key), so an app that checks web storage
+                does not bounce the crawler to its login page.
   CHROME_PATH   Path to Chrome, Chromium, or Edge.
 
 Exit codes
@@ -64,7 +75,7 @@ export function parseArgs(argv) {
   const o = {
     url: null, maxPages: 200, maxDepth: 10, concurrency: 4, include: [], exclude: [], failOn: ['critical', 'serious'],
     out: 'a11y-508-report', viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
-    tokenHeader: 'Authorization', authOrigins: [], interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
+    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
     maxTabs: 400, maxActivations: 12, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false,
     listTests: false, help: false, version: false,
   };
@@ -122,6 +133,15 @@ export function parseArgs(argv) {
       }
       case '--token-header': o.tokenHeader = next(a); break;
       case '--auth-origin': o.authOrigins.push(next(a)); break;
+      case '--token-storage': o.tokenStorageKeys.push(next(a)); break;
+      case '--no-token-storage': o.tokenStorage = false; break;
+      case '--cookie': {
+        const v = next(a);
+        const i = v.indexOf('=');
+        if (i < 1) throw new Error('--cookie expects "name=value"');
+        o.cookies.push({ name: v.slice(0, i).trim(), value: v.slice(i + 1).trim() });
+        break;
+      }
       case '--no-interact': o.interact = false; break;
       case '--interact': o.interact = true; break;
       case '--no-zoom': o.zoom = false; break;
@@ -179,15 +199,24 @@ export async function main(argv) {
   }
 
   const log = makeLogger(opts);
+  const origins = new Set([startUrl.origin, ...opts.authOrigins.map((o) => new URL(o).origin)]);
   const token = process.env.TOKEN;
   if (token) {
-    const value = /^\S+\s+\S/.test(token.trim()) ? token.trim() : `Bearer ${token.trim()}`;
-    opts.auth = { header: opts.tokenHeader, value, origins: new Set([startUrl.origin, ...opts.authOrigins.map((o) => new URL(o).origin)]) };
-    log.info(`auth: sending ${opts.tokenHeader} header on ${[...opts.auth.origins].join(', ')}`);
+    const trimmed = token.trim();
+    const hasScheme = /^\S+\s+\S/.test(trimmed);
+    const value = hasScheme ? trimmed : `Bearer ${trimmed}`;
+    const raw = hasScheme ? trimmed.replace(/^\S+\s+/, '') : trimmed;
+    const keys = [...new Set([...(opts.tokenStorage ? TOKEN_STORAGE_KEYS : []), ...opts.tokenStorageKeys])];
+    opts.auth = { header: opts.tokenHeader, value, origins, storage: keys.length ? { keys, value: raw } : null };
+    log.info(`auth: sending ${opts.tokenHeader} header on ${[...origins].join(', ')}`);
+    if (keys.length) log.info(`auth: seeding TOKEN into localStorage and sessionStorage as ${keys.join(', ')}`);
   } else {
     opts.auth = null;
+    if (opts.tokenStorageKeys.length) log.warn('--token-storage ignored because TOKEN is not set.');
     log.warn('TOKEN is not set; crawling without an Authorization header.');
   }
+  opts.cookieOrigins = opts.cookies.length ? [...origins] : [];
+  if (opts.cookies.length) log.info(`cookies: setting ${opts.cookies.map((c) => c.name).join(', ')} on ${[...origins].join(', ')}`);
 
   const outDir = resolve(opts.out);
   let browser;
@@ -236,6 +265,7 @@ export async function main(argv) {
       maxPages: opts.maxPages, maxDepth: opts.maxDepth, concurrency: opts.concurrency, include: opts.include.map(String), exclude: opts.exclude.map(String),
       failOn: opts.failOn, viewport: opts.viewport, timeout: opts.timeout, interact: opts.interact, zoom: opts.zoom, screenshots: opts.screenshots,
       tokenHeader: opts.auth ? opts.tokenHeader : null, authOrigins: opts.auth ? [...opts.auth.origins] : [],
+      tokenStorage: opts.auth && opts.auth.storage ? opts.auth.storage.keys : [], cookies: opts.cookies.map((c) => c.name),
     },
     passed,
     summary,

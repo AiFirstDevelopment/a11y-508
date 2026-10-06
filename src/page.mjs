@@ -1,5 +1,6 @@
 // A single Chrome tab driven over CDP: navigation, auth header injection,
-// script injection, keyboard input, screenshots, zoom emulation.
+// web-storage and cookie seeding, script injection, keyboard input,
+// screenshots, zoom emulation.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -86,6 +87,34 @@ export class Page {
         for (const h of extra) if (!has(h.name) || h.override) headers.push(h);
         s.send('Fetch.continueRequest', { requestId: p.requestId, headers }).catch(() => {});
       });
+    }
+
+    // Single-page apps usually keep the session token in web storage and send
+    // the user to a login page when it is missing, so a header alone does not
+    // get past their auth guard. Seed the raw token before any page script
+    // runs, on the auth origins only, and never overwrite a value the app has
+    // since written (for example a refreshed token).
+    if (auth && auth.storage) {
+      const source = `(() => {
+  const origins = new Set(${JSON.stringify([...auth.origins])});
+  if (!origins.has(location.origin)) return;
+  const keys = ${JSON.stringify(auth.storage.keys)};
+  const value = ${JSON.stringify(auth.storage.value)};
+  for (const name of ['localStorage', 'sessionStorage']) {
+    try {
+      const store = window[name];
+      for (const k of keys) if (store.getItem(k) === null) store.setItem(k, value);
+    } catch {}
+  }
+})();`;
+      await s.send('Page.addScriptToEvaluateOnNewDocument', { source });
+    }
+
+    for (const origin of this.opts.cookieOrigins || []) {
+      for (const c of this.opts.cookies || []) {
+        const r = await s.send('Network.setCookie', { name: c.name, value: c.value, url: origin + '/' }).catch(() => ({ success: false }));
+        if (!r.success) debug('setCookie failed', origin, c.name);
+      }
     }
   }
 
