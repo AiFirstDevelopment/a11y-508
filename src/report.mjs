@@ -30,6 +30,7 @@ export function summarize(pages, site) {
 }
 
 export function shouldFail(summary, failOn) {
+  if (!summary.audited) return true; // nothing was audited, so nothing can have passed
   if (!failOn.length) return false;
   return failOn.some((impact) => (summary.byImpact[impact] || 0) > 0);
 }
@@ -277,7 +278,8 @@ export function makeLogger({ quiet, json }) {
       lines.push(`        ${files.json}`);
       lines.push(`        ${files.md}`);
       lines.push('');
-      lines.push(report.passed ? c(32, `PASS (no ${report.options.failOn.join('/') || ''} violations)`) : c(31, `FAIL (${report.options.failOn.filter((i) => s.byImpact[i]).map((i) => `${s.byImpact[i]} ${i}`).join(', ')} violations)`));
+      if (!s.audited) lines.push(c(31, 'FAIL (no page could be audited)'));
+      else lines.push(report.passed ? c(32, `PASS (no ${report.options.failOn.join('/') || ''} violations)`) : c(31, `FAIL (${report.options.failOn.filter((i) => s.byImpact[i]).map((i) => `${s.byImpact[i]} ${i}`).join(', ')} violations)`));
       out(lines.join('\n'));
     },
   };

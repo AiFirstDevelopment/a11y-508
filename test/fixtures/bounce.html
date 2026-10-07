@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bouncing - a11y-508 test site</title>
+<script>
+  // Script-driven redirect shortly after load, to a page the server is slow to
+  // serve: the crawler must audit the landing page, not this one.
+  setTimeout(function () { location.replace('/landed.html'); }, 300);
+</script>
+</head>
+<body>
+<main>
+  <h1>Redirecting</h1>
+  <p>Taking you to the landing page.</p>
+</main>
+</body>
+</html>

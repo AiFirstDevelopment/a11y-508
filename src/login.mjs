@@ -1,13 +1,17 @@
 // One-time interactive sign-in. Opens a visible browser on the start URL,
 // waits for the user to finish logging in (through an external single-sign-on
 // portal if the app uses one), then captures the cookies and web storage the
-// app left behind so the headless crawl can reuse them. Only cookies for the
-// app's own origins are kept; the portal's are never written to disk.
+// app left behind so the headless crawl can reuse them. Cookies are kept for
+// the app's origins and for the hosts the sign-in bounced through, because
+// apps that re-check the SSO session on every load need the portal's cookie
+// as much as their own.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { sleep } from './page.mjs';
 
 const STATE_VERSION = 1;
+const LOGIN_PATH = /(^|\/)(login|log-in|signin|sign-in|logon|sso|oidc|saml|callback|auth)(\/|$|\?)/i;
+const STABLE_SECONDS = 6;
 
 function cookieBelongsTo(cookie, hostnames) {
   const d = String(cookie.domain || '').replace(/^\./, '').toLowerCase();
@@ -15,31 +19,71 @@ function cookieBelongsTo(cookie, hostnames) {
 }
 
 function waitForEnter() {
-  return new Promise((resolve) => {
-    const stdin = process.stdin;
-    const onData = (chunk) => {
-      if (!/[\r\n]/.test(String(chunk))) return;
-      stdin.off('data', onData);
-      stdin.pause();
-      resolve();
+  const stdin = process.stdin;
+  let onData;
+  const promise = new Promise((resolve) => {
+    onData = (chunk) => {
+      if (/[\r\n]/.test(String(chunk))) resolve();
     };
     stdin.setEncoding('utf8');
     stdin.on('data', onData);
     stdin.resume();
   });
+  const cancel = () => {
+    stdin.off('data', onData);
+    stdin.pause();
+  };
+  return { promise, cancel };
 }
 
 const currentOrigin = (session) => session.evaluate('location.origin').catch(() => '');
 
-export async function interactiveLogin({ browser, startUrl, origins, timeout, log }) {
-  if (!process.stdin.isTTY) throw new Error('--login needs an interactive terminal (stdin is not a TTY); sign in once locally and pass the saved file with --state');
+// Resolves once the tab has sat on the app's own origin, fully loaded, on a
+// non-login path, without navigating, for STABLE_SECONDS in a row.
+async function settledOnApp(session, origin, maxWait) {
+  const deadline = Date.now() + maxWait;
+  let last = '';
+  let stable = 0;
+  while (Date.now() < deadline) {
+    await sleep(1000);
+    let href = '';
+    let o = '';
+    let path = '';
+    let ready = '';
+    try {
+      [href, o, path, ready] = await session.evaluate('[location.href, location.origin, location.pathname, document.readyState]');
+    } catch {}
+    stable = o === origin && ready === 'complete' && !LOGIN_PATH.test(path) && href === last ? stable + 1 : 0;
+    last = href;
+    if (stable >= STABLE_SECONDS) return;
+  }
+  throw new Error(`gave up after ${Math.round(maxWait / 60000)} minutes waiting for sign-in to finish`);
+}
+
+export async function interactiveLogin({ browser, startUrl, origins, timeout, log, maxWait = 10 * 60 * 1000 }) {
   const session = await browser.newPage();
   await session.send('Page.enable');
   await session.send('Network.enable').catch(() => {});
+  const { frameTree } = await session.send('Page.getFrameTree');
+  const mainFrameId = frameTree.frame.id;
+  const visited = new Set();
+  session.on('Page.frameNavigated', ({ frame }) => {
+    if (frame.id !== mainFrameId) return;
+    try {
+      visited.add(new URL(frame.url).origin);
+    } catch {}
+  });
   await browser.cdp.send('Target.activateTarget', { targetId: session.targetId }).catch(() => {});
   await session.send('Page.navigate', { url: startUrl });
-  log.warn(`A browser window is open on ${startUrl}. Sign in there, wait until the app itself has loaded, then press Enter here.`);
-  await waitForEnter();
+  const startOrigin = new URL(startUrl).origin;
+  const tty = !!process.stdin.isTTY;
+  log.warn(`A browser window is open on ${startUrl}. Sign in there. The crawl continues by itself once the app has loaded and stayed put for ${STABLE_SECONDS} seconds${tty ? ', or press Enter here' : ''}.`);
+  const enter = tty ? waitForEnter() : null;
+  try {
+    await Promise.race([settledOnApp(session, startOrigin, maxWait), ...(enter ? [enter.promise] : [])]);
+  } finally {
+    if (enter) enter.cancel();
+  }
 
   let origin = await currentOrigin(session);
   if (!origins.includes(origin)) {
@@ -57,8 +101,15 @@ export async function interactiveLogin({ browser, startUrl, origins, timeout, lo
   } catch {
     ({ cookies } = await session.send('Storage.getCookies'));
   }
-  const hostnames = origins.map((o) => new URL(o).hostname.toLowerCase());
+  const hostnames = [...new Set([...origins, ...visited].map((o) => {
+    try {
+      return new URL(o).hostname.toLowerCase();
+    } catch {
+      return '';
+    }
+  }).filter(Boolean))];
   const kept = cookies.filter((c) => cookieBelongsTo(c, hostnames));
+  log.info(`session: keeping cookies for ${[...new Set(kept.map((c) => c.domain))].join(', ') || 'no hosts'}`);
   const storage = await session.evaluate(
     '(() => { const dump = (s) => { const o = {}; for (let i = 0; i < s.length; i++) { const k = s.key(i); o[k] = s.getItem(k); } return o; }; return { local: dump(localStorage), session: dump(sessionStorage) }; })()'
   );

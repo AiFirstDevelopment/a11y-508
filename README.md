@@ -126,13 +126,15 @@ When the app sends the browser to a login page on another domain (an SSO portal,
 a11y-508 https://app.example.gov --login
 ```
 
-A browser window opens on the start URL. Sign in there, wait until the app itself has loaded, then press Enter in the terminal. The crawler captures the app's cookies and web storage (only for the app's origins, never the portal's), writes them to `a11y-508-state.json`, closes that window, and runs the normal headless crawl with that session. Reuse the file on later runs until the session expires:
+A browser window opens on the start URL. Sign in there. Once the app itself has loaded and stayed put for six seconds the crawler carries on by itself (in an interactive terminal you can also press Enter): it captures the cookies and web storage the sign-in left behind, writes them to `a11y-508-state.json`, closes that window, and runs the normal headless crawl with that session. Cookies are kept for the app's origins and for the portal hosts the sign-in bounced through, because apps that re-check the SSO session on every page load need both. Reuse the file on later runs until the session expires:
 
 ```sh
 a11y-508 https://app.example.gov --state a11y-508-state.json
 ```
 
-The file holds live credentials. It is written with owner-only permissions and `a11y-508-state.json` is in this repository's `.gitignore`; keep it out of version control. `--login --state <file>` chooses where to write it. `--login` needs an interactive terminal, so in CI sign in on a workstation and provide the file from the secret store.
+The file holds live credentials, including the portal's session cookie. It is written with owner-only permissions and `a11y-508-state.json` is in this repository's `.gitignore`; keep it out of version control. `--login --state <file>` chooses where to write it. For CI, sign in on a workstation and provide the file from the secret store.
+
+During the crawl, a page that bounces through the portal and back (or any script-driven redirect) is followed until the document stops changing, and the page that finally lands is the one audited. A run in which no page could be audited is reported as FAIL, never PASS.
 
 ### Flaky networks and Windows
 

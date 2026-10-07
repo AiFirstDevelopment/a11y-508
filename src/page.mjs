@@ -56,6 +56,7 @@ export class Page {
     this.mainFrameId = null;
     this.docResponse = null;
     this.docRequestId = null;
+    this.docLoaderId = null;
     this.docError = null;
     this.lifecycle = [];
     this.viewport = opts.viewport;
@@ -83,6 +84,7 @@ export class Page {
     s.on('Network.requestWillBeSent', (p) => {
       if (p.type === 'Document' && p.frameId === this.mainFrameId) {
         this.docRequestId = p.requestId;
+        this.docLoaderId = p.loaderId;
         this.docError = null;
       }
     });
@@ -191,23 +193,35 @@ export class Page {
   async navigateOnce(url, timeout) {
     this.docResponse = null;
     this.docRequestId = null;
+    this.docLoaderId = null;
     this.docError = null;
     this.lifecycle = [];
     debug('goto', url);
     const res = await this.s.send('Page.navigate', { url });
     debug('navigate ->', res);
     if (res.errorText) return { error: res.errorText };
+    const deadline = Date.now() + timeout;
+    const remaining = () => Math.max(100, deadline - Date.now());
+    let loaderId = res.loaderId;
     let timedOut = false;
-    try {
-      await this.waitLifecycle('load', res.loaderId, timeout);
-    } catch {
-      timedOut = true;
-      await this.s.send('Page.stopLoading').catch(() => {});
+    for (let hop = 0; ; hop++) {
+      try {
+        await this.waitLifecycle('load', loaderId, remaining());
+      } catch {
+        timedOut = true;
+        await this.s.send('Page.stopLoading').catch(() => {});
+      }
+      try {
+        await this.waitLifecycle('networkIdle', loaderId, timedOut ? 500 : Math.min(5000, remaining()));
+      } catch {}
+      if (this.opts.settle) await sleep(this.opts.settle);
+      // A script or meta refresh may have started another navigation by now
+      // (a sign-in bounce through a portal, a landing redirect). Follow it
+      // rather than auditing a document that is about to be replaced.
+      if (timedOut || !this.docLoaderId || this.docLoaderId === loaderId || hop >= 8 || Date.now() >= deadline) break;
+      debug('following client-side navigation', this.docLoaderId);
+      loaderId = this.docLoaderId;
     }
-    try {
-      await this.waitLifecycle('networkIdle', res.loaderId, timedOut ? 500 : Math.min(5000, timeout));
-    } catch {}
-    if (this.opts.settle) await sleep(this.opts.settle);
     const doc = this.docResponse;
     if (!doc && this.docError) return { error: this.docError };
     debug('loaded', url, doc, timedOut ? 'TIMED OUT' : '');

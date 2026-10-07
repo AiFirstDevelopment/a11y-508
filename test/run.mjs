@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { Page } from '../src/page.mjs';
+import { shouldFail } from '../src/report.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -60,6 +61,14 @@ const site = createServer((req, res) => {
     return res.end('<!doctype html><html lang="en"><title>Submitted</title><main><h1>Submitted</h1></main></html>');
   }
   const file = join(fixtures, path);
+  if (path === '/landed.html') {
+    // Slow landing page for the script redirect from /bounce.html.
+    setTimeout(() => {
+      res.writeHead(200, { 'content-type': TYPES['.html'] });
+      res.end(readFileSync(file));
+    }, 1500);
+    return;
+  }
   if (!file.startsWith(fixtures) || !existsSync(file)) {
     res.writeHead(404, { 'content-type': 'text/html' });
     return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
@@ -155,6 +164,19 @@ check('--state cookie and web storage are applied', () => {
   assert.ok(cookieHeaders.some((c) => /(^|;\s*)state_cookie=from-state(;|$)/.test(c)), `cookies seen: ${[...new Set(cookieHeaders)].join(' | ') || '(none)'}`);
   assert.ok(!/reason=state/.test(pages['/app.html'].finalUrl), `app page bounced for missing session storage: ${pages['/app.html'].finalUrl}`);
   assert.deepEqual(report.options.session, { cookies: 1, origins: [origin] });
+});
+check('script redirect to a slow page is followed; the landing page is audited', () => {
+  const p = pages['/bounce.html'];
+  assert.ok(p, '/bounce.html was crawled');
+  assert.equal(p.error, null, `bounce page error: ${p.error}`);
+  assert.equal(p.skipped, null, `bounce page skipped: ${p.skipped}`);
+  assert.ok(/\/landed\.html$/.test(p.finalUrl), `expected to land on /landed.html, got ${p.finalUrl}`);
+  assert.equal(p.title, 'Landed - a11y-508 test site');
+});
+check('a run that audited nothing never passes', () => {
+  assert.equal(shouldFail({ audited: 0, byImpact: {} }, ['critical', 'serious']), true);
+  assert.equal(shouldFail({ audited: 0, byImpact: {} }, []), true);
+  assert.equal(shouldFail({ audited: 1, byImpact: {} }, ['critical', 'serious']), false);
 });
 check('dropped sockets on navigation do not fail the page', () => {
   assert.equal(dropsLeft, 0, 'the server dropped both requests');

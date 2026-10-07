@@ -233,10 +233,6 @@ export async function main(argv) {
 
   opts.state = null;
   if (opts.login) {
-    if (!process.stdin.isTTY) {
-      log.error('--login needs an interactive terminal (stdin is not a TTY); sign in once on a workstation and pass the saved file with --state');
-      return 2;
-    }
     const file = resolve(opts.stateFile || 'a11y-508-state.json');
     let headed;
     try {
