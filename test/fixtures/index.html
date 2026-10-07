@@ -30,6 +30,11 @@
     <a href="/media.html">Media</a>
     <a href="/about.html">About</a>
   </nav>
+  <div class="app-menu" aria-label="Application">
+    <span class="menu-item" id="go-reports" style="cursor:pointer">Reports</span>
+    <button type="button" class="menu-item" id="go-dashboard">Dashboard</button>
+    <button type="button" class="menu-item" id="danger">Delete account</button>
+  </div>
 </header>
 <main id="main">
   <h1>Fixture home page</h1>
@@ -83,6 +88,11 @@
   <iframe src="/about.html" width="300" height="100"></iframe>
 </main>
 <script>
+  // Link-less navigation: a full-page navigation from a span, and a router-style
+  // pushState from a button. The Delete button must never be clicked by the crawler.
+  document.getElementById('go-reports').addEventListener('click', function () { location.href = '/reports.html'; });
+  document.getElementById('go-dashboard').addEventListener('click', function () { history.pushState({}, '', '/dashboard.html'); document.querySelector('h1').textContent = 'Dashboard'; });
+  document.getElementById('danger').addEventListener('click', function () { fetch('/danger', { method: 'POST' }); });
   document.getElementById('pointer-span').addEventListener('click', function () { this.textContent = 'clicked'; });
   document.getElementById('disc').addEventListener('click', function () {
     var open = this.getAttribute('aria-expanded') === 'true';

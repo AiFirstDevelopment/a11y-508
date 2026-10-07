@@ -168,6 +168,20 @@ export class Page {
     }
   }
 
+  // Resolves 'load' when the document with this loader finishes loading,
+  // 'replaced' as soon as another main-frame document starts instead, or
+  // 'timeout'.
+  async waitLoadOrReplaced(loaderId, timeout) {
+    const end = Date.now() + timeout;
+    while (Date.now() < end) {
+      if (this.lifecycle.some((e) => e.name === 'load' && e.loaderId === loaderId)) return 'load';
+      if (this.docLoaderId && this.docLoaderId !== loaderId) return 'replaced';
+      if (this.closed) return 'timeout';
+      await sleep(50);
+    }
+    return 'timeout';
+  }
+
   async waitLifecycle(name, loaderId, timeout) {
     const hit = this.lifecycle.find((e) => e.name === name && (!loaderId || e.loaderId === loaderId));
     if (hit) return hit;
@@ -205,9 +219,15 @@ export class Page {
     let loaderId = res.loaderId;
     let timedOut = false;
     for (let hop = 0; ; hop++) {
-      try {
-        await this.waitLifecycle('load', loaderId, remaining());
-      } catch {
+      const outcome = await this.waitLoadOrReplaced(loaderId, remaining());
+      if (outcome === 'replaced' && hop < 8) {
+        // A script replaced this document before it finished loading (an
+        // auth guard in <head>, for example); wait for the new one instead.
+        debug('document replaced before load', loaderId, '->', this.docLoaderId);
+        loaderId = this.docLoaderId;
+        continue;
+      }
+      if (outcome !== 'load') {
         timedOut = true;
         await this.s.send('Page.stopLoading').catch(() => {});
       }
@@ -240,6 +260,12 @@ export class Page {
     const ok = await this.evaluate('typeof window.__a11y508 === "object" && typeof window.__a11y508.run === "function"').catch(() => false);
     if (ok) return;
     await this.evaluate(checksBundle(), { awaitPromise: false });
+  }
+
+  async click(x, y) {
+    await this.s.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await this.s.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+    await this.s.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
   }
 
   async press(name, modifiers = 0) {

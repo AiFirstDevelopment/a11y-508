@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { Page } from '../src/page.mjs';
 import { shouldFail } from '../src/report.mjs';
+import { normalizeUrl } from '../src/crawler.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -29,6 +30,7 @@ const externalUrl = `http://127.0.0.1:${external.address().port}/pixel.png`;
 
 const unauthorized = [];
 const cookieHeaders = [];
+const dangerHits = [];
 let dropsLeft = 2; // the first requests for /forms.html die before any response, like a flaky socket
 const site = createServer((req, res) => {
   if (req.headers.cookie) cookieHeaders.push(req.headers.cookie);
@@ -38,6 +40,11 @@ const site = createServer((req, res) => {
     return res.end('unauthorized');
   }
   let path = new URL(req.url, 'http://x').pathname;
+  if (path === '/danger') {
+    dangerHits.push(req.method);
+    res.writeHead(204);
+    return res.end();
+  }
   if (path === '/forms.html' && dropsLeft > 0) {
     dropsLeft--;
     return req.socket.destroy();
@@ -121,6 +128,8 @@ const runCli = (args, env) => new Promise((resolve) => {
 });
 const tsOk = await runCli([base + 'app.html', '--troubleshoot', '--json', '--quiet', '--token-storage', 'fixture_custom_key', '--state', stateFile], { TOKEN });
 const tsBounced = await runCli([base + 'app.html', '--troubleshoot', '--json', '--quiet', '--no-token-storage', '--state', stateFile], { TOKEN });
+const thin = await runCli([base + 'submit', '--json', '--quiet', '--no-interact', '--no-zoom', '--no-screenshots', '--out', join(here, '.report-thin')], { TOKEN });
+rmSync(join(here, '.report-thin'), { recursive: true, force: true });
 const tsText = await runCli([base + 'app.html', '--troubleshoot', '--quiet', '--no-token-storage'], { TOKEN });
 site.close();
 external.close();
@@ -211,6 +220,34 @@ check('--troubleshoot explains a client-side bounce and names the key the app re
 });
 check('--troubleshoot plain text output has the sections', () => {
   for (const re of [/^auth /m, /^navigation$/m, /page script navigated to/, /^verdict /m, /^next /m]) assert.ok(re.test(tsText.stdout), `missing ${re} in:\n${tsText.stdout}`);
+});
+check('pages behind link-less controls are found by clicking and audited', () => {
+  for (const p of ['/reports.html', '/dashboard.html']) {
+    assert.ok(pages[p], `${p} was crawled`);
+    assert.equal(pages[p].error, null, `${p}: ${pages[p].error}`);
+    assert.equal(pages[p].foundBy, 'click', `${p} foundBy`);
+  }
+  const d = pages['/'].discovery;
+  assert.ok(d && d.routes.some((r) => r.name === 'Reports') && d.routes.some((r) => r.name === 'Dashboard'), JSON.stringify(d));
+  assert.ok(report.summary.coverage.notes.some((n) => /reachable only by clicking/.test(n)), JSON.stringify(report.summary.coverage));
+});
+check('controls named like actions are never clicked, and that is reported', () => {
+  assert.equal(dangerHits.length, 0, `Delete was clicked ${dangerHits.length} time(s)`);
+  assert.ok(pages['/'].discovery.skipped.some((s) => s.name === 'Delete account'));
+  assert.ok(report.summary.coverage.warnings.some((w) => /look like actions \("Delete account"/.test(w)), JSON.stringify(report.summary.coverage.warnings));
+});
+check('hash routes are kept as distinct URLs, in-page anchors are not', () => {
+  const o = 'http://h.test';
+  assert.equal(normalizeUrl('http://h.test/app#/reports', o), 'http://h.test/app#/reports');
+  assert.equal(normalizeUrl('http://h.test/app#!/reports', o), 'http://h.test/app#!/reports');
+  assert.equal(normalizeUrl('http://h.test/app#section-2', o), 'http://h.test/app');
+});
+check('a one-page crawl with nothing to follow is flagged as incomplete', () => {
+  const r = JSON.parse(thin.stdout);
+  assert.equal(r.summary.audited, 1, thin.stderr);
+  assert.equal(r.summary.coverage.complete, false);
+  assert.ok(r.summary.coverage.warnings.some((w) => /Only the start page was audited/.test(w)), JSON.stringify(r.summary.coverage));
+  assert.ok(/COVERAGE IS INCOMPLETE/.test(thin.stderr), thin.stderr);
 });
 check('a run that audited nothing never passes', () => {
   assert.equal(shouldFail({ audited: 0, byImpact: {} }, ['critical', 'serious']), true);

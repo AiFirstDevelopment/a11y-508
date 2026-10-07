@@ -8,7 +8,7 @@ import { crawl } from './crawler.mjs';
 import { interactiveLogin, loadState, saveState, stateSummary } from './login.mjs';
 import { troubleshoot, formatTroubleshoot } from './troubleshoot.mjs';
 import { siteChecks } from './site-checks.mjs';
-import { summarize, shouldFail, writeReports, makeLogger } from './report.mjs';
+import { summarize, shouldFail, writeReports, makeLogger, coverage } from './report.mjs';
 import { CATALOG, IMPACTS, TEST_IDS } from './checks/catalog.mjs';
 
 const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
@@ -57,6 +57,9 @@ Options
   --max-screenshots <n>    Screenshots per page (default 40)
   --max-tabs <n>           Maximum Tab presses per page (default 400)
   --max-activations <n>    Disclosure controls activated per page (default 12)
+  --max-clicks <n>         Link-less navigation controls clicked per page to find pages
+                           reachable only through click handlers (default 30)
+  --no-follow-clicks       Do not click controls to discover pages; follow href links only
   --user-agent <ua>        Override the browser user agent
   --chrome <path>          Browser executable (default: auto-detect, or CHROME_PATH)
   --no-sandbox             Pass --no-sandbox to Chrome (containers running as root)
@@ -86,7 +89,7 @@ export function parseArgs(argv) {
     url: null, maxPages: 200, maxDepth: 10, concurrency: 4, include: [], exclude: [], failOn: ['critical', 'serious'],
     out: 'a11y-508-report', viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
     tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stateFile: null, troubleshoot: false, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
-    maxTabs: 400, maxActivations: 12, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false,
+    maxTabs: 400, maxActivations: 12, maxClicks: 30, followClicks: true, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false,
     listTests: false, help: false, version: false,
   };
   const args = [...argv];
@@ -165,6 +168,9 @@ export function parseArgs(argv) {
       case '--max-screenshots': o.maxScreenshots = int(a, next(a)); break;
       case '--max-tabs': o.maxTabs = int(a, next(a)); break;
       case '--max-activations': o.maxActivations = int(a, next(a)); break;
+      case '--max-clicks': o.maxClicks = int(a, next(a)); break;
+      case '--no-follow-clicks': o.followClicks = false; break;
+      case '--follow-clicks': o.followClicks = true; break;
       case '--user-agent': o.userAgent = next(a); break;
       case '--chrome': o.chrome = next(a); break;
       case '--no-sandbox': o.noSandbox = true; break;
@@ -324,6 +330,7 @@ export async function main(argv) {
   const { pages } = crawlResult;
   const site = siteChecks(pages);
   const summary = summarize(pages, site);
+  summary.coverage = coverage(pages, crawlResult, opts);
   const passed = !shouldFail(summary, opts.failOn);
   const report = {
     tool: { name: pkg.name, version: pkg.version },
@@ -333,7 +340,7 @@ export async function main(argv) {
     finishedAt: new Date().toISOString(),
     options: {
       maxPages: opts.maxPages, maxDepth: opts.maxDepth, concurrency: opts.concurrency, include: opts.include.map(String), exclude: opts.exclude.map(String),
-      failOn: opts.failOn, viewport: opts.viewport, timeout: opts.timeout, interact: opts.interact, zoom: opts.zoom, screenshots: opts.screenshots,
+      failOn: opts.failOn, viewport: opts.viewport, timeout: opts.timeout, interact: opts.interact, followClicks: opts.followClicks, maxClicks: opts.maxClicks, zoom: opts.zoom, screenshots: opts.screenshots,
       tokenHeader: opts.auth ? opts.tokenHeader : null, authOrigins: opts.auth ? [...opts.auth.origins] : [],
       tokenStorage: opts.auth && opts.auth.storage ? opts.auth.storage.keys : [], cookies: opts.cookies.map((c) => c.name),
       session: opts.state ? { cookies: opts.state.cookies.length, origins: Object.keys(opts.state.storage || {}) } : null,

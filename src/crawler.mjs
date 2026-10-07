@@ -14,7 +14,7 @@ export function normalizeUrl(href, origin) {
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
   if (u.origin !== origin) return null;
-  u.hash = '';
+  if (!/^#!?\//.test(u.hash)) u.hash = ''; // keep hash routes (#/path), drop in-page anchors
   u.username = '';
   u.password = '';
   if (BINARY.test(u.pathname)) return null;
@@ -31,6 +31,8 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
   const pages = [];
   let active = 0;
   let pageCounter = 0;
+  let overflow = 0;
+  const clickOnly = new Set();
   const ctx = { opts, origin, outDir, nextPageIndex: () => ++pageCounter };
   const allowed = (u) => {
     if (opts.exclude.some((re) => re.test(u))) return false;
@@ -79,15 +81,21 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
             ({ session, page } = await newWorkerPage());
           }
           res.depth = item.depth;
+          if (item.via === 'click') res.foundBy = 'click';
           pages.push(res);
           log.page(res, pages.length, seen.size);
           if (res.info && item.depth < opts.maxDepth) {
-            for (const link of res.info.links) {
+            const viaClick = (res.discovery && res.discovery.urls) || [];
+            for (const link of [...res.info.links, ...viaClick]) {
               const n = normalizeUrl(link, origin);
               if (!n || seen.has(n) || !allowed(n)) continue;
-              if (seen.size >= opts.maxPages) break;
+              if (seen.size >= opts.maxPages) {
+                overflow++;
+                continue;
+              }
               seen.add(n);
-              queue.push({ url: n, depth: item.depth + 1 });
+              if (viaClick.includes(link) && !res.info.links.includes(link)) clickOnly.add(n);
+              queue.push({ url: n, depth: item.depth + 1, via: clickOnly.has(n) ? 'click' : 'link' });
             }
           }
         } finally {
@@ -101,5 +109,5 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
 
   const n = Math.max(1, Math.min(opts.concurrency, opts.maxPages));
   await Promise.all(Array.from({ length: n }, (_, i) => worker(i)));
-  return { pages, discovered: seen.size, origin };
+  return { pages, discovered: seen.size, overflow, clickOnly: clickOnly.size, origin };
 }

@@ -3,7 +3,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { testInfo } from './checks/catalog.mjs';
-import { listenerProbe, keyboardPass, disclosurePass, zoomPass } from './passes.mjs';
+import { listenerProbe, keyboardPass, disclosurePass, zoomPass, routeDiscoveryPass } from './passes.mjs';
 
 export async function auditPage(page, url, ctx) {
   const { opts } = ctx;
@@ -121,6 +121,16 @@ export async function auditPage(page, url, ctx) {
         if (f.screenshot || !f.rect) continue;
         await shoot(f);
         if (f.screenshot) n++;
+      }
+    }
+    // Last, because it clicks around and reloads: find pages reachable only
+    // through click handlers so the crawler can queue them.
+    if (opts.followClicks && opts.maxClicks > 0) {
+      try {
+        await reload();
+        result.discovery = await routeDiscoveryPass(page, base.meta, opts, reload, ctx.origin);
+      } catch (e) {
+        result.errors.push(`route discovery: ${e.message}`);
       }
     }
   } catch (e) {

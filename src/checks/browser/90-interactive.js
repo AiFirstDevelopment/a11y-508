@@ -242,3 +242,70 @@
     return { clipped, overlaps, textLength: A.visibleTextLength(), scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth };
   };
 })();
+
+// Route discovery: controls that look like navigation but have no href, so the
+// crawler cannot see where they lead without clicking them.
+(() => {
+  const A = window.__a11y508;
+  // Names that suggest an action with side effects. Never clicked.
+  const DANGER = /\b(delete|remove|destroy|erase|purge|log ?out|log ?off|sign ?out|submit|save|send|post|pay|purchase|buy|order|checkout|approve|reject|deny|confirm|cancel|reset|clear|archive|disable|enable|revoke|unsubscribe|terminate|transfer|upload|import|export|download|print|run|execute|apply|update|create|add|new|edit|copy|duplicate|close|dismiss|accept|decline)\b/i;
+  const NAV_HINT = '[routerlink], [ng-reflect-router-link], [data-href], [data-url], [data-route], [data-link], [data-path], [role="link"], [role="menuitem"], [role="tab"], [role="treeitem"], [onclick]';
+  const NAV_AREA = 'nav, [role="navigation"], header, [role="banner"], aside, [role="menu"], [role="menubar"], [role="tablist"], [role="tree"], [class*="nav" i], [class*="menu" i], [class*="sidebar" i], [class*="sidenav" i], [class*="breadcrumb" i], [class*="tab" i]';
+
+  A.navCandidates = (max, extraSelectors) => {
+    const out = [];
+    const skipped = [];
+    const seen = new Set();
+    const consider = (el, why) => {
+      if (!el || seen.has(el) || out.length >= max * 4) return;
+      seen.add(el);
+      if (!A.isVisible(el)) return;
+      if (el.matches('a[href], area[href], input, select, textarea, option, label, [type="submit"], [disabled], [aria-disabled="true"], [aria-expanded], [aria-haspopup="dialog"]')) return;
+      if (el.closest('a[href], form, [role="dialog"], dialog, [aria-hidden="true"]')) return;
+      if (el.querySelector('a[href]')) return;
+      const name = (A.accName(el).name || A.text(el) || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+      if (!name) return;
+      if (DANGER.test(name)) {
+        skipped.push({ selector: A.selector(el), name, reason: 'looks like an action' });
+        return;
+      }
+      out.push({ selector: A.selector(el), name, why });
+    };
+    for (const el of document.querySelectorAll(NAV_HINT)) consider(el, 'navigation attribute or role');
+    for (const area of document.querySelectorAll(NAV_AREA)) {
+      for (const el of area.querySelectorAll('button, [role="button"], li, span, div')) {
+        if (el.localName !== 'button' && el.getAttribute('role') !== 'button') {
+          const s = A.cs(el);
+          if (!s || s.cursor !== 'pointer') continue;
+          if (el.parentElement && A.cs(el.parentElement).cursor === 'pointer') continue;
+        }
+        consider(el, 'clickable control in a navigation area');
+      }
+    }
+    for (const sel of extraSelectors || []) {
+      try {
+        consider(document.querySelector(sel), 'clickable element without a link');
+      } catch {}
+    }
+    const capped = Math.max(0, out.length - max);
+    return { candidates: out.slice(0, max), skipped, capped };
+  };
+
+  A.prepareClick = (sel) => {
+    let el;
+    try {
+      el = document.querySelector(sel);
+    } catch {
+      return null;
+    }
+    if (!el || !A.isVisible(el)) return null;
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return null;
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    if (!hit || (hit !== el && !el.contains(hit))) return null; // covered by something else
+    return { x, y };
+  };
+})();

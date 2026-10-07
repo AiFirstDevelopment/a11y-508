@@ -100,6 +100,7 @@ Start with `--max-pages 25` so a first run finishes in a few minutes; drop it on
 | `redirected off-origin to ...`, `FAIL (no page could be audited)`, `the start page could not be audited`, `HTTP 401`, `HTTP 403`, or `net::ERR_...` | The crawler could not get into the app. | Run the same command with `--troubleshoot` added (same `TOKEN`, same options). Paste its whole output in your reply, then follow its `next` line exactly, as below. |
 | `Unknown option --troubleshoot` (or any flag from this file) | The vendored copy is old. | Update the tool as above, then retry. |
 | `No Chrome, Chromium, or Edge found` | No browser on the machine. | Ask the person for the browser path and pass `--chrome <path>` or set `CHROME_PATH`. |
+| `coverage warning ...` or `COVERAGE IS INCOMPLETE` | Some pages were not reached. | Report the coverage warnings verbatim with the result. If it says only the start page was audited, run `--troubleshoot` and report its link count. If it says `--max-pages`, rerun without the limit. Never describe such a run as a full pass. |
 | `could not remove the temporary browser profile` | Windows kept files open for a moment. Harmless. | Ignore it. |
 
 **Following the troubleshoot `next` line.**
@@ -111,7 +112,7 @@ Start with `--max-pages 25` so a first run finishes in a few minutes; drop it on
 
 **Never**: edit files under `<TOOL>`; commit `a11y-508-state.json` or `a11y-508-report/` (add both to `.gitignore` if missing); write a token into any file; change `--fail-on`; retry blindly with guessed flags.
 
-**When you report back**, include the exact commands you ran, the `pages:` line, the exit code, the report path, and the troubleshoot output if you ran it.
+**When you report back**, include the exact commands you ran, the `pages:` line, any `coverage warning` lines, the exit code, the report path, and the troubleshoot output if you ran it.
 
 ## Command line
 
@@ -149,6 +150,9 @@ a11y-508 <url> [options]
   --max-screenshots <n>    Screenshots per page (default 40)
   --max-tabs <n>           Maximum Tab presses per page (default 400)
   --max-activations <n>    Disclosure controls activated per page (default 12)
+  --max-clicks <n>         Link-less navigation controls clicked per page to find pages
+                           reachable only through click handlers (default 30)
+  --no-follow-clicks       Do not click controls to discover pages; follow href links only
   --user-agent <ua>        Override the browser user agent
   --chrome <path>          Browser executable (default: auto-detect, or CHROME_PATH)
   --no-sandbox             Pass --no-sandbox to Chrome (containers running as root)
@@ -202,6 +206,12 @@ It prints the navigation chain hop by hop (HTTP redirects and script-driven navi
 Navigation errors that are usually momentary (`net::ERR_SOCKET_NOT_CONNECTED`, `ERR_CONNECTION_RESET`, `ERR_EMPTY_RESPONSE`, `ERR_NETWORK_CHANGED`, and similar) are retried up to three times with backoff before a page is recorded as failed; pages that needed a retry carry `navRetries` in the report. On Windows, Chrome can keep its temporary profile open for a moment after it closes; the crawler waits for the browser to exit, retries the cleanup, and prints the directory to delete by hand if it still cannot remove it, without failing the run.
 
 The crawl stays on the start URL's origin, ignores binary links (PDF, images, archives), closes any pop-up windows, and refuses downloads.
+
+### Coverage: pages without links
+
+The crawler finds pages by following `href` links. Many single-page apps navigate from buttons, menu items or `routerLink` elements that have no `href`, and a crawler that only reads links would audit the first page and stop, which looks like a complete run. To avoid that, after auditing a page the crawler clicks up to `--max-clicks` controls that look like navigation but have no link: elements with a router or `data-href` attribute, `role="link"`, `menuitem`, `tab` or `treeitem`, and pointer-cursor items or buttons inside navigation, menus, headers and sidebars. Any same-origin URL a click leads to, including `pushState` routes and `#/` hash routes, is queued and audited, and is marked `foundBy: "click"` in the report. Controls whose name looks like an action (Save, Delete, Submit, Sign out, Approve, Export and similar) and anything inside a form or dialog are never clicked. `--no-follow-clicks` turns this off.
+
+Every report has a coverage section. It warns when only the start page could be audited, when controls were skipped because they look like actions, when `--max-clicks` or `--max-pages` cut the crawl short, and notes pages that were reachable only by clicking (keyboard and screen reader users cannot discover those as links). A run that passes on violations but has coverage warnings prints `PASS on the N page(s) audited, but COVERAGE IS INCOMPLETE` rather than a plain PASS.
 
 ## What it checks
 

@@ -209,6 +209,61 @@ export async function disclosurePass(page, add, fingerprints, opts, reload) {
   return out;
 }
 
+// Clicks controls that look like navigation but have no href (router links on
+// buttons, menu items with click handlers) and reports the same-origin URLs
+// they lead to, so the crawler can audit pages it could not otherwise see.
+// Anything named like an action (Save, Delete, Sign out ...) is never clicked.
+export async function routeDiscoveryPass(page, meta, opts, reload, origin) {
+  const startHref = await page.evaluate('location.href');
+  const { candidates, skipped, capped } = await page.evaluate(`window.__a11y508.navCandidates(${opts.maxClicks}, ${JSON.stringify(meta.pointerCandidates || [])})`);
+  const out = { candidates: candidates.length, clicked: 0, urls: [], offOrigin: 0, skipped: skipped.slice(0, 20), skippedCount: skipped.length, capped, routes: [] };
+  const found = new Set();
+  const here = async () => page.evaluate('location.href').catch(() => null);
+  for (const c of candidates) {
+    if ((await here()) !== startHref) await reload();
+    let pt = null;
+    try {
+      pt = await page.evaluate(`window.__a11y508.prepareClick(${JSON.stringify(c.selector)})`);
+    } catch {}
+    if (!pt) continue;
+    try {
+      await page.click(pt.x, pt.y);
+    } catch {
+      continue;
+    }
+    out.clicked++;
+    let href = null;
+    const until = Date.now() + 1500;
+    while (Date.now() < until) {
+      await sleep(150);
+      href = await here();
+      if (href && href !== startHref) break;
+    }
+    if (!href || href === startHref) {
+      await sleep(500); // a full-page navigation may still be loading
+      href = await here();
+    }
+    if (!href || href === startHref) continue;
+    let u;
+    try {
+      u = new URL(href);
+    } catch {
+      continue;
+    }
+    if (u.origin !== origin) {
+      out.offOrigin++;
+      continue;
+    }
+    if (!found.has(href)) {
+      found.add(href);
+      out.urls.push(href);
+      out.routes.push({ name: c.name, selector: c.selector, url: href });
+    }
+  }
+  if ((await here()) !== startHref) await reload();
+  return out;
+}
+
 export async function zoomPass(page, add, shoot) {
   const before = await page.evaluate('window.__a11y508.layoutIssues()');
   await page.setZoom(2);

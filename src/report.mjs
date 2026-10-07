@@ -29,6 +29,32 @@ export function summarize(pages, site) {
   return { pages: pages.length, audited, failed, skipped, violations, reviews, byTest, byImpact };
 }
 
+// Reasons the crawl may not have reached every page. A run with warnings can
+// still pass on violations, but it must not look like a complete audit.
+export function coverage(pages, crawl, opts) {
+  const warnings = [];
+  const notes = [];
+  const audited = pages.filter((p) => !p.error && !p.skipped);
+  const start = pages[0];
+  const startLinks = start && start.info ? start.info.links.length : 0;
+  const startClicks = start && start.discovery ? start.discovery.urls.length : 0;
+  if (audited.length === 1 && start && !start.error && !start.skipped && startLinks + startClicks === 0) {
+    warnings.push(`Only the start page was audited: it has no links the crawler could follow${opts.followClicks ? ', and clicking its navigation-like controls led nowhere new' : ''}. Pages behind this one were not audited. Run --troubleshoot to see what the page offers, or pass more start URLs.`);
+  }
+  const skippedPages = pages.filter((p) => p.discovery && p.discovery.skippedCount);
+  if (skippedPages.length) {
+    const n = skippedPages.reduce((a, p) => a + p.discovery.skippedCount, 0);
+    const names = [...new Set(skippedPages.flatMap((p) => p.discovery.skipped.map((s) => `"${s.name}"`)))].slice(0, 6);
+    warnings.push(`${n} clickable control(s) on ${skippedPages.length} page(s) were not clicked because they look like actions (${names.join(', ')}${n > names.length ? ', ...' : ''}). Any pages behind them were not audited.`);
+  }
+  const cappedPages = pages.filter((p) => p.discovery && p.discovery.capped);
+  if (cappedPages.length) warnings.push(`${cappedPages.reduce((a, p) => a + p.discovery.capped, 0)} navigation-like control(s) on ${cappedPages.length} page(s) were beyond --max-clicks ${opts.maxClicks} and were not tried.`);
+  if (crawl.overflow) warnings.push(`Stopped at --max-pages ${opts.maxPages}: ${crawl.overflow} more link(s) were found but not audited.`);
+  if (!opts.followClicks) notes.push('Click discovery was off (--no-follow-clicks); pages reachable only through click handlers were not looked for.');
+  if (crawl.clickOnly) notes.push(`${crawl.clickOnly} page(s) were reachable only by clicking a control with no link (href); they were found by clicking and audited. Screen reader users cannot discover these destinations as links (check WCAG 2.1.1, 4.1.2).`);
+  return { complete: warnings.length === 0, warnings, notes };
+}
+
 export function shouldFail(summary, failOn) {
   if (!summary.audited) return true; // nothing was audited, so nothing can have passed
   if (!failOn.length) return false;
@@ -60,7 +86,14 @@ export function renderMarkdown(r) {
   lines.push('');
   lines.push(`Crawled ${s.pages} page(s) (${s.audited} audited, ${s.failed} failed, ${s.skipped} skipped) on ${r.finishedAt}.`);
   lines.push('');
-  lines.push(`**Result: ${r.passed ? 'PASS' : 'FAIL'}** (fail on: ${r.options.failOn.join(', ') || 'none'})`);
+  lines.push(`**Result: ${r.passed ? 'PASS' : 'FAIL'}${s.coverage && !s.coverage.complete ? ', coverage incomplete' : ''}** (fail on: ${r.options.failOn.join(', ') || 'none'})`);
+  if (s.coverage && (s.coverage.warnings.length || s.coverage.notes.length)) {
+    lines.push('');
+    lines.push('## Coverage');
+    lines.push('');
+    for (const w of s.coverage.warnings) lines.push(`- **Warning:** ${w}`);
+    for (const n of s.coverage.notes) lines.push(`- ${n}`);
+  }
   lines.push('');
   lines.push('| | Critical | Serious | Moderate | Minor | Review items |');
   lines.push('|---|---|---|---|---|---|');
@@ -168,7 +201,8 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{border:1px solid 
 <body>
 <header>
 <h1>Section 508 audit: ${esc(r.baseUrl)}</h1>
-<p>${esc(r.finishedAt)} · ${s.pages} page(s) crawled, ${s.audited} audited · <span class="result ${r.passed ? 'pass' : 'fail'}">${r.passed ? 'PASS' : 'FAIL'}</span> <small>(fails on: ${esc(r.options.failOn.join(', ') || 'none')})</small> · ${esc(r.tool.name)} ${esc(r.tool.version)} · ${esc(r.browser || '')}</p>
+<p>${esc(r.finishedAt)} · ${s.pages} page(s) crawled, ${s.audited} audited · <span class="result ${r.passed ? 'pass' : 'fail'}">${r.passed ? 'PASS' : 'FAIL'}</span>${s.coverage && !s.coverage.complete ? ' <span class="result fail">COVERAGE INCOMPLETE</span>' : ''} <small>(fails on: ${esc(r.options.failOn.join(', ') || 'none')})</small> · ${esc(r.tool.name)} ${esc(r.tool.version)} · ${esc(r.browser || '')}</p>
+${s.coverage && (s.coverage.warnings.length || s.coverage.notes.length) ? `<section class="coverage"><h2>Coverage</h2><ul>${s.coverage.warnings.map((w) => `<li><strong>Warning:</strong> ${esc(w)}</li>`).join('')}${s.coverage.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></section>` : ''}
 <div class="tiles">
 <div class="tile critical"><b>${s.byImpact.critical}</b>critical</div>
 <div class="tile serious"><b>${s.byImpact.serious}</b>serious</div>
@@ -278,7 +312,12 @@ export function makeLogger({ quiet, json }) {
       lines.push(`        ${files.json}`);
       lines.push(`        ${files.md}`);
       lines.push('');
+      const cov = s.coverage || { warnings: [], notes: [], complete: true };
+      for (const w of cov.warnings) lines.push(c(33, 'coverage warning ') + w);
+      for (const n of cov.notes) lines.push(c(90, 'coverage note ') + n);
+      if (cov.warnings.length || cov.notes.length) lines.push('');
       if (!s.audited) lines.push(c(31, 'FAIL (no page could be audited)'));
+      else if (report.passed && !cov.complete) lines.push(c(33, `PASS on the ${s.audited} page(s) audited, but COVERAGE IS INCOMPLETE (see coverage warnings above)`));
       else lines.push(report.passed ? c(32, `PASS (no ${report.options.failOn.join('/') || ''} violations)`) : c(31, `FAIL (${report.options.failOn.filter((i) => s.byImpact[i]).map((i) => `${s.byImpact[i]} ${i}`).join(', ')} violations)`));
       out(lines.join('\n'));
     },
