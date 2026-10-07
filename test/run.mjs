@@ -106,6 +106,22 @@ const run = await new Promise((resolve) => {
     resolve({ status: code, stdout });
   });
 });
+// --troubleshoot against the same fixture: one run that gets in, one that is bounced by the app's guard.
+const runCli = (args, env) => new Promise((resolve) => {
+  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), ...args], { env: { ...process.env, NO_COLOR: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (d) => (stdout += d));
+  child.stderr.on('data', (d) => (stderr += d));
+  const timer = setTimeout(() => child.kill('SIGKILL'), 120000);
+  child.on('exit', (code) => {
+    clearTimeout(timer);
+    resolve({ status: code, stdout, stderr });
+  });
+});
+const tsOk = await runCli([base + 'app.html', '--troubleshoot', '--json', '--quiet', '--token-storage', 'fixture_custom_key', '--state', stateFile], { TOKEN });
+const tsBounced = await runCli([base + 'app.html', '--troubleshoot', '--json', '--quiet', '--no-token-storage', '--state', stateFile], { TOKEN });
+const tsText = await runCli([base + 'app.html', '--troubleshoot', '--quiet', '--no-token-storage'], { TOKEN });
 site.close();
 external.close();
 rmSync(stateFile, { force: true });
@@ -172,6 +188,29 @@ check('script redirect to a slow page is followed; the landing page is audited',
   assert.equal(p.skipped, null, `bounce page skipped: ${p.skipped}`);
   assert.ok(/\/landed\.html$/.test(p.finalUrl), `expected to land on /landed.html, got ${p.finalUrl}`);
   assert.equal(p.title, 'Landed - a11y-508 test site');
+});
+check('--troubleshoot reports success when the page is reached', () => {
+  assert.equal(tsOk.status, 0, tsOk.stdout + tsOk.stderr);
+  const r = JSON.parse(tsOk.stdout);
+  assert.equal(r.ok, true);
+  assert.ok(/Authentication is working/.test(r.verdict), r.verdict);
+  assert.ok(r.auth.sentOn > 0, 'header seen on the wire');
+  assert.ok(r.auth.seededKeys.includes('fixture_custom_key'));
+  assert.ok(r.storage.read.localStorage.some((k) => k.key === 'access_token' && k.seeded && k.present), JSON.stringify(r.storage.read));
+  assert.ok(r.cookies.some((c) => c.name === 'state_cookie'));
+  assert.ok(!JSON.stringify(r).includes(TOKEN) && !JSON.stringify(r).includes('from-state'), 'no secret values in the output');
+});
+check('--troubleshoot explains a client-side bounce and names the key the app read', () => {
+  assert.equal(tsBounced.status, 2, tsBounced.stdout + tsBounced.stderr);
+  const r = JSON.parse(tsBounced.stdout);
+  assert.equal(r.ok, false);
+  assert.ok(/its own script navigated to .*\/login\.html/.test(r.verdict), r.verdict);
+  assert.ok(/--token-storage access_token/.test(r.next), r.next);
+  assert.ok(r.navigation.hops.some((h) => h.kind === 'navigation' && h.initiator === 'script'), JSON.stringify(r.navigation.hops));
+  assert.ok(r.storage.read.localStorage.some((k) => k.key === 'access_token' && !k.seeded && !k.present), JSON.stringify(r.storage.read));
+});
+check('--troubleshoot plain text output has the sections', () => {
+  for (const re of [/^auth /m, /^navigation$/m, /page script navigated to/, /^verdict /m, /^next /m]) assert.ok(re.test(tsText.stdout), `missing ${re} in:\n${tsText.stdout}`);
 });
 check('a run that audited nothing never passes', () => {
   assert.equal(shouldFail({ audited: 0, byImpact: {} }, ['critical', 'serious']), true);

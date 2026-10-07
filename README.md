@@ -8,6 +8,8 @@ A Section 508 crawler with **no dependencies**. It drives the Chrome, Chromium, 
 
 It exists for environments where nothing can be published to a package registry and nothing can be downloaded at install time. It is two directories of plain JavaScript. Nothing is fetched from the network except the site being audited.
 
+**AI coding assistants:** if you were told to read this file and get the crawl working, follow the [runbook](#runbook-for-ai-coding-assistants) below. It tells you which command to run next for every outcome.
+
 ```bash
 TOKEN=eyJhbGciOi... npm run e2e:a11y-508 https://app.example.gov
 ```
@@ -68,6 +70,49 @@ Paste this into Claude Code, Copilot, Cursor, or similar when working in the rep
 >
 > The tool needs Node 18+ and a Chrome, Chromium, or Edge binary on the machine (`CHROME_PATH` if it is not in a standard location). It does not download a browser.
 
+## Runbook for AI coding assistants
+
+Follow this when a person asks you to run, fix, or update this tool in a repository that vendors it. Do each step in order and do not improvise around a step that fails; report it instead.
+
+**Where the tool is.** Open `package.json` and find the script `e2e:a11y-508`. It points at `<TOOL>/bin/a11y-508.mjs`; `<TOOL>` (normally `tools/a11y-508`) is the tool folder. Never edit anything inside it.
+
+**Update it** (when asked, or when a flag mentioned here is "Unknown option"):
+
+```sh
+git subtree pull --prefix <TOOL> https://github.com/AiFirstDevelopment/a11y-508.git main --squash -m "Update a11y-508"
+```
+
+`-m` matters: without it git opens an editor and your shell hangs. If git complains about local modifications, run `git stash`, pull again, then `git stash pop`. If subtree fails because the folder was copied rather than added as a subtree, clone the repository to a temporary folder and copy its `bin/`, `src/`, `README.md` and `LICENSE` over `<TOOL>/`. The update worked when `<TOOL>/src/troubleshoot.mjs` exists.
+
+**Run the crawl.** Options after the URL need npm's `--` separator. On Windows PowerShell set the token with `$env:TOKEN='...'` on its own line first; never put a token in a file or a commit.
+
+```sh
+npm run e2e:a11y-508 <url> -- --max-pages 25
+```
+
+Start with `--max-pages 25` so a first run finishes in a few minutes; drop it once the run works. If your shell tool has a time limit, run long commands in a separate window with output redirected to a file (PowerShell: `Start-Process powershell -ArgumentList '-NoExit','-Command','npm run e2e:a11y-508 <url> -- --max-pages 25 *> a11y-508.log'`) and read the file when it stops growing.
+
+**Read the result and pick the next step.** Look at the `pages:` line and the last line.
+
+| The output says | What it means | Do this |
+|---|---|---|
+| `pages: N crawled, M audited` with M > 0 and a `report:` path | The crawl worked. Exit code 1 means violations were found; that is a finding, not a failure of the tool. | Report the `pages:` line, the violations line and the report path. Do not change `--fail-on` to make it pass. |
+| `redirected off-origin to ...`, `FAIL (no page could be audited)`, `the start page could not be audited`, `HTTP 401`, `HTTP 403`, or `net::ERR_...` | The crawler could not get into the app. | Run the same command with `--troubleshoot` added (same `TOKEN`, same options). Paste its whole output in your reply, then follow its `next` line exactly, as below. |
+| `Unknown option --troubleshoot` (or any flag from this file) | The vendored copy is old. | Update the tool as above, then retry. |
+| `No Chrome, Chromium, or Edge found` | No browser on the machine. | Ask the person for the browser path and pass `--chrome <path>` or set `CHROME_PATH`. |
+| `could not remove the temporary browser profile` | Windows kept files open for a moment. Harmless. | Ignore it. |
+
+**Following the troubleshoot `next` line.**
+
+- It names `--token-storage <key>`: rerun the crawl with that flag added (keep `TOKEN` set). Repeat troubleshoot if it still fails.
+- It says `--login-only`: the app needs a real signed-in session, which only a person can create. Run `npm run e2e:a11y-508 <url> -- --login-only`, tell the person "A Chrome window is open, please sign in there and stay on the app page", and wait; do not press keys, close the window, or kill the command. It finishes by itself once the app has loaded and stayed put for six seconds, printing `session: saved ...`. Then run the crawl with `-- --state a11y-508-state.json` (plus the other options). If a later run says `redirected off-origin` again, the session expired: repeat `--login-only` once.
+- It talks about a network error (VPN, proxy, DNS): stop and report; this is not something to fix in code.
+- It says `Authentication is working` but the crawl still failed: paste both outputs and ask the person.
+
+**Never**: edit files under `<TOOL>`; commit `a11y-508-state.json` or `a11y-508-report/` (add both to `.gitignore` if missing); write a token into any file; change `--fail-on`; retry blindly with guessed flags.
+
+**When you report back**, include the exact commands you ran, the `pages:` line, the exit code, the report path, and the troubleshoot output if you ran it.
+
 ## Command line
 
 ```
@@ -94,6 +139,10 @@ a11y-508 <url> [options]
                            SSO portals), save the session to --state, then crawl with it
   --state <file>           Session file to crawl with, or to write when used with --login
                            (default with --login: a11y-508-state.json)
+  --login-only             Sign in and save the session file, then exit without crawling
+  --troubleshoot           Load only the start URL with the configured auth and explain
+                           what happened (redirects, storage keys the app read, cookies,
+                           whether the header went out) with the next step to take
   --no-interact            Skip the keyboard and disclosure-activation passes
   --no-zoom                Skip the 200% zoom pass
   --no-screenshots         Do not capture element screenshots
@@ -132,9 +181,21 @@ A browser window opens on the start URL. Sign in there. Once the app itself has 
 a11y-508 https://app.example.gov --state a11y-508-state.json
 ```
 
+`--login-only` signs in, saves the file, and exits without crawling, which keeps the interactive step short when a coding agent or a script drives the tool.
+
 The file holds live credentials, including the portal's session cookie. It is written with owner-only permissions and `a11y-508-state.json` is in this repository's `.gitignore`; keep it out of version control. `--login --state <file>` chooses where to write it. For CI, sign in on a workstation and provide the file from the secret store.
 
 During the crawl, a page that bounces through the portal and back (or any script-driven redirect) is followed until the document stops changing, and the page that finally lands is the one audited. A run in which no page could be audited is reported as FAIL, never PASS.
+
+### When the crawl cannot get in
+
+`--troubleshoot` loads only the start URL, with whatever auth is configured (`TOKEN`, `--cookie`, `--state`), and explains what happened instead of auditing:
+
+```sh
+TOKEN=... a11y-508 https://app.example.gov/layout --troubleshoot
+```
+
+It prints the navigation chain hop by hop (HTTP redirects and script-driven navigations, with status codes), whether the auth header actually went out on the page request, which web storage keys and cookies the app's own scripts read or wrote before it left (keys only, never values), what is in storage and the cookie jar afterwards, and a verdict with the next step: add `--token-storage <key>` when the app reads a key the tool did not seed, or `--login-only` when the server or the app insists on a real session. Exit code 0 means the page landed on the app and the crawl should work. `--json` prints the same as JSON.
 
 ### Flaky networks and Windows
 

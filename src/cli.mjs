@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { launchChrome } from './chrome.mjs';
 import { crawl } from './crawler.mjs';
 import { interactiveLogin, loadState, saveState, stateSummary } from './login.mjs';
+import { troubleshoot, formatTroubleshoot } from './troubleshoot.mjs';
 import { siteChecks } from './site-checks.mjs';
 import { summarize, shouldFail, writeReports, makeLogger } from './report.mjs';
 import { CATALOG, IMPACTS, TEST_IDS } from './checks/catalog.mjs';
@@ -46,6 +47,10 @@ Options
                            SSO portals), save the session to --state, then crawl with it
   --state <file>           Session file to crawl with, or to write when used with --login
                            (default with --login: a11y-508-state.json)
+  --login-only             Sign in and save the session file, then exit without crawling
+  --troubleshoot           Load only the start URL with the configured auth and explain
+                           what happened (redirects, storage keys the app read, cookies,
+                           whether the header went out) with the next step to take
   --no-interact            Skip the keyboard and disclosure-activation passes
   --no-zoom                Skip the 200% zoom pass
   --no-screenshots         Do not capture element screenshots
@@ -80,7 +85,7 @@ export function parseArgs(argv) {
   const o = {
     url: null, maxPages: 200, maxDepth: 10, concurrency: 4, include: [], exclude: [], failOn: ['critical', 'serious'],
     out: 'a11y-508-report', viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
-    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, stateFile: null, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
+    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stateFile: null, troubleshoot: false, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
     maxTabs: 400, maxActivations: 12, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false,
     listTests: false, help: false, version: false,
   };
@@ -141,6 +146,8 @@ export function parseArgs(argv) {
       case '--token-storage': o.tokenStorageKeys.push(next(a)); break;
       case '--no-token-storage': o.tokenStorage = false; break;
       case '--login': o.login = true; break;
+      case '--login-only': o.login = true; o.loginOnly = true; break;
+      case '--troubleshoot': case '--trouble-shoot': case '--diagnose': o.troubleshoot = true; break;
       case '--state': o.stateFile = next(a); break;
       case '--cookie': {
         const v = next(a);
@@ -252,6 +259,10 @@ export async function main(argv) {
     saveState(file, opts.state);
     log.info(`session: saved ${stateSummary(opts.state)} to ${file}`);
     log.warn(`${file} holds live credentials; keep it out of version control. Reuse it with --state ${opts.stateFile || 'a11y-508-state.json'}`);
+    if (opts.loginOnly) {
+      log.info('session saved; not crawling (--login-only)');
+      return 0;
+    }
   } else if (opts.stateFile) {
     try {
       opts.state = loadState(resolve(opts.stateFile));
@@ -272,6 +283,21 @@ export async function main(argv) {
   }
   const browserName = `${browser.version.product} (${browser.exe})`;
   log.info(`browser: ${browserName}`);
+
+  if (opts.troubleshoot) {
+    let result;
+    try {
+      result = await troubleshoot({ browser, startUrl: startUrl.href, opts });
+    } catch (e) {
+      log.error(`troubleshoot failed: ${e.message}`);
+      await closeBrowser(browser);
+      return 2;
+    }
+    await closeBrowser(browser);
+    process.stdout.write(opts.json ? JSON.stringify(result, null, 2) + '\n' : formatTroubleshoot(result));
+    return result.ok ? 0 : 2;
+  }
+
   log.info(`crawling ${startUrl.href} (max ${opts.maxPages} pages, depth ${opts.maxDepth}, ${opts.concurrency} tabs)`);
 
   const startedAt = new Date().toISOString();
