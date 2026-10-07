@@ -5,3 +5,5 @@ a11y-508-report/
 a11y-508-state.json
 test/.report/
 test/.state.json
+test/.loop-repo/
+a11y-508-work/

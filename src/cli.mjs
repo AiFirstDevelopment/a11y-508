@@ -7,6 +7,7 @@ import { launchChrome } from './chrome.mjs';
 import { crawl } from './crawler.mjs';
 import { interactiveLogin, loadState, saveState, stateSummary } from './login.mjs';
 import { troubleshoot, formatTroubleshoot } from './troubleshoot.mjs';
+import { loadConfig, printStatus, runLoop } from './loop.mjs';
 import { siteChecks } from './site-checks.mjs';
 import { summarize, shouldFail, writeReports, makeLogger, coverage } from './report.mjs';
 import { CATALOG, IMPACTS, TEST_IDS } from './checks/catalog.mjs';
@@ -20,6 +21,8 @@ const HELP = `a11y-508 ${pkg.version} - Section 508 crawler (DHS Trusted Tester 
 
 Usage: a11y-508 <url> [options]
        npm run e2e:a11y-508 <url> [-- options]
+       a11y-508 loop [url] [--config <file>] [--max-rounds <n>] [--agent <spec>] [--dry-run] [crawl options]
+       a11y-508 status
 
 Crawls every same-origin page reachable from <url> in headless Chrome, runs the
 automatable Trusted Tester checks on each page, and writes a report with
@@ -78,6 +81,17 @@ Environment
                 authToken, plus any --token-storage key), so an app that checks web storage
                 does not bounce the crawler to its login page.
   CHROME_PATH   Path to Chrome, Chromium, or Edge.
+
+Fix loop
+  loop          Crawl, triage review items and fix violations through an AI coding
+                assistant, gate each fix with the app's build/test command, commit, push,
+                wait for the deployment, and repeat until nothing is open or Ctrl+C.
+                Reads a11y-508.config.json (--config) in the current directory; state
+                lives in a11y-508-work/ledger.json, so a stopped loop resumes where it was.
+    --max-rounds <n>   Rounds to run before stopping (default 20)
+    --agent <spec>     claude | gemini | codex | a command with {promptFile} (overrides config)
+    --dry-run          Crawl and update the ledger only; no agent, no commits
+  status        Print the ledger: what is open, pending, verified, and needs a person.
 
 Exit codes
   0  no violations at the --fail-on impacts     1  violations found
@@ -185,7 +199,85 @@ export function parseArgs(argv) {
   return o;
 }
 
+// "loop" and "status" take the loop's own flags; everything else is validated
+// with parseArgs and passed through to each round's crawl.
+export function splitLoopArgs(argv) {
+  const [command, ...rest] = argv;
+  if (command !== 'loop' && command !== 'status') return null;
+  const loop = { command, config: 'a11y-508.config.json', maxRounds: 20, agent: null, dryRun: false, help: false };
+  const remaining = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    const eq = a.startsWith('--') ? a.indexOf('=') : -1;
+    const key = eq > 0 ? a.slice(0, eq) : a;
+    const val = () => {
+      const v = eq > 0 ? a.slice(eq + 1) : rest[++i];
+      if (v === undefined) throw new Error(`${key} requires a value`);
+      return v;
+    };
+    if (key === '--config') loop.config = val();
+    else if (key === '--max-rounds') loop.maxRounds = Math.max(1, parseInt(val(), 10) || 0);
+    else if (key === '--agent') loop.agent = val();
+    else if (key === '--dry-run') loop.dryRun = true;
+    else if (key === '-h' || key === '--help') loop.help = true;
+    else remaining.push(a);
+  }
+  return { loop, remaining };
+}
+
+async function loopMain(split) {
+  const { loop, remaining } = split;
+  if (loop.help) {
+    process.stdout.write(HELP);
+    return 0;
+  }
+  const out = (s) => process.stdout.write(s + '\n');
+  if (loop.command === 'status') return printStatus(process.cwd(), out);
+  let crawlOpts;
+  try {
+    crawlOpts = parseArgs(remaining);
+  } catch (e) {
+    process.stderr.write(`error: ${e.message}\n\n${HELP}`);
+    return 2;
+  }
+  const passthrough = remaining.filter((a) => a !== crawlOpts.url);
+  const log = makeLogger({ quiet: false, json: false });
+  let config;
+  try {
+    config = loadConfig(loop.config, process.cwd());
+  } catch (e) {
+    log.error(e.message);
+    return 2;
+  }
+  if (config._missing && !loop.dryRun) log.warn(`no ${loop.config} found; using command-line values only`);
+  if (crawlOpts.url) {
+    try {
+      config._url = new URL(/^https?:\/\//i.test(crawlOpts.url) ? crawlOpts.url : 'http://' + crawlOpts.url).href;
+    } catch {
+      log.error(`"${crawlOpts.url}" is not a valid URL`);
+      return 2;
+    }
+  }
+  config._agent = loop.agent;
+  const stopSignal = { stopped: false };
+  const onSignal = () => {
+    if (stopSignal.stopped) process.exit(130);
+    stopSignal.stopped = true;
+    log.warn('stopping after the current step (press Ctrl+C again to quit at once)');
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  try {
+    return await runLoop({ config, cwd: process.cwd(), log, maxRounds: loop.maxRounds, dryRun: loop.dryRun, passthrough, stopSignal });
+  } finally {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+  }
+}
+
 export async function main(argv) {
+  const split = splitLoopArgs(argv);
+  if (split) return loopMain(split);
   let opts;
   try {
     opts = parseArgs(argv);

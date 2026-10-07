@@ -11,7 +11,7 @@
   },
   "scripts": {
     "e2e:a11y-508": "node bin/a11y-508.mjs",
-    "test": "node test/run.mjs"
+    "test": "node test/run.mjs && node test/loop.mjs"
   },
   "files": [
     "bin",

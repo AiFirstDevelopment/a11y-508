@@ -70,6 +70,50 @@ Paste this into Claude Code, Copilot, Cursor, or similar when working in the rep
 >
 > The tool needs Node 18+ and a Chrome, Chromium, or Edge binary on the machine (`CHROME_PATH` if it is not in a standard location). It does not download a browser.
 
+## The fix loop
+
+`a11y-508 loop` turns the crawl into an unattended fix cycle driven by an AI coding assistant of your choice. Each round it crawls, diffs the findings against the last round, has the assistant judge the review items and fix the open violations one at a time, gates every fix with your own build or test command, commits and pushes what survives, waits for the deployment, and crawls again. It keeps going until nothing is open or you press Ctrl+C, and a stopped loop resumes where it was because all state is in `a11y-508-work/ledger.json`.
+
+Nobody reviews the assistant's changes before they are committed; the gate command stands in for the reviewer, and each fix is its own commit so a bad one can be reverted by hand later.
+
+Put `a11y-508.config.json` in the repository that vendors the tool:
+
+```json
+{
+  "url": "https://app-dev.example.gov/layout",
+  "args": ["--max-pages", "50"],
+  "agent": "claude",
+  "source": ["src"],
+  "check": "npm run build && npm test",
+  "branch": "a11y-508/fixes",
+  "deployed": "bundle-change"
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `url` | Start URL. The command line overrides it. |
+| `args` | Crawl options used in every round, same as the basic run. Options on the `loop` command line are added. |
+| `agent` | `claude`, `gemini`, `codex`, or any command. The presets run the assistant in non-interactive mode with file edits allowed. A custom command gets the prompt's path as `{promptFile}` and may also use `{resultFile}`. |
+| `source` | Folders the assistant may edit (default `["src"]`). Changes anywhere else are reverted. |
+| `check` | Build and test command run after each fix. A non-zero exit reverts the fix. `"checkEvery": "round"` runs it once per round instead and rolls back the whole round on failure. No `check` means no gate, with a warning. |
+| `branch` | Branch to commit on (created if missing). Default: the current branch. `"push": false` keeps commits local. |
+| `deployed` | How the loop knows the new build is live: `"command"` runs `deploy` and continues when it exits; `"bundle-change"` polls the start page every 15 seconds until its script and stylesheet URLs change (the default `deployTimeout` is 30 minutes); `"enter"` prints a prompt and waits for Enter; `"none"` continues at once (only for sites served straight from the working tree). Default: `"command"` if `deploy` is set, else `"enter"`. |
+| `maxAttempts` | Fix attempts per finding before it is marked needs-human (default 3). |
+
+Then:
+
+```sh
+TOKEN=... a11y-508 loop                 # or: npm run e2e:a11y-508 loop
+a11y-508 loop --dry-run                  # crawl and update the ledger, nothing else
+a11y-508 loop --max-rounds 1 --agent gemini
+a11y-508 status                          # what is open, pending, verified, needs a person
+```
+
+What the assistant gets: one prompt per task, written to a file under `a11y-508-work/`, with the finding's test condition, message, pages, selector and rendered HTML, the folders it may edit, the folders it must not touch, and the path of the JSON result file it has to write. It never sees the token, the session file, or the report as a whole, and the token is stripped from its environment. A finding that is still present after `maxAttempts` fixes, or whose fix fails the gate that many times, is marked needs-human and dropped from the loop so one stubborn issue cannot keep it running. Review items the assistant calls "unsure" go to needs-human as well.
+
+The loop refuses to start on a repository with uncommitted changes under `source`, so its commits only ever contain its own work. Each round's crawl output is kept in `a11y-508-work/round-N/`; add `a11y-508-work/` to `.gitignore`.
+
 ## Runbook for AI coding assistants
 
 Follow this when a person asks you to run, fix, or update this tool in a repository that vendors it. Do each step in order and do not improvise around a step that fails; report it instead.
@@ -113,6 +157,8 @@ Start with `--max-pages 25` so a first run finishes in a few minutes; drop it on
 **Never**: edit files under `<TOOL>`; commit `a11y-508-state.json` or `a11y-508-report/` (add both to `.gitignore` if missing); write a token into any file; change `--fail-on`; retry blindly with guessed flags.
 
 **When you report back**, include the exact commands you ran, the `pages:` line, any `coverage warning` lines, the exit code, the report path, and the troubleshoot output if you ran it.
+
+**If asked to set up or run the fix loop:** create `a11y-508.config.json` as shown under "The fix loop" with the project's real build/test command in `check`, the folder that holds the app's source in `source`, and `agent` set to the assistant the person names. Ask which branch to commit on and how deployments happen (a command, a push that triggers a pipeline, or by hand) and set `branch` and `deployed` accordingly; do not guess. Run `a11y-508 loop --dry-run` first and report the ledger summary, then `a11y-508 loop` only when the person says to. Never edit `a11y-508-work/ledger.json` by hand.
 
 ## Command line
 
