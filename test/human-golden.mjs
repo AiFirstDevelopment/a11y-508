@@ -21,7 +21,10 @@ export const HUMAN_ARGS = ['--concurrency', '1', '--no-screenshots', '--token-st
 export function normalizeHuman(text, { base, out, externalUrl }) {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return text
-    .split(esc(out)).join('OUT')
+    // A plain string split: escaping it would miss every Windows path. The
+    // path separator after OUT is normalized too (OUT\report.html on Windows).
+    .split(out).join('OUT')
+    .replace(/OUT\\/g, 'OUT/')
     .replace(new RegExp(esc(base), 'g'), 'BASE/')
     .replace(new RegExp(esc(new URL(base).origin), 'g'), 'BASE')
     .replace(new RegExp(esc(externalUrl), 'g'), 'EXTERNAL')
