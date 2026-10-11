@@ -74,7 +74,14 @@ export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; a
     stop: async () => {
       await stopTree(proc);
       // Windows releases a killed process's hold on its working directory a little later.
-      if (!opts.keepCwd && !opts.cwd) rmSync(cwd, { recursive: true, force: true, maxRetries: 15, retryDelay: 200 });
+      if (opts.keepCwd || opts.cwd) return;
+      try {
+        rmSync(cwd, { recursive: true, force: true, maxRetries: 15, retryDelay: 200 });
+      } catch (e: any) {
+        // Name what still runs, so a process that outlived the server is visible.
+        const procs = (processList() as string).split(/\r?\n/).filter((l) => /bash|sh\.exe|npm|node|git|cmd\.exe|where|claude|gemini|codex/i.test(l) && !/playwright|chrome/i.test(l));
+        throw new Error(`${e.message}\nprocesses still running:\n${procs.join('\n')}`);
+      }
     },
   };
 }

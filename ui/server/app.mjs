@@ -4,7 +4,7 @@
 
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { createReadStream, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import { findChrome } from '../../src/chrome.mjs';
@@ -280,7 +280,10 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
       err.errors = hard;
       throw err;
     }
-    writeFileSync(join(cwd, CONFIG_FILE), JSON.stringify(config, null, 2) + '\n');
+    // Whole or not at all: a reader (the loop, an editor) never sees it half written.
+    const tmpFile = join(cwd, `.${CONFIG_FILE}.${process.pid}.tmp`);
+    writeFileSync(tmpFile, JSON.stringify(config, null, 2) + '\n');
+    renameSync(tmpFile, join(cwd, CONFIG_FILE));
     return { ...readConfig(), warnings: errors.filter((e) => /^no agent/.test(e)) };
   }
 
