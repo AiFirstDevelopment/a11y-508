@@ -74,10 +74,9 @@ rmSync(stateFile, { force: true });
 const evSite = await startFixtureSite();
 const evOut = join(here, '.report-events');
 rmSync(evOut, { recursive: true, force: true });
-const [evRun, human] = await Promise.all([
-  runCli([evSite.base, '--out', evOut, ...HUMAN_ARGS, '--events', '--json', '--quiet'], { TOKEN }, 400000),
-  humanRun(root),
-]);
+// One after the other: two Chrome crawls at once can time out.
+const evRun = await runCli([evSite.base, '--out', evOut, ...HUMAN_ARGS, '--events', '--json', '--quiet'], { TOKEN }, 400000);
+const human = await humanRun(root);
 evSite.close();
 const evReport = existsSync(join(evOut, 'report.json')) ? JSON.parse(readFileSync(join(evOut, 'report.json'), 'utf8')) : null;
 rmSync(evOut, { recursive: true, force: true });

@@ -44,19 +44,28 @@ ${JSON.stringify({ kind: 'test', resultFile }, null, 2)}
 
 export function createDashboard({ cwd = process.cwd(), env = process.env, platform = process.platform, distDir = join(UI_DIR, 'dist'), uiDir = UI_DIR, agentTestTimeout = 180000 } = {}) {
   const secret = randomBytes(24).toString('hex');
+  // Report files (<img>, a new tab) cannot send the header, so they take a
+  // cookie instead: a separate value that opens report files and nothing else.
+  const fileSecret = randomBytes(24).toString('hex');
   const state = { token: null, port: null, presets: null, detecting: null, lastTest: {} };
   const runs = new Runs({ onExit: () => {} });
   const build = freshness(uiDir);
 
+  // A forced detection never reuses one that started before it was asked for.
   const detect = (force = false) => {
-    if (state.detecting) return state.detecting;
+    if (state.detecting && !force) return state.detecting;
     if (state.presets && !force) return Promise.resolve(state.presets);
-    state.detecting = detectPresets({ env, platform }).then((d) => {
-      state.presets = d;
-      state.detecting = null;
-      return d;
-    });
-    return state.detecting;
+    const p = (state.detecting && force ? state.detecting.catch(() => {}) : Promise.resolve())
+      .then(() => detectPresets({ env, platform }))
+      .then((d) => {
+        state.presets = d;
+        return d;
+      })
+      .finally(() => {
+        if (state.detecting === p) state.detecting = null;
+      });
+    state.detecting = p;
+    return p;
   };
 
   const tokens = () => [state.token, env.TOKEN].filter(Boolean);
@@ -102,7 +111,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
     if (typeof h === 'string' && same(h.replace(/^Bearer\s+/i, '').trim(), secret)) return true;
     if (allowCookie) {
       const m = new RegExp(`(?:^|;\\s*)${cookieName()}=([0-9a-f]+)`).exec(req.headers.cookie || '');
-      if (m && same(m[1], secret)) return true;
+      if (m && same(m[1], fileSecret)) return true;
     }
     return false;
   };
@@ -175,7 +184,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
     const command = preset.install;
     const [file, args] = shellInvocation(d.shell, command);
     return runs.start({
-      kind: 'install', file, args, env: { ...env }, cwd, events: false, secrets: tokens(),
+      kind: 'install', file, args, env: agentEnv(env), cwd, events: false, secrets: tokens(),
       meta: { agent: body.agent, command, shell: d.shell.name },
       finish: async ({ code, output }) => {
         const again = await detect(true);
@@ -293,7 +302,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
     }
     if (m === 'GET' && path === '/api/env') {
       const d = await detect(url.searchParams.get('refresh') === '1');
-      return send(res, 200, envInfo(d), { 'set-cookie': `${cookieName()}=${secret}; Path=/api/reports; HttpOnly; SameSite=Strict` });
+      return send(res, 200, envInfo(d), { 'set-cookie': `${cookieName()}=${fileSecret}; Path=/api/reports; HttpOnly; SameSite=Strict` });
     }
     if (m === 'POST' && path === '/api/agent/install') return send(res, 202, runSummary(await startInstall(await readBody(req))));
     if (m === 'POST' && path === '/api/agent/test') return send(res, 200, await testAgent(await readBody(req)));

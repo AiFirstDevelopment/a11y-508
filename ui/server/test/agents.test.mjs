@@ -14,6 +14,7 @@ function machine() {
   stub(bin, 'npm', `#!/bin/sh
 if [ "$1" = "prefix" ]; then echo ${JSON.stringify(prefix)}; exit 0; fi
 echo "$*" >> ${JSON.stringify(join(root, 'npm-calls'))}
+env > ${JSON.stringify(join(root, 'npm-env'))}
 if [ -f ${JSON.stringify(join(root, 'fail'))} ]; then echo "npm ERR! code EACCES"; exit 1; fi
 printf '#!/bin/sh\\necho 1.0.0\\n' > ${JSON.stringify(prefix)}/bin/codex; chmod +x ${JSON.stringify(prefix)}/bin/codex
 exit 0
@@ -45,7 +46,7 @@ test('presets are detected on PATH and in npm prefix -g, with versions and the c
 
 test('install runs the fixed command in the login shell, re-detects, and explains a failure', async () => {
   const m = machine();
-  const s = await startServer({ env: m.env });
+  const s = await startServer({ env: { ...m.env, TOKEN: 'server-token-for-install-test' } });
   try {
     for (const body of [{ agent: 'codex', command: 'touch x' }, { agent: 'npm' }, {}, { command: 'x' }]) assert.equal((await s.call('POST', '/api/agent/install', { body })).status, 400, JSON.stringify(body));
     assert.ok(!existsSync(join(m.root, 'npm-calls')));
@@ -68,6 +69,7 @@ test('install runs the fixed command in the login shell, re-detects, and explain
     done = ev.find((e) => e.type === 'done');
     assert.deepEqual([done.code, done.found, done.remedies], [0, true, []]);
     assert.equal(readFileSync(join(m.root, 'npm-calls'), 'utf8'), 'install -g @openai/codex\ninstall -g @openai/codex\n');
+    assert.ok(!readFileSync(join(m.root, 'npm-env'), 'utf8').includes('server-token-for-install-test'), 'the install never sees TOKEN');
     const env = (await s.call('GET', '/api/env')).json;
     assert.equal(env.presets.find((p) => p.name === 'codex').found, true);
   } finally {

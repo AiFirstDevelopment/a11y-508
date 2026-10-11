@@ -288,7 +288,7 @@ Every report has a coverage section. It warns when only the start page could be 
 
 ### The event stream (--events)
 
-With `--events` the CLI prints one JSON object per line on stdout instead of its human-readable output, for tools such as the dashboard. It takes precedence over `--json` and `--quiet`; without it, the output is unchanged. Every event has `type` and `at` (an ISO timestamp); the last line is always `done`.
+With `--events` the CLI prints one JSON object per line on stdout instead of its human-readable output, for tools such as the dashboard. It takes precedence over `--json` and `--quiet`; without it, the output is unchanged. Every event has `type` and `at` (an ISO timestamp); the last line is `done`, unless the process was interrupted (Ctrl+C or SIGTERM), in which case it exits with code 130 and prints no `done`.
 
 | type | fields | when |
 |---|---|---|

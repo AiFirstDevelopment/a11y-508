@@ -19,6 +19,11 @@ test('the API needs the session secret, refuses foreign hosts, and confines repo
       assert.equal((await s.call('GET', '/', { host })).status, 403, host);
     }
     assert.equal((await s.call('GET', '/api/env', { host: `localhost:${s.port}` })).status, 200);
+    // The report-file cookie is not the API secret and opens nothing else.
+    const cookie = /a11y508_\d+=([0-9a-f]+)/.exec((await s.call('GET', '/api/env')).headers['set-cookie'][0])[1];
+    assert.notEqual(cookie, s.secret);
+    assert.equal((await s.call('GET', '/api/env', { secret: cookie })).status, 401);
+    assert.equal((await s.call('GET', '/api/env', { secret: null, headers: { cookie: `a11y508_${s.port}=${cookie}` } })).status, 401);
     mkdirSync(join(s.cwd, 'a11y-508-report', 'screenshots'), { recursive: true });
     writeFileSync(join(s.cwd, 'a11y-508-report', 'report.json'), JSON.stringify({ finishedAt: 'x', summary: {}, pages: [] }));
     writeFileSync(join(s.cwd, 'a11y-508-report', 'screenshots', 'a.png'), 'png');
