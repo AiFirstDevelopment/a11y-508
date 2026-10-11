@@ -75,7 +75,8 @@ progress { width: 100%; max-width: 640px; height: 18px; }
 .tile dd { margin: 0; font-size: 1.5rem; font-weight: 700; }
 .chart-panel { border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px 12px; margin: 12px 0; }
 .chart { overflow-x: auto; }
-.chart text { fill: #333333 !important; }
+.chart { color: #222222; background: #ffffff; }
+.chart text { fill: #333333 !important; color: #222222 !important; }
 .filters { display: flex; flex-wrap: wrap; gap: 0 18px; align-items: flex-end; border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; margin: 8px 0; }
 .detail { border: 2px solid var(--accent); border-radius: 6px; padding: 8px 14px; margin: 12px 0; }
 .detail dt { font-weight: 600; }
