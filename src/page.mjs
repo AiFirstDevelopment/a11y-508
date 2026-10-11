@@ -285,8 +285,18 @@ export class Page {
       height: Math.min(1200, rect.height + pad * 2),
       scale: 1,
     };
-    const { data } = await this.s.send('Page.captureScreenshot', { format: 'png', clip, captureBeyondViewport: true, fromSurface: true });
-    return Buffer.from(data, 'base64');
+    // Bounded: a tab that draws no frames never answers, and one missing
+    // screenshot must not stall the whole crawl.
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Page.captureScreenshot did not answer within 15s')), 15000);
+    });
+    try {
+      const { data } = await Promise.race([this.s.send('Page.captureScreenshot', { format: 'png', clip, captureBeyondViewport: true, fromSurface: true }), timeout]);
+      return Buffer.from(data, 'base64');
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async setZoom(factor) {

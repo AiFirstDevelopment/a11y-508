@@ -132,7 +132,12 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
   const version = await cdp.send('Browser.getVersion');
 
   async function newPage() {
-    const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+    // Headless, each tab gets a window of its own. Tabs sharing a window are
+    // hidden behind the front one, and a hidden tab draws no frames, so
+    // Page.captureScreenshot in it never returns (seen on Linux: with
+    // --concurrency 2 or more the first page's screenshots stalled the crawl).
+    // The visible login browser keeps a single window.
+    const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', ...(headless ? { newWindow: true } : {}) });
     const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
     return new Session(cdp, sessionId, targetId);
   }
