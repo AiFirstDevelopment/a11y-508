@@ -6,7 +6,9 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, delimiter, dirname, extname, join } from 'node:path';
+import { killTreeWindows } from './runs.mjs';
 import { PRESETS, PRESET_INFO, installCommand, npmBinDir, presetCommandAt } from '../../src/agent.mjs';
 
 // Git for Windows' bash, or null. SHELL naming a bash.exe wins (Git Bash
@@ -68,8 +70,20 @@ export function shellInvocation(shell, command) {
   return [shell.path, ['-lc', command]];
 }
 
-export function run(file, args, { env, timeout = 10000, cwd, shell = false } = {}) {
-  return new Promise((resolve) => {
+// Detection runs outside the project (the home directory), so a slow or
+// stuck lookup never holds the project folder open, which on Windows stops
+// it being moved or deleted. A lookup that times out gives up even when a
+// grandchild still holds its output open (child.kill on Windows ends only
+// the direct child, and 'close' waits for every holder of the pipe).
+export function run(file, args, { env, timeout = 10000, cwd = homedir(), shell = false } = {}) {
+  return new Promise((resolveRun) => {
+    let settled = false;
+    const resolve = (r) => {
+      if (!settled) {
+        settled = true;
+        resolveRun(r);
+      }
+    };
     let child;
     try {
       child = spawn(file, args, { env, cwd, shell, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
@@ -80,7 +94,11 @@ export function run(file, args, { env, timeout = 10000, cwd, shell = false } = {
     let err = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
+    const timer = setTimeout(() => {
+      if (process.platform === 'win32') killTreeWindows(child.pid).catch(() => {});
+      else child.kill('SIGKILL');
+      setTimeout(() => resolve({ code: null, out, err: err + 'timed out' }), 2000).unref();
+    }, timeout);
     child.on('error', (e) => {
       clearTimeout(timer);
       resolve({ code: null, out, err: err + e.message });

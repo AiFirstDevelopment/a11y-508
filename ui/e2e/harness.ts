@@ -79,7 +79,7 @@ export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; a
         rmSync(cwd, { recursive: true, force: true, maxRetries: 15, retryDelay: 200 });
       } catch (e: any) {
         // Name what still runs, so a process that outlived the server is visible.
-        const procs = (processList() as string).split(/\r?\n/).filter((l) => /bash|sh\.exe|npm|node|git|cmd\.exe|where|claude|gemini|codex/i.test(l) && !/playwright|chrome/i.test(l));
+        const procs = (processList() as string).split(/\r?\n/).filter((l) => l.trim() && !/--type=|svchost|\\Windows\\System32\\(svchost|conhost|RuntimeBroker|dllhost|sihost|taskhostw|ctfmon|WmiPrvSE)/i.test(l));
         throw new Error(`${e.message}\nprocesses still running:\n${procs.join('\n')}`);
       }
     },

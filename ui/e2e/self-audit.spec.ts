@@ -23,14 +23,18 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
         if (r.json && r.json.status === 'done') return phase(`${name} done`);
         await new Promise((ok) => setTimeout(ok, 1000));
       }
-      const ev = await api(dash, '/api/runs/current/events');
-      throw new Error(`the ${name} run did not finish in 150s:\n${ev.text.slice(-4000)}`);
+      // Not the event stream: it stays open while the run is going.
+      throw new Error(`the ${name} run did not finish in 150s: ${JSON.stringify((await api(dash, '/api/runs/current')).json).slice(0, 2000)}`);
     };
     expect((await api(dash, '/api/runs', { method: 'POST', body: { kind: 'crawl', url: site.base, options: { 'max-pages': '3', 'no-zoom': true, 'max-screenshots': '2' }, auth: { mode: 'token', token: TOKEN } } })).status).toBe(202);
     await wait('crawl');
     writeFileSync(join(dash.cwd, 'a11y-508.config.json'), JSON.stringify({ url: site.base + 'about.html', args: ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots'] }));
     expect((await api(dash, '/api/runs', { method: 'POST', body: { kind: 'dry-run', auth: { mode: 'token' } } })).status).toBe(202);
     await wait('dry-run');
+
+    // Every screen asks for the environment; how long its first detection takes on this host.
+    const env = await api(dash, '/api/env');
+    phase(`environment detected (${env.json.shell.name}; ${env.json.presets.filter((p: any) => p.found).map((p: any) => p.name).join(', ') || 'no assistants'})`);
 
     const out = tempDir('a11y-508-self-');
     // Asynchronously: this process also serves the fixture site, which a blocking spawn would freeze.
