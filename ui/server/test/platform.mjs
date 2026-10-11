@@ -85,12 +85,24 @@ export function mergeEnv(base, extra = {}) {
 // Ends a process and everything it started: SIGINT elsewhere (the server's
 // own shutdown); on Windows, where there is no SIGINT to send, the server's
 // own tree kill, including what escaped a first taskkill /T.
-export function stopTree(proc, signal = 'SIGINT') {
+// group: proc was spawned detached, and the signal goes to its whole process
+// group, as Ctrl+C in a terminal does. A wrapper such as `npm run` (npm, then
+// sh, then node) needs it: on Linux, SIGINT to npm alone reaches sh, which
+// waits for node, which never hears it. Whatever has not exited after 10
+// seconds is killed, so a stuck process cannot take the test's time with it.
+export function stopTree(proc, signal = 'SIGINT', { group = false } = {}) {
   if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
   const exited = new Promise((ok) => proc.once('exit', ok));
   if (!WIN) {
-    proc.kill(signal);
-    return exited;
+    const send = (sig) => {
+      try {
+        if (group) process.kill(-proc.pid, sig);
+        else proc.kill(sig);
+      } catch {}
+    };
+    send(signal);
+    const timer = setTimeout(() => send('SIGKILL'), 10000);
+    return exited.then(() => clearTimeout(timer));
   }
   return Promise.all([exited, killTreeWindows(proc.pid)]);
 }

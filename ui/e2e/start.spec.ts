@@ -36,6 +36,8 @@ test('AC 1: npm run ui from a clean copy, no install, serves on 127.0.0.1 and op
     env: { ...process.env, ...openEnv, PATH: systemPath(bin, nodeDir), TOKEN: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: WIN,
+    // Its own process group, so stopping it reaches npm, its sh and the server, as Ctrl+C does.
+    detached: !WIN,
   });
   let out = '';
   proc.stdout!.on('data', (d) => (out += d));
@@ -57,6 +59,6 @@ test('AC 1: npm run ui from a clean copy, no install, serves on 127.0.0.1 and op
     await expect(page.getByText('Working directory')).toBeVisible();
     expect(page.url()).not.toContain('secret='); // moved out of the address bar
   } finally {
-    await stopTree(proc);
+    await stopTree(proc, 'SIGINT', { group: !WIN });
   }
 });
