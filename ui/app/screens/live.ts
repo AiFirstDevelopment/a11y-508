@@ -1,0 +1,61 @@
+import { Component, computed, inject } from '@angular/core';
+import { Router, RouterLink } from '@angular/router';
+import { FormStore } from '../core/form.store';
+import { RunStore } from '../core/run.store';
+import { resultWord } from '../core/format';
+import { RunView } from '../shared/run-view';
+
+@Component({
+  selector: 'app-live-screen',
+  imports: [RunView, RouterLink],
+  template: `
+    <h1>Live run</h1>
+    @if (!store.run()) {
+      <p>No run yet. <a routerLink="/run">Start one</a>.</p>
+    } @else {
+      <p class="status" role="status" data-testid="run-status">{{ status() }}</p>
+      @if (store.run()?.['command']; as cmd) {
+        <p class="hint">Running <code data-testid="run-command">{{ cmd }}</code></p>
+      }
+      <div class="actions">
+        <button type="button" (click)="stop()" [disabled]="!store.active()">Stop</button>
+        @if (store.done() && store.summary()) {
+          <a class="button secondary" routerLink="/report">Open the report</a>
+        }
+      </div>
+      @if (store.cannotGetIn()) {
+        <div class="notice error" role="alert" data-notice="cannot-get-in">
+          <p>The crawler could not get into the app.</p>
+          <button type="button" (click)="troubleshoot()">Troubleshoot with these settings</button>
+        </div>
+      }
+      <app-run-view />
+    }
+  `,
+})
+export class LiveScreen {
+  readonly store = inject(RunStore);
+  private form = inject(FormStore);
+  private router = inject(Router);
+
+  readonly status = computed(() => {
+    const d = this.store.done();
+    const s = this.store.summary();
+    if (this.store.stopping() && !d) return 'Stopping…';
+    if (!d) return `Running: ${this.store.kind()}`;
+    if (d['outcome'] === 'stopped') return 'Stopped';
+    if (s) return `Finished: ${resultWord(s['result'])}`;
+    if (d['outcome'] === 'error') return `Failed (exit code ${d['code']})`;
+    return 'Finished';
+  });
+
+  async stop(): Promise<void> {
+    await this.store.stop();
+  }
+
+  async troubleshoot(): Promise<void> {
+    await this.store.start(this.form.body('troubleshoot'));
+    this.form.clearToken();
+    await this.router.navigateByUrl('/troubleshoot');
+  }
+}

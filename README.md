@@ -114,6 +114,31 @@ What the assistant gets: one prompt per task, written to a file under `a11y-508-
 
 The loop refuses to start on a repository with uncommitted changes under `source`, so its commits only ever contain its own work. Each round's crawl output is kept in `a11y-508-work/round-N/`; add `a11y-508-work/` to `.gitignore`.
 
+## The dashboard
+
+A local web dashboard does everything the command line does, as screens instead of a scrolling log: sign in, start a crawl and watch it page by page, troubleshoot, read the report with charts and filters, and run the fix loop with an assistant picker and a ledger board. It is built on the CLI, which still does the work, and it runs only on your machine, for you.
+
+```sh
+npm run ui                 # in this repository
+node ui/server/main.mjs    # the same thing
+```
+
+In a repository that vendors the tool, add a script next to the existing one:
+
+```json
+"e2e:a11y-508:ui": "node tools/a11y-508/ui/server/main.mjs"
+```
+
+Nothing has to be installed: the server uses only Node's own modules (Node 18 or newer), and the built app is committed under `ui/dist/`. It listens on `127.0.0.1` only (port 5508, or the next free one; `--port <n>` to choose) and opens your browser; `--no-open` prints the address instead. Run it in the repository you want to audit or fix: it reads and writes `a11y-508-report/`, `a11y-508-work/`, `a11y-508-state.json` and `a11y-508.config.json` there, exactly as the CLI does.
+
+- **The address carries a secret.** Each launch makes a random secret and puts it in the address it opens. The app keeps it for the tab and sends it on every request; anything without it gets 401, and a request for any host other than `127.0.0.1:<port>` or `localhost:<port>` gets 403.
+- **The token stays in memory.** Type it into the Run screen, or start the dashboard with `TOKEN` set and choose *use TOKEN from my shell*. It is passed to the CLI in its environment only, never written to disk, never sent back to the browser, and blanked out of the CLI's output if it ever appears there.
+- **Reports are kept.** Before each crawl the previous `a11y-508-report/` moves to `a11y-508-history/<finished-at>/`, so the latest report stays where the runbook says and History lists the earlier ones. Add `a11y-508-history/` to `.gitignore`.
+- **The fix loop's assistant.** The Fix loop screen lists Claude Code, Gemini CLI and Codex, shows which are installed (on `PATH`, through your login shell, or in `npm prefix -g`'s bin folder) with their versions, and can install a missing one with `npm install -g` in your own shell after you confirm. *Test assistant* calls it once with a tiny task, to show it is installed and signed in before a loop spends a round finding out.
+- **Every chart has a data table** with the same numbers, and chart animations are off when you have asked your system for reduced motion.
+
+The Run screen shows the equivalent command line, so a run you set up in the dashboard can go into CI unchanged.
+
 ## Runbook for AI coding assistants
 
 Follow this when a person asks you to run, fix, or update this tool in a repository that vendors it. Do each step in order and do not improvise around a step that fails; report it instead.
@@ -204,6 +229,8 @@ a11y-508 <url> [options]
   --no-sandbox             Pass --no-sandbox to Chrome (containers running as root)
   --quiet                  Only print the summary
   --json                   Print the report summary as JSON on stdout
+  --events                 Print one JSON event per line on stdout instead of the
+                           human-readable output (for tools; see the README)
   --list-tests             Print the Trusted Tester test catalog and exit
 ```
 
@@ -258,6 +285,29 @@ The crawl stays on the start URL's origin, ignores binary links (PDF, images, ar
 The crawler finds pages by following `href` links. Many single-page apps navigate from buttons, menu items or `routerLink` elements that have no `href`, and a crawler that only reads links would audit the first page and stop, which looks like a complete run. To avoid that, after auditing a page the crawler clicks up to `--max-clicks` controls that look like navigation but have no link: elements with a router or `data-href` attribute, `role="link"`, `menuitem`, `tab` or `treeitem`, and pointer-cursor items or buttons inside navigation, menus, headers and sidebars. Any same-origin URL a click leads to, including `pushState` routes and `#/` hash routes, is queued and audited, and is marked `foundBy: "click"` in the report. Controls whose name looks like an action (Save, Delete, Submit, Sign out, Approve, Export and similar) and anything inside a form or dialog are never clicked. `--no-follow-clicks` turns this off.
 
 Every report has a coverage section. It warns when only the start page could be audited, when controls were skipped because they look like actions, when `--max-clicks` or `--max-pages` cut the crawl short, and notes pages that were reachable only by clicking (keyboard and screen reader users cannot discover those as links). A run that passes on violations but has coverage warnings prints `PASS on the N page(s) audited, but COVERAGE IS INCOMPLETE` rather than a plain PASS.
+
+### The event stream (--events)
+
+With `--events` the CLI prints one JSON object per line on stdout instead of its human-readable output, for tools such as the dashboard. It takes precedence over `--json` and `--quiet`; without it, the output is unchanged. Every event has `type` and `at` (an ISO timestamp); the last line is always `done`.
+
+| type | fields | when |
+|---|---|---|
+| `start` | `kind` (`crawl`, `troubleshoot`, `login`, `loop`), `version`, `url`, `maxPages` | first |
+| `info`, `warn`, `error` | `message` | a line the human output would print, by level |
+| `page` | `url`, `finalUrl`, `title`, `status`, `error`, `skipped`, `violations`, `reviews`, `byImpact`, `durationMs`, `foundBy`, `done` (pages finished so far), `discovered` (pages found so far), `limit` (`--max-pages`) | each page as it finishes; `done` over `discovered` is the progress |
+| `coverage` | `complete`, `warnings`, `notes` | after the crawl |
+| `summary` | `result` (`pass`, `fail`, `incomplete`, `nothing-audited`), `passed`, `baseUrl`, `failOn`, `summary` (as in `report.json`), `files` | after the crawl |
+| `troubleshoot` | `result` (the `--troubleshoot --json` object) | `--troubleshoot` |
+| `login-waiting` | `url`, `stableSeconds` | `--login`: the sign-in window is open |
+| `session-saved` | `file`, `summary` | `--login`: the session file was written |
+| `round` | `round` | loop: a round starts |
+| `step` | `round`, `step` (`crawl`, `triage`, `fix`, `gate`, `commit`, `push`, `deploy`, `await-deploy`), and `count` or `n`/`m` where they apply | loop: what it is doing now |
+| `task` | `round`, `n`, `m`, `test`, `impact`, `message`, `state` (`start`, `done`), `outcome` (`committed`, `no-change`, `failed-gate`, `commit-failed`) | loop: fix *n* of *m* |
+| `ledger` | `rounds`, `counts` (by status), `line` | loop: whenever the ledger changes |
+| `await-deploy` | `round`, `committed`, `nextRound` | loop with `"deployed": "enter"`: write a newline to stdin to continue |
+| `done` | `code` (the exit code) | last |
+
+In a loop, each round's crawl runs with `--events` too, and its `page`, `coverage` and `summary` events are passed on with a `round` field, so a round shows the same per-page progress as a plain crawl.
 
 ## What it checks
 
@@ -340,7 +390,23 @@ npm test
 
 The test serves a fixture site that requires a bearer token on every request, runs the crawler against it, and asserts on about sixty expected findings, including that the token is never sent to another origin. Set `A11Y_508_DEBUG=1` to trace navigation and request interception.
 
+`npm test` also runs the remedies table (`test/remedies.mjs`) and the dashboard server's own tests (`ui/server/test/`), all with no install. The fixture site is `test/fixture-site.mjs`; `node test/fixture-site.mjs --port 4100` serves it on its own (token `fixture-token-123`), and `--auto-login` adds a stand-in sign-in portal.
+
 Checks live in `src/checks/browser/`. Each file registers a function that runs inside the audited page and calls `A.add({ test, level, impact, el, message, details })`. The test catalog is `src/checks/catalog.mjs`. Interactive passes (keyboard, disclosure, zoom) are in `src/passes.mjs`; cross-page checks are in `src/site-checks.mjs`.
+
+### Changing the dashboard
+
+The Angular app is in `ui/app/` (standalone components, signals, ngx-charts, plain CSS) and the server in `ui/server/`. Only someone changing the UI needs to install anything, with Node 22 LTS:
+
+```bash
+npm --prefix ui ci
+npm --prefix ui run typecheck
+npm --prefix ui test          # unit tests
+npm --prefix ui run build     # rebuilds ui/dist and ui/dist/build-info.json; commit both
+npm --prefix ui run e2e       # Playwright, against the real server and CLI, with the Chrome on the machine
+```
+
+`ui/dist/build-info.json` records a hash of `ui/app/` and `ui/package-lock.json`. The server warns at startup when the committed build does not match the source, and CI fails (`npm --prefix ui run freshness`). The server and the core never import anything from `ui/node_modules`.
 
 ## License
 

@@ -2,6 +2,7 @@
 // file, finds the machine-readable block, and applies two deterministic fixes
 // to the fixture site; everything else it declines. Triage marks everything
 // adequate except the sensory-instruction item, which it calls inadequate.
+// The dashboard's Test assistant prompt gets { ok: true }.
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,12 +10,15 @@ import { join } from 'node:path';
 const [promptFile, resultFile] = process.argv.slice(2);
 const prompt = readFileSync(promptFile, 'utf8');
 const blocks = [...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => m[1]);
-const task = blocks.map((b) => { try { return JSON.parse(b); } catch { return null; } }).find((o) => o && (o.kind === 'fix' || o.kind === 'triage'));
+const task = blocks.map((b) => { try { return JSON.parse(b); } catch { return null; } }).find((o) => o && (o.kind === 'fix' || o.kind === 'triage' || o.kind === 'test'));
 const leaked = /fixture-token-123/.test(prompt) || !!process.env.TOKEN;
 const write = (obj) => writeFileSync(resultFile, JSON.stringify(Array.isArray(obj) ? obj : { ...obj, leaked }, null, 2));
 
 if (!task) {
   write({ fixed: false, note: 'no task block found' });
+} else if (task.kind === 'test') {
+  // The dashboard's "Test assistant" check.
+  write({ ok: true });
 } else if (task.kind === 'triage') {
   write(task.items.map((it) => ({ id: it.id, decision: it.test === '13.B' ? 'inadequate' : 'adequate', reason: 'fake agent' })));
 } else {

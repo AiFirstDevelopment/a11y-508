@@ -13,6 +13,8 @@ import { applyReport, loadLedger } from '../src/ledger.mjs';
 import { agentEnv, fixPrompt, triagePrompt } from '../src/agent.mjs';
 import { normalizeConfig } from '../src/loop.mjs';
 import { splitLoopArgs } from '../src/cli.mjs';
+import { statusCounts } from '../src/ledger.mjs';
+import { parseEvents } from './event-schema.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -224,5 +226,122 @@ check('status prints the ledger', () => {
 });
 
 rmSync(repo, { recursive: true, force: true });
+
+// ---- e2e: the same loop with --events and "deployed": "enter", answered on stdin
+check('"deployed": "enter" is accepted when someone can answer it (a terminal, or the dashboard)', () => {
+  const c = { url: 'http://x', agent: 'claude', deployed: 'enter' };
+  assert.deepEqual(normalizeConfig(c, {}, { interactive: true }).errors, []);
+  assert.ok(normalizeConfig(c, {}, { interactive: false }).errors.some((e) => /no interactive terminal/.test(e)));
+});
+const repo2 = join(here, '.loop-repo-events');
+rmSync(repo2, { recursive: true, force: true });
+mkdirSync(join(repo2, 'site'), { recursive: true });
+for (const f of ['index.html', 'about.html', 'forms.html']) cpSync(join(here, 'fixtures', f), join(repo2, 'site', f));
+const site2 = createServer((req, res) => {
+  if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+    res.writeHead(401);
+    return res.end();
+  }
+  let path = new URL(req.url, 'http://x').pathname;
+  if (path === '/') path = '/index.html';
+  if (path.startsWith('/img/') || path === '/pixel.png') {
+    res.writeHead(200, { 'content-type': 'image/png' });
+    return res.end(PNG);
+  }
+  const file = join(repo2, 'site', path);
+  if (extname(path) !== '.html' || !existsSync(file)) {
+    res.writeHead(404, { 'content-type': 'text/html' });
+    return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
+  }
+  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+  res.end(readFileSync(file, 'utf8').replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN));
+});
+await new Promise((r) => site2.listen(0, '127.0.0.1', r));
+const g2 = (...args) => {
+  const r = spawnSync('git', args, { cwd: repo2, encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout.trim();
+};
+g2('init', '-q', '-b', 'main');
+g2('config', 'user.email', 'loop-test@example.test');
+g2('config', 'user.name', 'loop test');
+g2('config', 'commit.gpgsign', 'false');
+writeFileSync(join(repo2, '.gitignore'), 'a11y-508-work/\na11y-508-report/\n');
+writeFileSync(join(repo2, 'a11y-508.config.json'), JSON.stringify({
+  url: `http://127.0.0.1:${site2.address().port}/`,
+  args: ['--max-pages', '2', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage'],
+  agent: `${JSON.stringify(process.execPath)} ${JSON.stringify(join(here, 'fake-agent.mjs'))} {promptFile} {resultFile}`,
+  source: ['site'],
+  push: false,
+  deployed: 'enter',
+  triageBatch: 50,
+}, null, 2));
+g2('add', '-A');
+g2('commit', '-q', '-m', 'fixture site');
+const evLoop = await new Promise((resolve) => {
+  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), 'loop', '--max-rounds', '2', '--events'], { cwd: repo2, env: { ...process.env, TOKEN, NO_COLOR: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  let out = '';
+  let err = '';
+  let presses = 0;
+  child.stdout.on('data', (d) => {
+    out += d;
+    const waiting = (out.match(/"type":"await-deploy"/g) || []).length;
+    while (presses < waiting) {
+      presses++;
+      child.stdin.write('\n');
+    }
+  });
+  child.stderr.on('data', (d) => (err += d));
+  const timer = setTimeout(() => child.kill('SIGKILL'), 300000);
+  child.on('exit', (code) => {
+    clearTimeout(timer);
+    resolve({ status: code, out, err, presses });
+  });
+});
+site2.close();
+{
+  const { events, problems } = parseEvents(evLoop.out);
+  const ledger2 = loadLedger(join(repo2, 'a11y-508-work', 'ledger.json'));
+  const ofType = (t) => events.filter((e) => e.type === t);
+  check('loop --events: every line on stdout is an event that fits the schema', () => {
+    assert.ok(events.length > 0, evLoop.out + evLoop.err);
+    assert.deepEqual(problems, []);
+    assert.equal(events[0].type, 'start');
+    assert.equal(events[0].kind, 'loop');
+    assert.equal(events.at(-1).type, 'done');
+    assert.equal(events.at(-1).code, evLoop.status);
+  });
+  check('loop --events: a round event per round, and each round\'s crawl relays its page events tagged with the round', () => {
+    assert.deepEqual(ofType('round').map((e) => e.round), [1, 2]);
+    for (const r of [1, 2]) {
+      const rep = JSON.parse(readFileSync(join(repo2, 'a11y-508-work', `round-${r}`, 'report.json'), 'utf8'));
+      const pages = ofType('page').filter((e) => e.round === r);
+      assert.equal(pages.length, rep.pages.length, `round ${r} page events`);
+      assert.deepEqual(ofType('summary').find((e) => e.round === r).summary, rep.summary);
+    }
+  });
+  check('loop --events: fix n of m, with the outcome of each task', () => {
+    const fix = ofType('step').find((e) => e.step === 'fix' && e.round === 1);
+    const tasks = ofType('task').filter((e) => e.round === 1 && e.state === 'start');
+    assert.ok(fix && fix.count > 0);
+    assert.deepEqual(tasks.map((t) => t.n), Array.from({ length: fix.count }, (_, i) => i + 1));
+    assert.ok(tasks.every((t) => t.m === fix.count));
+    assert.ok(ofType('task').some((t) => t.state === 'done' && t.outcome === 'committed'));
+  });
+  check('loop --events: await-deploy is emitted and a newline on stdin starts the next round', () => {
+    const waits = ofType('await-deploy');
+    assert.ok(waits.length >= 1 && waits[0].round === 1 && waits[0].nextRound === 2, JSON.stringify(waits));
+    const iWait = events.indexOf(waits[0]);
+    const iRound2 = events.findIndex((e) => e.type === 'round' && e.round === 2);
+    assert.ok(iRound2 > iWait, 'round 2 started after the prompt');
+    assert.ok(!/press Enter/.test(evLoop.out), 'the human prompt is not on stdout');
+  });
+  check('loop --events: the last ledger event equals the ledger on disk', () => {
+    const last = ofType('ledger').at(-1);
+    assert.equal(last.rounds, ledger2.rounds.length);
+    assert.deepEqual(last.counts, statusCounts(ledger2));
+  });
+}
+rmSync(repo2, { recursive: true, force: true });
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
 process.exitCode = failures ? 1 : 0;

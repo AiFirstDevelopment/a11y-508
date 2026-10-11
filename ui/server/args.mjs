@@ -1,0 +1,121 @@
+// The Run form as CLI arguments: one table of the crawl flags the dashboard
+// may set, the auth modes, and the command line a person can paste into a
+// terminal or CI. Everything is validated by the core's own parseArgs.
+
+import { relative, resolve, join, dirname, isAbsolute } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseArgs } from '../../src/cli.mjs';
+
+export const TOOL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+export const BIN = join(TOOL_DIR, 'bin', 'a11y-508.mjs');
+export const DEFAULT_STATE_FILE = 'a11y-508-state.json';
+
+// Flags the form may set. --out, --json, --quiet, --events, --login and
+// --troubleshoot belong to the server; --state and --cookie to auth.
+export const FLAGS = {
+  'max-pages': 'value', 'max-depth': 'value', concurrency: 'value', include: 'list', exclude: 'list', 'fail-on': 'value',
+  viewport: 'value', timeout: 'value', settle: 'value', header: 'list', 'token-header': 'value', 'auth-origin': 'list',
+  'token-storage': 'list', 'no-token-storage': 'switch', 'no-interact': 'switch', 'no-zoom': 'switch', 'no-screenshots': 'switch',
+  'max-screenshots': 'value', 'max-tabs': 'value', 'max-activations': 'value', 'max-clicks': 'value', 'no-follow-clicks': 'switch',
+  'user-agent': 'value', chrome: 'value', 'no-sandbox': 'switch',
+};
+
+export const AUTH_MODES = ['token', 'env', 'state', 'cookies', 'none'];
+
+export class BadRequest extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export function optionArgs(options = {}) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) throw new BadRequest('options must be an object');
+  const out = [];
+  for (const [k, v] of Object.entries(options)) {
+    const kind = FLAGS[k];
+    if (!kind) throw new BadRequest(`unknown or reserved option "${k}"`);
+    if (v === undefined || v === null || v === '' || v === false) continue;
+    if (kind === 'switch') {
+      if (v !== true) throw new BadRequest(`option "${k}" is a switch; send true`);
+      out.push(`--${k}`);
+    } else if (kind === 'list') {
+      const list = Array.isArray(v) ? v : [v];
+      for (const x of list) if (String(x).trim()) out.push(`--${k}`, String(x));
+    } else {
+      if (typeof v === 'object') throw new BadRequest(`option "${k}" takes one value`);
+      out.push(`--${k}`, String(v));
+    }
+  }
+  return out;
+}
+
+// The auth part of the arguments and environment. The token itself never
+// appears in arguments; it goes only into the child's environment.
+export function authArgs(auth = { mode: 'none' }) {
+  const mode = (auth && auth.mode) || 'none';
+  if (!AUTH_MODES.includes(mode)) throw new BadRequest(`unknown auth mode "${mode}"`);
+  if (mode === 'state') return { args: ['--state', auth.file || DEFAULT_STATE_FILE], token: 'none' };
+  if (mode === 'cookies') {
+    const cookies = (Array.isArray(auth.cookies) ? auth.cookies : String(auth.cookies || '').split('\n')).map((c) => String(c).trim()).filter(Boolean);
+    return { args: cookies.flatMap((c) => ['--cookie', c]), token: 'none' };
+  }
+  if (mode === 'token') return { args: [], token: 'form' };
+  if (mode === 'env') return { args: [], token: 'env' };
+  return { args: [], token: 'none' };
+}
+
+export function validateUrl(url) {
+  if (!url || typeof url !== 'string') throw new BadRequest('a start URL is required');
+  return url.trim();
+}
+
+// The CLI arguments (after the bin path) for a crawl-like run, without the
+// server's own --events. Throws BadRequest with the core's message on a bad form.
+export function crawlArgs({ kind = 'crawl', url, options, auth }) {
+  const u = validateUrl(url);
+  const a = authArgs(auth);
+  const args = [u, ...optionArgs(options), ...a.args];
+  if (kind === 'troubleshoot') args.push('--troubleshoot');
+  if (kind === 'login') {
+    const stateFile = (auth && auth.mode === 'state' && auth.file) || DEFAULT_STATE_FILE;
+    return { args: [u, ...optionArgs(options), '--login-only', '--state', stateFile], token: 'none' };
+  }
+  try {
+    parseArgs(args);
+  } catch (e) {
+    throw new BadRequest(e.message);
+  }
+  return { args, token: a.token };
+}
+
+export function loopArgs({ kind, url, options, auth, maxRounds, agent }) {
+  const a = authArgs(auth);
+  const args = ['loop'];
+  if (url) args.push(validateUrl(url));
+  if (kind === 'dry-run') args.push('--dry-run');
+  if (maxRounds) {
+    const n = parseInt(maxRounds, 10);
+    if (!(n >= 1)) throw new BadRequest('maxRounds must be a positive number');
+    args.push('--max-rounds', String(n));
+  }
+  if (agent) args.push('--agent', agent);
+  const crawl = [...optionArgs(options), ...a.args];
+  args.push(...crawl);
+  try {
+    parseArgs(crawl);
+  } catch (e) {
+    throw new BadRequest(e.message);
+  }
+  return { args, token: a.token };
+}
+
+const shq = (s) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`);
+
+// What a person would type in a terminal in the dashboard's working directory.
+export function commandLine({ cwd, args, token }) {
+  let bin = relative(cwd, BIN);
+  if (isAbsolute(bin) || bin.startsWith('..')) bin = BIN;
+  const env = token === 'none' ? '' : 'TOKEN=$TOKEN ';
+  return `${env}node ${shq(bin)} ${args.map(shq).join(' ')}`;
+}

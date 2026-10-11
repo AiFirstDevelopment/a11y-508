@@ -78,6 +78,7 @@ export async function interactiveLogin({ browser, startUrl, origins, timeout, lo
   const startOrigin = new URL(startUrl).origin;
   const tty = !!process.stdin.isTTY;
   log.warn(`A browser window is open on ${startUrl}. Sign in there. The crawl continues by itself once the app has loaded and stayed put for ${STABLE_SECONDS} seconds${tty ? ', or press Enter here' : ''}.`);
+  if (log.event) log.event('login-waiting', { url: startUrl, stableSeconds: STABLE_SECONDS });
   const enter = tty ? waitForEnter() : null;
   try {
     await Promise.race([settledOnApp(session, startOrigin, maxWait), ...(enter ? [enter.promise] : [])]);

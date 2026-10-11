@@ -12,6 +12,141 @@ export const PRESETS = {
   codex: 'codex exec --full-auto "Read the file {promptFile} and do exactly what it says."',
 };
 
+// What each preset is called on screen and the executable it runs.
+export const PRESET_INFO = {
+  claude: { label: 'Claude Code', bin: 'claude', package: '@anthropic-ai/claude-code' },
+  gemini: { label: 'Gemini CLI', bin: 'gemini', package: '@google/gemini-cli' },
+  codex: { label: 'Codex', bin: 'codex', package: '@openai/codex' },
+};
+
+// The install command per preset and operating system. Fixed here, never
+// taken from a request.
+export const INSTALL = Object.fromEntries(
+  Object.entries(PRESET_INFO).map(([name, p]) => [name, { default: `npm install -g ${p.package}` }])
+);
+
+export function installCommand(name, platform = process.platform) {
+  const row = INSTALL[name];
+  if (!row) return null;
+  return row[platform] || row.default;
+}
+
+// The preset's command with its executable replaced by an absolute path, for
+// a CLI that was found somewhere other than PATH.
+export function presetCommandAt(name, exePath) {
+  const cmd = PRESETS[name];
+  if (!cmd || !exePath) return cmd || null;
+  const quoted = /[\s"']/.test(exePath) ? JSON.stringify(exePath) : exePath;
+  return quoted + cmd.slice(PRESET_INFO[name].bin.length);
+}
+
+const isWin = (platform) => platform === 'win32';
+const shellKind = (shell = '') => {
+  const s = String(shell).toLowerCase();
+  if (/pwsh|powershell/.test(s)) return 'powershell';
+  if (/(^|[\\/])cmd(\.exe)?$/.test(s) || s === 'cmd') return 'cmd';
+  if (/fish/.test(s)) return 'fish';
+  if (/bash/.test(s)) return 'bash';
+  if (/zsh/.test(s)) return 'zsh';
+  return 'sh';
+};
+
+export function rcFile(shell) {
+  return { zsh: '~/.zshrc', bash: '~/.bashrc', fish: '~/.config/fish/config.fish', powershell: '$PROFILE', cmd: null, sh: '~/.profile' }[shellKind(shell)];
+}
+
+// The command that puts dir on PATH for every new shell of this kind.
+export function pathLine(dir, shell) {
+  const k = shellKind(shell);
+  if (k === 'fish') return `fish_add_path ${dir}`;
+  if (k === 'powershell') return `Add-Content $PROFILE '$env:Path = "${dir};" + $env:Path'`;
+  if (k === 'cmd') return `setx PATH "${dir};%PATH%"`;
+  return `echo 'export PATH="${dir}:$PATH"' >> ${rcFile(shell)}`;
+}
+
+const setEnvLine = (name, value, shell) => {
+  const k = shellKind(shell);
+  if (k === 'fish') return `set -Ux ${name} ${value}`;
+  if (k === 'powershell') return `[Environment]::SetEnvironmentVariable('${name}', '${value}', 'User')`;
+  if (k === 'cmd') return `setx ${name} "${value}"`;
+  return `echo 'export ${name}="${value}"' >> ${rcFile(shell)}`;
+};
+
+export const npmBinDir = (prefix, platform = process.platform) => (prefix ? (isWin(platform) ? prefix : `${prefix.replace(/\/+$/, '')}/bin`) : null);
+
+// Why an install failed, and what to do about it: a fixed table, tried in
+// order (most specific first); every row that matches is returned. Pure: the
+// same inputs always give the same remedies.
+export const REMEDY_ROWS = [
+  {
+    id: 'tls',
+    match: ({ output }) => /SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_GET_ISSUER_CERT|CERT_HAS_EXPIRED/.test(output),
+    remedy: ({ shell }) => ({
+      text: 'Something on the network is inspecting TLS traffic, so npm does not trust the registry\'s certificate. Point Node at your company\'s CA bundle with NODE_EXTRA_CA_CERTS, then retry. Never turn off strict-ssl.',
+      command: setEnvLine('NODE_EXTRA_CA_CERTS', '/path/to/company-ca.pem', shell),
+    }),
+  },
+  {
+    id: 'execution-policy',
+    match: ({ output }) => /running scripts is disabled|ExecutionPolicy/i.test(output),
+    remedy: () => ({ text: 'PowerShell\'s execution policy blocks npm\'s script shim. Allow signed and local scripts for your user, then retry.', command: 'Set-ExecutionPolicy -Scope CurrentUser RemoteSigned' }),
+  },
+  {
+    id: 'node-too-old',
+    match: ({ output }) => /EBADENGINE|Unsupported engine|requires Node/i.test(output),
+    remedy: ({ platform }) => ({ text: 'This assistant needs a newer Node.js than the one this shell runs. Install the current LTS (with nvm, or from nodejs.org), then retry.', command: isWin(platform) ? null : 'nvm install --lts' }),
+  },
+  {
+    id: 'not-on-registry',
+    match: ({ output }) => /\bE404\b|\bETARGET\b/.test(output),
+    remedy: () => ({ text: 'The npm registry this machine is configured for does not carry the package. Check which registry that is, and ask for the package to be mirrored there.', command: 'npm config get registry' }),
+  },
+  {
+    id: 'disk',
+    match: ({ output }) => /\bENOSPC\b/.test(output),
+    remedy: () => ({ text: 'The disk is full. Free some space, then retry.', command: null }),
+  },
+  {
+    id: 'permission',
+    match: ({ output }) => /\bEACCES\b|\bEPERM\b|permission denied/i.test(output),
+    remedy: ({ shell, platform }) => ({
+      text: 'npm\'s global folder is not writable by you. Give npm a folder in your home directory and put it on PATH, then retry. Do not use sudo.',
+      command: isWin(platform)
+        ? 'npm config set prefix "$env:APPDATA\\npm"'
+        : `npm config set prefix ~/.npm-global && ${pathLine('$HOME/.npm-global/bin', shell)}`,
+    }),
+  },
+  {
+    id: 'network',
+    match: ({ output }) => /\bENOTFOUND\b|\bEAI_AGAIN\b|\bETIMEDOUT\b|\bECONNREFUSED\b|\bECONNRESET\b|\b407\b/.test(output),
+    remedy: () => ({
+      text: 'The npm registry could not be reached. Check the VPN or proxy; set npm config set proxy and https-proxy if a proxy is required, or point npm config set registry at the internal mirror.',
+      command: 'npm config get registry && npm config get https-proxy',
+    }),
+  },
+  {
+    id: 'npm-missing',
+    match: ({ output }) => /npm: command not found|command not found: npm|npm: not found|'npm' is not recognized|spawn\s+\S*\s*ENOENT/i.test(output),
+    remedy: ({ platform }) => ({ text: 'Node.js is not on this shell\'s PATH, so there is no npm to install with. Install Node.js 18 or newer, or run nvm use, then retry.', command: isWin(platform) ? null : 'nvm use --lts' }),
+  },
+  {
+    id: 'not-on-path',
+    match: ({ code, found }) => code === 0 && !found,
+    remedy: ({ shell, platform, npmPrefix }) => {
+      const dir = npmBinDir(npmPrefix, platform) || '<npm prefix -g>/bin';
+      return { text: `The install finished, but npm's global bin directory (${dir}) is not on PATH, so the assistant cannot be found. Add it for new shells, open a new terminal, and retry.`, command: pathLine(dir, shell) };
+    },
+  },
+];
+
+export function installRemedies({ code, output = '', shell = '', platform = process.platform, found = false, npmPrefix = null }) {
+  if (code === 0 && found) return [];
+  const ctx = { code, output: String(output), shell, platform, found, npmPrefix };
+  const hits = REMEDY_ROWS.filter((r) => r.match(ctx)).map((r) => ({ id: r.id, ...r.remedy(ctx) }));
+  if (hits.length) return hits;
+  return [{ id: 'unknown', text: `No known cause matched (exit code ${code}). The full output is below; run the same command in a terminal to see more.`, command: null }];
+}
+
 export function resolveAgentCommand(spec) {
   if (!spec) return null;
   return PRESETS[spec] || spec;

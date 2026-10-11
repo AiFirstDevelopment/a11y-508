@@ -29,3 +29,32 @@ jobs:
           name: a11y-508-fixture-report-node${{ matrix.node }}
           path: test/.report
           if-no-files-found: ignore
+
+  ui:
+    # The dashboard: its own install, typecheck, unit tests, that the committed
+    # ui/dist was built from this source, and the Playwright suite against the
+    # real server and CLI. The core matrix above runs the server's own tests on
+    # Node 18/20/22 as part of npm test.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install the UI's dependencies
+        run: npm --prefix ui ci
+      - name: Typecheck
+        run: npm --prefix ui run typecheck
+      - name: Unit tests
+        run: npm --prefix ui test
+      - name: ui/dist matches the source
+        run: npm --prefix ui run freshness
+      - name: Show browser
+        run: google-chrome --version
+      - name: Playwright end-to-end suite
+        # Sign in opens a visible browser, so it needs a display.
+        run: xvfb-run -a npm --prefix ui run e2e
+        env:
+          CHROME_PATH: /usr/bin/google-chrome

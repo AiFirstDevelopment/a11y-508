@@ -158,6 +158,13 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
       } catch {}
       await Promise.race([exited, delay(2000)]);
     }
+    // Chrome's crash handler can outlive the browser holding inherited copies
+    // of the DevTools pipe, which would keep this process alive after the run.
+    for (const stream of [proc.stdio[3], proc.stdio[4], proc.stderr]) {
+      try {
+        if (stream) stream.destroy();
+      } catch {}
+    }
     const removed = await removeDir(userDataDir);
     return { userDataDir, removed };
   }
