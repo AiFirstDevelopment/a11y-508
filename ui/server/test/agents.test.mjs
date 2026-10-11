@@ -3,41 +3,43 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer, stub, tmp } from './helpers.mjs';
+import { loginShell, npmBin, shPath, stubScript, systemPath } from './platform.mjs';
 
+// A machine in miniature: a PATH directory, an npm prefix, the login shell
+// (a stub bash, or Git Bash on Windows), and a stub npm.
 function machine() {
   const root = tmp('a11y-508-mach-');
   const bin = join(root, 'bin');
   const prefix = join(root, 'prefix');
-  mkdirSync(join(prefix, 'bin'), { recursive: true });
+  mkdirSync(npmBin(prefix), { recursive: true });
   mkdirSync(join(root, 'home'));
-  stub(join(root, 'sh'), 'bash', '#!/bin/sh\n[ "$1" = "-lc" ] && shift\nexec /bin/sh -c "$1"\n');
+  const shell = loginShell(root);
   stub(bin, 'npm', `#!/bin/sh
 if [ "$1" = "prefix" ]; then echo ${JSON.stringify(prefix)}; exit 0; fi
-echo "$*" >> ${JSON.stringify(join(root, 'npm-calls'))}
-env > ${JSON.stringify(join(root, 'npm-env'))}
-if [ -f ${JSON.stringify(join(root, 'fail'))} ]; then echo "npm ERR! code EACCES"; exit 1; fi
-printf '#!/bin/sh\\necho 1.0.0\\n' > ${JSON.stringify(prefix)}/bin/codex; chmod +x ${JSON.stringify(prefix)}/bin/codex
-exit 0
+echo "$*" >> ${JSON.stringify(shPath(join(root, 'npm-calls')))}
+env > ${JSON.stringify(shPath(join(root, 'npm-env')))}
+if [ -f ${JSON.stringify(shPath(join(root, 'fail')))} ]; then echo "npm ERR! code EACCES"; exit 1; fi
+${stubScript(npmBin(prefix), 'codex', '#!/bin/sh\necho 1.0.0\n')}exit 0
 `);
-  return { root, bin, prefix, env: { PATH: `${bin}:/usr/bin:/bin`, SHELL: join(root, 'sh', 'bash'), HOME: join(root, 'home') } };
+  return { root, bin, prefix, shellName: shell.name, env: { PATH: systemPath(bin), SHELL: shell.SHELL, HOME: join(root, 'home') } };
 }
 
 test('presets are detected on PATH and in npm prefix -g, with versions and the command the loop runs', async () => {
   const m = machine();
-  stub(m.bin, 'claude', '#!/bin/sh\necho "2.0.0 (Claude Code)"\n');
-  stub(join(m.prefix, 'bin'), 'gemini', '#!/bin/sh\necho "0.9.0"\n');
+  const claudeExe = stub(m.bin, 'claude', '#!/bin/sh\necho "2.0.0 (Claude Code)"\n');
+  const geminiExe = stub(npmBin(m.prefix), 'gemini', '#!/bin/sh\necho "0.9.0"\n');
   const s = await startServer({ env: m.env });
   try {
     const env = (await s.call('GET', '/api/env')).json;
     assert.deepEqual(env.presets.map((p) => p.name), ['claude', 'gemini', 'codex']);
     const [claude, gemini, codex] = env.presets;
-    assert.deepEqual([claude.found, claude.where, claude.path, claude.version], [true, 'PATH', join(m.bin, 'claude'), '2.0.0 (Claude Code)']);
+    assert.deepEqual([claude.found, claude.where, claude.path, claude.version], [true, 'PATH', claudeExe, '2.0.0 (Claude Code)']);
     assert.match(claude.command, /^claude -p /);
-    assert.deepEqual([gemini.found, gemini.where, gemini.path], [true, 'npm prefix -g', join(m.prefix, 'bin', 'gemini')]);
-    assert.ok(gemini.command.startsWith(join(m.prefix, 'bin', 'gemini') + ' --approval-mode'));
+    assert.deepEqual([gemini.found, gemini.where, gemini.path], [true, 'npm prefix -g', geminiExe]);
+    assert.ok(gemini.command.startsWith(geminiExe + ' --approval-mode'));
     assert.equal(codex.found, false);
     assert.equal(codex.install, 'npm install -g @openai/codex');
-    assert.equal(env.shell.name, 'bash');
+    assert.equal(env.shell.name, m.shellName);
     assert.equal(env.npmPrefix, m.prefix);
   } finally {
     await s.stop();

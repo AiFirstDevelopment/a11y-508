@@ -36,7 +36,8 @@ export function installCommand(name, platform = process.platform) {
 export function presetCommandAt(name, exePath) {
   const cmd = PRESETS[name];
   if (!cmd || !exePath) return cmd || null;
-  const quoted = /[\s"']/.test(exePath) ? JSON.stringify(exePath) : exePath;
+  // A Windows path is quoted as it is: JSON.stringify would double its backslashes.
+  const quoted = !/[\s"']/.test(exePath) ? exePath : /\\/.test(exePath) && !/"/.test(exePath) ? `"${exePath}"` : JSON.stringify(exePath);
   return quoted + cmd.slice(PRESET_INFO[name].bin.length);
 }
 
@@ -55,9 +56,13 @@ export function rcFile(shell) {
   return { zsh: '~/.zshrc', bash: '~/.bashrc', fish: '~/.config/fish/config.fish', powershell: '$PROFILE', cmd: null, sh: '~/.profile' }[shellKind(shell)];
 }
 
+// C:\Users\dev\npm as Git Bash writes it: /c/Users/dev/npm.
+const msysPath = (dir) => (/^[A-Za-z]:[\\/]/.test(dir) ? `/${dir[0].toLowerCase()}${dir.slice(2).replace(/\\/g, '/')}` : dir);
+
 // The command that puts dir on PATH for every new shell of this kind.
 export function pathLine(dir, shell) {
   const k = shellKind(shell);
+  if (k !== 'powershell' && k !== 'cmd') dir = msysPath(dir);
   if (k === 'fish') return `fish_add_path ${dir}`;
   if (k === 'powershell') return `Add-Content $PROFILE '$env:Path = "${dir};" + $env:Path'`;
   if (k === 'cmd') return `setx PATH "${dir};%PATH%"`;
@@ -111,9 +116,11 @@ export const REMEDY_ROWS = [
     match: ({ output }) => /\bEACCES\b|\bEPERM\b|permission denied/i.test(output),
     remedy: ({ shell, platform }) => ({
       text: 'npm\'s global folder is not writable by you. Give npm a folder in your home directory and put it on PATH, then retry. Do not use sudo.',
-      command: isWin(platform)
+      // On Windows npm puts executables in the prefix itself, not prefix/bin;
+      // Git Bash gets the POSIX form, PowerShell and cmd the Windows one.
+      command: isWin(platform) && ['powershell', 'cmd'].includes(shellKind(shell))
         ? 'npm config set prefix "$env:APPDATA\\npm"'
-        : `npm config set prefix ~/.npm-global && ${pathLine('$HOME/.npm-global/bin', shell)}`,
+        : `npm config set prefix ~/.npm-global && ${pathLine(isWin(platform) ? '$HOME/.npm-global' : '$HOME/.npm-global/bin', shell)}`,
     }),
   },
   {

@@ -3,7 +3,7 @@
 // can watch the progress from the start.
 
 import { test, expect, type Page } from '@playwright/test';
-import { dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, readReport, nav, run, tempDir, TOKEN, QUICK, type Dash, type Site } from './harness';
+import { dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, readReport, nav, run, api, shellLine, tempDir, TOKEN, QUICK, type Dash, type Site } from './harness';
 
 let site: Site;
 let dash: Dash;
@@ -202,12 +202,15 @@ test('AC 10: the command on the Run screen, run in a terminal with TOKEN set, gi
   await nav(page, 'Run');
   // The form still holds the crawl's settings; the token field was cleared.
   await expect(page.getByLabel(/^Token \(sent as/)).toHaveValue('');
-  await expect(page.getByTestId('command')).toHaveText(/^TOKEN=\$TOKEN node \S+a11y-508\.mjs /);
+  // The path is quoted when it holds a backslash (Windows, Git Bash syntax).
+  await expect(page.getByTestId('command')).toHaveText(/^TOKEN=\$TOKEN node '?\S+a11y-508\.mjs'? /);
   const command = (await page.getByTestId('command').textContent())!.trim();
   expect(command).not.toContain(TOKEN);
   // Asynchronously: the fixture site is served from this same process.
   const term = tempDir('a11y-508-term-');
-  const r = await run('/bin/sh', ['-c', command], { cwd: term, env: { ...process.env, TOKEN } });
+  // In the dashboard's shell: sh here, Git Bash on Windows.
+  const [file, args, extra] = shellLine(command, (await api(dash, '/api/env')).json.shell);
+  const r = await run(file, args, { cwd: term, env: { ...process.env, ...extra, TOKEN } });
   expect(r.status, r.output).toBe(1);
   const terminalSummary = readReport(term).summary;
   expect(terminalSummary).toEqual(dashboardSummary);

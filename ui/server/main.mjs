@@ -34,7 +34,10 @@ process.stdout.write(`open: ${dash.url}\n`);
 process.stdout.write('This address carries a one-time secret for this launch; keep it to yourself. Press Ctrl+C to stop.\n');
 
 function openBrowser(url) {
-  const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url.replace(/&/g, '^&')]] : ['xdg-open', [url]];
+  // start's first quoted argument is a window title. Node writes an empty
+  // argument as "", which is that empty title; a literal '""' would reach
+  // cmd as "\"\"" and become the title and a stray argument.
+  const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url.replace(/&/g, '^&')]] : ['xdg-open', [url]];
   try {
     const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
     child.on('error', () => process.stdout.write('could not open a browser; open the address above by hand\n'));

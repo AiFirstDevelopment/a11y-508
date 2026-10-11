@@ -123,7 +123,10 @@ export class Runs {
     const run = this.current;
     if (!run || run.status !== 'running' || !run.child) return false;
     try {
-      if (process.platform === 'win32') run.child.kill(sig);
+      // Windows has no signals to send: child.kill ends only the CLI and
+      // leaves its Chrome running. taskkill /T ends the whole tree, the way
+      // the process group does elsewhere; it is never a clean shutdown.
+      if (process.platform === 'win32') spawn('taskkill', ['/pid', String(run.child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => run.child.kill(sig));
       else process.kill(-run.child.pid, sig);
     } catch {
       try {

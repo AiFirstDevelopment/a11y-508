@@ -12,7 +12,7 @@ import { PRESETS, installRemedies, runAgent, agentEnv } from '../../src/agent.mj
 import { loadConfig, normalizeConfig, summaryLine, WORK_DIR } from '../../src/loop.mjs';
 import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine } from './args.mjs';
-import { detectPresets, shellInvocation } from './detect.mjs';
+import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
 import { listReports, readReport, confinedFile, moveLatestToHistory, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
@@ -47,7 +47,9 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
   // Report files (<img>, a new tab) cannot send the header, so they take a
   // cookie instead: a separate value that opens report files and nothing else.
   const fileSecret = randomBytes(24).toString('hex');
-  const state = { token: null, port: null, presets: null, detecting: null, lastTest: {} };
+  const state = { token: null, port: null, presets: null, detecting: null, lastTest: {}, shell: null };
+  // The shell the shown command line is written for; looked up once.
+  const shellKind = () => (state.shell ||= detectShell(env, platform)).kind;
   const runs = new Runs({ onExit: () => {} });
   const build = freshness(uiDir);
 
@@ -171,7 +173,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
     if (kind === 'crawl') moved = moveLatestToHistory(cwd);
     return runs.start({
       kind, file: process.execPath, args: [BIN, ...built.args, '--events'], env: runEnv, cwd, events: true, secrets: tokens(),
-      meta: { ...meta, command: commandLine({ cwd, args: built.args, token: built.token }), url: body.url || null, movedToHistory: moved },
+      meta: { ...meta, command: commandLine({ cwd, args: built.args, token: built.token, shell: shellKind() }), url: body.url || null, movedToHistory: moved },
     });
   }
 
@@ -341,7 +343,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
         throw new BadRequest('form must be JSON');
       }
       const built = form.kind === 'loop' || form.kind === 'dry-run' ? loopArgs(form) : crawlArgs(form);
-      return send(res, 200, { command: commandLine({ cwd, args: built.args, token: built.token }) });
+      return send(res, 200, { command: commandLine({ cwd, args: built.args, token: built.token, shell: shellKind() }) });
     }
     return send(res, 404, { error: 'not found' });
   }

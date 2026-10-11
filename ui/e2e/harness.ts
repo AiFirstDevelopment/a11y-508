@@ -3,11 +3,15 @@
 // the app the way a person does.
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page } from '@playwright/test';
+// @ts-ignore -- plain JS shared with the server's node:test suite
+import { mergeEnv, processList, stopTree } from '../server/test/platform.mjs';
+// @ts-ignore
+export { WIN, exePath, gitBash, loginShell, msysPath, npmBin, quote, recordOpen, shellLine, shPath, stopTree, stub, stubScript, systemPath } from '../server/test/platform.mjs';
 
 export const UI = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const ROOT = resolve(UI, '..');
@@ -44,7 +48,7 @@ export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; a
   const cwd = opts.cwd || tempDir('a11y-508-dash-');
   const proc = spawn(process.execPath, [opts.main || MAIN, '--no-open', '--port', '0', ...(opts.args || [])], {
     cwd,
-    env: { ...process.env, TOKEN: '', ...opts.env },
+    env: mergeEnv(process.env, { TOKEN: '', ...opts.env }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';
@@ -68,11 +72,8 @@ export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; a
     origin: u.origin, url, secret, cwd, proc,
     output: () => out,
     stop: async () => {
-      if (proc.exitCode === null) {
-        proc.kill('SIGINT');
-        await new Promise((r) => proc.once('exit', r));
-      }
-      if (!opts.keepCwd && !opts.cwd) rmSync(cwd, { recursive: true, force: true });
+      await stopTree(proc);
+      if (!opts.keepCwd && !opts.cwd) rmSync(cwd, { recursive: true, force: true, maxRetries: 10 });
     },
   };
 }
@@ -147,20 +148,10 @@ export const readReport = (cwd: string, dir = 'a11y-508-report') => JSON.parse(r
 
 // Chrome processes started by the CLI: their profile is a11y-508-* in the temp directory.
 export function cliChromePids(): number[] {
-  const r = spawnSync('ps', ['-ax', '-o', 'pid=,command='], { encoding: 'utf8' });
-  return r.stdout
-    .split('\n')
+  return (processList() as string)
+    .split(/\r?\n/)
     .filter((l) => /--user-data-dir=\S*a11y-508-[A-Za-z0-9]+/.test(l) && /--remote-debugging-pipe/.test(l))
     .map((l) => parseInt(l.trim(), 10));
-}
-
-// An executable script in dir, for stub CLIs and a stub shell.
-export function stub(dir: string, name: string, body: string): string {
-  mkdirSync(dir, { recursive: true });
-  const p = join(dir, name);
-  writeFileSync(p, body);
-  chmodSync(p, 0o755);
-  return p;
 }
 
 export function gitRepo(dir: string): (...args: string[]) => string {

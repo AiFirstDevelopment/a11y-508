@@ -57,6 +57,12 @@ check('not-on-path per shell: bash, fish, PowerShell, cmd', () => {
   assert.equal(at('C:\\Program Files\\PowerShell\\7\\pwsh.exe', 'win32'), `Add-Content $PROFILE '$env:Path = "C:\\npm;" + $env:Path'`);
   assert.equal(at('C:\\Windows\\system32\\cmd.exe', 'win32'), 'setx PATH "C:\\npm;%PATH%"');
 });
+check('Git Bash on Windows: POSIX PATH line with an MSYS path; permission remedy without bin/', () => {
+  const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
+  assert.equal(first({ code: 0, output: '', shell: gitBash, platform: 'win32', found: false, npmPrefix: 'C:\\Users\\dev\\AppData\\Roaming\\npm' }).command, `echo 'export PATH="/c/Users/dev/AppData/Roaming/npm:$PATH"' >> ~/.bashrc`);
+  assert.equal(first({ code: 1, output: 'npm ERR! code EPERM', shell: gitBash, platform: 'win32' }).command, `npm config set prefix ~/.npm-global && echo 'export PATH="$HOME/.npm-global:$PATH"' >> ~/.bashrc`);
+  assert.equal(first({ code: 1, output: 'npm ERR! code EPERM', shell: 'powershell.exe', platform: 'win32' }).command, 'npm config set prefix "$env:APPDATA\\npm"');
+});
 check('permission: user prefix and the PATH line for the detected shell, never sudo', () => {
   const bash = first({ code: 243, output: 'npm ERR! code EACCES', shell: '/bin/bash', platform: 'linux' });
   assert.equal(bash.id, 'permission');

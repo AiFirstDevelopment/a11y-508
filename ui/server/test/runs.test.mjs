@@ -61,3 +61,15 @@ test('before a crawl the previous report moves to a11y-508-history/<finishedAt>/
     await s.stop();
   }
 });
+
+test('the shown command is written for the shell: POSIX (Git Bash too), PowerShell, cmd', async () => {
+  const { commandLine, BIN } = await import('../args.mjs');
+  const args = ['http://x/', '--max-pages', '5', '--include', 'a b'];
+  const cwd = join(BIN, '..', '..');
+  const rel = join('bin', 'a11y-508.mjs'); // bin\a11y-508.mjs on Windows, which sh syntax quotes
+  const sh = rel.includes('\\') ? `'${rel}'` : rel;
+  assert.equal(commandLine({ cwd, args, token: 'form' }), `TOKEN=$TOKEN node ${sh} http://x/ --max-pages 5 --include 'a b'`);
+  assert.equal(commandLine({ cwd, args, token: 'form', shell: 'bash' }), `TOKEN=$TOKEN node ${sh} http://x/ --max-pages 5 --include 'a b'`);
+  assert.equal(commandLine({ cwd, args, token: 'form', shell: 'powershell' }), `$env:TOKEN='...'; node ${rel} http://x/ --max-pages 5 --include 'a b'`);
+  assert.equal(commandLine({ cwd, args, token: 'none', shell: 'cmd' }), `node ${rel} http://x/ --max-pages 5 --include "a b"`);
+});

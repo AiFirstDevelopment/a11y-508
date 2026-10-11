@@ -9,7 +9,8 @@ export default defineConfig({
   fullyParallel: false,
   timeout: 300_000,
   expect: { timeout: 15_000 },
-  reporter: [['list']],
+  // In CI, also an HTML report the workflow uploads when a run fails.
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
   use: {
     channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome',
     launchOptions: process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {},

@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { cpSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { ROOT, stub, tempDir } from './harness';
+import { ROOT, WIN, recordOpen, stopTree, systemPath, tempDir } from './harness';
 
 // The oldest Node on this machine that is 18 or newer (CI runs this suite on 22).
 function oldestNode(): string {
@@ -25,15 +25,17 @@ test('AC 1: npm run ui from a clean copy, no install, serves on 127.0.0.1 and op
   expect(existsSync(join(clone, 'ui', 'node_modules'))).toBe(false);
   expect(JSON.parse(readFileSync(join(clone, 'package.json'), 'utf8')).dependencies).toBeUndefined();
 
-  // A stand-in for the system's "open" / "xdg-open" that records what it was asked to open.
+  // A stand-in for the system's "open" / "xdg-open" (Windows: "cmd /c start") that records what it was asked to open.
   const opened = join(clone, 'opened.txt');
   const bin = join(tempDir('a11y-508-openbin-'), 'bin');
-  for (const name of ['open', 'xdg-open']) stub(bin, name, `#!/bin/sh\necho "$@" >> ${JSON.stringify(opened)}\n`);
+  const openEnv = recordOpen(bin, opened);
   const nodeDir = oldestNode();
-  const proc = spawn(join(nodeDir, 'npm'), ['run', 'ui', '--', '--port', '0'], {
+  // npm is npm.cmd on Windows, which only a shell can run.
+  const proc = spawn(WIN ? `"${join(nodeDir, 'npm.cmd')}"` : join(nodeDir, 'npm'), ['run', 'ui', '--', '--port', '0'], {
     cwd: clone,
-    env: { ...process.env, PATH: `${bin}:${nodeDir}:/usr/bin:/bin`, TOKEN: '' },
+    env: { ...process.env, ...openEnv, PATH: systemPath(bin, nodeDir), TOKEN: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
+    shell: WIN,
   });
   let out = '';
   proc.stdout!.on('data', (d) => (out += d));
@@ -43,7 +45,7 @@ test('AC 1: npm run ui from a clean copy, no install, serves on 127.0.0.1 and op
     const url = /http:\/\/127\.0\.0\.1:\d+\/#secret=[0-9a-f]+/.exec(readFileSync(opened, 'utf8'))![0];
     expect(out).toContain(url);
     const version = await new Promise<string>((ok) => {
-      const v = spawn(join(nodeDir, 'node'), ['-v']);
+      const v = spawn(join(nodeDir, WIN ? 'node.exe' : 'node'), ['-v']);
       let s = '';
       v.stdout.on('data', (d) => (s += d));
       v.on('close', () => ok(s.trim()));
@@ -55,6 +57,6 @@ test('AC 1: npm run ui from a clean copy, no install, serves on 127.0.0.1 and op
     await expect(page.getByText('Working directory')).toBeVisible();
     expect(page.url()).not.toContain('secret='); // moved out of the address bar
   } finally {
-    proc.kill('SIGINT');
+    await stopTree(proc);
   }
 });

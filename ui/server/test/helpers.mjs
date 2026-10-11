@@ -1,23 +1,19 @@
 import { spawn } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mergeEnv, stopTree } from './platform.mjs';
 
 export const MAIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'main.mjs');
 export const tmp = (p) => realpathSync(mkdtempSync(join(tmpdir(), p)));
 
-export function stub(dir, name, body) {
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, name), body);
-  chmodSync(join(dir, name), 0o755);
-  return join(dir, name);
-}
+export { stub } from './platform.mjs';
 
 // The real server, as a person starts it, in its own working directory.
 export async function startServer({ cwd = tmp('a11y-508-srv-'), env = {} } = {}) {
-  const proc = spawn(process.execPath, [MAIN, '--no-open', '--port', '0'], { cwd, env: { ...process.env, TOKEN: '', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(process.execPath, [MAIN, '--no-open', '--port', '0'], { cwd, env: mergeEnv(process.env, { TOKEN: '', ...env }), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   proc.stdout.on('data', (d) => (out += d));
   proc.stderr.on('data', (d) => (out += d));
@@ -66,11 +62,8 @@ export async function startServer({ cwd = tmp('a11y-508-srv-'), env = {} } = {})
     throw new Error('run did not finish');
   };
   const stop = async () => {
-    if (proc.exitCode === null) {
-      proc.kill('SIGINT');
-      await new Promise((ok) => proc.once('exit', ok));
-    }
-    rmSync(cwd, { recursive: true, force: true });
+    await stopTree(proc);
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10 });
   };
   return { cwd, port, secret, url, call, waitDone, stop, output: () => out };
 }

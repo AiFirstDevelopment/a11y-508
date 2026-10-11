@@ -111,11 +111,18 @@ export function loopArgs({ kind, url, options, auth, maxRounds, agent }) {
 }
 
 const shq = (s) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`);
+const psq = (s) => (/^[A-Za-z0-9_@%+=:,./\\-]+$/.test(s) ? s : `'${String(s).replace(/'/g, "''")}'`);
+const cmdq = (s) => (/^[A-Za-z0-9_@+=:,./\\-]+$/.test(s) ? s : `"${String(s).replace(/"/g, '""')}"`);
 
-// What a person would type in a terminal in the dashboard's working directory.
-export function commandLine({ cwd, args, token }) {
+// What a person would type in a terminal in the dashboard's working directory,
+// in the dashboard's shell: POSIX syntax (Git Bash too), or PowerShell or cmd
+// syntax when that is the shell on Windows. The token is never in it.
+export function commandLine({ cwd, args, token, shell = 'sh' }) {
   let bin = relative(cwd, BIN);
   if (isAbsolute(bin) || bin.startsWith('..')) bin = BIN;
-  const env = token === 'none' ? '' : 'TOKEN=$TOKEN ';
+  const none = token === 'none';
+  if (shell === 'powershell') return `${none ? '' : "$env:TOKEN='...'; "}node ${psq(bin)} ${args.map(psq).join(' ')}`;
+  if (shell === 'cmd') return `${none ? '' : 'set "TOKEN=..." && '}node ${cmdq(bin)} ${args.map(cmdq).join(' ')}`;
+  const env = none ? '' : 'TOKEN=$TOKEN ';
   return `${env}node ${shq(bin)} ${args.map(shq).join(' ')}`;
 }

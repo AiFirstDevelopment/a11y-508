@@ -58,3 +58,39 @@ jobs:
         run: xvfb-run -a npm --prefix ui run e2e
         env:
           CHROME_PATH: /usr/bin/google-chrome
+
+  windows:
+    # The dashboard's Windows paths: Git Bash as the shell, .cmd shims, taskkill
+    # for Stop, cmd /c start for the browser. The core suite and the server's
+    # tests (npm test), then the Playwright suite. Chrome and Git for Windows
+    # are preinstalled; the runner has a desktop, so Sign in needs no xvfb.
+    runs-on: windows-latest
+    steps:
+      - name: Check out without CRLF conversion
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Show browser and Git Bash
+        run: |
+          (Get-Item "C:\Program Files\Google\Chrome\Application\chrome.exe").VersionInfo.ProductVersion
+          & "C:\Program Files\Git\bin\bash.exe" --version | Select-Object -First 1
+      - name: Core, loop, remedies and server tests
+        run: npm test
+      - name: Install the UI's dependencies
+        run: npm --prefix ui ci
+      - name: Playwright end-to-end suite
+        run: npm --prefix ui run e2e
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a11y-508-windows-reports
+          path: |
+            test/.report
+            ui/playwright-report
+            ui/test-results
+          if-no-files-found: ignore
