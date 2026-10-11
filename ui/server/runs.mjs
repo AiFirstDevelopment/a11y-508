@@ -24,6 +24,55 @@ export function redactor(secrets) {
   };
 }
 
+// Every process id with its parent's, from CIM (wmic is gone from current Windows).
+function windowsProcesses() {
+  return new Promise((resolve) => {
+    let out = '';
+    let child;
+    try {
+      child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }'], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    } catch {
+      return resolve([]);
+    }
+    child.stdout.on('data', (d) => (out += d));
+    child.on('error', () => resolve([]));
+    child.on('close', () => resolve(out.split(/\r?\n/).map((l) => l.trim().split(/\s+/).map(Number)).filter((x) => x.length === 2 && x[0] > 0)));
+  });
+}
+
+const taskkill = (args) =>
+  new Promise((resolve) => {
+    const c = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
+    c.on('error', resolve);
+    c.on('close', resolve);
+  });
+
+// Ends pid and everything it started. taskkill /T walks the tree at that
+// moment, so a process started while it runs (Chrome spawning its helpers,
+// a shell forking) can escape and keep the working directory open; a second
+// sweep finds those by the parent ids of the processes already ended.
+export async function killTreeWindows(pid) {
+  await taskkill(['/PID', String(pid), '/T', '/F']);
+  const ended = new Set([pid]);
+  for (let round = 0; round < 3; round++) {
+    const procs = await windowsProcesses();
+    const alive = new Set();
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const [p, parent] of procs) {
+        if ((ended.has(parent) || alive.has(parent)) && !ended.has(p) && !alive.has(p)) {
+          alive.add(p);
+          grew = true;
+        }
+      }
+    }
+    if (!alive.size) return;
+    for (const p of alive) ended.add(p);
+    await taskkill([...[...alive].flatMap((p) => ['/PID', String(p)]), '/T', '/F']);
+  }
+}
+
 export class Runs {
   constructor({ onExit } = {}) {
     this.current = null;
@@ -126,7 +175,7 @@ export class Runs {
       // Windows has no signals to send: child.kill ends only the CLI and
       // leaves its Chrome running. taskkill /T ends the whole tree, the way
       // the process group does elsewhere; it is never a clean shutdown.
-      if (process.platform === 'win32') spawn('taskkill', ['/pid', String(run.child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => run.child.kill(sig));
+      if (process.platform === 'win32') killTreeWindows(run.child.pid).catch(() => run.child.kill(sig));
       else process.kill(-run.child.pid, sig);
     } catch {
       try {

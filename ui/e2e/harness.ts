@@ -11,7 +11,7 @@ import { expect, type Page } from '@playwright/test';
 // @ts-ignore -- plain JS shared with the server's node:test suite
 import { mergeEnv, processList, stopTree } from '../server/test/platform.mjs';
 // @ts-ignore
-export { WIN, exePath, gitBash, loginShell, msysPath, npmBin, quote, recordOpen, shellLine, shPath, stopTree, stub, stubScript, systemPath } from '../server/test/platform.mjs';
+export { WIN, exePath, gitBash, loginShell, msysPath, npmBin, processList, quote, recordOpen, shellLine, shPath, stopTree, stub, stubScript, systemPath } from '../server/test/platform.mjs';
 
 export const UI = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const ROOT = resolve(UI, '..');

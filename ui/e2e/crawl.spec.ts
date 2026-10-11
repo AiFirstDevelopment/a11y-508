@@ -3,7 +3,8 @@
 // can watch the progress from the start.
 
 import { test, expect, type Page } from '@playwright/test';
-import { dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, readReport, nav, run, api, shellLine, tempDir, TOKEN, QUICK, type Dash, type Site } from './harness';
+import { join } from 'node:path';
+import { dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, readReport, nav, run, api, shellLine, exists, processList, WIN, tempDir, TOKEN, QUICK, type Dash, type Site } from './harness';
 
 let site: Site;
 let dash: Dash;
@@ -211,7 +212,13 @@ test('AC 10: the command on the Run screen, run in a terminal with TOKEN set, gi
   // In the dashboard's shell: sh here, Git Bash on Windows.
   const [file, args, extra] = shellLine(command, (await api(dash, '/api/env')).json.shell);
   const r = await run(file, args, { cwd: term, env: { ...process.env, ...extra, TOKEN } });
-  expect(r.status, r.output).toBe(1);
+  // If the shell returned early, say whether the CLI went on without it.
+  let diag = '';
+  if (r.status !== 1 && WIN) {
+    await new Promise((ok) => setTimeout(ok, 30_000));
+    diag = `\nreport written later: ${exists(join(term, 'a11y-508-report', 'report.json'))}\nCLI processes: ${(processList() as string).split(/\r?\n/).filter((l) => /a11y-508\.mjs|bash/.test(l)).join('\n')}`;
+  }
+  expect(r.status, r.output + diag).toBe(1);
   const terminalSummary = readReport(term).summary;
   expect(terminalSummary).toEqual(dashboardSummary);
 });

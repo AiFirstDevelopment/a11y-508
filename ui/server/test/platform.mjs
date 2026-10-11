@@ -7,6 +7,7 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
+import { killTreeWindows } from '../runs.mjs';
 
 export const WIN = process.platform === 'win32';
 
@@ -82,13 +83,16 @@ export function mergeEnv(base, extra = {}) {
 }
 
 // Ends a process and everything it started: SIGINT elsewhere (the server's
-// own shutdown); on Windows, where there is no SIGINT to send, taskkill /T.
+// own shutdown); on Windows, where there is no SIGINT to send, the server's
+// own tree kill, including what escaped a first taskkill /T.
 export function stopTree(proc, signal = 'SIGINT') {
   if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
   const exited = new Promise((ok) => proc.once('exit', ok));
-  if (WIN) spawnSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
-  else proc.kill(signal);
-  return exited;
+  if (!WIN) {
+    proc.kill(signal);
+    return exited;
+  }
+  return Promise.all([exited, killTreeWindows(proc.pid)]);
 }
 
 // What the server runs to open the browser, recorded to file instead:

@@ -37,7 +37,8 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     const r = await run(
       process.execPath,
       [BIN, dash.origin + '/run', '--token-header', SECRET_HEADER, '--token-storage', 'a11y508.secret', '--no-follow-clicks', '--max-pages', '30', '--out', out, '--json'],
-      { env: { ...process.env, TOKEN: dash.secret }, timeout: 200_000 }
+      // In CI, the core's debug log, so a page that never finishes is named.
+      { env: { ...process.env, TOKEN: dash.secret, ...(process.env.CI ? { A11Y_508_DEBUG: '1' } : {}) }, timeout: 200_000 }
     );
     phase(`self crawl exit ${r.status}`);
     if (!existsSync(join(out, 'report.json'))) throw new Error(`the self crawl wrote no report (exit ${r.status}):\n${r.output.slice(-6000)}\n--- dashboard ---\n${dash.output().slice(-3000)}`);
