@@ -9,7 +9,7 @@ import { interactiveLogin, loadState, saveState, stateSummary } from './login.mj
 import { troubleshoot, formatTroubleshoot } from './troubleshoot.mjs';
 import { loadConfig, printStatus, runLoop } from './loop.mjs';
 import { siteChecks } from './site-checks.mjs';
-import { summarize, shouldFail, writeReports, makeLogger, coverage } from './report.mjs';
+import { summarize, shouldFail, writeReports, makeLogger, coverage, eventWriter } from './report.mjs';
 import { CATALOG, IMPACTS, TEST_IDS } from './checks/catalog.mjs';
 
 const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
@@ -68,6 +68,8 @@ Options
   --no-sandbox             Pass --no-sandbox to Chrome (containers running as root)
   --quiet                  Only print the summary
   --json                   Print the report summary as JSON on stdout
+  --events                 Print one JSON event per line on stdout instead of the
+                           human-readable output (for tools; see the README)
   --list-tests             Print the Trusted Tester test catalog and exit
   -h, --help               Show this help
   -v, --version            Show the version
@@ -103,7 +105,7 @@ export function parseArgs(argv) {
     url: null, maxPages: 200, maxDepth: 10, concurrency: 4, include: [], exclude: [], failOn: ['critical', 'serious'],
     out: 'a11y-508-report', viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
     tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stateFile: null, troubleshoot: false, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
-    maxTabs: 400, maxActivations: 12, maxClicks: 30, followClicks: true, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false,
+    maxTabs: 400, maxActivations: 12, maxClicks: 30, followClicks: true, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false, events: false,
     listTests: false, help: false, version: false,
   };
   const args = [...argv];
@@ -190,6 +192,7 @@ export function parseArgs(argv) {
       case '--no-sandbox': o.noSandbox = true; break;
       case '--quiet': case '-q': o.quiet = true; break;
       case '--json': o.json = true; break;
+      case '--events': o.events = true; break;
       default:
         if (a.startsWith('-')) throw new Error(`Unknown option ${a}`);
         if (o.url) throw new Error(`Unexpected argument "${a}" (URL already given: ${o.url})`);
@@ -240,8 +243,11 @@ async function loopMain(split) {
     process.stderr.write(`error: ${e.message}\n\n${HELP}`);
     return 2;
   }
-  const passthrough = remaining.filter((a) => a !== crawlOpts.url);
-  const log = makeLogger({ quiet: false, json: false });
+  // --events is the loop's own: crawlOnce decides whether each round's crawl gets it.
+  const passthrough = remaining.filter((a) => a !== crawlOpts.url && a !== '--events');
+  const events = crawlOpts.events;
+  const log = makeLogger({ quiet: false, json: false, events });
+  log.event('start', { kind: 'loop', version: pkg.version, url: crawlOpts.url || null, dryRun: loop.dryRun });
   let config;
   try {
     config = loadConfig(loop.config, process.cwd());
@@ -268,14 +274,30 @@ async function loopMain(split) {
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
   try {
-    return await runLoop({ config, cwd: process.cwd(), log, maxRounds: loop.maxRounds, dryRun: loop.dryRun, passthrough, stopSignal });
+    return await runLoop({ config, cwd: process.cwd(), log, maxRounds: loop.maxRounds, dryRun: loop.dryRun, passthrough, stopSignal, events });
   } finally {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
   }
 }
 
+// With --events the last line on stdout is always {"type":"done","code":N}.
 export async function main(argv) {
+  if (!argv.includes('--events') || argv[0] === 'status') return run(argv);
+  const emit = eventWriter();
+  let code;
+  try {
+    code = await run(argv);
+  } catch (e) {
+    emit('error', { message: `${e && e.message ? e.message : e}` });
+    emit('done', { code: 2 });
+    throw e;
+  }
+  emit('done', { code });
+  return code;
+}
+
+async function run(argv) {
   const split = splitLoopArgs(argv);
   if (split) return loopMain(split);
   let opts;
@@ -311,6 +333,7 @@ export async function main(argv) {
   }
 
   const log = makeLogger(opts);
+  log.event('start', { kind: opts.troubleshoot ? 'troubleshoot' : opts.loginOnly ? 'login' : 'crawl', version: pkg.version, url: startUrl.href, maxPages: opts.maxPages });
   const origins = new Set([startUrl.origin, ...opts.authOrigins.map((o) => new URL(o).origin)]);
   const token = process.env.TOKEN;
   if (token) {
@@ -356,6 +379,7 @@ export async function main(argv) {
     await closeBrowser(headed);
     saveState(file, opts.state);
     log.info(`session: saved ${stateSummary(opts.state)} to ${file}`);
+    log.event('session-saved', { file, summary: stateSummary(opts.state) });
     log.warn(`${file} holds live credentials; keep it out of version control. Reuse it with --state ${opts.stateFile || 'a11y-508-state.json'}`);
     if (opts.loginOnly) {
       log.info('session saved; not crawling (--login-only)');
@@ -392,7 +416,8 @@ export async function main(argv) {
       return 2;
     }
     await closeBrowser(browser);
-    process.stdout.write(opts.json ? JSON.stringify(result, null, 2) + '\n' : formatTroubleshoot(result));
+    if (opts.events) log.event('troubleshoot', { result });
+    else process.stdout.write(opts.json ? JSON.stringify(result, null, 2) + '\n' : formatTroubleshoot(result));
     return result.ok ? 0 : 2;
   }
 
@@ -446,7 +471,7 @@ export async function main(argv) {
   };
   const files = writeReports({ outDir, report });
   log.summary(report, files);
-  if (opts.json) process.stdout.write(JSON.stringify({ passed, summary, files, baseUrl: report.baseUrl }, null, 2) + '\n');
+  if (opts.json && !opts.events) process.stdout.write(JSON.stringify({ passed, summary, files, baseUrl: report.baseUrl }, null, 2) + '\n');
 
   if (pages.length === 1 && (pages[0].error || pages[0].skipped)) {
     log.error(`the start page could not be audited: ${pages[0].error || pages[0].skipped}`);

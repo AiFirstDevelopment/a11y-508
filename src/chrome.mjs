@@ -132,7 +132,12 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
   const version = await cdp.send('Browser.getVersion');
 
   async function newPage() {
-    const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+    // Headless, each tab gets a window of its own. Tabs sharing a window are
+    // hidden behind the front one, and a hidden tab draws no frames, so
+    // Page.captureScreenshot in it never returns (seen on Linux: with
+    // --concurrency 2 or more the first page's screenshots stalled the crawl).
+    // The visible login browser keeps a single window.
+    const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', ...(headless ? { newWindow: true } : {}) });
     const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
     return new Session(cdp, sessionId, targetId);
   }
@@ -157,6 +162,13 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
         proc.kill('SIGKILL');
       } catch {}
       await Promise.race([exited, delay(2000)]);
+    }
+    // Chrome's crash handler can outlive the browser holding inherited copies
+    // of the DevTools pipe, which would keep this process alive after the run.
+    for (const stream of [proc.stdio[3], proc.stdio[4], proc.stderr]) {
+      try {
+        if (stream) stream.destroy();
+      } catch {}
     }
     const removed = await removeDir(userDataDir);
     return { userDataDir, removed };

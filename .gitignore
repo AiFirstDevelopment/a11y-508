@@ -7,3 +7,6 @@ test/.report/
 test/.state.json
 test/.loop-repo/
 a11y-508-work/
+test/.report-events/
+test/.loop-repo-events/
+a11y-508-history/

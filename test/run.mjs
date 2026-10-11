@@ -1,92 +1,26 @@
 // End-to-end test: serves the fixture site, requires a bearer token on every
 // request, runs the CLI against it, and asserts on report.json.
 
-import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
-import { join, dirname, extname } from 'node:path';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { Page } from '../src/page.mjs';
 import { shouldFail } from '../src/report.mjs';
 import { normalizeUrl } from '../src/crawler.mjs';
+import { startFixtureSite, TOKEN, COOKIE } from './fixture-site.mjs';
+import { parseEvents } from './event-schema.mjs';
+import { humanRun, readGolden, HUMAN_ARGS } from './human-golden.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
-const fixtures = join(here, 'fixtures');
-const TOKEN = 'fixture-token-123';
-const COOKIE = 'fixture-cookie-456';
-const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
-const TYPES = { '.html': 'text/html; charset=utf-8', '.png': 'image/png', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg' };
 
-const externalHits = [];
-const external = createServer((req, res) => {
-  externalHits.push({ url: req.url, auth: req.headers.authorization || null });
-  res.writeHead(200, { 'content-type': 'image/png' });
-  res.end(PNG);
-});
-await new Promise((r) => external.listen(0, '127.0.0.1', r));
-const externalUrl = `http://127.0.0.1:${external.address().port}/pixel.png`;
-
-const unauthorized = [];
-const cookieHeaders = [];
-const dangerHits = [];
-let dropsLeft = 2; // the first requests for /forms.html die before any response, like a flaky socket
-const site = createServer((req, res) => {
-  if (req.headers.cookie) cookieHeaders.push(req.headers.cookie);
-  if (req.headers.authorization !== `Bearer ${TOKEN}`) {
-    unauthorized.push(req.url);
-    res.writeHead(401, { 'content-type': 'text/plain' });
-    return res.end('unauthorized');
-  }
-  let path = new URL(req.url, 'http://x').pathname;
-  if (path === '/danger') {
-    dangerHits.push(req.method);
-    res.writeHead(204);
-    return res.end();
-  }
-  if (path === '/forms.html' && dropsLeft > 0) {
-    dropsLeft--;
-    return req.socket.destroy();
-  }
-  if (path === '/') path = '/index.html';
-  const ext = extname(path);
-  if (path.startsWith('/img/')) {
-    res.writeHead(200, { 'content-type': 'image/png' });
-    return res.end(PNG);
-  }
-  if (path === '/report.pdf') {
-    res.writeHead(200, { 'content-type': 'application/pdf' });
-    return res.end('%PDF-1.4 fixture');
-  }
-  if (path.startsWith('/media/')) {
-    res.writeHead(200, { 'content-type': TYPES[ext] || 'application/octet-stream' });
-    return res.end('');
-  }
-  if (path === '/submit') {
-    res.writeHead(200, { 'content-type': 'text/html' });
-    return res.end('<!doctype html><html lang="en"><title>Submitted</title><main><h1>Submitted</h1></main></html>');
-  }
-  const file = join(fixtures, path);
-  if (path === '/landed.html') {
-    // Slow landing page for the script redirect from /bounce.html.
-    setTimeout(() => {
-      res.writeHead(200, { 'content-type': TYPES['.html'] });
-      res.end(readFileSync(file));
-    }, 1500);
-    return;
-  }
-  if (!file.startsWith(fixtures) || !existsSync(file)) {
-    res.writeHead(404, { 'content-type': 'text/html' });
-    return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
-  }
-  let body = readFileSync(file);
-  if (ext === '.html') body = Buffer.from(body.toString('utf8').replace('EXTERNAL_IMAGE', externalUrl).replace('FIXTURE_TOKEN', TOKEN));
-  res.writeHead(200, { 'content-type': TYPES[ext] || 'application/octet-stream' });
-  res.end(body);
-});
-await new Promise((r) => site.listen(0, '127.0.0.1', r));
-const base = `http://127.0.0.1:${site.address().port}/`;
+const fixture = await startFixtureSite();
+const { externalHits, unauthorized, cookieHeaders, dangerHits } = fixture;
+const site = { close: () => fixture.close() };
+const external = { close: () => {} };
+const base = fixture.base;
 const out = join(here, '.report');
 rmSync(out, { recursive: true, force: true });
 const origin = new URL(base).origin;
@@ -114,13 +48,13 @@ const run = await new Promise((resolve) => {
   });
 });
 // --troubleshoot against the same fixture: one run that gets in, one that is bounced by the app's guard.
-const runCli = (args, env) => new Promise((resolve) => {
+const runCli = (args, env, killAfter = 120000) => new Promise((resolve) => {
   const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), ...args], { env: { ...process.env, NO_COLOR: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
   let stderr = '';
   child.stdout.on('data', (d) => (stdout += d));
   child.stderr.on('data', (d) => (stderr += d));
-  const timer = setTimeout(() => child.kill('SIGKILL'), 120000);
+  const timer = setTimeout(() => child.kill('SIGKILL'), killAfter);
   child.on('exit', (code) => {
     clearTimeout(timer);
     resolve({ status: code, stdout, stderr });
@@ -134,6 +68,18 @@ const tsText = await runCli([base + 'app.html', '--troubleshoot', '--quiet', '--
 site.close();
 external.close();
 rmSync(stateFile, { force: true });
+
+// --events: the same crawl as the golden human run, as a JSON event stream, and
+// the human run itself, which must match origin/main's output line for line.
+const evSite = await startFixtureSite();
+const evOut = join(here, '.report-events');
+rmSync(evOut, { recursive: true, force: true });
+// One after the other: two Chrome crawls at once can time out.
+const evRun = await runCli([evSite.base, '--out', evOut, ...HUMAN_ARGS, '--events', '--json', '--quiet'], { TOKEN }, 400000);
+const human = await humanRun(root);
+evSite.close();
+const evReport = existsSync(join(evOut, 'report.json')) ? JSON.parse(readFileSync(join(evOut, 'report.json'), 'utf8')) : null;
+rmSync(evOut, { recursive: true, force: true });
 console.log(`cli finished in ${((Date.now() - t0) / 1000).toFixed(1)}s with exit code ${run.status}`);
 if (run.status === null) throw new Error('CLI was killed after 300s');
 
@@ -255,7 +201,7 @@ check('a run that audited nothing never passes', () => {
   assert.equal(shouldFail({ audited: 1, byImpact: {} }, ['critical', 'serious']), false);
 });
 check('dropped sockets on navigation do not fail the page', () => {
-  assert.equal(dropsLeft, 0, 'the server dropped both requests');
+  assert.equal(fixture.dropsLeft, 0, 'the server dropped both requests');
   assert.equal(pages['/forms.html'].error, null, `forms page error: ${pages['/forms.html'].error}`);
 });
 check('report records storage keys and cookie names, not values', () => {
@@ -338,6 +284,55 @@ check('9.C inconsistent identification', () => siteHas('9.C', 'review', /About/)
 check('19.A multiple ways', () => siteHas('19.A', 'review'));
 check('manual checklist present', () => assert.ok(report.manual.some((m) => m.test === '4.B')));
 check('html report written', () => assert.ok(existsSync(join(out, 'report.html')) && existsSync(join(out, 'summary.md'))));
+
+{
+  const { events, problems } = parseEvents(evRun.stdout);
+  const pageEvents = events.filter((e) => e.type === 'page');
+  check('--events: every line on stdout is an event that fits the schema', () => {
+    assert.ok(events.length > 0, evRun.stdout + evRun.stderr);
+    assert.deepEqual(problems, []);
+  });
+  check('--events: starts with start, ends with done carrying the exit code', () => {
+    assert.equal(events[0].type, 'start');
+    assert.equal(events[0].kind, 'crawl');
+    assert.equal(events.at(-1).type, 'done');
+    assert.equal(events.at(-1).code, evRun.status);
+    assert.equal(evRun.status, 1);
+  });
+  check('--events: one page event per page in report.json, with the same counts', () => {
+    assert.ok(evReport, 'report.json written');
+    assert.equal(pageEvents.length, evReport.pages.length);
+    for (const p of evReport.pages) {
+      const e = pageEvents.find((x) => x.finalUrl === (p.finalUrl || p.url));
+      assert.ok(e, `page event for ${p.finalUrl || p.url}`);
+      const v = (p.findings || []).filter((f) => f.level === 'violation').length;
+      assert.equal(e.violations, v, `${e.finalUrl} violations`);
+      assert.equal(e.reviews, (p.findings || []).length - v, `${e.finalUrl} reviews`);
+      assert.equal(e.error, p.error || null);
+    }
+  });
+  check('--events: page events count up, and discovered never trails done', () => {
+    pageEvents.forEach((e, i) => {
+      assert.equal(e.done, i + 1);
+      assert.ok(e.discovered >= e.done, JSON.stringify(e));
+      assert.equal(e.limit, 8);
+    });
+  });
+  check('--events: summary and coverage equal report.json; --json and --quiet do not leak through', () => {
+    const sum = events.find((e) => e.type === 'summary');
+    assert.deepEqual(sum.summary, evReport.summary);
+    assert.equal(sum.result, 'fail');
+    assert.deepEqual(events.find((e) => e.type === 'coverage').warnings, evReport.summary.coverage.warnings);
+    assert.ok(events.some((e) => e.type === 'info'), 'info lines are events even with --quiet');
+  });
+}
+check('without --events the human output is unchanged from origin/main', () => {
+  const golden = readGolden();
+  const a = golden.split('\n');
+  const b = human.split('\n');
+  const i = a.findIndex((l, k) => l !== b[k]);
+  assert.equal(human, golden, `first difference at line ${i + 1}:\n  origin/main: ${a[i]}\n  this tree:   ${b[i]}`);
+});
 
 // The navigation retry loop, with the single navigation stubbed out: Chrome
 // absorbs plain socket drops itself, so this is the only way to drive it.

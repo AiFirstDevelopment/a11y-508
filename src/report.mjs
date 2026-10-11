@@ -270,7 +270,57 @@ ${sections || '<p>No findings.</p>'}
 `;
 }
 
-export function makeLogger({ quiet, json }) {
+// One JSON object per line on stdout, for --events. The shapes are documented
+// in the README ("Event stream"); the dashboard (ui/) reads nothing else.
+export function eventWriter(stream = process.stdout) {
+  return (type, data = {}) => stream.write(JSON.stringify({ type, at: new Date().toISOString(), ...data }) + '\n');
+}
+
+export const resultOf = (report) => {
+  const s = report.summary;
+  if (!s.audited) return 'nothing-audited';
+  if (!report.passed) return 'fail';
+  return s.coverage && !s.coverage.complete ? 'incomplete' : 'pass';
+};
+
+export function pageEvent(p, done, discovered, limit) {
+  const findings = p.findings || [];
+  const byImpact = { critical: 0, serious: 0, moderate: 0, minor: 0 };
+  let violations = 0;
+  for (const f of findings) {
+    if (f.level !== 'violation') continue;
+    violations++;
+    byImpact[f.impact] = (byImpact[f.impact] || 0) + 1;
+  }
+  return {
+    url: p.url, finalUrl: p.finalUrl || p.url, title: p.title || '', status: p.status ?? null, error: p.error || null, skipped: p.skipped || null,
+    violations, reviews: findings.length - violations, byImpact, durationMs: p.durationMs || 0, foundBy: p.foundBy || 'link',
+    done, discovered, limit: limit ?? null,
+  };
+}
+
+function makeEventLogger({ maxPages }) {
+  const emit = eventWriter();
+  const msg = (type) => (s) => {
+    if (s !== '') emit(type, { message: s });
+  };
+  return {
+    events: true,
+    event: emit,
+    info: msg('info'),
+    warn: msg('warn'),
+    error: msg('error'),
+    page: (p, done, discovered) => emit('page', pageEvent(p, done, discovered, maxPages)),
+    summary: (report, files) => {
+      const s = report.summary;
+      emit('coverage', s.coverage || { complete: true, warnings: [], notes: [] });
+      emit('summary', { result: resultOf(report), passed: report.passed, baseUrl: report.baseUrl, failOn: report.options.failOn, summary: s, files });
+    },
+  };
+}
+
+export function makeLogger({ quiet, json, events, maxPages }) {
+  if (events) return makeEventLogger({ maxPages });
   const tty = process.stdout.isTTY && !process.env.NO_COLOR;
   const c = (code, s) => (tty ? `\u001b[${code}m${s}\u001b[0m` : s);
   const out = (s) => {
@@ -278,6 +328,8 @@ export function makeLogger({ quiet, json }) {
     else process.stderr.write(s + '\n');
   };
   return {
+    events: false,
+    event: () => {},
     info: (s) => {
       if (!quiet) out(s);
     },

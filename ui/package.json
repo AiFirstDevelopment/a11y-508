@@ -1,0 +1,42 @@
+{
+  "name": "a11y-508-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The a11y-508 dashboard (Angular). Only needed to change the UI; the built app is committed under dist/.",
+  "scripts": {
+    "ng": "ng",
+    "build": "ng build && node server/build-info.mjs --write",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.spec.json --noEmit && tsc -p tsconfig.e2e.json --noEmit",
+    "test": "ng test --watch=false",
+    "e2e": "playwright test",
+    "freshness": "node server/build-info.mjs --check"
+  },
+  "engines": {
+    "node": "^22.22.3 || ^24.15.0 || >=26.0.0"
+  },
+  "dependencies": {
+    "@angular/animations": "^22.2.2",
+    "@angular/cdk": "^22.2.2",
+    "@angular/common": "^22.2.2",
+    "@angular/compiler": "^22.2.2",
+    "@angular/core": "^22.2.2",
+    "@angular/forms": "^22.2.2",
+    "@angular/platform-browser": "^22.2.2",
+    "@angular/platform-browser-dynamic": "^22.2.2",
+    "@angular/router": "^22.2.2",
+    "@swimlane/ngx-charts": "^25.0.3",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "@angular/build": "^22.2.2",
+    "@angular/cli": "^22.2.2",
+    "@angular/compiler-cli": "^22.2.2",
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^22.20.5",
+    "jsdom": "^30.1.2",
+    "typescript": "~6.0.2",
+    "vitest": "^5.0.3"
+  },
+  "type": "module"
+}
