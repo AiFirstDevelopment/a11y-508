@@ -2,10 +2,9 @@
 // features, and finds no critical or serious violations on any screen.
 
 import { test, expect } from '@playwright/test';
-import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { api, dashboard, fixtureSite, BIN, TOKEN, SECRET_HEADER, tempDir } from './harness';
+import { api, dashboard, fixtureSite, run, BIN, TOKEN, SECRET_HEADER, tempDir } from './harness';
 
 const ROUTES = ['/run', '/live', '/report', '/troubleshoot', '/sign-in', '/fix-loop', '/history'];
 
@@ -29,10 +28,11 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     await wait();
 
     const out = tempDir('a11y-508-self-');
-    const r = spawnSync(
+    // Asynchronously: this process also serves the fixture site, which a blocking spawn would freeze.
+    const r = await run(
       process.execPath,
       [BIN, dash.origin + '/run', '--token-header', SECRET_HEADER, '--token-storage', 'a11y508.secret', '--no-follow-clicks', '--max-pages', '30', '--out', out, '--json', '--quiet'],
-      { env: { ...process.env, TOKEN: dash.secret }, encoding: 'utf8', timeout: 280_000 }
+      { env: { ...process.env, TOKEN: dash.secret }, timeout: 280_000 }
     );
     const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
     const paths = report.pages.map((p: any) => new URL(p.finalUrl || p.url).pathname);
@@ -41,7 +41,7 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     const bad = [...report.pages.flatMap((p: any) => p.findings.map((f: any) => ({ ...f, page: p.url }))), ...report.site.findings].filter(
       (f: any) => f.level === 'violation' && ['critical', 'serious'].includes(f.impact)
     );
-    expect(bad.map((f: any) => `${f.page} ${f.test} ${f.impact}: ${f.message} [${f.selector}]`), r.stderr).toEqual([]);
+    expect(bad.map((f: any) => `${f.page} ${f.test} ${f.impact}: ${f.message} [${f.selector}]`), r.output).toEqual([]);
   } finally {
     await dash.stop();
     site.close();

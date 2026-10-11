@@ -73,7 +73,8 @@ export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; a
     output: () => out,
     stop: async () => {
       await stopTree(proc);
-      if (!opts.keepCwd && !opts.cwd) rmSync(cwd, { recursive: true, force: true, maxRetries: 10 });
+      // Windows releases a killed process's hold on its working directory a little later.
+      if (!opts.keepCwd && !opts.cwd) rmSync(cwd, { recursive: true, force: true, maxRetries: 15, retryDelay: 200 });
     },
   };
 }
