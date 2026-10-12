@@ -18,6 +18,11 @@ on:
       - test/loop-app/**
       - .github/workflows/loop-gemini.yml
   workflow_dispatch:
+    inputs:
+      model:
+        description: Gemini model for the assistant (a free-tier one)
+        required: false
+        default: gemini-3.8-flash
 
 permissions:
   contents: read
@@ -31,9 +36,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 180
     env:
-      # A free-tier model rather than the CLI's default. Gemini CLI reads GEMINI_MODEL
-      # (argv.model || GEMINI_MODEL || settings), so no -m flag is needed.
-      GEMINI_MODEL: gemini-2.5-flash
+      # A free-tier flash model rather than the CLI's default. Gemini CLI reads GEMINI_MODEL
+      # (argv.model || GEMINI_MODEL || settings), so no -m flag is needed. gemini-2.5-flash, the
+      # first choice, now answers "no longer available to new users" (404) for this key; the API's
+      # message names gemini-3.8-flash instead. workflow_dispatch can pick another.
+      GEMINI_MODEL: ${{ inputs.model || 'gemini-3.8-flash' }}
     defaults:
       run:
         shell: bash

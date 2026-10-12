@@ -233,6 +233,12 @@ await check('AC6: a gemini command gets GEMINI_CLI_TRUST_WORKSPACE=true; others,
   assert.equal(agentEnvFor('gemini -p x', { GEMINI_CLI_TRUST_WORKSPACE: 'false' }).GEMINI_CLI_TRUST_WORKSPACE, 'false');
 });
 
-rmSync(tmp, { recursive: true, force: true });
+// On Windows the shell's SIGKILL leaves the stub of the time-out case running for a few seconds
+// in tmp, which keeps the folder busy; wait for it rather than fail the run on cleanup.
+try {
+  rmSync(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 });
+} catch (e) {
+  console.log(`  (could not remove ${tmp}: ${e.code})`);
+}
 console.log(failures ? `\n${failures} loop app assertion(s) failed` : '\nall loop app assertions passed');
 process.exitCode = failures ? 1 : 0;
