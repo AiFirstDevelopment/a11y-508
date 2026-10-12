@@ -206,7 +206,13 @@ window.__a11y508.register(function sensoryContrast(A) {
     const varies = max.ratio - min.ratio >= 0.005;
     const kind = !varies ? 'solid' : layers.some((l) => l.kind === 'image') ? 'image' : 'gradient';
     const bound = (c) => results.find((r) => layers.every((l) => l.kind !== 'image' || r.pick.get(l.node) === c)) || min;
-    return { kind, min, max, white: bound(WHITE), black: bound(BLACK) };
+    const white = bound(WHITE);
+    const black = bound(BLACK);
+    // The text's own color lies between the two bounds: an image of a similar color would hide it,
+    // even when both bounds pass.
+    const lt = A.luminance(min.fg);
+    const between = kind === 'image' && lt > Math.min(A.luminance(white.bg), A.luminance(black.bg)) && lt < Math.max(A.luminance(white.bg), A.luminance(black.bg));
+    return { kind, min, max, white, black, between };
   };
 
   // Decides the outcome of a set of samples (one per line, or one for a control). Returns null
@@ -215,6 +221,8 @@ window.__a11y508.register(function sensoryContrast(A) {
     const pass = (r) => r.ratio + 0.005 >= need;
     const mixedImage = samples.find((s) => s.kind === 'image' && pass(s.max) && !pass(s.min));
     if (mixedImage) return { level: 'review', kind: 'image', s: mixedImage };
+    const between = samples.find((s) => s.kind === 'image' && s.between && pass(s.min));
+    if (between) return { level: 'review', kind: 'image', between: true, s: between };
     const gradient = samples.filter((s) => s.kind === 'gradient' && !pass(s.min));
     if (gradient.length) return { level: 'review', kind: 'gradient', s: gradient.reduce((a, b) => (b.min.ratio < a.min.ratio ? b : a)) };
     const failing = samples.filter((s) => !pass(s.min));
@@ -290,7 +298,9 @@ window.__a11y508.register(function sensoryContrast(A) {
     return out;
   };
   // Messages for the outcomes decide() can return, for text (who = 'Text') and form controls.
-  const imageMessage = (who, d, t) => d.level === 'violation'
+  const imageMessage = (who, d, t) => d.between
+    ? `${who} over a background image passes ${t.need}:1 if the image is white (${fmt(d.s.white.ratio)}:1) or black (${fmt(d.s.black.ratio)}:1), but its color (${A.hex(d.s.min.fg)}) lies between the two, so parts of the image close to that color would hide it. Check it visually.`
+    : d.level === 'violation'
     ? `${who} over a background image fails ${t.need}:1 over any background: ${fmt(d.s.white.ratio)}:1 if the image is white, ${fmt(d.s.black.ratio)}:1 if it is black (${A.hex(d.s.min.fg)}).`
     : `${who} over a background image has contrast between ${fmt(d.s.min.ratio)}:1 and ${fmt(d.s.max.ratio)}:1 depending on the image (${fmt(d.s.white.ratio)}:1 if it is white, ${fmt(d.s.black.ratio)}:1 if it is black); it needs ${t.need}:1. Check it visually.`;
   const gradientMessage = (who, d, t) => `${who} over a gradient has contrast ${fmt(d.s.min.ratio)}:1 at the gradient's worst point (${A.hex(d.s.min.fg)} on ${A.hex(d.s.min.bg)}), below ${t.need}:1. Check it visually.`;

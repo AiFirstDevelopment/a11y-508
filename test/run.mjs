@@ -419,6 +419,11 @@ check('AC3 13.C: #ccc over a background image fails over any background', () => 
   near(f.details.bounds.black, 1.77, 'if black');
 });
 check('AC3 13.C: #000 over the image has no finding', () => noneOn(IMAGES, '13.C', ['#img-dark']));
+check('AC3 13.C: text passing both bounds but colored between them is a review item', () => {
+  const f = on(IMAGES, '13.C', '#img-between', 'review', /lies between the two/);
+  near(f.details.bounds.white, 4.54, 'if white');
+  near(f.details.bounds.black, 4.62, 'if black');
+});
 check('AC3 13.C: #999 on a light gradient is a review item at the worst stop', () => near(on(IMAGES, '13.C', '#grad-grey', 'review', /gradient's worst point/).details.ratio, 2.61, 'worst stop'));
 check('AC3 13.C: #333 on the gradient has no finding', () => noneOn(IMAGES, '13.C', ['#grad-dark']));
 
