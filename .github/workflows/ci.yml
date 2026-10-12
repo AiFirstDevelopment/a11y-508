@@ -59,6 +59,39 @@ jobs:
         env:
           CHROME_PATH: /usr/bin/google-chrome
 
+  macos:
+    # macOS is where headless Chrome's key-event handling differs: a synthetic
+    # key event with a native key code stalled the browser process (see
+    # Page.press in src/page.mjs). The core suite, then the Playwright suite,
+    # whose self-audit presses Enter and Escape on every screen. Chrome is
+    # preinstalled and the runner has a desktop, so Sign in needs no xvfb.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Show browser
+        run: /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --version
+      - name: Core, loop, remedies and server tests
+        run: npm test
+      - name: Install the UI's dependencies
+        run: npm --prefix ui ci
+      - name: Playwright end-to-end suite
+        run: npm --prefix ui run e2e
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a11y-508-macos-reports
+          path: |
+            test/.report
+            ui/playwright-report
+            ui/test-results
+          if-no-files-found: ignore
+
   windows:
     # The dashboard's Windows paths: Git Bash as the shell, .cmd shims, taskkill
     # for Stop, cmd /c start for the browser. The core suite and the server's

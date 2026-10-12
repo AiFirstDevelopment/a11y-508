@@ -4,6 +4,11 @@
 
 import { EventEmitter } from 'node:events';
 
+// A11Y_508_DEBUG=2 traces every protocol call and its reply on stderr, so a
+// call that never returns can be named.
+const TRACE = process.env.A11Y_508_DEBUG === '2';
+const trace = (s) => process.stderr.write(`[cdp] ${s}\n`);
+
 export class Cdp extends EventEmitter {
   #seq = 0;
   #pending = new Map();
@@ -55,6 +60,7 @@ export class Cdp extends EventEmitter {
       const p = this.#pending.get(msg.id);
       if (!p) return;
       this.#pending.delete(msg.id);
+      if (TRACE) trace(`< ${msg.id} ${p.method} ${Date.now() - p.at}ms${msg.error ? ' ERROR ' + msg.error.message : ''}`);
       if (msg.error) {
         const err = new Error(`${p.method}: ${msg.error.message}`);
         err.code = msg.error.code;
@@ -75,8 +81,12 @@ export class Cdp extends EventEmitter {
     const id = ++this.#seq;
     const msg = { id, method, params };
     if (sessionId) msg.sessionId = sessionId;
+    if (TRACE) {
+      const what = method === 'Runtime.evaluate' ? ` ${String(params.expression || '').replace(/\s+/g, ' ').slice(0, 90)}` : method === 'Input.dispatchKeyEvent' ? ` ${params.type} ${params.key}` : '';
+      trace(`> ${id} ${method}${sessionId ? ' @' + sessionId.slice(0, 6) : ''}${what}`);
+    }
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject, method });
+      this.#pending.set(id, { resolve, reject, method, at: Date.now() });
       this.#writer.write(JSON.stringify(msg) + '\0', (err) => {
         if (err) {
           this.#pending.delete(id);
