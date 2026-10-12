@@ -11,7 +11,7 @@ import { RunView } from '../shared/run-view';
   template: `
     <h1>Live run</h1>
     @if (!store.run()) {
-      <p>No run yet. <a routerLink="/run">Start one</a>.</p>
+      <p data-testid="no-run">No run in this directory yet. <a routerLink="/run">Start one</a>.</p>
     } @else {
       <p class="status" role="status" data-testid="run-status">{{ status() }}</p>
       @if (store.run()?.['command']; as cmd) {

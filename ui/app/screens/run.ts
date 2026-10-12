@@ -110,6 +110,7 @@ import { ageText } from '../core/format';
       </details>
       <section class="command" aria-labelledby="cmd-h">
         <h2 id="cmd-h">The same run on the command line</h2>
+        <p class="hint">Run it in <code data-testid="command-cwd">{{ env.cwd() }}</code></p>
         <pre data-testid="command" tabindex="0" aria-label="Equivalent command">{{ command() || '(enter a start URL)' }}</pre>
         <button type="button" class="secondary" (click)="copy()" [disabled]="!command()">Copy command</button>
         <span role="status" class="hint">{{ copied() }}</span>
@@ -148,6 +149,8 @@ export class RunScreen implements OnInit {
 
   constructor() {
     effect(() => {
+      // The command is written for the working directory, so it follows a switch.
+      this.env.cwd();
       const body = this.form.body('crawl', false);
       clearTimeout(this.timer);
       this.timer = setTimeout(() => this.refreshCommand(body), 150);

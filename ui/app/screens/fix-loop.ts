@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { Component, ElementRef, OnInit, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { LineChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
@@ -20,6 +20,9 @@ const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Pending verifi
   imports: [ChartPanel, LineChartModule, RunView],
   template: `
     <h1>Fix loop</h1>
+    @if (env.env()?.inGitRepo === false) {
+      <p class="notice warn" role="status" data-testid="not-git">{{ env.env()?.cwd }} is not a git repository. The loop commits each fix, so it needs one; a dry run and a crawl do not.</p>
+    }
     <p class="notice warn">The assistant's changes are committed without review. The <code>check</code> command below is the only gate between a fix and a commit.</p>
 
     <section aria-labelledby="agent-h">
@@ -265,7 +268,19 @@ export class FixLoopScreen implements OnInit {
     effect(() => {
       this.store.ledger();
       this.store.done();
+      this.env.cwd();
       void this.loadLedger();
+    });
+    // After a switch of directory, the new directory's config; an edit in
+    // progress is discarded (the server never saw it).
+    let seen: string | null = null;
+    effect(() => {
+      const cwd = this.env.cwd();
+      untracked(() => {
+        if (!cwd) return;
+        if (seen && seen !== cwd) void this.loadConfig();
+        seen = cwd;
+      });
     });
     effect(() => {
       const d = this.store.done();
@@ -274,26 +289,44 @@ export class FixLoopScreen implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
-    await this.env.load();
-    try {
-      const c = await this.api.get<{ config: Record<string, any> }>('/api/config');
-      this.cfg.set(c.config || {});
-      const a = c.config?.['agent'];
-      if (a) {
-        if (['claude', 'gemini', 'codex'].includes(a)) this.choice.set(a);
-        else {
-          this.choice.set('custom');
-          this.custom.set(a);
-        }
-      }
-    } catch {}
+    // In parallel: the first /api/env can take seconds (assistant detection),
+    // and the config must not arrive after the developer has started editing.
+    await Promise.all([this.env.load(), this.loadConfig()]);
     const spec = this.agentSpec();
-    if (spec && this.env.env()?.lastTest?.[spec]) this.testResult.set(this.env.env()!.lastTest[spec]);
+    if (!this.testResult() && spec && this.env.env()?.lastTest?.[spec]) this.testResult.set(this.env.env()!.lastTest[spec]);
   }
 
-  async loadLedger(): Promise<void> {
+  private configLoads = 0;
+  async loadConfig(): Promise<void> {
+    const n = ++this.configLoads;
+    let c: { config: Record<string, any> } | null = null;
     try {
-      this.ledger.set(await this.api.get<LedgerInfo>('/api/ledger'));
+      c = await this.api.get<{ config: Record<string, any> }>('/api/config');
+    } catch {}
+    if (n !== this.configLoads || !c) return;
+    this.cfg.set(c.config || {});
+    this.configErrors.set([]);
+    this.configStatus.set('');
+    const a = c.config?.['agent'];
+    this.choice.set(null);
+    this.custom.set('');
+    if (a) {
+      if (['claude', 'gemini', 'codex'].includes(a)) this.choice.set(a);
+      else {
+        this.choice.set('custom');
+        this.custom.set(a);
+      }
+    }
+    const spec = this.agentSpec();
+    this.testResult.set((spec && this.env.env()?.lastTest?.[spec]) || null);
+  }
+
+  private ledgerLoads = 0;
+  async loadLedger(): Promise<void> {
+    const n = ++this.ledgerLoads;
+    try {
+      const l = await this.api.get<LedgerInfo>('/api/ledger');
+      if (n === this.ledgerLoads) this.ledger.set(l);
     } catch {}
   }
 
@@ -333,6 +366,8 @@ export class FixLoopScreen implements OnInit {
   }
 
   async saveConfig(): Promise<void> {
+    // A load still in flight must not replace what is being saved.
+    this.configLoads++;
     const c = { ...this.cfg() };
     if (!c['url'] && this.form.url()) c['url'] = this.form.url();
     try {

@@ -1,5 +1,6 @@
 // AC 20: a11y-508 audits the dashboard itself, through the tool's own auth
 // features, and finds no critical or serious violations on any screen.
+// Folder picker AC 12: the picker's dialog is opened and checked on each one.
 
 import { test, expect } from '@playwright/test';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -54,6 +55,22 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
       (f: any) => f.level === 'violation' && ['critical', 'serious'].includes(f.impact)
     );
     expect(bad.map((f: any) => `${f.page} ${f.test} ${f.impact}: ${f.message} [${f.selector}]`), r.output).toEqual([]);
+
+    // The folder picker (Change… in the header, aria-haspopup="dialog") is a
+    // disclosure on every screen. Every disclosure on each screen was
+    // activated, so Change… was, and its dialog's focus checks (4.G focus
+    // moves in, 4.H focus returns) raised nothing. The core closes a dialog
+    // with Escape before it re-audits the page, so the open dialog's own
+    // contents are covered by the picker's Playwright tests instead.
+    for (const route of ROUTES) {
+      const d = report.pages.find((x: any) => new URL(x.finalUrl || x.url).pathname === route).passes.disclosure;
+      expect(d.candidates, `${route}: disclosure candidates`).toBeGreaterThanOrEqual(1);
+      expect(d.activated, `${route}: every disclosure, Change… among them, was activated`).toBe(d.candidates);
+    }
+    const dialogIssues = [...report.pages.flatMap((p: any) => p.findings.map((f: any) => ({ ...f, page: p.url }))), ...report.site.findings].filter(
+      (f: any) => ['4.G', '4.H'].includes(f.test) || /Dialog has no accessible name|did not close with Escape|did not change aria-expanded/.test(f.message) || /Change working directory/.test(f.message)
+    );
+    expect(dialogIssues.map((f: any) => `${f.page} ${f.test} ${f.impact}: ${f.message} [${f.selector}]`)).toEqual([]);
   } finally {
     await dash.stop();
     site.close();
