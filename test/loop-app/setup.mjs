@@ -43,9 +43,10 @@ writeFileSync(join(target, 'a11y-508.config.json'), JSON.stringify({
   push: false,
   deployed: 'none',
   maxAttempts: 2,
-  // One triage call per round: the free tiers limit requests per minute.
-  triageBatch: 40,
-  agentTimeout: 8 * 60 * 1000,
+  // Small triage batches and a three-minute limit per call: a stuck or rate-limited call costs
+  // three minutes, not fifteen.
+  triageBatch: 8,
+  agentTimeout: 3 * 60 * 1000,
 }, null, 2) + '\n');
 
 const git = (...args) => {

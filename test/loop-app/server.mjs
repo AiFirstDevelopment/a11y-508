@@ -15,7 +15,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const SITE = join(here, 'site');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.js': 'text/javascript; charset=utf-8' };
 
-export function startServer(port = 0) {
+export function startServer(port = 0, { stoppable = false } = {}) {
   const server = createServer(async (req, res) => {
     let path;
     try {
@@ -23,6 +23,13 @@ export function startServer(port = 0) {
     } catch {
       res.writeHead(400);
       return res.end();
+    }
+    // node server.mjs --stoppable: GET /__stop ends the server (a CI step on Windows cannot always
+    // kill a background node.exe from Git Bash, and a server left running keeps the step open).
+    if (stoppable && path === '/__stop') {
+      res.end('stopping\n');
+      setTimeout(() => process.exit(0), 50);
+      return;
     }
     if (path.endsWith('/')) path += 'index.html';
     const file = normalize(join(SITE, path));
@@ -48,6 +55,6 @@ export function startServer(port = 0) {
 // Run directly (realpath: a temporary directory can be reached through a symlink, as on macOS).
 if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   const at = process.argv.indexOf('--port');
-  const server = await startServer(at > 0 ? Number(process.argv[at + 1]) : 4321);
+  const server = await startServer(at > 0 ? Number(process.argv[at + 1]) : 4321, { stoppable: process.argv.includes('--stoppable') });
   process.stdout.write(`loop app at http://127.0.0.1:${server.address().port}/\n`);
 }

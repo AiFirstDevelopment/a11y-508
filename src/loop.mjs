@@ -5,7 +5,7 @@
 // person stops it. State lives in the ledger, so Ctrl+C and resume are safe.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyReport, byStatus, isDone, loadLedger, openFindings, saveLedger, statusCounts } from './ledger.mjs';
@@ -155,6 +155,19 @@ function waitForEnter(message, prompt) {
   });
 }
 
+// One line when each assistant call starts and one when it ends (exit code, time, quota, the last
+// lines of its output), in a11y-508-work/agent-calls.log: a call that hangs shows as a start with no
+// end, while the loop is still running and afterwards.
+async function callAgent(work, label, args) {
+  const file = join(work, 'agent-calls.log');
+  const t0 = new Date();
+  appendFileSync(file, `${t0.toISOString()} start ${label}\n`);
+  const res = await runAgent(args);
+  const tail = `${res.stdout || ''}\n${res.stderr || ''}`.split('\n').map((l) => l.trim()).filter(Boolean).slice(-5).map((l) => `    ${l.slice(0, 300)}`).join('\n');
+  appendFileSync(file, `${new Date().toISOString()} end   ${label} exit ${res.code}${res.timedOut ? ' timed-out' : ''}${res.quota ? ` quota (retries ${res.quotaRetries})` : ''} result ${res.result ? 'yes' : 'no'} ${Math.round((Date.now() - t0) / 1000)}s\n${tail ? tail + '\n' : ''}`);
+  return res;
+}
+
 export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false, passthrough = [], stopSignal, events = false }) {
   const { cfg, errors } = normalizeConfig(config, { url: config._url, agent: config._agent }, { interactive: events || !!process.stdin.isTTY });
   const ev = (type, data) => log.event && log.event(type, data);
@@ -257,7 +270,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         const promptFile = join(work, `prompt-r${round}-triage-${i}.md`);
         const resultFile = join(work, `result-r${round}-triage-${i}.json`);
         writePrompt(promptFile, triagePrompt({ items, resultFile }));
-        const res = await runAgent({ command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout });
+        const res = await callAgent(work, `r${round}-triage-${i}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout });
         writeFileSync(join(work, `agent-r${round}-triage-${i}.log`), agentLog(res));
         const decisions = Array.isArray(res.result) ? res.result : Array.isArray(res.result && res.result.items) ? res.result.items : null;
         if (!decisions) {
@@ -297,7 +310,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       const promptFile = join(work, `prompt-r${round}-fix-${n}.md`);
       const resultFile = join(work, `result-r${round}-fix-${n}.json`);
       writePrompt(promptFile, fixPrompt({ finding: entry, sourceDirs, protectedDirs, resultFile, condition: testInfo(entry.test).condition }));
-      const res = await runAgent({ command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout });
+      const res = await callAgent(work, `r${round}-fix-${n}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout });
       writeFileSync(join(work, `agent-r${round}-fix-${n}.log`), agentLog(res));
       const changed = gitChanged(cwd, sourceDirs);
       const strayChanges = gitChanged(cwd).filter((f) => !changed.includes(f) && !f.startsWith(WORK_DIR) && !f.startsWith('a11y-508-report'));

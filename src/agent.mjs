@@ -187,6 +187,8 @@ function lastJson(text) {
 export const QUOTA = /\b429\b|RESOURCE_EXHAUSTED|\bquota\b|rate[ -]?limit|too many requests/i;
 // Waits before each retry of a call refused for quota: two retries, then the call is given up.
 export const QUOTA_DELAYS = [30000, 90000];
+// A quota that resets in hours (a free tier's daily limit) is not worth waiting for in seconds.
+export const QUOTA_TERMINAL = /daily quota|TerminalQuotaError|per day|retry in \d+h/i;
 
 // Gemini CLI refuses to run headless in a folder it has not been told to trust; the loop runs it
 // in the repository it was configured for, so it says so. Any other command's environment is
@@ -208,7 +210,7 @@ export async function runAgent({ command, promptFile, resultFile, cwd, timeout =
     // A call that ran out its time while the assistant backed off on its own counts as refused for
     // quota too, but is not run again: it has already spent its time.
     const quota = !r.result && QUOTA.test(r.stdout + '\n' + r.stderr);
-    if (quota && !r.timedOut && quotaRetries < quotaDelays.length) {
+    if (quota && !r.timedOut && !QUOTA_TERMINAL.test(r.stdout + '\n' + r.stderr) && quotaRetries < quotaDelays.length) {
       await new Promise((res) => setTimeout(res, quotaDelays[quotaRetries]));
       quotaRetries++;
       continue;
@@ -229,6 +231,9 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
+    // On Windows the command runs under cmd.exe, and killing cmd.exe leaves the assistant running
+    // (it would keep retrying, and keep a CI step alive); taskkill /T ends the whole tree.
+    if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }).on('error', () => {});
     child.kill('SIGKILL');
   }, timeout);
   const closed = new Promise((r) => child.on('close', r));
@@ -237,6 +242,13 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env
   // The last of its output can arrive after it exits; wait for the pipes, but not for a grandchild
   // that keeps them open.
   await Promise.race([closed, new Promise((r) => setTimeout(r, 2000).unref())]);
+  // A grandchild still holding the pipes (an assistant that outlived its shell) must not keep the
+  // loop's own process alive after it is done: let go of them.
+  for (const stream of [child.stdout, child.stderr]) {
+    try {
+      stream.destroy();
+    } catch {}
+  }
   let result = null;
   if (existsSync(resultFile)) {
     try {

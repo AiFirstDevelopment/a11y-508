@@ -188,7 +188,7 @@ const calls = existsSync(counter) ? Number(readFileSync(counter, 'utf8')) + 1 : 
 writeFileSync(counter, String(calls));
 const failFor = Number(process.env.FAIL_FOR || 0);
 if (calls <= failFor) {
-  console.error(process.env.FAIL_KIND === 'other' ? 'Error: could not read the prompt' : 'Error: [API Error: got status: 429 Too Many Requests. RESOURCE_EXHAUSTED: quota exceeded]');
+  console.error(process.env.FAIL_KIND === 'other' ? 'Error: could not read the prompt' : process.env.FAIL_KIND === 'daily' ? 'TerminalQuotaError: You have exhausted your daily quota on this model. 429' : 'Error: [API Error: got status: 429 Too Many Requests. RESOURCE_EXHAUSTED: quota exceeded]');
   // HANG: backs off on its own past the call's time limit, as Gemini CLI does on 429s.
   if (process.env.HANG) setTimeout(() => process.exit(1), 4000);
   else process.exit(1);
@@ -218,6 +218,11 @@ await check('AC4: a call that fails for another reason is not retried', async ()
   assert.deepEqual([res.quota, res.quotaRetries, res.code], [false, 0, 1]);
 });
 
+await check('AC4: a daily quota is not retried in seconds', async () => {
+  const { res, calls } = await callAgent('daily', { FAIL_FOR: '99', FAIL_KIND: 'daily' });
+  assert.equal(calls, 1);
+  assert.deepEqual([res.quota, res.quotaRetries], [true, 0]);
+});
 await check('AC4: a call that runs out its time while refused for quota is marked quota, and not run again (fix round)', async () => {
   const { res, calls } = await callAgent('hang', { FAIL_FOR: '99', HANG: '1' }, 1500);
   assert.equal(calls, 1);

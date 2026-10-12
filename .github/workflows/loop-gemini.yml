@@ -34,7 +34,7 @@ concurrency:
 jobs:
   loop-gemini:
     runs-on: windows-latest
-    timeout-minutes: 180
+    timeout-minutes: 120
     env:
       # A free-tier flash model rather than the CLI's default. Gemini CLI reads GEMINI_MODEL
       # (argv.model || GEMINI_MODEL || settings), so no -m flag is needed. gemini-2.5-flash, the
@@ -71,15 +71,40 @@ jobs:
       - name: Make the throwaway repository
         if: steps.key.outputs.present == 'true'
         run: node test/loop-app/setup.mjs "$RUNNER_TEMP/loop-repo" --agent gemini --port 4321
-      - name: Run the fix loop, two rounds
+      - name: Does Gemini answer at all? (90 s)
+        # One direct call with the loop's environment, so a trust prompt, a model the key cannot use
+        # or an exhausted quota shows in seconds rather than after a round of agent calls. Quota
+        # makes the run SKIPPED (green); anything else fails it.
+        id: preflight
         if: steps.key.outputs.present == 'true'
+        working-directory: ${{ runner.temp }}\loop-repo
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+        run: |
+          set +e
+          timeout 90 gemini -p "Reply with the single word ok." > "$RUNNER_TEMP/preflight.txt" 2>&1
+          code=$?
+          echo "gemini exit code $code (model $GEMINI_MODEL)"
+          grep -v "^Warning: True color\|^Ripgrep" "$RUNNER_TEMP/preflight.txt" | tail -40
+          if [ $code -eq 0 ] && grep -qiw ok "$RUNNER_TEMP/preflight.txt"; then
+            echo "state=ok" >> "$GITHUB_OUTPUT"
+          elif grep -Eqi '429|RESOURCE_EXHAUSTED|quota|rate.?limit' "$RUNNER_TEMP/preflight.txt"; then
+            echo "SKIPPED: Gemini refused the call for quota or rate limit ($GEMINI_MODEL); the loop was not run."
+            echo "state=quota" >> "$GITHUB_OUTPUT"
+          else
+            echo "Gemini CLI did not answer (exit $code); see its output above."
+            echo "state=error" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+      - name: Run the fix loop, two rounds
+        if: steps.preflight.outputs.state == 'ok'
         working-directory: ${{ runner.temp }}\loop-repo
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           unset TOKEN
-          node server.mjs --port 4321 > "$RUNNER_TEMP/server.log" 2>&1 &
-          server=$!
+          node server.mjs --port 4321 --stoppable > "$RUNNER_TEMP/server.log" 2>&1 &
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:4321/ > /dev/null && break; sleep 1; done
           curl -sf http://127.0.0.1:4321/ > /dev/null || { echo "the loop app's server did not start:"; cat "$RUNNER_TEMP/server.log"; exit 1; }
           set +e
@@ -89,13 +114,14 @@ jobs:
           node "$GITHUB_WORKSPACE/bin/a11y-508.mjs" status
           git log --stat --format='--- %h %s' > a11y-508-work/git-log.txt
           cp a11y-508-gate.log a11y-508-work/ 2>/dev/null
-          kill $server
+          cp "$RUNNER_TEMP/preflight.txt" a11y-508-work/ 2>/dev/null
+          curl -s http://127.0.0.1:4321/__stop > /dev/null
           exit 0
       - name: Check the outcome
-        if: steps.key.outputs.present == 'true'
+        if: steps.preflight.outputs.state == 'ok'
         run: node test/loop-app/verify.mjs "$RUNNER_TEMP/loop-repo" --rounds 2
       - name: Upload the loop's work directory
-        if: always() && steps.key.outputs.present == 'true'
+        if: always() && steps.preflight.outputs.state == 'ok'
         uses: actions/upload-artifact@v4
         with:
           name: loop-gemini-work
