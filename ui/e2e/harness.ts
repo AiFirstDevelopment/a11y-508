@@ -149,6 +149,10 @@ export const QUICK = { maxPages: 5, advanced: { 'no-zoom': true, 'max-screenshot
 export async function startFromRun(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Start', exact: true }).click();
   await expect(page).toHaveURL(/\/live$/);
+  // The Live screen can still show the previous run's "Finished" until the
+  // store sees the new run, and waitFinished would accept that at once. A run
+  // cannot finish before this is observed: the browser alone takes seconds.
+  await expect(status(page)).toHaveText(/^(Running|Stopping)/, { timeout: 60_000 });
 }
 
 export const status = (page: Page) => page.getByTestId('run-status');
