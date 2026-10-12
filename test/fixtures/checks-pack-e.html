@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tables: data or layout - a11y-508 test site</title>
+<!--
+  Round 4a pack E (plan items 12-13). Header-less tables are classified before 14.A escalates
+  them: one that nests another table, and one wider than 95% of the viewport with fewer than ten
+  cells, are layout and not escalated; a bordered one with five columns is data and is. With th
+  present: a data cell in a column no header covers is a 14.B violation, while the cells under a
+  colspan header are covered; scope="column" is a 14.B violation; a first row that is one cell
+  across the table is a 14.B review item suggesting a caption. Also: a header that labels no data
+  cell, and a caption that repeats the summary, are 14.B review items.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus, summary:focus { outline: 3px solid #f90; }
+  table { border-collapse: collapse; margin: 12px 0; }
+  .bordered td, .bordered th { border: 1px solid #999; padding: 4px 8px; }
+  #te-wide { width: 100%; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Tables: data or layout</h1>
+  <table id="te-nested">
+    <tr><td>Navigation</td><td><table id="te-inner"><tr><td>Inner one</td><td>Inner two</td></tr><tr><td>Inner three</td><td>Inner four</td></tr></table></td></tr>
+    <tr><td>Footer left</td><td>Footer right</td></tr>
+  </table>
+  <table id="te-bordered" class="bordered">
+    <tr><td>Region</td><td>Q1</td><td>Q2</td><td>Q3</td><td>Q4</td></tr>
+    <tr><td>East</td><td>10</td><td>12</td><td>14</td><td>16</td></tr>
+    <tr><td>West</td><td>20</td><td>22</td><td>24</td><td>26</td></tr>
+  </table>
+  <table id="te-orphan" class="bordered">
+    <tr><th colspan="2">Fruit and count</th><th>Notes</th></tr>
+    <tr><td>Apples</td><td>3</td><td id="te-notes-1">Crisp</td></tr>
+    <tr><td>Pears</td><td>5</td><td id="te-notes-2">Soft</td></tr>
+    <tr><td>Plums</td><td>7</td><td id="te-notes-3">Tart</td><td id="te-orphan-cell">Extra</td></tr>
+  </table>
+  <table id="te-scope" class="bordered">
+    <tr><th scope="column" id="te-scope-bad">Item</th><th scope="col">Count</th></tr>
+    <tr><td>Apples</td><td>3</td></tr>
+  </table>
+  <table id="te-fakecap" class="bordered">
+    <tr><td colspan="3" id="te-fakecap-cell">Staff directory</td></tr>
+    <tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Office</th></tr>
+    <tr><td>Ada</td><td>Engineer</td><td>Denver</td></tr>
+    <tr><td>Grace</td><td>Admiral</td><td>Arlington</td></tr>
+  </table>
+  <table id="te-nodata" class="bordered">
+    <tr><th scope="col">Name</th><th scope="col">Office</th><th scope="col" id="te-nodata-th">Notes</th></tr>
+    <tr><td>Ada</td><td>Denver</td></tr>
+    <tr><td>Grace</td><td>Arlington</td></tr>
+  </table>
+  <table id="te-summary" class="bordered" summary="Opening hours">
+    <caption>Opening hours</caption>
+    <tr><th scope="col">Day</th><th scope="col">Hours</th></tr>
+    <tr><td>Monday</td><td>9 to 5</td></tr>
+  </table>
+</main>
+<table id="te-wide">
+  <tr><td>Masthead left</td><td>Masthead centre</td><td>Masthead right</td></tr>
+  <tr><td>Column left</td><td>Column centre</td><td>Column right</td></tr>
+  <tr><td>Base left</td><td>Base centre</td><td>Base right</td></tr>
+</table>
+</body>
+</html>

@@ -88,7 +88,7 @@ const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Pending verifi
                   <div class="remedy" [attr.data-remedy]="r.id">
                     <p>{{ r.text }}</p>
                     @if (r.command) {
-                      <pre data-testid="remedy-command" tabindex="0" role="region" aria-label="Remedy command">{{ r.command }}</pre>
+                      <pre data-testid="remedy-command" tabindex="0" role="region" [attr.aria-label]="'Remedy command: ' + r.id">{{ r.command }}</pre>
                       <button type="button" class="secondary small" (click)="copy(r.command)">Copy<span class="visually-hidden"> the command for {{ r.id }}</span></button>
                     }
                   </div>

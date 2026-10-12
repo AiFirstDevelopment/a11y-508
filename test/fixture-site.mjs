@@ -67,6 +67,11 @@ const LOGIN_PAGE = (value) => `<!doctype html>
 </body>
 </html>`;
 
+const FRAMES = {
+  '/frames/text.html': '<!doctype html><html lang="en"><title>Frame text</title><p>Plain text in a frame, with nothing to focus.</p></html>',
+  '/frames/link.html': '<!doctype html><html lang="en"><title>Frame with a link</title><p>Office hours are 9 to 5. <a href="/about.html" id="frame-link">About the office</a></p></html>',
+};
+
 const listen = (server, port, host) => new Promise((resolve, reject) => {
   server.once('error', reject);
   server.listen(port, host, () => {
@@ -133,6 +138,12 @@ export async function startFixtureSite({ port = 0, host = '127.0.0.1', token = T
     if (path.startsWith('/media/')) {
       res.writeHead(200, { 'content-type': TYPES[ext] || 'application/octet-stream' });
       return res.end('');
+    }
+    // Documents for the iframes on checks-pack-c.html and the object on checks-pack-a.html: not
+    // pages of their own, so the crawler never queues them.
+    if (FRAMES[path]) {
+      res.writeHead(200, { 'content-type': TYPES['.html'] });
+      return res.end(FRAMES[path]);
     }
     if (path === '/submit') {
       res.writeHead(200, { 'content-type': 'text/html' });

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Wrapper left hidden - a11y-508 test site</title>
+<!--
+  Round 4a pack A (plan item 1). The application wrapper is aria-hidden="true" and holds almost
+  all of the page's visible text, and no modal dialog is open: a modal library left the attribute
+  behind. A critical 4.A violation naming the wrapper.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus, summary:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<div id="pa-app" aria-hidden="true">
+  <main>
+    <h1>Wrapper left hidden</h1>
+    <p>This application wrapper still carries aria-hidden="true" after a dialog closed, so screen reader users hear nothing of it. Every paragraph here is part of the hidden wrapper, which holds nearly all of the page's visible text.</p>
+    <p>A second paragraph of ordinary page content, also inside the hidden wrapper.</p>
+  </main>
+</div>
+</body>
+</html>

@@ -107,6 +107,13 @@ window.__a11y508.register(function ariaStructure(A) {
     const d = tabbable || focusable;
     if (!d) continue;
     const details = { descendant: A.selector(d), html: A.html(d, 160) };
+    // <summary> maps to button, but Chrome does not make its children presentational the way it
+    // does a button's: the inner control is exposed, though some screen readers present a summary
+    // as one button. Escalated, not reported.
+    if (el.localName === 'summary' && !A.explicitRole(el)) {
+      A.add({ test: '6.A', level: 'review', impact: 'moderate', el, details, message: `This summary contains a focusable <${d.localName}> (${A.selector(d)}). Chrome exposes it, but a summary acts as the button that opens its details, and some screen readers present it as one control and do not announce what is inside. Confirm the inner control can be reached and is announced, or move it outside the summary.` });
+      continue;
+    }
     if (tabbable) A.add({ test: '6.A', impact: 'serious', el, details, message: `This ${role} contains a focusable <${d.localName}> (${A.selector(d)}). The children of a ${role} are presentational, so assistive technology does not announce the inner control, and keyboard users reach a stop with no name or purpose. Move it outside the ${role}.` });
     else A.add({ test: '6.A', level: 'review', impact: 'moderate', el, details, message: `This ${role} contains a <${d.localName}> with tabindex="-1" (${A.selector(d)}). It is not in the tab order, but if a script focuses it, assistive technology cannot announce it, because the children of a ${role} are presentational. Confirm it never receives focus.` });
   }
@@ -124,6 +131,13 @@ window.__a11y508.register(function ariaStructure(A) {
     while (p && !(model(roleOf(p)) && model(roleOf(p)).childrenPresentational)) p = p.parentElement;
     if (p) continue;
     if (A.accName(el).name) continue;
+    // Inside a link or button that already has a name, an unnamed image adds nothing to it: hiding
+    // it is the likely fix, so it is escalated rather than reported.
+    const control = explicit === 'img' && el.parentElement && el.parentElement.closest('a[href], button, [role="link"], [role="button"]');
+    if (control && A.accName(control).name) {
+      A.add({ test: '7.A', level: 'review', impact: 'minor', el, message: `${el.localName === 'svg' ? '<svg role="img">' : 'role="img"'} has no accessible name, inside a ${control.localName === 'a' || A.role(control) === 'link' ? 'link' : 'button'} already named "${A.accName(control).name.slice(0, 60)}". If the image adds nothing to that name, hide it with aria-hidden="true"; if it does, name it with aria-label.` });
+      continue;
+    }
     if (explicit === 'img') {
       A.add({ test: '7.A', impact: 'serious', el, message: `${el.localName === 'svg' ? '<svg role="img">' : `role="${explicit}"`} has no accessible name. Name it with aria-label or aria-labelledby${el.localName === 'svg' ? ', or a <title> as its first child' : ''}; if it is decorative, remove the role and hide it with aria-hidden="true".` });
     } else {

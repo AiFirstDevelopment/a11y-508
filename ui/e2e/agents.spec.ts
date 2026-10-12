@@ -2,7 +2,7 @@
 // controlling PATH, the shell, and npm through stub executables.
 
 import { test, expect, type Page } from '@playwright/test';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath } from './harness';
 
@@ -53,6 +53,7 @@ case "$3" in
 esac
 echo "npm install output for $3"
 if [ "$mode" = "eacces" ]; then echo "npm ERR! code EACCES" >&2; echo "npm ERR! syscall mkdir" >&2; exit 1; fi
+if [ "$mode" = "eacces-network" ]; then echo "npm ERR! code EACCES" >&2; echo "npm ERR! network request to the registry failed, reason: ETIMEDOUT" >&2; exit 1; fi
 if [ "$mode" = "ok" ]; then
 case "$bin" in
 ${installs}
@@ -224,6 +225,32 @@ test('AC 13: Install shows the command and shell, runs only after confirmation, 
     }
     expect(existsSync(marker)).toBe(false);
     expect(calls().length).toBe(3);
+  } finally {
+    await dash.stop();
+  }
+});
+
+// checks-rule-packs AC 11: with two remedies on screen, the tool's own checks (the in-page bundle the
+// crawler injects) find no landmark-uniqueness item for the remedy command regions: each region is
+// named after its remedy.
+test('checks-rule-packs AC 11: remedy command regions have unique names, so the landmark check has nothing to report', async ({ page }) => {
+  const r = rig();
+  const dash = await dashboard({ env: r.env });
+  try {
+    await open(page, dash, '/fix-loop');
+    await entry(page, 'codex').getByRole('radio').check();
+    writeFileSync(r.mode, 'eacces-network');
+    await page.getByTestId('install-panel').getByRole('button', { name: 'Install' }).click();
+    await page.getByTestId('install-confirm').getByRole('button', { name: 'Run the install' }).click();
+    await expect(page.locator('[data-remedy="permission"]').getByTestId('remedy-command')).toBeVisible();
+    await expect(page.locator('[data-remedy="network"]').getByTestId('remedy-command')).toBeVisible();
+    const dir = join(ROOT, 'src', 'checks', 'browser');
+    const bundle = readdirSync(dir).filter((f) => f.endsWith('.js')).sort().map((f) => readFileSync(join(dir, f), 'utf8')).join('\n;\n');
+    await page.evaluate(bundle);
+    const run = await page.evaluate(() => (window as any).__a11y508.run());
+    expect(run.findings.length, 'the checks ran').toBeGreaterThan(0);
+    const remedyLandmarks = run.findings.filter((f: any) => f.test === '9.A' && /remedy-command/.test(f.html));
+    expect(remedyLandmarks.map((f: any) => `${f.level} ${f.message} [${f.selector}]`)).toEqual([]);
   } finally {
     await dash.stop();
   }

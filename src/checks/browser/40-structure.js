@@ -135,19 +135,73 @@ window.__a11y508.register(function structure(A) {
     }
   }
 
-  // Bypass blocks (9.A)
-  const skipLinks = Array.from(document.querySelectorAll('a[href^="#"]')).filter((a) => /skip|jump|main content|to content|navigation/i.test(A.accName(a).name) && a.getAttribute('href').length > 1);
+  // Bypass blocks (9.A). A skip link works only if assistive technology can reach it, a sighted
+  // keyboard user can see it once it has focus, and its target exists and is not hidden.
+  // Technique informed by axe-core; no code taken from it.
+  const linkName = (a) => A.accName(a).name || A.nameFromContent(a, true);
+  const skipLinks = Array.from(document.querySelectorAll('a[href^="#"]')).filter((a) => /skip|jump|main content|to content|navigation/i.test(linkName(a)) && a.getAttribute('href').length > 1);
   const main = document.querySelector('main, [role="main"]');
   const navLinks = document.querySelectorAll('nav a[href], [role="navigation"] a[href], header a[href], [role="banner"] a[href]').length;
-  for (const a of skipLinks) {
+  // Does an author style rule for :focus, :focus-visible or :focus-within (on the link or an
+  // ancestor) apply to the link and change how it is laid out or shown?
+  const REVEAL = /(^|;)\s*(left|right|top|bottom|inset|position|clip|clip-path|transform|translate|width|height|max-width|max-height|margin[\w-]*|opacity|overflow|z-index|font-size|text-indent|visibility|display)\s*:/i;
+  const focusReveals = (a) => {
+    const visit = (rules) => {
+      for (const rule of rules) {
+        if (rule.cssRules && !rule.selectorText) {
+          if (visit(rule.cssRules)) return true;
+          continue;
+        }
+        if (!rule.selectorText || !/:focus/.test(rule.selectorText) || !REVEAL.test(rule.style.cssText)) continue;
+        for (const sel of rule.selectorText.split(',')) {
+          if (!/:focus/.test(sel)) continue;
+          try {
+            // A rule that hides the link only while it lacks focus (:not(:focus), as Bootstrap's
+            // visually-hidden-focusable does) reveals it on focus just as a :focus rule does.
+            if (a.matches(sel.replace(/:not\(\s*:focus(-visible|-within)?\s*\)/g, '').replace(/:focus(-visible|-within)?/g, '') || '*')) return true;
+          } catch {}
+        }
+      }
+      return false;
+    };
+    for (const sheet of document.styleSheets) {
+      let rules;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+        continue; // a cross-origin sheet cannot be read
+      }
+      if (rules && visit(rules)) return true;
+    }
+    return false;
+  };
+  const targetOf = (a) => {
     const id = decodeURIComponent(a.getAttribute('href').slice(1));
-    const target = document.getElementById(id) || document.querySelector(`[name="${CSS.escape(id)}"]`);
-    if (!target) A.add({ test: '9.A', impact: 'serious', el: a, message: `Skip link target "#${id}" does not exist on the page.` });
+    return { id, target: document.getElementById(id) || document.querySelector(`[name="${CSS.escape(id)}"]`) };
+  };
+  // Why the skip link does not work, or '' when it does. level: violation, or review when a script
+  // might still reveal it.
+  // While a modal dialog is open (on load, before the crawler dismisses it), everything outside it is
+  // hidden from assistive technology on purpose; the run behind the modal judges the skip links.
+  const modalOpen = !!A.openModal();
+  const skipProblem = (a) => {
+    const { id, target } = targetOf(a);
+    if (!target) return { level: 'violation', message: `Skip link target "#${id}" does not exist on the page.` };
+    if (!modalOpen && A.isHiddenFromAT(a)) return { level: 'violation', message: `Skip link "${linkName(a)}" is hidden from assistive technology (aria-hidden, inert, or outside an open modal), so it does not provide a way to bypass blocks.` };
+    if (A.isHiddenForEveryone(a)) return { level: 'violation', message: `Skip link "${linkName(a)}" is hidden for everyone (display:none, visibility:hidden or the hidden attribute), so keyboard users can never reach it and it does not provide a way to bypass blocks. Hide it off-screen and reveal it on :focus instead.` };
+    const closed = target.closest('details:not([open])');
+    if (A.isHiddenForEveryone(target) || (!modalOpen && A.isHiddenFromAT(target)) || (closed && !closed.querySelector(':scope > summary')?.contains(target))) {
+      return { level: 'violation', message: `Skip link target "#${id}" is hidden (${closed ? 'inside a closed <details>' : 'display:none, visibility:hidden, aria-hidden or inert'}), so following the link moves focus nowhere useful and it does not provide a way to bypass blocks.` };
+    }
+    if (A.isVisuallyHidden(a) && !focusReveals(a)) return { level: 'review', message: `Skip link "${linkName(a)}" is visually hidden and no :focus style reveals it, so sighted keyboard users may never see it. Confirm it becomes visible when it receives focus.` };
+    return null;
+  };
+  const problems = skipLinks.map((a) => [a, skipProblem(a)]);
+  for (const [a, p] of problems) {
+    if (p) A.add({ test: '9.A', level: p.level, impact: p.level === 'violation' ? 'serious' : 'moderate', el: a, message: p.message });
   }
-  const validSkip = skipLinks.some((a) => {
-    const id = decodeURIComponent(a.getAttribute('href').slice(1));
-    return document.getElementById(id) || document.querySelector(`[name="${CSS.escape(id)}"]`);
-  });
+  // A link that may yet be revealed by a script (review) still counts as a way to bypass blocks.
+  const validSkip = problems.some(([, p]) => !p || p.level === 'review');
   if (!validSkip && !main && !outline.length) {
     A.add({ test: '9.A', impact: 'serious', selector: 'body', message: 'No mechanism to bypass repetitive content: no working skip link, no <main>/role="main" landmark, and no headings.' });
   } else if (!validSkip && navLinks >= 8) {

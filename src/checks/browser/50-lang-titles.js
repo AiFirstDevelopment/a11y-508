@@ -1,22 +1,51 @@
 // Trusted Tester 11.A-11.B (language), 12.A-12.D (titles, frames).
+// The primary language subtag is checked against ISO 639-1 (06-lang-data.js, A.lang); technique
+// informed by axe-core and IBM Equal Access, no code or tables taken from either.
 window.__a11y508.register(function langTitles(A) {
   const BCP47 = /^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$/;
+  const { ISO_639_1, DEPRECATED, THREE_TO_TWO, LIKELY } = A.lang;
+  // What is wrong with a syntactically valid tag's primary subtag: { level, message } or null.
+  // Two letters must be an ISO 639-1 code. Three letters are accepted when the language has no
+  // two-letter code (haw, yue ...); when it has one, BCP 47 says to use it (review).
+  const primaryProblem = (tag) => {
+    const primary = tag.split('-')[0].toLowerCase();
+    if (primary.length === 2) {
+      if (ISO_639_1.has(primary)) return null;
+      if (DEPRECATED[primary]) return { level: 'review', message: `lang="${tag}": "${primary}" is a deprecated language code; use "${DEPRECATED[primary]}".` };
+      const likely = LIKELY[primary];
+      return { level: 'violation', message: `lang="${tag}": "${primary}" is not an ISO 639-1 language code, so assistive technology cannot choose a voice for it.${likely ? ` "${primary}" is a country code; the language is probably "${likely}".` : ''}` };
+    }
+    const two = THREE_TO_TWO[primary];
+    if (two) return { level: 'review', message: `lang="${tag}": "${primary}" has the two-letter code "${two}", which BCP 47 requires and assistive technology recognises more reliably. Use lang="${two}${tag.slice(primary.length)}".` };
+    return null;
+  };
+
   const html = document.documentElement;
   const lang = (html.getAttribute('lang') || '').trim();
   if (!lang) {
     A.add({ test: '11.A', impact: 'critical', el: html, message: 'The <html> element has no lang attribute, so the page language cannot be determined.' });
   } else if (!BCP47.test(lang)) {
     A.add({ test: '11.A', impact: 'serious', el: html, message: `lang="${lang}" is not a valid language tag (e.g. "en", "en-US", "es").` });
+  } else {
+    const p = primaryProblem(lang);
+    if (p) A.add({ test: '11.A', level: p.level, impact: p.level === 'violation' ? 'serious' : 'moderate', el: html, message: p.message });
   }
   const xmlLang = html.getAttribute('xml:lang');
   if (xmlLang && lang && xmlLang.toLowerCase() !== lang.toLowerCase()) {
     A.add({ test: '11.A', impact: 'minor', el: html, message: `lang="${lang}" and xml:lang="${xmlLang}" disagree.` });
   }
 
+  // Inner lang attributes matter only where there is text for them to apply to.
   for (const el of document.querySelectorAll('[lang]')) {
     if (el === html) continue;
     const v = (el.getAttribute('lang') || '').trim();
-    if (v && !BCP47.test(v)) A.add({ test: '11.B', impact: 'moderate', el, message: `lang="${v}" is not a valid language tag.` });
+    if (!v || !A.text(el)) continue;
+    if (!BCP47.test(v)) {
+      A.add({ test: '11.B', impact: 'moderate', el, message: `lang="${v}" is not a valid language tag.` });
+      continue;
+    }
+    const p = primaryProblem(v);
+    if (p) A.add({ test: '11.B', level: p.level, impact: p.level === 'violation' ? 'moderate' : 'minor', el, message: p.message });
   }
 
   const title = (document.title || '').trim();
@@ -36,6 +65,8 @@ window.__a11y508.register(function langTitles(A) {
 
   const inventory = [];
   const GENERIC_IFRAME = /^(iframe|frame|embed|embedded content|content|widget|video|map|untitled)$/i;
+  // Frames a user can tell apart only by title: grouped by title, whitespace and case normalised.
+  const byTitle = new Map();
   for (const f of document.querySelectorAll('iframe')) {
     const s = A.cs(f);
     const r = f.getBoundingClientRect();
@@ -43,6 +74,11 @@ window.__a11y508.register(function langTitles(A) {
     if (hidden) continue; // tracking/zero-size iframes are not perceivable
     if (A.isAriaHidden(f)) continue;
     const { name } = A.accName(f);
+    if (name) {
+      const key = name.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (!byTitle.has(key)) byTitle.set(key, []);
+      byTitle.get(key).push(f);
+    }
     if (!name) {
       A.add({ test: '12.D', impact: 'serious', el: f, message: 'iframe has no title/aria-label describing its content.', details: { src: (f.getAttribute('src') || '').slice(0, 200) } });
     } else if (GENERIC_IFRAME.test(name)) {
@@ -50,6 +86,11 @@ window.__a11y508.register(function langTitles(A) {
     } else {
       inventory.push({ selector: A.selector(f), title: name, src: (f.getAttribute('src') || '').slice(0, 200) });
     }
+  }
+  for (const frames of byTitle.values()) {
+    if (frames.length < 2) continue;
+    const title = A.accName(frames[0]).name;
+    for (const f of frames.slice(1)) A.add({ test: '12.D', impact: 'serious', el: f, message: `${frames.length} iframes share the title "${title}", so users cannot tell them apart. Give each frame a title that describes its own content.`, details: { frames: frames.map((x) => A.selector(x)) } });
   }
   if (inventory.length) {
     A.add({ test: '12.D', level: 'review', impact: 'minor', selector: 'iframe', message: `${inventory.length} iframe(s) have titles. Confirm each title describes the frame content.`, details: { iframes: inventory } });

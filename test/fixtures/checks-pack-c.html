@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frames - a11y-508 test site</title>
+<!--
+  Round 4a pack C (plan items 9-10). Two iframes titled "Content" and " content " (equal once case
+  and spacing are normalised) are a 12.D violation. An iframe with tabindex="-1" whose same-origin
+  document has a link is a 4.A violation; the same frame at 20x10 px is not reported, and neither is
+  a cross-origin (data: URL) frame with tabindex="-1", whose document cannot be read. The frame
+  documents are served by test/fixture-site.mjs (/frames/...).
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus, summary:focus { outline: 3px solid #f90; }
+  iframe { border: 1px solid #888; display: block; margin: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Frames</h1>
+  <iframe src="/frames/text.html" title="Content" id="pc-dup-a" width="200" height="60"></iframe>
+  <iframe src="/frames/text.html" title=" content " id="pc-dup-b" width="200" height="60"></iframe>
+  <iframe src="/frames/link.html" title="Office hours" tabindex="-1" id="pc-focusable" width="300" height="100"></iframe>
+  <iframe src="/frames/link.html" title="Office hours, small" tabindex="-1" id="pc-small" width="20" height="10"></iframe>
+  <iframe src="data:text/html,%3Ca%20href%3D%22https%3A%2F%2Fexample.org%2F%22%3EA%20link%3C%2Fa%3E" title="Partner widget" tabindex="-1" id="pc-cross" width="300" height="100"></iframe>
+</main>
+</body>
+</html>

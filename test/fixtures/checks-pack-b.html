@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Forms: labels and groups - a11y-508 test site</title>
+<!--
+  Round 4a pack B (plan items 6-8). A field with two visible labels is a 5.C review item listing
+  both; with aria-labelledby choosing one, it is not reported. Three checkboxes sharing a name with
+  no group label are a 5.C review item; inside a fieldset with a legend they are not. A fieldset
+  with no legend, one with two, and one whose legend is not its first child are 5.C violations.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus, summary:focus { outline: 3px solid #f90; }
+  fieldset { margin: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Forms: labels and groups</h1>
+  <form action="#" id="pb-form">
+    <p><label for="pb-email" id="pb-email-label-a">Email</label> <label id="pb-email-label-b">Work email <input type="email" id="pb-email" name="email"></label></p>
+    <p><label for="pb-phone" id="pb-phone-label-a">Phone</label> <label id="pb-phone-label-b">Work phone <input type="tel" id="pb-phone" name="phone" aria-labelledby="pb-phone-label-a"></label></p>
+    <div id="pb-topics">
+      <p>Topics</p>
+      <label><input type="checkbox" name="topics" value="news" id="pb-topic-1"> News</label>
+      <label><input type="checkbox" name="topics" value="events" id="pb-topic-2"> Events</label>
+      <label><input type="checkbox" name="topics" value="jobs" id="pb-topic-3"> Jobs</label>
+    </div>
+    <fieldset id="pb-alerts">
+      <legend>Alerts</legend>
+      <label><input type="checkbox" name="alerts" value="email" id="pb-alert-1"> By email</label>
+      <label><input type="checkbox" name="alerts" value="text" id="pb-alert-2"> By text</label>
+      <label><input type="checkbox" name="alerts" value="mail" id="pb-alert-3"> By mail</label>
+    </fieldset>
+    <fieldset id="pb-fs-none">
+      <label>City <input type="text" name="city" id="pb-city"></label>
+    </fieldset>
+    <fieldset id="pb-fs-two">
+      <legend>Address</legend>
+      <legend>Street</legend>
+      <label>Street <input type="text" name="street" id="pb-street"></label>
+    </fieldset>
+    <fieldset id="pb-fs-late">
+      <label>Postcode <input type="text" name="postcode" id="pb-postcode"></label>
+      <legend>Postcode</legend>
+    </fieldset>
+    <button type="submit">Save</button>
+  </form>
+</main>
+</body>
+</html>

@@ -484,6 +484,25 @@
     return out;
   };
 
+  // Characters (whitespace excluded) of the text nodes under root whose element renders, so a
+  // check can ask how much of the page's visible text an element holds.
+  A.renderedTextLength = (root) => {
+    if (!root) return 0;
+    const seen = new Map();
+    const shows = (el) => {
+      if (!seen.has(el)) seen.set(el, !/^(script|style|noscript|template|title)$/.test(el.localName) && A.isVisible(el));
+      return seen.get(el);
+    };
+    let n = 0;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let t;
+    while ((t = walker.nextNode())) {
+      const len = t.nodeValue.replace(/\s+/g, '').length;
+      if (len && t.parentElement && shows(t.parentElement)) n += len;
+    }
+    return n;
+  };
+
   A.bodyFontSize = () => parseFloat(A.cs(document.body || document.documentElement).fontSize) || 16;
 
   A.run = (opts) => {

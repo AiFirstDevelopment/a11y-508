@@ -172,6 +172,55 @@ window.__a11y508.register(function ariaKeyboard(A) {
     if (el.localName === 'select' && A.meta.selectCandidates.length < 50) A.meta.selectCandidates.push(A.selector(el));
   }
 
+  // An iframe taken out of the tab order (tabindex="-1") whose same-origin document has content
+  // that can be tabbed to. Frames smaller than 30 x 15 px, frames hidden from assistive technology
+  // (behind an open modal included) and cross-origin frames are skipped.
+  const FRAME_FOCUSABLE = 'a[href], area[href], button, input, select, textarea, summary, iframe, object, embed, audio[controls], video[controls], [contenteditable]:not([contenteditable="false"]), [tabindex]';
+  const tabbableInFrame = (el) => {
+    const t = A.tabindexOf(el);
+    if (t !== null && t < 0) return false;
+    if (t === null && !el.matches(FRAME_FOCUSABLE.replace(', [tabindex]', ''))) return false;
+    if (el.matches('input[type="hidden"]') || el.matches(':disabled') || el.closest('[inert]')) return false;
+    const s = el.ownerDocument.defaultView.getComputedStyle(el);
+    return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && el.getClientRects().length > 0;
+  };
+  for (const f of document.querySelectorAll('iframe[tabindex]')) {
+    const t = A.tabindexOf(f);
+    if (t === null || t >= 0 || !A.isVisible(f) || A.isHiddenFromAT(f)) continue;
+    const r = f.getBoundingClientRect();
+    if (r.width < 30 || r.height < 15) continue;
+    let doc = null;
+    try {
+      doc = f.contentDocument;
+    } catch {}
+    if (!doc || !doc.documentElement) continue; // cross-origin: its content cannot be read from here
+    const inner = Array.from(doc.querySelectorAll(FRAME_FOCUSABLE)).find(tabbableInFrame);
+    if (inner) A.add({ test: '4.A', impact: 'serious', el: f, details: { content: A.html(inner, 160) }, message: `This iframe has tabindex="-1", but its document has content keyboard users can tab to (<${inner.localName}>${A.text(inner) ? ` "${A.text(inner).slice(0, 40)}"` : ''}). Depending on the browser, keyboard users cannot reach that content, or reach it inside a frame taken out of the tab order. Remove tabindex="-1", or take the content out of the tab order too.` });
+  }
+
+  // A scrolling region with content outside its box and nothing in it that can take keyboard
+  // focus. Chrome 130 and later make such a region focusable, so this is escalated: keyboard users
+  // on other browsers cannot scroll to the content.
+  let scrollers = 0;
+  for (const el of A.allVisible(6000)) {
+    if (scrollers >= 20) break;
+    if (el === document.body || el === document.documentElement || /^(textarea|select|iframe)$/.test(el.localName)) continue;
+    const s = A.cs(el);
+    if (!s) continue;
+    const sx = /^(auto|scroll)$/.test(s.overflowX) && el.scrollWidth > el.clientWidth + 1;
+    const sy = /^(auto|scroll)$/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 1;
+    if (!sx && !sy) continue;
+    if (A.isHiddenFromAT(el) || A.isTabbable(el)) continue;
+    const box = el.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const c = range.getBoundingClientRect();
+    if (!(c.bottom > box.bottom + 1 || c.right > box.right + 1 || c.top < box.top - 1 || c.left < box.left - 1)) continue;
+    if (Array.from(el.querySelectorAll('*')).some((d) => A.isTabbable(d) && A.isVisible(d))) continue;
+    scrollers++;
+    A.add({ test: '4.A', level: 'review', impact: 'moderate', el, message: `This region scrolls (${sy ? 'vertically' : 'horizontally'}), but neither it nor anything in it can take keyboard focus. Chrome lets keyboard users focus it; on other browsers they cannot scroll to the content outside its box. Add tabindex="0" with a role and a name (for example role="region" and aria-label), or put a focusable element inside.` });
+  }
+
   // Duplicate ids that break ARIA/label references
   const refIds = new Set();
   for (const el of document.querySelectorAll('[aria-labelledby], [aria-describedby], [aria-controls], [aria-owns], [headers], label[for], [aria-errormessage], [aria-activedescendant], [aria-details], [aria-flowto]')) {
