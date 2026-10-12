@@ -20,7 +20,7 @@ const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Pending verifi
   imports: [ChartPanel, LineChartModule, RunView],
   template: `
     <h1>Fix loop</h1>
-    @if (env.env()?.cwdFacts?.git === false) {
+    @if (env.env()?.inGitRepo === false) {
       <p class="notice warn" role="status" data-testid="not-git">{{ env.env()?.cwd }} is not a git repository. The loop commits each fix, so it needs one; a dry run and a crawl do not.</p>
     }
     <p class="notice warn">The assistant's changes are committed without review. The <code>check</code> command below is the only gate between a fix and a commit.</p>

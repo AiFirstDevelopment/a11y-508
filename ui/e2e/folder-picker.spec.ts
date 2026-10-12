@@ -252,6 +252,12 @@ test('AC 5: Choose switches the server, the header, the Report screen, the Fix-l
   await expect(page.getByLabel('Check command (build and test)')).toHaveValue('');
   await expect(page.getByText('No ledger yet.', { exact: false })).toBeVisible();
   await expect(page.getByTestId('not-git')).toContainText(`${b} is not a git repository`);
+  // A subfolder of a repository is inside one, as the loop sees it.
+  mkdirSync(join(b, '.git'));
+  mkdirSync(join(b, 'packages', 'web'), { recursive: true });
+  await chooseDir(page, join(b, 'packages', 'web'));
+  await expect(page.getByTestId('not-git')).toHaveCount(0);
+  await chooseDir(page, b);
   await nav(page, 'Report');
   await expect(page.getByText('No report yet.', { exact: false })).toBeVisible();
   await nav(page, 'History');

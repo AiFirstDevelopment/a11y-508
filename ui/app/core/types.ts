@@ -71,6 +71,7 @@ export interface DirListing {
 export interface EnvInfo {
   cwd: string;
   cwdFacts: DirFacts;
+  inGitRepo: boolean;
   launchDir: string;
   version: string;
   platform: string;

@@ -29,6 +29,20 @@ export function factsOf(dir) {
   };
 }
 
+// Inside a git work tree: this directory or any parent holds .git, the way
+// the loop's `git rev-parse --is-inside-work-tree` sees it. (facts.git is
+// the folder itself being a repository root, for the picker's badge.)
+export function inGitRepo(dir) {
+  for (let d = dir; ; ) {
+    try {
+      if (existsSync(join(d, '.git'))) return true;
+    } catch {}
+    const parent = dirname(d);
+    if (parent === d) return false;
+    d = parent;
+  }
+}
+
 // An operating-system error as an HTTP error: missing or not a directory is
 // 404, not allowed is 403; the message is the operating system's own.
 function osError(e) {

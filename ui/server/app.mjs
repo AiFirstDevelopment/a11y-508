@@ -16,7 +16,7 @@ import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
 import { listReports, readReport, confinedFile, moveLatestToHistory, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
-import { CONFIG_FILE, factsOf, listDirs, realDir } from './dirs.mjs';
+import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
 
 const pkg = JSON.parse(readFileSync(join(UI_DIR, '..', 'package.json'), 'utf8'));
 export const SECRET_HEADER = 'x-a11y-508-secret';
@@ -245,7 +245,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     }
     const latest = readReport(cwd, 'latest');
     return {
-      cwd, cwdFacts: factsOf(cwd), launchDir: state.launchDir, version: pkg.version, platform, browser,
+      cwd, cwdFacts: factsOf(cwd), inGitRepo: inGitRepo(cwd), launchDir: state.launchDir, version: pkg.version, platform, browser,
       config: { exists: existsSync(join(cwd, CONFIG_FILE)), file: CONFIG_FILE },
       session,
       report: latest ? { exists: true, finishedAt: latest.finishedAt, baseUrl: latest.baseUrl } : { exists: false },
