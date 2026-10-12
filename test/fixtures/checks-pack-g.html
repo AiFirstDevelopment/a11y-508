@@ -7,7 +7,8 @@
   Round 4a pack G (plan item 16). A display:none skip link to #main is reported under 9.A with the
   reason. A visually hidden skip link that a :focus style reveals satisfies 9.A. A skip link whose
   target is inside a closed <details> is reported. A visually hidden skip link with no :focus style
-  is a review item.
+  is a review item. Fix round: a link hidden by a :not(:focus):not(:focus-within) rule (Bootstrap's
+  visually-hidden-focusable) is revealed on focus and is not reported.
 -->
 <style>
   body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
@@ -18,6 +19,7 @@
   .sr-skip { position: absolute; left: -9999px; }
   .sr-skip:focus { left: 8px; top: 8px; background: #fff; color: #000; padding: 6px; }
   .sr-only { position: absolute; left: -9999px; }
+  .vh-focusable:not(:focus):not(:focus-within) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -33,6 +35,7 @@
 <a href="#main" id="pg-skip-none" style="display: none">Skip to main content</a>
 <a href="#main" class="sr-skip" id="pg-skip-ok">Skip to content</a>
 <a href="#main" class="sr-only" id="pg-skip-unrevealed">Jump to the content</a>
+<a href="#main" class="vh-focusable" id="pg-skip-bs">Skip to main content area</a>
 <a href="#pg-answer" id="pg-skip-details">Skip to the answer</a>
 <main id="main">
   <h1>Skip links</h1>

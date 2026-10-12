@@ -698,6 +698,8 @@ const PACK_G = '/checks-pack-g.html';
 check('AC9 9.A: a display:none skip link is reported with the reason', () => on(PACK_G, '9.A', '#pg-skip-none', 'violation', /^Skip link "Skip to main content" is hidden for everyone \(display:none/));
 check('AC9 9.A: a visually hidden skip link that a :focus style reveals satisfies 9.A', () => noneOn(PACK_G, '9.A', ['#pg-skip-ok']));
 check('AC9 9.A: a skip link whose target is inside a closed <details> is reported', () => on(PACK_G, '9.A', '#pg-skip-details', 'violation', /^Skip link target "#pg-answer" is hidden \(inside a closed <details>\)/));
+check('fix round 9.A: a skip link hidden by a :not(:focus) rule is revealed on focus and not reported', () => noneOn(PACK_G, '9.A', ['#pg-skip-bs']));
+check('fix round 9.A: a skip link outside a modal open on load is not reported as hidden from assistive technology', () => noneOn(PACK_MODAL, '9.A', ['#pm-skip']));
 check('plan item 16 9.A: a visually hidden skip link that no :focus style reveals is a review item', () => on(PACK_G, '9.A', '#pg-skip-unrevealed', 'review', /is visually hidden and no :focus style reveals it/));
 
 const FOLLOWUPS = '/checks-pack-followups.html';

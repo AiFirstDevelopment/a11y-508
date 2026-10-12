@@ -156,7 +156,9 @@ window.__a11y508.register(function structure(A) {
         for (const sel of rule.selectorText.split(',')) {
           if (!/:focus/.test(sel)) continue;
           try {
-            if (a.matches(sel.replace(/:focus(-visible|-within)?/g, ''))) return true;
+            // A rule that hides the link only while it lacks focus (:not(:focus), as Bootstrap's
+            // visually-hidden-focusable does) reveals it on focus just as a :focus rule does.
+            if (a.matches(sel.replace(/:not\(\s*:focus(-visible|-within)?\s*\)/g, '').replace(/:focus(-visible|-within)?/g, '') || '*')) return true;
           } catch {}
         }
       }
@@ -179,13 +181,16 @@ window.__a11y508.register(function structure(A) {
   };
   // Why the skip link does not work, or '' when it does. level: violation, or review when a script
   // might still reveal it.
+  // While a modal dialog is open (on load, before the crawler dismisses it), everything outside it is
+  // hidden from assistive technology on purpose; the run behind the modal judges the skip links.
+  const modalOpen = !!A.openModal();
   const skipProblem = (a) => {
     const { id, target } = targetOf(a);
     if (!target) return { level: 'violation', message: `Skip link target "#${id}" does not exist on the page.` };
-    if (A.isHiddenFromAT(a)) return { level: 'violation', message: `Skip link "${linkName(a)}" is hidden from assistive technology (aria-hidden, inert, or outside an open modal), so it does not provide a way to bypass blocks.` };
+    if (!modalOpen && A.isHiddenFromAT(a)) return { level: 'violation', message: `Skip link "${linkName(a)}" is hidden from assistive technology (aria-hidden, inert, or outside an open modal), so it does not provide a way to bypass blocks.` };
     if (A.isHiddenForEveryone(a)) return { level: 'violation', message: `Skip link "${linkName(a)}" is hidden for everyone (display:none, visibility:hidden or the hidden attribute), so keyboard users can never reach it and it does not provide a way to bypass blocks. Hide it off-screen and reveal it on :focus instead.` };
     const closed = target.closest('details:not([open])');
-    if (A.isHiddenForEveryone(target) || A.isHiddenFromAT(target) || (closed && !closed.querySelector(':scope > summary')?.contains(target))) {
+    if (A.isHiddenForEveryone(target) || (!modalOpen && A.isHiddenFromAT(target)) || (closed && !closed.querySelector(':scope > summary')?.contains(target))) {
       return { level: 'violation', message: `Skip link target "#${id}" is hidden (${closed ? 'inside a closed <details>' : 'display:none, visibility:hidden, aria-hidden or inert'}), so following the link moves focus nowhere useful and it does not provide a way to bypass blocks.` };
     }
     if (A.isVisuallyHidden(a) && !focusReveals(a)) return { level: 'review', message: `Skip link "${linkName(a)}" is visually hidden and no :focus style reveals it, so sighted keyboard users may never see it. Confirm it becomes visible when it receives focus.` };

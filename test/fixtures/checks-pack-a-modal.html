@@ -7,7 +7,8 @@
   Round 4a pack A (plan item 1). While the consent dialog (showModal on load) is open, the
   application wrapper is aria-hidden="true", as modal libraries do: that is correct and not
   reported. Escape closes the dialog and the library removes the attribute, so the run behind the
-  modal reports nothing either.
+  modal reports nothing either. Fix round: the skip link, outside the dialog and revealed by :focus,
+  is not reported as hidden from assistive technology while the dialog is open.
 -->
 <style>
   body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
@@ -16,6 +17,8 @@
   main { padding: 20px; max-width: 800px; }
   a:focus, button:focus, [tabindex]:focus, input:focus, select:focus, summary:focus { outline: 3px solid #f90; }
   dialog { max-width: 420px; }
+  .skip { position: absolute; left: -9999px; }
+  .skip:focus { left: 8px; top: 8px; background: #fff; color: #000; padding: 6px; }
 </style>
 </head>
 <body>
@@ -28,11 +31,13 @@
     <a href="/about.html">About</a>
   </nav>
 </header>
+<a href="#pm-main" class="skip" id="pm-skip">Skip to main content</a>
 <div id="pm-app" aria-hidden="true">
-  <main>
+  <main id="pm-main">
     <h1>Wrapper hidden behind a modal</h1>
     <p>This application wrapper is hidden from assistive technology only while the consent dialog is open. The dialog's script removes the attribute when the dialog closes, as a well-behaved modal library does.</p>
     <p>A second paragraph of ordinary page content inside the wrapper.</p>
+    <p>A third paragraph, so the wrapper clearly holds most of the page's visible text: the header, the skip link and the dialog are the only text outside it.</p>
   </main>
 </div>
 <dialog id="pm-consent" aria-labelledby="pm-consent-title">
