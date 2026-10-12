@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Wrapper hidden behind a modal - a11y-508 test site</title>
+<!--
+  Round 4a pack A (plan item 1). While the consent dialog (showModal on load) is open, the
+  application wrapper is aria-hidden="true", as modal libraries do: that is correct and not
+  reported. Escape closes the dialog and the library removes the attribute, so the run behind the
+  modal reports nothing either.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus, summary:focus { outline: 3px solid #f90; }
+  dialog { max-width: 420px; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<div id="pm-app" aria-hidden="true">
+  <main>
+    <h1>Wrapper hidden behind a modal</h1>
+    <p>This application wrapper is hidden from assistive technology only while the consent dialog is open. The dialog's script removes the attribute when the dialog closes, as a well-behaved modal library does.</p>
+    <p>A second paragraph of ordinary page content inside the wrapper.</p>
+  </main>
+</div>
+<dialog id="pm-consent" aria-labelledby="pm-consent-title">
+  <h2 id="pm-consent-title">Cookie preferences</h2>
+  <p>We use cookies.</p>
+  <button type="button" id="pm-accept">Accept</button>
+</dialog>
+<script>
+  const d = document.getElementById('pm-consent');
+  const app = document.getElementById('pm-app');
+  d.addEventListener('close', () => app.removeAttribute('aria-hidden'));
+  document.getElementById('pm-accept').addEventListener('click', () => d.close());
+  d.showModal();
+</script>
+</body>
+</html>

@@ -611,6 +611,102 @@ check('AC14: after a reload the load-time modal is dismissed again, so the discl
   noneOn(MODAL_OK, '4.H', ['#consent-ok', '#me-reveal', '#me-nav']);
 });
 
+// Checks round 4a (docs/plans/checks-rule-packs.md): the rule packs. Each fixture page holds the
+// failing cases and, beside them, the passing ones.
+check('round 4a fixture pages were crawled without error', () => {
+  for (const p of ['a', 'a-body', 'a-wrapper', 'a-modal', 'b', 'c', 'd', 'e', 'f', 'g', 'followups']) assert.equal(pages[`/checks-pack-${p}.html`]?.error, null, `/checks-pack-${p}.html crawled without error`);
+});
+
+const PACK_BODY = '/checks-pack-a-body.html';
+const PACK_WRAPPER = '/checks-pack-a-wrapper.html';
+const PACK_MODAL = '/checks-pack-a-modal.html';
+check('AC1 4.A: <body aria-hidden="true"> is critical, and the message says every other test is silenced', () => {
+  assert.equal(on(PACK_BODY, '4.A', 'body', 'violation', /^<body aria-hidden="true"> hides the whole page from assistive technology.*every other test on this page is silenced/).impact, 'critical');
+});
+check('AC1 4.A: an aria-hidden wrapper holding most of the text, with no modal open, is critical and named', () => {
+  assert.equal(on(PACK_WRAPPER, '4.A', '#pa-app', 'violation', /^#pa-app is aria-hidden="true" and holds 9\d% of the page's visible text, while no modal dialog is open.*A modal library probably left aria-hidden behind/).impact, 'critical');
+});
+check('AC1 4.A: the same wrapper while a modal dialog is open is not reported', () => {
+  assert.equal(pages[PACK_MODAL].modalOnLoad?.dismissed, true, JSON.stringify(pages[PACK_MODAL].modalOnLoad));
+  noneOn(PACK_MODAL, '4.A', ['#pm-app']);
+});
+
+const PACK_A = '/checks-pack-a.html';
+check('AC2 4.A: an img with ismap inside a link is a violation', () => on(PACK_A, '4.A', '#pa-ismap', 'violation', /^Server-side image map \(ismap\)/));
+check('AC2 7.A: <object> with no fallback text is a violation, an SVG and an HTML document alike; one with text is not', () => {
+  on(PACK_A, '7.A', '#pa-object-svg', 'violation', /^<object data="\/img\/budget\.svg"> has no text alternative/);
+  on(PACK_A, '7.A', '#pa-object-html', 'violation', /^<object data="\/frames\/text\.html"> has no text alternative/);
+  noneOn(PACK_A, '7.A', ['#pa-object-ok']);
+});
+check('AC2 7.A: an alt that repeats its link\'s text (case and spacing aside) is a review item; alt="" there is not', () => {
+  on(PACK_A, '7.A', '#pa-redundant', 'review', /^Alt text "Annual {2}Report" repeats the text of the link around it/);
+  noneOn(PACK_A, '7.A', ['#pa-empty-alt']);
+});
+check('AC3 7.A: an unnamed svg role="img" inside a named link is a review item suggesting aria-hidden, not a violation', () => {
+  on(PACK_A, '7.A', '#pa-svg-in-link', 'review', /inside a link already named "Start here"\. If the image adds nothing to that name, hide it with aria-hidden="true"/);
+  noneOn(PACK_A, '7.A', ['#pa-svg-in-link'], 'violation');
+});
+check('AC3 7.A: the same svg standing alone is a violation', () => on(PACK_A, '7.A', '#pa-svg-alone', 'violation', /^<svg role="img"> has no accessible name/));
+
+const PACK_B = '/checks-pack-b.html';
+check('AC4 5.C: a field with two visible labels is a review item listing both', () => on(PACK_B, '5.C', '#pb-email', 'review', /^Field has 2 visible labels \("Email", "Work email"\)/));
+check('AC4 5.C: with aria-labelledby choosing one label, it is not reported', () => noneOn(PACK_B, '5.C', ['#pb-phone']));
+check('AC4 5.C: three same-name checkboxes with no group label are a review item', () => on(PACK_B, '5.C', '#pb-topic-1', 'review', /^Group of 3 checkboxes named "topics" has no group label/));
+check('AC4 5.C: the same checkboxes inside a fieldset with a legend are not reported', () => noneOn(PACK_B, '5.C', ['#pb-alerts', '#pb-alert-1', '#pb-alert-2', '#pb-alert-3']));
+check('AC4 5.C: a fieldset with no legend, with two, and with the legend not first are violations', () => {
+  on(PACK_B, '5.C', '#pb-fs-none', 'violation', /^This fieldset has no <legend>/);
+  on(PACK_B, '5.C', '#pb-fs-two', 'violation', /^This fieldset has 2 <legend> elements/);
+  on(PACK_B, '5.C', '#pb-fs-late', 'violation', /^This fieldset has a <legend> that is not its first child/);
+});
+
+const PACK_C = '/checks-pack-c.html';
+check('AC5 12.D: two iframes titled "Content" and " content " are a violation', () => on(PACK_C, '12.D', '#pc-dup-b', 'violation', /^2 iframes share the title "Content"/));
+check('AC5 4.A: iframe tabindex="-1" whose same-origin document has a link is a violation', () => on(PACK_C, '4.A', '#pc-focusable', 'violation', /^This iframe has tabindex="-1", but its document has content keyboard users can tab to \(<a> "About the office"\)/));
+check('AC5 4.A: the same frame at 20x10 px, and a cross-origin frame, are not reported', () => noneOn(PACK_C, '4.A', ['#pc-small', '#pc-cross']));
+
+const PACK_D = '/checks-pack-d.html';
+check('AC6 4.A: a scrolling region with nothing focusable is a review item', () => on(PACK_D, '4.A', '#pd-scroll', 'review', /^This region scrolls \(vertically\), but neither it nor anything in it can take keyboard focus/));
+check('AC6 4.A: the region with tabindex="0", or holding a link, is not reported', () => noneOn(PACK_D, '4.A', ['#pd-scroll-focusable', '#pd-scroll-link']));
+
+const PACK_E = '/checks-pack-e.html';
+check('AC7 14.A: a header-less table nesting another, and one wider than the viewport with under ten cells, are layout and not escalated', () => noneOn(PACK_E, '14.A', ['#te-nested', '#te-inner', '#te-wide']));
+check('AC7 14.A: a bordered header-less table with five columns is classified data and escalated', () => {
+  const f = on(PACK_E, '14.A', '#te-bordered', 'review', /^Table \(3 rows x 5 cols\) has no header cells and is classified as a data table/);
+  assert.equal(f.details.classification, 'data');
+});
+check('AC7 14.B: a data cell no header covers is a violation; cells under the colspan header are covered', () => {
+  on(PACK_E, '14.B', '#te-orphan-cell', 'violation', /^Data cell "Extra" has no row or column header/);
+  noneOn(PACK_E, '14.B', ['#te-notes-1', '#te-notes-2', '#te-notes-3']);
+});
+check('AC7 14.B: scope="column" is a violation', () => on(PACK_E, '14.B', '#te-scope-bad', 'violation', /^scope="column" is not a valid value/));
+check('AC7 14.B: a first row that is one cell across the table is a review item suggesting a caption', () => on(PACK_E, '14.B', '#te-fakecap-cell', 'review', /acting as a caption.*make it a <caption>/));
+check('plan item 13 14.B: a header that labels no data cell, and a caption equal to the summary, are review items', () => {
+  on(PACK_E, '14.B', '#te-nodata-th', 'review', /^Header "Notes" labels no data cell/);
+  on(PACK_E, '14.B', '#te-summary', 'review', /caption and summary are the same text/);
+});
+
+const PACK_F = '/checks-pack-f.html';
+check('AC8 11.A: lang="jp" is a violation whose message names ja', () => on(PACK_F, '11.A', '', 'violation', /^lang="jp": "jp" is not an ISO 639-1 language code.*probably "ja"/));
+check('AC8 11.B: en-US, zh-Hant and haw are not reported', () => noneOn(PACK_F, '11.B', ['#pf-en-us', '#pf-zh-hant', '#pf-haw']));
+check('AC8 11.B: lang="fra" with text is a review item naming fr', () => on(PACK_F, '11.B', '#pf-fra', 'review', /^lang="fra": "fra" has the two-letter code "fr"/));
+check('AC8 11.B: lang="xx" on an empty element is not reported; with text it is', () => {
+  noneOn(PACK_F, '11.B', ['#pf-xx-empty']);
+  on(PACK_F, '11.B', '#pf-xx', 'violation', /^lang="xx": "xx" is not an ISO 639-1 language code/);
+});
+
+const PACK_G = '/checks-pack-g.html';
+check('AC9 9.A: a display:none skip link is reported with the reason', () => on(PACK_G, '9.A', '#pg-skip-none', 'violation', /^Skip link "Skip to main content" is hidden for everyone \(display:none/));
+check('AC9 9.A: a visually hidden skip link that a :focus style reveals satisfies 9.A', () => noneOn(PACK_G, '9.A', ['#pg-skip-ok']));
+check('AC9 9.A: a skip link whose target is inside a closed <details> is reported', () => on(PACK_G, '9.A', '#pg-skip-details', 'violation', /^Skip link target "#pg-answer" is hidden \(inside a closed <details>\)/));
+check('plan item 16 9.A: a visually hidden skip link that no :focus style reveals is a review item', () => on(PACK_G, '9.A', '#pg-skip-unrevealed', 'review', /is visually hidden and no :focus style reveals it/));
+
+const FOLLOWUPS = '/checks-pack-followups.html';
+check('AC10 6.A: a link inside <summary> is a review item, not a violation', () => {
+  on(FOLLOWUPS, '6.A', '#pu-summary-link', 'review', /^This summary contains a focusable <a>/);
+  noneOn(FOLLOWUPS, '6.A', ['#pu-summary-link'], 'violation');
+});
+check('AC10 6.A: a link inside a button stays a violation', () => on(FOLLOWUPS, '6.A', '#pu-button-link', 'violation', /^This button contains a focusable <a>/));
+
 {
   const { events, problems } = parseEvents(evRun.stdout);
   const pageEvents = events.filter((e) => e.type === 'page');

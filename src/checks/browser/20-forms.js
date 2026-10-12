@@ -37,6 +37,13 @@ window.__a11y508.register(function forms(A) {
       A.add({ test: '5.A', level: 'review', impact: 'minor', el, message: `Field is named by aria-label ("${name}") with no visible <label>. Confirm a visible label, adjacent text, or icon makes its purpose clear to sighted users.` });
     }
 
+    // More than one visible <label> for one field: assistive technology joins them all into the
+    // name, unless aria-labelledby chooses one.
+    if (!el.hasAttribute('aria-labelledby') && el.labels && el.labels.length > 1) {
+      const shown = Array.from(el.labels).filter((l) => !A.isHiddenForEveryone(l) && !A.isHiddenFromAT(l));
+      if (shown.length > 1) A.add({ test: '5.C', level: 'review', impact: 'moderate', el, details: { labels: shown.map((l) => A.selector(l)) }, message: `Field has ${shown.length} visible labels (${shown.map((l) => `"${A.nameFromContent(l, true, el)}"`).join(', ')}), which assistive technology joins into one name. Keep one label, or point aria-labelledby at the one that names the field.` });
+    }
+
     if (name && (/^[\s*:.\-_]*$/.test(name) || name.length < 2)) {
       A.add({ test: '5.B', impact: 'serious', el, message: `Label "${name}" is not descriptive.` });
     }
@@ -88,6 +95,38 @@ window.__a11y508.register(function forms(A) {
     const grp = first.closest('[role="group"], [role="radiogroup"]');
     const named = (fs && A.accName(fs).name) || (grp && A.accName(grp).name);
     if (!named) A.add({ test: '5.C', level: 'review', impact: 'moderate', el: first, message: `Radio group of ${group.length} has no group label (fieldset/legend or role="radiogroup" with a name). Confirm the question the radios answer is programmatically associated.` });
+  }
+
+  // Checkboxes that answer one question (the same name in the same form) need a group label, as
+  // radios do: a fieldset with a legend, or role="group" with a name.
+  const boxGroups = new Map();
+  for (const c of document.querySelectorAll('input[type="checkbox"]')) {
+    if (!c.name || !A.isVisible(c) || A.isHiddenFromAT(c) || A.explicitRole(c)) continue;
+    const key = (c.form ? 'f' + Array.from(document.forms).indexOf(c.form) : 'none') + ':' + c.name;
+    if (!boxGroups.has(key)) boxGroups.set(key, []);
+    boxGroups.get(key).push(c);
+  }
+  for (const group of boxGroups.values()) {
+    if (group.length < 2) continue;
+    const first = group[0];
+    const fs = first.closest('fieldset');
+    const grp = first.closest('[role="group"]');
+    const named = (fs && fs.contains(group[group.length - 1]) && A.accName(fs).name) || (grp && grp.contains(group[group.length - 1]) && A.accName(grp).name);
+    if (!named) A.add({ test: '5.C', level: 'review', impact: 'moderate', el: first, message: `Group of ${group.length} checkboxes named "${first.name}" has no group label (fieldset/legend, or role="group" with a name). Confirm the question the checkboxes answer is programmatically associated.` });
+  }
+
+  // fieldset structure: one legend, the first child, with text. A fieldset named by aria-label or
+  // aria-labelledby has a group label without one.
+  for (const fs of document.querySelectorAll('fieldset')) {
+    if (!A.isVisible(fs) || A.isHiddenFromAT(fs)) continue;
+    const legends = Array.from(fs.children).filter((c) => c.localName === 'legend');
+    const labelled = (fs.getAttribute('aria-label') || '').trim() || (fs.getAttribute('aria-labelledby') || '').trim();
+    let problem = '';
+    if (!legends.length) problem = labelled ? '' : 'has no <legend>, so its controls have no group label';
+    else if (legends.length > 1) problem = `has ${legends.length} <legend> elements; only the first names the group`;
+    else if (fs.firstElementChild !== legends[0]) problem = 'has a <legend> that is not its first child; HTML requires the legend first, and some assistive technology does not announce a later one as the group label';
+    else if (!A.nameFromContent(legends[0], true)) problem = 'has an empty <legend>';
+    if (problem) A.add({ test: '5.C', impact: 'moderate', el: fs, message: `This fieldset ${problem}. Give it one <legend> with text, as its first child.` });
   }
 
   const forms = Array.from(document.querySelectorAll('form')).filter((f) => A.isVisible(f) && f.querySelector(FIELD_SEL));

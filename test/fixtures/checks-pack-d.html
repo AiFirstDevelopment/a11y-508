@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scrolling regions - a11y-508 test site</title>
+<!--
+  Round 4a pack D (plan item 11). A 200 px tall overflow:auto region holding 600 px of plain text,
+  with nothing focusable, is a 4.A review item. The same region with tabindex="0", or holding a
+  link, is not reported.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus, summary:focus { outline: 3px solid #f90; }
+  .scroller { height: 200px; overflow: auto; border: 1px solid #888; margin: 8px 0; }
+  .scroller:focus { outline: 3px solid #f90; }
+  .tall { height: 600px; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Scrolling regions</h1>
+  <div class="scroller" id="pd-scroll"><p class="tall">Terms of service. This region scrolls, and nothing in it can take keyboard focus.</p></div>
+  <div class="scroller" id="pd-scroll-focusable" tabindex="0" role="region" aria-label="Privacy notice"><p class="tall">Privacy notice. This region scrolls and can take keyboard focus itself.</p></div>
+  <div class="scroller" id="pd-scroll-link"><p class="tall">Accessibility statement. This region scrolls and holds <a href="#pd-end">a link</a> keyboard users can reach.</p></div>
+  <p id="pd-end">End of the regions.</p>
+</main>
+</body>
+</html>

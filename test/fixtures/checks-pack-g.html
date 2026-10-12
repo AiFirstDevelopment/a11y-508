@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Skip links - a11y-508 test site</title>
+<!--
+  Round 4a pack G (plan item 16). A display:none skip link to #main is reported under 9.A with the
+  reason. A visually hidden skip link that a :focus style reveals satisfies 9.A. A skip link whose
+  target is inside a closed <details> is reported. A visually hidden skip link with no :focus style
+  is a review item.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus, summary:focus { outline: 3px solid #f90; }
+  .sr-skip { position: absolute; left: -9999px; }
+  .sr-skip:focus { left: 8px; top: 8px; background: #fff; color: #000; padding: 6px; }
+  .sr-only { position: absolute; left: -9999px; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<a href="#main" id="pg-skip-none" style="display: none">Skip to main content</a>
+<a href="#main" class="sr-skip" id="pg-skip-ok">Skip to content</a>
+<a href="#main" class="sr-only" id="pg-skip-unrevealed">Jump to the content</a>
+<a href="#pg-answer" id="pg-skip-details">Skip to the answer</a>
+<main id="main">
+  <h1>Skip links</h1>
+  <details id="pg-faq"><summary>Frequently asked question</summary><p id="pg-answer">The answer, hidden until the details open.</p></details>
+</main>
+</body>
+</html>

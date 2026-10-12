@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Links inside a summary - a11y-508 test site</title>
+<!--
+  Round 4a follow-up (plan item 17). Chrome does not make the children of <summary> presentational
+  as it does a button's, so a link inside a summary is a 6.A review item; a link inside a button
+  stays a 6.A violation.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus, summary:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Links inside a summary</h1>
+  <details><summary id="pu-summary-link">Shipping, see <a href="#pu-policy">the policy</a></summary><p>Ships in two days.</p></details>
+  <button type="button" id="pu-button-link">Open <a href="#pu-policy">the policy</a></button>
+  <p id="pu-policy">The policy.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Body hidden from assistive technology - a11y-508 test site</title>
+<!--
+  Round 4a pack A (plan item 1). <body aria-hidden="true"> hides the whole page from assistive
+  technology: a critical 4.A violation whose message says every other test is silenced.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus, summary:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body aria-hidden="true">
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Body hidden from assistive technology</h1>
+  <p>Everything on this page is hidden from screen readers by the attribute on the body element. A page like this looks clean to every other check, because they skip content that assistive technology cannot reach.</p>
+</main>
+</body>
+</html>

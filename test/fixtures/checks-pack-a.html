@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Images and objects - a11y-508 test site</title>
+<!--
+  Round 4a pack A (plan items 2-5). A server-side image map (img ismap) is a 4.A violation. Every
+  loaded <object> needs a text alternative, whatever it embeds: an SVG and an HTML document with
+  no fallback are 7.A violations, an SVG with fallback text is not. An alt that repeats its link's
+  text (differing only in case and spacing) is a 7.A review item; alt="" there is not. An unnamed
+  svg role="img" inside a named link is a 7.A review item suggesting aria-hidden; standing alone it
+  is a 7.A violation.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus, summary:focus, object:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Images and objects</h1>
+  <p><a href="#pa-map-text" id="pa-ismap-link"><img src="/img/office-map.png" ismap alt="Office floor plan" id="pa-ismap" width="60" height="40"></a></p>
+  <object data="/img/budget.svg" type="image/svg+xml" width="60" height="40" id="pa-object-svg"></object>
+  <object data="/frames/text.html" type="text/html" width="200" height="60" id="pa-object-html"></object>
+  <object data="/img/seal.svg" type="image/svg+xml" width="60" height="40" id="pa-object-ok">Agency seal</object>
+  <p><a href="#pa-report-text" id="pa-redundant-link"><img src="/img/report.png" alt="Annual  Report" id="pa-redundant" width="24" height="24"> annual report</a></p>
+  <p><a href="#pa-report-text" id="pa-empty-link"><img src="/img/report.png" alt="" id="pa-empty-alt" width="24" height="24"> Annual report</a></p>
+  <p><a href="#pa-home-text" id="pa-home">Start here <svg role="img" id="pa-svg-in-link" width="20" height="20"><rect width="20" height="20" fill="#58a"></rect></svg></a></p>
+  <svg role="img" id="pa-svg-alone" width="40" height="40"><rect width="40" height="40" fill="#58a"></rect></svg>
+  <p id="pa-map-text">Floor plan.</p>
+  <p id="pa-report-text">The annual report.</p>
+  <p id="pa-home-text">Start here.</p>
+</main>
+</body>
+</html>
