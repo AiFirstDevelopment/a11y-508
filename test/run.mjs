@@ -16,6 +16,14 @@ import { humanRun, readGolden, HUMAN_ARGS } from './human-golden.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
+// --only /checks-focus.html crawls that one fixture page and runs only the
+// assertions that look at it: a mutation check in seconds instead of a full
+// crawl. The troubleshoot, --events and golden runs are skipped, and so is
+// every assertion that never reads the chosen page.
+const onlyAt = process.argv.indexOf('--only');
+const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
+if (only && !/^\/[\w.-]+$/.test(only)) throw new Error('--only takes one fixture path, such as /checks-focus.html');
+
 const fixture = await startFixtureSite();
 const { externalHits, unauthorized, cookieHeaders, dangerHits } = fixture;
 const site = { close: () => fixture.close() };
@@ -35,7 +43,7 @@ writeFileSync(stateFile, JSON.stringify({
 console.log(`fixture site at ${base}`);
 const t0 = Date.now();
 const run = await new Promise((resolve) => {
-  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), base, '--out', out, '--concurrency', '2', '--max-screenshots', '5', '--json', '--token-storage', 'fixture_custom_key', '--cookie', `session=${COOKIE}`, '--state', stateFile], {
+  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), only ? base + only.slice(1) : base, ...(only ? ['--max-pages', '1'] : []), '--out', out, '--concurrency', '2', '--max-screenshots', '5', '--json', '--token-storage', 'fixture_custom_key', '--cookie', `session=${COOKIE}`, '--state', stateFile], {
     env: { ...process.env, TOKEN, NO_COLOR: '1' },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -48,7 +56,7 @@ const run = await new Promise((resolve) => {
   });
 });
 // --troubleshoot against the same fixture: one run that gets in, one that is bounced by the app's guard.
-const runCli = (args, env, killAfter = 120000) => new Promise((resolve) => {
+const runCliReal = (args, env, killAfter = 120000) => new Promise((resolve) => {
   const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), ...args], { env: { ...process.env, NO_COLOR: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
   let stderr = '';
@@ -60,6 +68,8 @@ const runCli = (args, env, killAfter = 120000) => new Promise((resolve) => {
     resolve({ status: code, stdout, stderr });
   });
 });
+// In --only mode the extra runs do not happen; the assertions that read them never touch the chosen page, so they are skipped.
+const runCli = only ? async () => ({ status: null, stdout: '', stderr: '' }) : runCliReal;
 const tsOk = await runCli([base + 'app.html', '--troubleshoot', '--json', '--quiet', '--token-storage', 'fixture_custom_key', '--state', stateFile], { TOKEN });
 const tsBounced = await runCli([base + 'app.html', '--troubleshoot', '--json', '--quiet', '--no-token-storage', '--state', stateFile], { TOKEN });
 const thin = await runCli([base + 'submit', '--json', '--quiet', '--no-interact', '--no-zoom', '--no-screenshots', '--out', join(here, '.report-thin')], { TOKEN });
@@ -76,12 +86,12 @@ rmSync(stateFile, { force: true });
 
 // --events: the same crawl as the golden human run, as a JSON event stream, and
 // the human run itself, which must match origin/main's output line for line.
-const evSite = await startFixtureSite();
+const evSite = only ? { base: '', close() {} } : await startFixtureSite();
 const evOut = join(here, '.report-events');
 rmSync(evOut, { recursive: true, force: true });
 // One after the other: two Chrome crawls at once can time out.
 const evRun = await runCli([evSite.base, '--out', evOut, ...HUMAN_ARGS, '--events', '--json', '--quiet'], { TOKEN }, 400000);
-const human = await humanRun(root);
+const human = only ? '' : await humanRun(root);
 evSite.close();
 const evReport = existsSync(join(evOut, 'report.json')) ? JSON.parse(readFileSync(join(evOut, 'report.json'), 'utf8')) : null;
 rmSync(evOut, { recursive: true, force: true });
@@ -89,7 +99,19 @@ console.log(`cli finished in ${((Date.now() - t0) / 1000).toFixed(1)}s with exit
 if (run.status === null) throw new Error('CLI was killed after 300s');
 
 const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
-const pages = Object.fromEntries(report.pages.map((p) => [new URL(p.url).pathname, p]));
+const pagesRaw = Object.fromEntries(report.pages.map((p) => [new URL(p.url).pathname, p]));
+// In --only mode, an assertion counts only if it read the chosen page and no other; the rest are skipped, pass or fail.
+let touchedOnly = false;
+class NeedsOtherPage extends Error {}
+const pages = only
+  ? new Proxy(pagesRaw, {
+      get(t, k) {
+        if (k === only) touchedOnly = true;
+        else if (typeof k === 'string' && k.startsWith('/')) throw new NeedsOtherPage(k);
+        return t[k];
+      },
+    })
+  : pagesRaw;
 const has = (path, test, level, re) => {
   const p = pages[path];
   assert.ok(p, `page ${path} was crawled`);
@@ -104,11 +126,17 @@ const siteHas = (test, level, re) => {
 };
 
 let failures = 0;
+let ran = 0;
 const check = (name, fn) => {
+  touchedOnly = false;
   try {
     fn();
+    if (only && !touchedOnly) return;
+    ran++;
     console.log(`  ok   ${name}`);
   } catch (e) {
+    if (only && (!touchedOnly || e instanceof NeedsOtherPage)) return;
+    ran++;
     failures++;
     console.log(`  FAIL ${name}\n       ${e.message.split('\n').join('\n       ')}`);
   }
@@ -561,5 +589,5 @@ const stubbed = (outcomes) => {
   });
 }
 
-console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
+console.log(failures ? `\n${failures} assertion(s) failed` : only ? `\nall ${ran} assertion(s) that read ${only} passed` : '\nall assertions passed');
 process.exitCode = failures ? 1 : 0;

@@ -59,12 +59,35 @@ jobs:
         env:
           CHROME_PATH: /usr/bin/google-chrome
 
-  macos:
+
+  # macOS and Windows each run the core suite and the Playwright suite as two
+  # jobs in parallel, so the wall time is the longer half, not the sum.
+  macos-core:
     # macOS is where headless Chrome's key-event handling differs: a synthetic
     # key event with a native key code stalled the browser process (see
-    # Page.press in src/page.mjs). The core suite, then the Playwright suite,
-    # whose self-audit presses Enter and Escape on every screen. Chrome is
-    # preinstalled and the runner has a desktop, so Sign in needs no xvfb.
+    # Page.press in src/page.mjs).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Show browser
+        run: /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --version
+      - name: Core, loop, remedies and server tests
+        run: npm test
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a11y-508-macos-core-report
+          path: test/.report
+          if-no-files-found: ignore
+
+  macos-ui:
+    # The Playwright suite, whose self-audit presses Enter and Escape on every
+    # screen. Chrome is preinstalled and the runner has a desktop, so Sign in
+    # needs no xvfb.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,10 +96,6 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      - name: Show browser
-        run: /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --version
-      - name: Core, loop, remedies and server tests
-        run: npm test
       - name: Install the UI's dependencies
         run: npm --prefix ui ci
       - name: Playwright end-to-end suite
@@ -85,18 +104,41 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: a11y-508-macos-reports
+          name: a11y-508-macos-ui-reports
           path: |
-            test/.report
             ui/playwright-report
             ui/test-results
           if-no-files-found: ignore
 
-  windows:
-    # The dashboard's Windows paths: Git Bash as the shell, .cmd shims, taskkill
-    # for Stop, cmd /c start for the browser. The core suite and the server's
-    # tests (npm test), then the Playwright suite. Chrome and Git for Windows
-    # are preinstalled; the runner has a desktop, so Sign in needs no xvfb.
+  windows-core:
+    # The core suite and the server's tests on Windows: Git Bash as the
+    # dashboard's shell, .cmd shims, taskkill for Stop. Chrome and Git for
+    # Windows are preinstalled.
+    runs-on: windows-latest
+    steps:
+      - name: Check out without CRLF conversion
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Show browser and Git Bash
+        run: |
+          (Get-Item "C:\Program Files\Google\Chrome\Application\chrome.exe").VersionInfo.ProductVersion
+          & "C:\Program Files\Git\bin\bash.exe" --version | Select-Object -First 1
+      - name: Core, loop, remedies and server tests
+        run: npm test
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a11y-508-windows-core-report
+          path: test/.report
+          if-no-files-found: ignore
+
+  windows-ui:
+    # The Playwright suite on Windows: cmd /c start for the browser, the
+    # runner's desktop for Sign in.
     runs-on: windows-latest
     steps:
       - name: Check out without CRLF conversion
@@ -107,12 +149,6 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      - name: Show browser and Git Bash
-        run: |
-          (Get-Item "C:\Program Files\Google\Chrome\Application\chrome.exe").VersionInfo.ProductVersion
-          & "C:\Program Files\Git\bin\bash.exe" --version | Select-Object -First 1
-      - name: Core, loop, remedies and server tests
-        run: npm test
       - name: Install the UI's dependencies
         run: npm --prefix ui ci
       - name: Playwright end-to-end suite
@@ -121,9 +157,8 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: a11y-508-windows-reports
+          name: a11y-508-windows-ui-reports
           path: |
-            test/.report
             ui/playwright-report
             ui/test-results
           if-no-files-found: ignore
