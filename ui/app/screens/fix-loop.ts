@@ -289,8 +289,11 @@ export class FixLoopScreen implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
-    await this.env.load();
-    await this.loadConfig();
+    // In parallel: the first /api/env can take seconds (assistant detection),
+    // and the config must not arrive after the developer has started editing.
+    await Promise.all([this.env.load(), this.loadConfig()]);
+    const spec = this.agentSpec();
+    if (!this.testResult() && spec && this.env.env()?.lastTest?.[spec]) this.testResult.set(this.env.env()!.lastTest[spec]);
   }
 
   private configLoads = 0;
@@ -363,6 +366,8 @@ export class FixLoopScreen implements OnInit {
   }
 
   async saveConfig(): Promise<void> {
+    // A load still in flight must not replace what is being saved.
+    this.configLoads++;
     const c = { ...this.cfg() };
     if (!c['url'] && this.form.url()) c['url'] = this.form.url();
     try {
