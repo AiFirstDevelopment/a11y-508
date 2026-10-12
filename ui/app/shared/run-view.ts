@@ -66,7 +66,12 @@ import { ChartPanel } from './chart-panel';
       <tbody>
         @for (p of s.pages(); track $index) {
           <tr [attr.data-url]="p.finalUrl">
-            <th scope="row">{{ short(p.finalUrl) }}</th>
+            <th scope="row">
+              {{ short(p.finalUrl) }}
+              @if (p.modalOnLoad; as m) {
+                <span class="modal-note" data-testid="modal-note">{{ modalNote(m) }}</span>
+              }
+            </th>
             <td>{{ p.error ? p.error : p.skipped ? 'skipped: ' + p.skipped : p.status }}</td>
             <td class="num">{{ p.violations }}</td>
             <td class="num">{{ p.reviews }}</td>
@@ -91,6 +96,10 @@ export class RunView {
   readonly rawOpen = signal(false);
   readonly animations = !prefersReducedMotion();
   readonly short = shortUrl;
+  readonly modalNote = (m: { selector: string; name: string; dismissed: boolean }) =>
+    m.dismissed
+      ? `A modal dialog (${m.name || m.selector}) was open on load; it closed with Escape and the page behind it was audited.`
+      : `A modal dialog (${m.name || m.selector}) was open on load and did not close with Escape; the page behind it was not audited.`;
   readonly errors = computed(() => this.store.notices().filter((n) => n.level === 'error'));
   readonly warnings = computed(() => this.store.notices().filter((n) => n.level === 'warn'));
   readonly unknownList = computed(() => [...new Set(this.store.unknown())].join(', '));

@@ -287,7 +287,11 @@ The crawl stays on the start URL's origin, ignores binary links (PDF, images, ar
 
 The crawler finds pages by following `href` links. Many single-page apps navigate from buttons, menu items or `routerLink` elements that have no `href`, and a crawler that only reads links would audit the first page and stop, which looks like a complete run. To avoid that, after auditing a page the crawler clicks up to `--max-clicks` controls that look like navigation but have no link: elements with a router or `data-href` attribute, `role="link"`, `menuitem`, `tab` or `treeitem`, and pointer-cursor items or buttons inside navigation, menus, headers and sidebars. Any same-origin URL a click leads to, including `pushState` routes and `#/` hash routes, is queued and audited, and is marked `foundBy: "click"` in the report. Controls whose name looks like an action (Save, Delete, Submit, Sign out, Approve, Export and similar) and anything inside a form or dialog are never clicked. `--no-follow-clicks` turns this off.
 
-Every report has a coverage section. It warns when only the start page could be audited, when controls were skipped because they look like actions, when `--max-clicks` or `--max-pages` cut the crawl short, and notes pages that were reachable only by clicking (keyboard and screen reader users cannot discover those as links). A run that passes on violations but has coverage warnings prints `PASS on the N page(s) audited, but COVERAGE IS INCOMPLETE` rather than a plain PASS.
+Every report has a coverage section. It warns when only the start page could be audited, when controls were skipped because they look like actions, when `--max-clicks` or `--max-pages` cut the crawl short, when a modal dialog open on load could not be dismissed (see below), and notes pages that were reachable only by clicking (keyboard and screen reader users cannot discover those as links). A run that passes on violations but has coverage warnings prints `PASS on the N page(s) audited, but COVERAGE IS INCOMPLETE` rather than a plain PASS.
+
+### Modal dialogs open on load
+
+A page that opens a modal dialog as it loads (a cookie or consent banner shown with `showModal()`, or a visible `role="dialog"` with `aria-modal="true"`) hides everything else from assistive technology, and so from the checks. The crawler audits the dialog, presses Escape once, and if the dialog closed, audits the page behind it; those findings are labelled `after closing the modal shown on load`. The page result records `modalOnLoad: { selector, name, dismissed }`. When Escape does not close it, the page behind it was not audited: the coverage section warns, naming the dialog, and `summary.modalsNotDismissed` counts such pages. Dismiss it with `--cookie` or a saved session (`--login`, `--state`), or audit its close control by hand. The keyboard and disclosure passes run on whatever state the page is in afterwards.
 
 ### The event stream (--events)
 
@@ -297,7 +301,7 @@ With `--events` the CLI prints one JSON object per line on stdout instead of its
 |---|---|---|
 | `start` | `kind` (`crawl`, `troubleshoot`, `login`, `loop`), `version`, `url`, `maxPages` | first |
 | `info`, `warn`, `error` | `message` | a line the human output would print, by level |
-| `page` | `url`, `finalUrl`, `title`, `status`, `error`, `skipped`, `violations`, `reviews`, `byImpact`, `durationMs`, `foundBy`, `done` (pages finished so far), `discovered` (pages found so far), `limit` (`--max-pages`) | each page as it finishes; `done` over `discovered` is the progress |
+| `page` | `url`, `finalUrl`, `title`, `status`, `error`, `skipped`, `violations`, `reviews`, `byImpact`, `durationMs`, `foundBy`, `modalOnLoad` (or `null`), `done` (pages finished so far), `discovered` (pages found so far), `limit` (`--max-pages`) | each page as it finishes; `done` over `discovered` is the progress |
 | `coverage` | `complete`, `warnings`, `notes` | after the crawl |
 | `summary` | `result` (`pass`, `fail`, `incomplete`, `nothing-audited`), `passed`, `baseUrl`, `failOn`, `summary` (as in `report.json`), `files` | after the crawl |
 | `troubleshoot` | `result` (the `--troubleshoot --json` object) | `--troubleshoot` |
@@ -331,7 +335,7 @@ Every finding carries a Trusted Tester test ID and the WCAG success criterion. `
 | 4.E | On focus | navigation triggered by focus during the Tab pass |
 | 4.F | Focus order | positive `tabindex`, focus order that differs from DOM order (escalated) |
 | 4.G / 4.H | Focus into and out of revealed content | dialogs opened from disclosure buttons are checked for focus move and return |
-| 5.A | Label provided | missing, placeholder-only, title-only, aria-label-only labels; custom widgets (listbox, textbox, combobox ...) are never named by their own content |
+| 5.A | Label provided | missing, placeholder-only, title-only, aria-label-only labels; a field whose only label is hidden for everyone (`display:none`, `visibility:hidden`; an sr-only label still counts) is escalated; custom widgets (listbox, textbox, combobox ...) are never named by their own content; a label that wraps a control includes the control's value (`Show 10 rows`) |
 | 5.B | Label descriptive | empty/punctuation labels; label inventory escalated |
 | 5.C | Programmatic associations | broken `for`/ARIA references, duplicate ids, visual-only required marks, missing widget states, role attributes with no valid token, abstract roles, unnamed dialogs, ungrouped radios |
 | 5.D | On input | selects that submit on change (attribute or listener) |
@@ -356,9 +360,9 @@ Every finding carries a Trusted Tester test ID and the WCAG success criterion. `
 | 11.A / 11.B | Language | missing or invalid `lang` |
 | 12.A / 12.B | Page title | missing, generic, or duplicated across pages |
 | 12.C / 12.D | Frame and iframe names | missing or generic titles |
-| 13.A | Color alone | inline links distinguished from text only by color |
+| 13.A | Color alone | inline links distinguished only by color (below 3:1) from the text of their nearest block, when that text is longer than the link's and the link has no underline, border, weight, style, size or background cue |
 | 13.B | Sensory characteristics | instructions that refer to shape, color, or position |
-| 13.C | Contrast | real computed contrast using the actual paint stack behind each text node, alpha included and opacity applied once per translucent layer; labels of disabled controls exempt; text over images, over positioned `::before`/`::after` backgrounds, at 1:1, or of a single character escalated |
+| 13.C | Contrast | real computed contrast using the actual paint stack behind every line of text, sampled where it is painted (text outside the viewport is scrolled to, and the page is scrolled back), alpha included and opacity applied once per translucent layer; lines over different backgrounds that disagree are escalated; a background image is bounded by white and black (fails both: violation; passes one: escalated), a gradient by its worst stop (escalated); a thin outline-like text shadow counts, a soft halo escalates a failure; typed values, selected options and placeholders of form fields are checked; labels of disabled controls exempt; text over positioned `::before`/`::after` backgrounds, at 1:1, or of a single character escalated |
 | 14.A / 14.B / 14.C | Tables | data tables without headers, missing scope, complex tables without `headers`, broken `headers` ids, layout tables with header markup |
 | 15.A | CSS generated content | text and images inserted via `::before`/`::after` |
 | 15.B | CSS positioning | reversed flex, CSS `order`, content positioned far from its DOM position |

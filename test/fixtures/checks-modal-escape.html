@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Modal on load that closes - a11y-508 test site</title>
+<!--
+  Plan item 10. A consent dialog opened with showModal() on load. Escape closes it (native
+  behaviour). Behind it, an image with no alt is a 7.A violation that only the run after closing
+  the dialog can see.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  dialog { max-width: 420px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Modal on load that closes</h1>
+  <p>Page content behind the consent dialog.</p>
+  <img id="behind-ok" src="/img/behind.png" width="40" height="40">
+  <p><a href="/checks-modal-stuck.html">Modal on load that stays</a></p>
+</main>
+<dialog id="consent-ok" aria-labelledby="consent-ok-title">
+  <h2 id="consent-ok-title">Cookie preferences</h2>
+  <p>We use cookies to remember your settings.</p>
+  <button type="button" id="consent-ok-accept">Accept</button>
+</dialog>
+<script>
+  const d = document.getElementById('consent-ok');
+  document.getElementById('consent-ok-accept').addEventListener('click', () => d.close());
+  d.showModal();
+</script>
+</body>
+</html>

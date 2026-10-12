@@ -85,12 +85,37 @@
 
   A.isAriaHiddenAttr = (el) => !!el.closest('[aria-hidden="true" i]');
   const isInert = (el) => !!el.closest('[inert]');
-  const outsideModal = (el) => {
-    let modal = null;
+  // The open modal dialog, if any: a native dialog shown with showModal(), or a visible element
+  // with role="dialog"/"alertdialog" and aria-modal="true". Looked up once per A.run() (cached
+  // for the run's duration) and on every call outside a run.
+  const findModal = () => {
     try {
-      modal = document.querySelector('dialog:modal');
+      const native = document.querySelector('dialog:modal');
+      if (native) return native;
     } catch {}
+    for (const d of document.querySelectorAll('[role="dialog"][aria-modal="true" i], [role="alertdialog"][aria-modal="true" i]')) {
+      if (A.isVisible(d)) return d;
+    }
+    return null;
+  };
+  let modalCache;
+  A.openModal = () => (modalCache !== undefined ? modalCache : findModal());
+  const outsideModal = (el) => {
+    const modal = A.openModal();
     return !!modal && !modal.contains(el);
+  };
+  // { selector, name } of the modal dialog open now, or null. The crawler calls it after load.
+  A.modalOnLoad = () => {
+    const m = findModal();
+    return m ? { selector: A.selector(m), name: A.accName(m).name || '' } : null;
+  };
+  // Hidden for everyone, sighted users included: display:none or visibility:hidden on the element
+  // or an ancestor, or the hidden attribute. Visually hidden (sr-only, clipped) content is not.
+  A.isHiddenForEveryone = (el) => {
+    if (el.closest('[hidden]')) return true;
+    const s = A.cs(el);
+    if (!s || s.display === 'none' || s.visibility === 'hidden' || s.visibility === 'collapse') return true;
+    return s.display !== 'contents' && el.getClientRects().length === 0;
   };
   // Hidden from assistive technology: aria-hidden (any case), an inert ancestor, or outside an open modal dialog.
   A.isHiddenFromAT = (el) => A.isAriaHiddenAttr(el) || isInert(el) || outsideModal(el);
@@ -287,7 +312,31 @@
     return out;
   };
 
-  // Simplified accessible-name-from-content: text, alt of images, aria-label of descendants.
+  // The value an embedded control contributes to the name of what contains it (accname 2C):
+  // a textbox's value, the selected option of a select or listbox, a range's aria-valuetext or
+  // aria-valuenow. null when the node is not such a control. Password values never contribute.
+  const TEXT_INPUT = /^(text|search|email|tel|url|number)$/;
+  A.embeddedValue = (node) => {
+    const tag = node.localName;
+    const role = A.explicitRole(node);
+    const type = tag === 'input' ? (node.getAttribute('type') || 'text').toLowerCase() : '';
+    if (role === 'slider' || role === 'spinbutton' || type === 'range') {
+      const vt = node.getAttribute('aria-valuetext');
+      if (vt && vt.trim()) return vt.trim();
+      const vn = node.getAttribute('aria-valuenow');
+      if (vn && vn.trim()) return vn.trim();
+      return tag === 'input' ? node.value || '' : '';
+    }
+    if (tag === 'select') return Array.from(node.selectedOptions || []).map((o) => A.text(o)).join(' ');
+    if (tag === 'textarea') return node.value || '';
+    if (tag === 'input') return TEXT_INPUT.test(type) ? node.value || '' : null;
+    if (role === 'listbox') return Array.from(node.querySelectorAll('[role="option"][aria-selected="true" i]')).map((o) => A.text(o)).join(' ');
+    if (role === 'combobox' || role === 'textbox' || role === 'searchbox') return A.text(node);
+    return null;
+  };
+
+  // Simplified accessible-name-from-content: text, alt of images, aria-label of descendants,
+  // and the value of embedded controls.
   // Returns { name, raw }: raw keeps icon-font glyphs so a message can show what is there.
   function contentName(el, includeHidden) {
     const parts = [];
@@ -328,6 +377,13 @@
         const t = node.querySelector(':scope > title');
         if (t) push(A.text(t));
         return;
+      }
+      if (node !== el) {
+        const v = A.embeddedValue(node);
+        if (v !== null) {
+          push(v);
+          return;
+        }
       }
       const [before, after] = pseudoText(node);
       if (before && before.raw) push(before.text, before.raw);
@@ -472,13 +528,22 @@
     A.counts = {};
     A.truncated = {};
     A.meta = { errors: [] };
-    for (const check of A.checks) {
-      try {
-        check(A);
-      } catch (e) {
-        A.meta.errors.push(`${check.name}: ${e && e.message ? e.message : e}`);
+    const sx = window.scrollX;
+    const sy = window.scrollY;
+    modalCache = findModal();
+    try {
+      for (const check of A.checks) {
+        try {
+          check(A);
+        } catch (e) {
+          A.meta.errors.push(`${check.name}: ${e && e.message ? e.message : e}`);
+        }
       }
+    } finally {
+      modalCache = undefined;
     }
+    // Checks may scroll (contrast scrolls text into view to sample it); they must leave the page where it was.
+    A.meta.scrollRestored = Math.abs(window.scrollX - sx) < 1 && Math.abs(window.scrollY - sy) < 1;
     A.meta.truncated = A.truncated;
     return { findings: A.findings, meta: A.meta };
   };

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Labels with embedded controls - a11y-508 test site</title>
+<!--
+  Plan items 8 and 9. A label that wraps a control reads the control's value, as the browser does:
+  "Show 10 rows", "Search for maps nearby" (the value is typed by the script below, so only the
+  value property, not an attribute, holds it). A label hidden with display:none or by a
+  visibility:hidden ancestor is not a visible label; an sr-only (clipped) label is.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  label { display: block; margin: 10px 0 2px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Labels with embedded controls</h1>
+  <label>Show <select id="show-rows"><option>5</option><option selected>10</option><option>25</option></select> rows</label>
+  <label>Search for <input id="typed" type="text"> nearby</label>
+  <label for="hid-none" style="display:none">Email address</label>
+  <input id="hid-none" type="text">
+  <div style="visibility:hidden"><label for="hid-vis">Postal code</label></div>
+  <input id="hid-vis" type="text">
+  <label for="sr-label" class="sr-only">Phone number</label>
+  <input id="sr-label" type="text">
+  <label for="hid-aria" style="display:none">City</label>
+  <input id="hid-aria" type="text" aria-label="City">
+</main>
+<script>document.getElementById('typed').value = 'maps';</script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contrast of form text - a11y-508 test site</title>
+<!--
+  Plan item 5 (13.C). Light grey #bbb (L 0.49693) on the white field background:
+  1.05/0.54693 = 1.92, fails 4.5:1. Typed values, placeholders and the selected option are checked;
+  the same controls disabled are exempt.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  label { display: block; margin: 10px 0 2px; }
+  input, select { font-size: 16px; background: #fff; }
+  .ph-light::placeholder { color: #bbb; opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Contrast of form text</h1>
+  <form action="/submit">
+    <label for="f-value">Greeting</label>
+    <input id="f-value" type="text" value="hello" style="color:#bbb">
+    <label for="f-ph">Keyword</label>
+    <input id="f-ph" type="text" class="ph-light" placeholder="Type a keyword">
+    <label for="f-select">Rows per page</label>
+    <select id="f-select" style="color:#bbb"><option selected>Ten</option><option>Twenty</option></select>
+    <label for="f-dis">Greeting (disabled)</label>
+    <input id="f-dis" type="text" value="hello" style="color:#bbb" disabled>
+    <label for="f-ph-dis">Keyword (disabled)</label>
+    <input id="f-ph-dis" type="text" class="ph-light" placeholder="Type a keyword" disabled>
+  </form>
+</main>
+</body>
+</html>

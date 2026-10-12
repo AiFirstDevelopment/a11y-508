@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Modal on load that stays - a11y-508 test site</title>
+<!--
+  Plan item 10. A consent dialog opened with showModal() on load that cancels its cancel event,
+  so Escape does nothing. The image with no alt behind it is never
+  audited; the coverage section says so.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  dialog { max-width: 420px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Modal on load that stays</h1>
+  <p>Page content behind the consent dialog.</p>
+  <img id="behind-stuck" src="/img/behind.png" width="40" height="40">
+  <p><a href="/checks-modal-escape.html">Modal on load that closes</a></p>
+</main>
+<dialog id="consent-stuck" aria-labelledby="consent-stuck-title">
+  <h2 id="consent-stuck-title">Consent required</h2>
+  <p>You must choose before you continue.</p>
+  <button type="button" id="consent-stuck-accept">Accept</button>
+</dialog>
+<script>
+  const d = document.getElementById('consent-stuck');
+  document.getElementById('consent-stuck-accept').addEventListener('click', () => d.close());
+  d.addEventListener('cancel', (e) => e.preventDefault());
+  d.showModal();
+</script>
+</body>
+</html>

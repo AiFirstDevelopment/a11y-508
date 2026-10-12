@@ -3,7 +3,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { testInfo } from './checks/catalog.mjs';
-import { listenerProbe, keyboardPass, disclosurePass, zoomPass, routeDiscoveryPass } from './passes.mjs';
+import { listenerProbe, keyboardPass, disclosurePass, zoomPass, routeDiscoveryPass, modalOnLoadPass } from './passes.mjs';
 
 export async function auditPage(page, url, ctx) {
   const { opts } = ctx;
@@ -79,11 +79,23 @@ export async function auditPage(page, url, ctx) {
     await page.ensureInjected();
     result.info = await page.evaluate('window.__a11y508.pageInfo()');
     result.title = result.info.title;
-    const base = await page.evaluate('window.__a11y508.run()');
+    // A modal dialog open on load (a cookie or consent banner) hides the page from every check.
+    const modal = await page.evaluate('window.__a11y508.modalOnLoad()');
+    let base = await page.evaluate('window.__a11y508.run()');
     for (const f of base.findings) add(f);
     if (base.meta.errors && base.meta.errors.length) result.errors.push(...base.meta.errors.map((e) => `check: ${e}`));
     for (const [test, n] of Object.entries(base.meta.truncated || {})) result.errors.push(`${test}: ${n} additional finding(s) not listed (per-test cap)`);
-    result.passes.static = { findings: base.findings.length, contrastChecked: base.meta.contrastChecked };
+    result.passes.static = { findings: base.findings.length, contrastChecked: base.meta.contrastChecked, scrollRestored: base.meta.scrollRestored };
+    if (modal) {
+      const behind = await modalOnLoadPass(page, add, fingerprints);
+      result.modalOnLoad = { ...modal, dismissed: behind.dismissed };
+      if (behind.run) {
+        result.passes.static.behindModal = behind.added;
+        result.passes.static.scrollRestored = result.passes.static.scrollRestored && behind.run.meta.scrollRestored;
+        if (behind.run.meta.errors && behind.run.meta.errors.length) result.errors.push(...behind.run.meta.errors.map((e) => `check: ${e}`));
+        base = behind.run;
+      }
+    }
 
     try {
       await listenerProbe(page, base.meta, add);

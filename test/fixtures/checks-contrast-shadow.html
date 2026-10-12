@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contrast with text shadows - a11y-508 test site</title>
+<!--
+  Plan item 4 (13.C). A light panel, #eee (L 0.85499), 16px text, so 0.1em = 1.6px and 0.2em = 3.2px.
+    #sh-none   white, no shadow: 1.05/0.90499 = 1.16 -> violation.
+    #sh-stroke white, 0 0 1px #000 (blur 1px <= 0.1em, darker than the light text): the best of
+               text/background 1.16, text/shadow 21.00, shadow/background 0.90499/0.05 = 18.10 -> 21.00, no finding.
+    #sh-halo   white, 0 0 8px #000 (blur 8px >= 0.2em): 1.16 without it -> review naming the shadow.
+    #sh-pass-halo #000 on #eee with a 0 0 8px #888 halo: 18.10 passes; a shadow never makes a finding of it.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .panel { background: #eee; padding: 12px; margin: 16px 0; }
+  .panel p { font-size: 16px; margin: 6px 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Contrast with text shadows</h1>
+  <div class="panel">
+    <p id="sh-none" style="color:#fff">White text with no shadow</p>
+    <p id="sh-stroke" style="color:#fff; text-shadow: 0 0 1px #000">White text with a thin dark outline</p>
+    <p id="sh-halo" style="color:#fff; text-shadow: 0 0 8px #000">White text with a soft dark halo</p>
+    <p id="sh-pass-halo" style="color:#000; text-shadow: 0 0 8px #888">Black text with a soft grey halo</p>
+  </div>
+</main>
+</body>
+</html>

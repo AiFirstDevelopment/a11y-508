@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Links told apart by color - a11y-508 test site</title>
+<!--
+  Plan item 7 (13.A). Surrounding text #333 (L 0.03310); link #0645ad (L 0.07312):
+  link/text contrast 0.12312/0.08310 = 1.48, below 3:1. The paragraphs have no text of their own:
+  the words around the link are in spans, so only the block's text tells link from text.
+  #lk-far: link #1565c0 (L 0.13273) against text #000: 0.18273/0.05 = 3.65, at least 3:1.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .t { color: #333; }
+  .lk { color: #0645ad; text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Links told apart by color</h1>
+  <p><span class="t">Read the </span><a class="lk" id="lk-plain" href="#privacy">privacy policy</a><span class="t"> before applying.</span></p>
+  <p><span class="t">Read the </span><a class="lk" id="lk-under" href="#terms" style="text-decoration:underline">terms of use</a><span class="t"> before applying.</span></p>
+  <p><span class="t">Read the </span><a class="lk" id="lk-border" href="#fees" style="border-bottom:1px solid #0645ad">fee schedule</a><span class="t"> before applying.</span></p>
+  <p><span class="t">Read the </span><a class="lk" id="lk-bg" href="#eligibility" style="background:#fff3c4">eligibility rules</a><span class="t"> before applying.</span></p>
+  <p><span style="color:#000">Read the </span><a id="lk-far" href="#guide" style="color:#1565c0;text-decoration:none">filing guide</a><span style="color:#000"> before applying.</span></p>
+  <p><a class="lk" id="lk-short" href="#permits">Everything about applying for a permit</a><span class="t"> here.</span></p>
+</main>
+</body>
+</html>

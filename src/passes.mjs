@@ -145,6 +145,26 @@ export async function keyboardPass(page, add, opts) {
   return { tabbed: seq.length, trap, navigated, tabbable: prep.count };
 }
 
+// The page opened a modal dialog on load and the static checks saw only the dialog: press Escape
+// once; if the dialog closed, run the static checks again on the page behind it and label what
+// they find. Returns { dismissed, run, added }.
+export const BEHIND_MODAL = 'after closing the modal shown on load';
+export async function modalOnLoadPass(page, add, fingerprints) {
+  await page.press('Escape');
+  await sleep(400);
+  const still = await page.evaluate('window.__a11y508.modalOnLoad()');
+  if (still) return { dismissed: false, run: null, added: 0 };
+  const run = await page.evaluate('window.__a11y508.run()');
+  let added = 0;
+  for (const f of run.findings) {
+    if (fingerprints.has(`${f.test}|${f.selector}|${f.message}`)) continue;
+    f.state = BEHIND_MODAL;
+    add(f);
+    added++;
+  }
+  return { dismissed: true, run, added };
+}
+
 export async function disclosurePass(page, add, fingerprints, opts, reload) {
   const cands = await page.evaluate(`window.__a11y508.disclosureCandidates(${opts.maxActivations})`);
   const out = { candidates: cands.length, activated: 0, revealedFindings: 0 };

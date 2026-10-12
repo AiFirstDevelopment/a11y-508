@@ -16,6 +16,8 @@ export interface PageRow {
   byImpact: ByImpact;
   durationMs: number;
   round: number | null;
+  // A modal dialog that was open when the page loaded, and whether Escape closed it.
+  modalOnLoad: { selector: string; name: string; dismissed: boolean } | null;
 }
 
 export interface Notice {
@@ -109,6 +111,7 @@ export class RunStore {
         const row: PageRow = {
           url: ev['url'], finalUrl: ev['finalUrl'], title: ev['title'], status: ev['status'], error: ev['error'], skipped: ev['skipped'],
           violations: ev['violations'], reviews: ev['reviews'], byImpact: ev['byImpact'], durationMs: ev['durationMs'], round: ev['round'] ?? null,
+          modalOnLoad: ev['modalOnLoad'] ?? null,
         };
         this.pages.update((p) => [...p, row]);
         this.progress.update((p) => ({ ...p, done: ev['done'], discovered: ev['discovered'], limit: ev['limit'] ?? p.limit }));

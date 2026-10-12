@@ -222,3 +222,14 @@ test('AC 10: the command on the Run screen, run in a terminal with TOKEN set, gi
   const terminalSummary = readReport(term).summary;
   expect(terminalSummary).toEqual(dashboardSummary);
 });
+
+// docs/plans/checks-foundations.md AC 10: the page event carries modalOnLoad and the live list says so.
+test('checks-foundations AC 10: the live page list notes a modal dialog open on load, closed by Escape or not', async () => {
+  await open(page, dash, '/run');
+  await fillRun(page, { url: site.base + 'checks-modal-escape.html', token: TOKEN, ...QUICK, maxPages: 2 });
+  await startFromRun(page);
+  await waitFinished(page);
+  const note = (path: string) => page.getByTestId('page-list').locator(`tr[data-url$="${path}"] [data-testid="modal-note"]`);
+  await expect(note('/checks-modal-escape.html')).toHaveText('A modal dialog (Cookie preferences) was open on load; it closed with Escape and the page behind it was audited.');
+  await expect(note('/checks-modal-stuck.html')).toHaveText('A modal dialog (Consent required) was open on load and did not close with Escape; the page behind it was not audited.');
+});

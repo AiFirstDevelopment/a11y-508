@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contrast per line - a11y-508 test site</title>
+<!--
+  Plan item 1 (13.C). Each span has two lines (a <br>), 40px apart. The first line sits on the
+  white page; behind the second line is an absolutely positioned block (a sibling, not an ancestor).
+  WCAG relative luminance, sRGB linearised: L(#fff)=1, L(#595959)=0.09990, L(#222)=0.01600,
+  L(#aaa)=0.40198, L(#ddd)=0.72306, L(#000)=0.
+    #ln-mixed  #595959: line 1 on #fff (1.05/0.14990) = 7.00 passes; line 2 on #222 (0.14990/0.06600) = 2.27 fails
+               -> review naming the failing line.
+    #ln-fail   #aaa:    line 1 on #fff (1.05/0.45198) = 2.32; line 2 on #ddd (0.77306/0.45198) = 1.71
+               -> violation at the worst, 1.71.
+    #ln-pass   #000:    on #fff 21.00; on #ddd (0.77306/0.05) = 15.46 -> no finding.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .split { position: relative; width: 600px; font-size: 16px; line-height: 40px; margin: 16px 0; }
+  .split p { margin: 0; }
+  .split .t { position: relative; z-index: 1; }
+  .block { position: absolute; left: 0; right: 0; top: 40px; height: 40px; z-index: 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Contrast per line</h1>
+  <div class="split"><div class="block" style="background:#222"></div><p><span class="t" id="ln-mixed" style="color:#595959">First line on the page<br>Second line on a dark block</span></p></div>
+  <div class="split"><div class="block" style="background:#ddd"></div><p><span class="t" id="ln-fail" style="color:#aaa">First line on the page<br>Second line on a light block</span></p></div>
+  <div class="split"><div class="block" style="background:#ddd"></div><p><span class="t" id="ln-pass" style="color:#000">First line on the page<br>Second line on a light block</span></p></div>
+</main>
+</body>
+</html>

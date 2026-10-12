@@ -26,7 +26,8 @@ export function summarize(pages, site) {
   const audited = pages.filter((p) => !p.error && !p.skipped).length;
   const failed = pages.filter((p) => p.error).length;
   const skipped = pages.filter((p) => p.skipped).length;
-  return { pages: pages.length, audited, failed, skipped, violations, reviews, byTest, byImpact };
+  const modalsNotDismissed = pages.filter((p) => p.modalOnLoad && p.modalOnLoad.dismissed === false).length;
+  return { pages: pages.length, audited, failed, skipped, violations, reviews, byTest, byImpact, modalsNotDismissed };
 }
 
 // Reasons the crawl may not have reached every page. A run with warnings can
@@ -49,6 +50,9 @@ export function coverage(pages, crawl, opts) {
   }
   const cappedPages = pages.filter((p) => p.discovery && p.discovery.capped);
   if (cappedPages.length) warnings.push(`${cappedPages.reduce((a, p) => a + p.discovery.capped, 0)} navigation-like control(s) on ${cappedPages.length} page(s) were beyond --max-clicks ${opts.maxClicks} and were not tried.`);
+  for (const p of pages.filter((x) => x.modalOnLoad && x.modalOnLoad.dismissed === false)) {
+    warnings.push(`A modal dialog (${p.modalOnLoad.name || p.modalOnLoad.selector}) was open when ${short(p.finalUrl || p.url)} loaded and did not close with Escape; the page behind it was not audited. Dismiss it with --cookie or a saved session, or audit the dialog's close control.`);
+  }
   if (crawl.overflow) warnings.push(`Stopped at --max-pages ${opts.maxPages}: ${crawl.overflow} more link(s) were found but not audited.`);
   if (!opts.followClicks) notes.push('Click discovery was off (--no-follow-clicks); pages reachable only through click handlers were not looked for.');
   if (crawl.clickOnly) notes.push(`${crawl.clickOnly} page(s) were reachable only by clicking a control with no link (href); they were found by clicking and audited. Screen reader users cannot discover these destinations as links (check WCAG 2.1.1, 4.1.2).`);
@@ -295,7 +299,7 @@ export function pageEvent(p, done, discovered, limit) {
   return {
     url: p.url, finalUrl: p.finalUrl || p.url, title: p.title || '', status: p.status ?? null, error: p.error || null, skipped: p.skipped || null,
     violations, reviews: findings.length - violations, byImpact, durationMs: p.durationMs || 0, foundBy: p.foundBy || 'link',
-    done, discovered, limit: limit ?? null,
+    modalOnLoad: p.modalOnLoad || null, done, discovered, limit: limit ?? null,
   };
 }
 

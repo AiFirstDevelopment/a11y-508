@@ -35,6 +35,8 @@ window.__a11y508.register(function forms(A) {
       A.add({ test: '5.A', impact: 'serious', el, message: `Field is labelled only by its placeholder ("${name}"), which disappears once the user types. Provide a persistent <label>.` });
     } else if (source === 'title') {
       A.add({ test: '5.A', level: 'review', impact: 'moderate', el, message: `Field is labelled only by its title attribute ("${name}"), which is not visible. Confirm a visible label or instruction exists nearby.` });
+    } else if (source === 'label' && Array.from(el.labels).every((l) => A.isHiddenForEveryone(l))) {
+      A.add({ test: '5.A', level: 'review', impact: 'moderate', el, message: `Field's only label ("${name}") is hidden (display:none or visibility:hidden), so sighted users see no label. Show the label, or hide it visually only (an sr-only class) if a visible cue already identifies the field.` });
     } else if (source === 'aria-label' && !(el.labels && el.labels.length)) {
       A.add({ test: '5.A', level: 'review', impact: 'minor', el, message: `Field is named by aria-label ("${name}") with no visible <label>. Confirm a visible label, adjacent text, or icon makes its purpose clear to sighted users.` });
     }
