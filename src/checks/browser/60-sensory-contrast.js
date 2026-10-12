@@ -284,11 +284,30 @@ window.__a11y508.register(function sensoryContrast(A) {
     const fill = s.webkitTextFillColor;
     return fill && fill !== s.color && !/currentcolor/i.test(fill) ? A.parseColor(fill) : A.parseColor(s.color);
   };
-  const thresholds = (s) => {
+  // Text whose letters are mostly Chinese, Japanese or Korean characters.
+  const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu;
+  const isCJK = (text) => {
+    const letters = (text.match(/\p{L}/gu) || []).length;
+    return letters > 0 && (text.match(CJK) || []).length / letters > 0.5;
+  };
+  // cjk: true when IBM's stricter CJK rule (beyond-508 profile only) makes text that WCAG counts
+  // as large count as normal: CJK text is large only at 29.3 px, or 24 px bold.
+  const thresholds = (s, text) => {
     const size = parseFloat(s.fontSize) || 16;
     const weight = parseInt(s.fontWeight, 10) || (s.fontWeight === 'bold' ? 700 : 400);
     const large = size >= 24 || (size >= 18.66 && weight >= 700);
+    if (large && text && A.beyond() && isCJK(text) && !(size >= 29.3 || (size >= 24 && weight >= 700))) return { size, weight, need: 4.5, cjk: true };
     return { size, weight, need: large ? 3 : 4.5 };
+  };
+  const CJK_NOTE = 'CJK text counts as large only at 29.3 px, or 24 px bold (IBM Equal Access, stricter than WCAG; beyond-508 profile)';
+  // Findings that exist only because of the CJK rule: those passing the WCAG large-text 3:1.
+  const markCJK = (from, t, ratio) => {
+    if (!t.cjk || ratio < 3) return;
+    for (const f of A.findings.slice(from)) {
+      f.beyond508 = true;
+      f.message += ` (${CJK_NOTE}.)`;
+      if (f.details) f.details.note = CJK_NOTE;
+    }
   };
   const detailsOf = (d, t, text) => {
     const w = d.s.min;
@@ -322,7 +341,7 @@ window.__a11y508.register(function sensoryContrast(A) {
       if (!s) continue;
       const fg = textColor(s);
       if (fg.a === 0) continue;
-      const t = thresholds(s);
+      const t = thresholds(s, ownText(el));
       const shadows = shadowsOf(s);
       const stroke = shadows.find((x) => x.blur <= 0.1 * t.size);
       const halo = shadows.find((x) => x !== stroke && x.blur >= 0.2 * t.size);
@@ -346,42 +365,47 @@ window.__a11y508.register(function sensoryContrast(A) {
       const d = decide(samples, t.need);
       if (!d) continue;
       count++;
-      const text = A.text(el).slice(0, 80);
-      const details = detailsOf(d, t, text);
-      const w = d.s.min;
-      const measured = `${fmt(w.ratio)}:1, ${A.hex(w.fg)} on ${A.hex(w.bg)}`;
-      if (d.between) {
-        between.push(betweenItem(el, d, t, text));
-        continue;
-      }
-      if (d.kind === 'image') {
-        A.add({ test: '13.C', level: d.level, impact: d.level === 'violation' ? 'serious' : 'moderate', el, message: imageMessage('Text', d, t), details });
-        continue;
-      }
-      if (d.kind === 'gradient') {
-        A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: gradientMessage('Text', d, t), details });
-        continue;
-      }
-      if (d.kind === 'lines') {
-        A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Text contrast differs between its lines: line ${d.line} of ${d.of} is ${measured}, below ${t.need}:1, while line ${d.bestLine} is ${fmt(d.best.min.ratio)}:1 on ${A.hex(d.best.min.bg)}. Part of the text sits over a different background; check it visually.`, details });
-        continue;
-      }
-      const pseudo = pseudoBackground(el);
-      const own = ownText(el);
-      if (pseudo) {
-        A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Text sits over an absolutely positioned ${pseudo.pseudo} background covering ${pseudo.percent}% of the element, so its contrast could not be measured (computed ${measured} without it). Check it visually.`, details });
-      } else if (w.ratio < 1.005) {
-        A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Text and background resolve to the same color (1:1, ${A.hex(w.fg)}). This is usually hidden text or a background the check cannot see; check it visually.`, details });
-      } else if (Array.from(own).length === 1) {
-        A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Single-character text "${own}" has contrast ${measured}, below ${t.need}:1. Single characters are often icons; confirm whether it conveys information and check it visually.`, details });
-      } else if (halo) {
-        A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Text contrast ${fmt(w.ratio)}:1 is below ${t.need}:1 (${A.hex(w.fg)} on ${A.hex(w.bg)}) without its text shadow (text-shadow: ${halo.css}), which may make it readable. Check it visually.`, details: { ...details, shadow: halo.css } });
-      } else {
-        A.add({
-          test: '13.C', impact: w.ratio < t.need - 1.5 ? 'serious' : 'moderate', el,
-          message: `Text contrast ${fmt(w.ratio)}:1 is below ${t.need}:1 (${Math.round(t.size)}px${t.weight >= 700 ? ' bold' : ''}, ${A.hex(w.fg)} on ${A.hex(w.bg)}).`,
-          details,
-        });
+      const before = A.findings.length;
+      try {
+        const text = A.text(el).slice(0, 80);
+        const details = detailsOf(d, t, text);
+        const w = d.s.min;
+        const measured = `${fmt(w.ratio)}:1, ${A.hex(w.fg)} on ${A.hex(w.bg)}`;
+        if (d.between) {
+          between.push(betweenItem(el, d, t, text));
+          continue;
+        }
+        if (d.kind === 'image') {
+          A.add({ test: '13.C', level: d.level, impact: d.level === 'violation' ? 'serious' : 'moderate', el, message: imageMessage('Text', d, t), details });
+          continue;
+        }
+        if (d.kind === 'gradient') {
+          A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: gradientMessage('Text', d, t), details });
+          continue;
+        }
+        if (d.kind === 'lines') {
+          A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Text contrast differs between its lines: line ${d.line} of ${d.of} is ${measured}, below ${t.need}:1, while line ${d.bestLine} is ${fmt(d.best.min.ratio)}:1 on ${A.hex(d.best.min.bg)}. Part of the text sits over a different background; check it visually.`, details });
+          continue;
+        }
+        const pseudo = pseudoBackground(el);
+        const own = ownText(el);
+        if (pseudo) {
+          A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Text sits over an absolutely positioned ${pseudo.pseudo} background covering ${pseudo.percent}% of the element, so its contrast could not be measured (computed ${measured} without it). Check it visually.`, details });
+        } else if (w.ratio < 1.005) {
+          A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Text and background resolve to the same color (1:1, ${A.hex(w.fg)}). This is usually hidden text or a background the check cannot see; check it visually.`, details });
+        } else if (Array.from(own).length === 1) {
+          A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Single-character text "${own}" has contrast ${measured}, below ${t.need}:1. Single characters are often icons; confirm whether it conveys information and check it visually.`, details });
+        } else if (halo) {
+          A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Text contrast ${fmt(w.ratio)}:1 is below ${t.need}:1 (${A.hex(w.fg)} on ${A.hex(w.bg)}) without its text shadow (text-shadow: ${halo.css}), which may make it readable. Check it visually.`, details: { ...details, shadow: halo.css } });
+        } else {
+          A.add({
+            test: '13.C', impact: w.ratio < t.need - 1.5 ? 'serious' : 'moderate', el,
+            message: `Text contrast ${fmt(w.ratio)}:1 is below ${t.need}:1 (${Math.round(t.size)}px${t.weight >= 700 ? ' bold' : ''}, ${A.hex(w.fg)} on ${A.hex(w.bg)}).`,
+            details,
+          });
+        }
+      } finally {
+        markCJK(before, t, d.s.min.ratio);
       }
     }
 

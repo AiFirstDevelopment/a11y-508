@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Non-text contrast and CJK text - a11y-508 test site</title>
+<!--
+  Round 4b, AC 10 (1.4.11 non-text contrast) and AC 12 (IBM's CJK large-text rule), by hand with
+  WCAG's relative luminance:
+  - #bc-light: a text field with a #dddddd border on white: 1.358:1 (shown 1.36), below 3:1:
+    a review item.
+  - #bc-dark: a #767676 border on the #f0f0f0 panel around it: 3.986:1, at least 3:1, so not
+    reported (it would fail a 4.5:1 threshold).
+  - #bc-cjk: 20 px bold Japanese text, #7f7f7f on white: 4.004:1. WCAG counts 20 px bold as large
+    (at least 18.66 px bold), so 3:1 is enough and the default run reports nothing. IBM's CJK rule
+    counts CJK text as large only at 29.3 px, or 24 px bold, so with the profile it needs 4.5:1:
+    a 13.C violation, marked beyond508.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus, select:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  label { display: block; margin-top: 12px; }
+  .panel { background: #f0f0f0; padding: 12px; }
+  #bc-light { border: 1px solid #ddd; background: #fff; }
+  #bc-dark { border: 1px solid #767676; background: #fff; }
+  #bc-cjk { font-size: 20px; font-weight: 700; color: #7f7f7f; }
+  /* A dark focus outline, so the Tab pass's focus-indicator check (1.4.11) has nothing to say here. */
+  input:focus { outline: 3px solid #036; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Non-text contrast and CJK text</h1>
+  <form action="/about.html">
+    <label for="bc-light">Case number</label>
+    <input id="bc-light" type="text">
+    <div class="panel">
+      <label for="bc-dark">Reference number</label>
+      <input id="bc-dark" type="text">
+    </div>
+  </form>
+  <p id="bc-cjk" lang="ja">日本語のお知らせです。窓口の受付時間が変わります。</p>
+</main>
+</body>
+</html>

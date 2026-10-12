@@ -138,6 +138,7 @@ Nothing has to be installed: the server uses only Node's own modules (Node 18 or
 - **The token stays in memory.** Type it into the Run screen, or start the dashboard with `TOKEN` set and choose *use TOKEN from my shell*. It is passed to the CLI in its environment only, never written to disk, never sent back to the browser, and blanked out of the CLI's output if it ever appears there.
 - **Reports are kept.** Before each crawl the previous `a11y-508-report/` moves to `a11y-508-history/<finished-at>/`, so the latest report stays where the runbook says and History lists the earlier ones. Add `a11y-508-history/` to `.gitignore`.
 - **The fix loop's assistant.** The Fix loop screen lists Claude Code, Gemini CLI and Codex, shows which are installed (on `PATH`, through your login shell, or in `npm prefix -g`'s bin folder) with their versions, and can install a missing one with `npm install -g` in your own shell after you confirm. *Test assistant* calls it once with a tiny task, to show it is installed and signed in before a loop spends a round finding out. On Windows, "your shell" is Git Bash, which comes with Git for Windows (the loop needs git anyway); without it the dashboard falls back to PowerShell or cmd.
+- **Beyond Section 508.** *Also check WCAG 2.2 (beyond Section 508)* under **Advanced** adds `--wcag 2.2` to the run (see [Beyond Section 508](#beyond-section-508)); the Report screen then lists those rules under their own heading and in their own group of the test filter.
 - **Every chart has a data table** with the same numbers, and chart animations are off when you have asked your system for reduced motion.
 
 The Run screen shows the equivalent command line, so a run you set up in the dashboard can go into CI unchanged.
@@ -220,6 +221,10 @@ a11y-508 <url> [options]
                            whether the header went out) with the next step to take
   --no-interact            Skip the keyboard and disclosure-activation passes
   --no-zoom                Skip the 200% zoom pass
+  --wcag <version>         2.0 (default): the Trusted Tester checks only, as Section 508
+                           requires. 2.1 or 2.2 also runs the WCAG 2.1/2.2 rules and best
+                           practices beyond Section 508, listed under their own heading
+  --beyond-508             Same as --wcag 2.2
   --no-screenshots         Do not capture element screenshots
   --max-screenshots <n>    Screenshots per page (default 40)
   --max-tabs <n>           Maximum Tab presses per page (default 400)
@@ -234,7 +239,8 @@ a11y-508 <url> [options]
   --json                   Print the report summary as JSON on stdout
   --events                 Print one JSON event per line on stdout instead of the
                            human-readable output (for tools; see the README)
-  --list-tests             Print the Trusted Tester test catalog and exit
+  --list-tests             Print the Trusted Tester test catalog and exit (with --wcag
+                           2.1/2.2, also the rules beyond Section 508)
 ```
 
 Exit codes: `0` no violations at the `--fail-on` impacts, `1` violations found, `2` usage or crawl error, `3` the browser could not start.
@@ -371,8 +377,31 @@ Every finding carries a Trusted Tester test ID and the WCAG success criterion. `
 | 18.A | Resize text | the page is re-laid out at 200% zoom and checked for clipped and overlapping text; viewport tags that block zoom |
 | 19.A | Multiple ways | navigation, search, site map, breadcrumbs detected across the site |
 | 20.A | Parsing | not tested, per Trusted Tester |
+| 1.3.4, 1.3.5, 1.4.10, 1.4.11, 1.4.12, 2.4.11, 2.5.3, 2.5.8, BP | Beyond Section 508 (WCAG 2.1 / 2.2, best practices) | only with `--wcag 2.1` / `2.2` (`--beyond-508`), listed under their own heading: see [Beyond Section 508](#beyond-section-508) |
 
 Each page is also re-checked after the tool opens every disclosure button, accordion, and menu it can find, so content that only appears after interaction is audited too. Findings from that pass are labelled with the control that revealed them.
+
+A page that opens a modal dialog on load is audited behind it once Escape closes it. Besides a native `<dialog>` shown with `showModal()` and a dialog with `aria-modal="true"`, a visible `role="dialog"` or `"alertdialog"` that older modal libraries (react-modal, older Bootstrap, jQuery UI) show beside an `aria-hidden` application root counts as the open modal, so the hidden root is not reported as a page left hidden.
+
+## Beyond Section 508
+
+Section 508 incorporates WCAG 2.0 AA, and the default run checks exactly that: the Trusted Tester catalog. A team that wants to go further turns on the **WCAG 2.2 profile** with `--wcag 2.2` (or `--beyond-508`; `--wcag 2.1` leaves out the 2.2 criteria). The extra rules then run on every page, and their findings count like any other: violations fail the run at the `--fail-on` impacts, review items join the review list. Each carries `beyond508: true` and its WCAG criterion as its test (`BP` for best practices), and every output lists them under a "Beyond Section 508 (WCAG 2.2)" heading: the summary table, `summary.md`, `report.html` and the dashboard's Report screen. `--list-tests --wcag 2.2` prints them after the Trusted Tester tests, and `report.json` records the profile in `options.wcag`. Without the flag nothing changes, and the text-spacing and reflow passes do not run at all.
+
+| Rule | WCAG | What is checked |
+|---|---|---|
+| 1.3.4 Orientation | 2.1 | a stylesheet rule under an `orientation` media query that rotates content a quarter turn or hides it (escalated) |
+| 1.3.5 Identify input purpose | 2.1 | an `autocomplete` value that breaks the HTML autofill grammar (`[section-*] [shipping\|billing] [home\|work\|mobile\|fax\|pager] field`, plus `on`/`off`), or a field name the control cannot take (`email` on a checkbox, `bday` on a number field) |
+| 1.4.10 Reflow | 2.1 | the page laid out at 320 CSS px wide (400% zoom); an element that still reaches past the right edge is reported, except content that needs two dimensions (tables, images, maps, video, `pre`, `code`) or sits in its own scrolling container; the viewport is set back afterwards (`passes.reflow.restored`) |
+| 1.4.11 Non-text contrast | 2.1 | the border, or else the background, of a text field, author-drawn checkbox or radio, or button below 3:1 against what surrounds it; a focus indicator whose only change is a colour within 3:1 of the unfocused state, or a new outline below 3:1 against what is behind it (escalated) |
+| 1.4.12 Text spacing | 2.1 | `line-height`, `letter-spacing` or `word-spacing` held below WCAG's values with `!important` (inline, or in a stylesheet rule); text clipped or overlapping once WCAG's spacing (line height 1.5, letter spacing 0.12em, word spacing 0.16em, paragraph spacing 2em) is applied, as a bookmarklet would, and removed afterwards |
+| 2.4.11 Focus not obscured (minimum) | 2.2 | in the Tab pass, a focused element entirely under fixed or sticky content; partly covered focus stays a 4.D review, as without the profile |
+| 2.5.3 Label in name | 2.1 | a link, button or field whose `aria-label`/`aria-labelledby` name does not contain its visible text (case, spacing and punctuation aside; a single character or symbol is not label text) |
+| 2.5.8 Target size (minimum) | 2.2 | a link, button, control, ARIA widget or element with a click listener smaller than 24×24 CSS px, unless a 24 px circle centred on it touches no other target (or another small target's circle), it is inline in a sentence, it is a form field the browser draws, or a 24×24 target with the same link or name exists |
+| BP Best practices | — | visible text outside every landmark (`region`); no level-one heading (`page-has-heading-one`); a role ARIA in HTML does not allow on the element, such as `<li role="button">` (`aria-allowed-role`); an empty `columnheader`/`rowheader` (`empty-table-header`; empty `th` is 14.B); a viewport that caps zoom below 500% (`meta-viewport-large`; below 200% is 18.A). All escalated |
+
+Two choices IBM Equal Access makes, stricter than WCAG, also apply under the profile: text whose letters are mostly Chinese, Japanese or Korean counts as large only at 29.3 px, or 24 px bold, so 20 px bold CJK text needs 4.5:1 (reported as 13.C with a note, and `beyond508: true`); and an element whose opacity, multiplied through its ancestors, is under 0.1 counts as not visible, so focus landing on it is a 4.D violation. WCAG 2.2's 3.2.6, 3.3.7, 3.3.8 and 3.3.9 have no automatable rule and are not checked.
+
+The rule set is informed by axe-core (MPL-2.0) and IBM Equal Access (Apache-2.0) and written from the WCAG 2.1/2.2 Understanding documents, the HTML autofill grammar and ARIA in HTML; no code from either is used.
 
 ## Reading the report
 
@@ -399,7 +428,7 @@ The test serves a fixture site that requires a bearer token on every request, ru
 
 `npm test` also runs the remedies table (`test/remedies.mjs`), the ARIA model's facts (`test/aria-data.mjs`), and the dashboard server's own tests (`ui/server/test/`), all with no install. The fixture site is `test/fixture-site.mjs`; `node test/fixture-site.mjs --port 4100` serves it on its own (token `fixture-token-123`), and `--auto-login` adds a stand-in sign-in portal.
 
-Checks live in `src/checks/browser/`. Each file registers a function that runs inside the audited page and calls `A.add({ test, level, impact, el, message, details })`. The test catalog is `src/checks/catalog.mjs`. Interactive passes (keyboard, disclosure, zoom) are in `src/passes.mjs`; cross-page checks are in `src/site-checks.mjs`.
+Checks live in `src/checks/browser/`. Each file registers a function that runs inside the audited page and calls `A.add({ test, level, impact, el, message, details })`. The test catalog is `src/checks/catalog.mjs`. Interactive passes (keyboard, disclosure, zoom; text spacing and reflow with `--wcag 2.1`/`2.2`) are in `src/passes.mjs`; the beyond-508 rules are in `src/checks/browser/95-beyond-508.js` and their catalog in `BEYOND`. Fixture pages named `checks-beyond-*` are asserted from a second crawl with `--wcag 2.2`, and `--only` passes the flag through for them; cross-page checks are in `src/site-checks.mjs`.
 
 ### Changing the dashboard
 

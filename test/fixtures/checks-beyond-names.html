@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Label in name and input purpose - a11y-508 test site</title>
+<!--
+  Round 4b, AC 3 (2.5.3 label in name) and AC 4 (1.3.5 identify input purpose).
+  - #bn-mismatch: visible "Read more", name "Learn about pricing": violation.
+  - #bn-match: visible "Read more", name "Read more about pricing": contains it, not reported.
+  - #bn-case: visible "search", name "Search the site": contains it once case is ignored.
+  - #bn-email-bad: autocomplete="e-mail" is no autofill token: violation.
+  - #bn-ship ("shipping email") and #bn-tel ("section-blue billing tel"): valid grammar.
+  - #bn-check: a checkbox takes no autofill field name, so "email" there is a violation.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus, select:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  label { display: block; margin-top: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Label in name and input purpose</h1>
+  <p>Our plans start at ten dollars. <a id="bn-mismatch" href="/about.html" aria-label="Learn about pricing">Read more</a></p>
+  <p>Discounts apply to teams. <a id="bn-match" href="/about.html" aria-label="Read more about pricing">Read more</a></p>
+  <p><button type="button" id="bn-case" aria-label="Search the site">search</button></p>
+  <form action="/about.html">
+    <label for="bn-email-bad">Your email</label>
+    <input id="bn-email-bad" type="text" autocomplete="e-mail">
+    <label for="bn-ship">Email for shipping updates</label>
+    <input id="bn-ship" type="email" autocomplete="shipping email">
+    <label for="bn-tel">Billing phone</label>
+    <input id="bn-tel" type="tel" autocomplete="section-blue billing tel">
+    <label><input id="bn-check" type="checkbox" autocomplete="email"> Send me the newsletter</label>
+  </form>
+</main>
+</body>
+</html>

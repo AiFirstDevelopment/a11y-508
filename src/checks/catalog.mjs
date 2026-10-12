@@ -155,8 +155,46 @@ export const CATALOG = {
 
 export const TEST_IDS = Object.keys(CATALOG);
 
+// Beyond Section 508: WCAG 2.1 and 2.2 success criteria and best practices, keyed by WCAG
+// criterion ('BP' for the best practices). They run only with --wcag 2.1 or 2.2 (--beyond-508),
+// never in the default Trusted Tester gate. level: the WCAG version that added the criterion,
+// or 'best-practice'. Written from the WCAG 2.1/2.2 Understanding documents; the rule set is
+// informed by axe-core and IBM Equal Access, with no code taken from either.
+export const BEYOND = {
+  '1.3.4': { name: '1.3.4-orientation', wcag: '1.3.4', level: '2.1', automation: 'partial', beyond508: true,
+    condition: 'Content does not restrict its view and operation to a single display orientation, such as portrait or landscape, unless a specific orientation is essential.' },
+  '1.3.5': { name: '1.3.5-identify-input-purpose', wcag: '1.3.5', level: '2.1', automation: 'partial', beyond508: true,
+    condition: 'The purpose of each input field collecting information about the user can be programmatically determined: its autocomplete attribute holds a valid autofill token for that kind of control.' },
+  '1.4.10': { name: '1.4.10-reflow', wcag: '1.4.10', level: '2.1', automation: 'partial', beyond508: true,
+    condition: 'Content can be presented without loss of information or functionality, and without scrolling in two dimensions, at a width of 320 CSS pixels, except for parts that require two-dimensional layout.' },
+  '1.4.11': { name: '1.4.11-non-text-contrast', wcag: '1.4.11', level: '2.1', automation: 'partial', beyond508: true,
+    condition: 'The visual boundaries of user interface components, their states, and focus indicators have a contrast ratio of at least 3:1 against adjacent colors.' },
+  '1.4.12': { name: '1.4.12-text-spacing', wcag: '1.4.12', level: '2.1', automation: 'partial', beyond508: true,
+    condition: 'No loss of content or functionality occurs when line height is set to 1.5 times the font size, paragraph spacing to 2 times, letter spacing to 0.12 times and word spacing to 0.16 times the font size.' },
+  '2.4.11': { name: '2.4.11-focus-not-obscured-minimum', wcag: '2.4.11', level: '2.2', automation: 'partial', beyond508: true,
+    condition: 'When a user interface component receives keyboard focus, it is not entirely hidden by author-created content.' },
+  '2.5.3': { name: '2.5.3-label-in-name', wcag: '2.5.3', level: '2.1', automation: 'partial', beyond508: true,
+    condition: 'For user interface components with labels that include text, the accessible name contains the text that is presented visually.' },
+  '2.5.8': { name: '2.5.8-target-size-minimum', wcag: '2.5.8', level: '2.2', automation: 'partial', beyond508: true,
+    condition: 'Pointer targets are at least 24 by 24 CSS pixels, unless they are spaced so a 24 px circle on each touches no other target, are inline in text, are a browser control the author did not size, or an equivalent larger control exists.' },
+  BP: { name: 'best-practices', wcag: 'best practice', level: 'best-practice', automation: 'partial', beyond508: true,
+    condition: 'Best practices beyond WCAG that axe-core and IBM Equal Access report: content inside landmarks, a level-one heading, roles the element permits, named table headers, and zoom allowed to at least 500%.' },
+};
+
+// --wcag versions: 2.0 is the default (the Trusted Tester catalog only).
+export const WCAG_VERSIONS = ['2.0', '2.1', '2.2'];
+
+// The beyond-508 tests a version turns on: 2.1 adds the 2.1 criteria and the best practices,
+// 2.2 adds the 2.2 criteria too.
+export function beyondIds(wcag) {
+  if (!wcag || wcag === '2.0') return [];
+  return Object.keys(BEYOND).filter((id) => BEYOND[id].level !== '2.2' || wcag === '2.2');
+}
+
+export const beyondHeading = (wcag) => `Beyond Section 508 (WCAG ${wcag})`;
+
 export function testInfo(id) {
-  return CATALOG[id] || { name: 'unknown', wcag: '', automation: 'manual', condition: '' };
+  return CATALOG[id] || BEYOND[id] || { name: 'unknown', wcag: '', automation: 'manual', condition: '' };
 }
 
 export const IMPACTS = ['critical', 'serious', 'moderate', 'minor'];

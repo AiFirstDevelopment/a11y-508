@@ -30,7 +30,8 @@ h3 { font-size: 1.05rem; margin: 16px 0 6px; }
 .field.indent, .indent { margin-left: 28px; }
 .row { display: flex; flex-wrap: wrap; gap: 0 24px; }
 .row .field { flex: 1 1 260px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0 24px; }
+/* min(): at 320 px wide (WCAG 1.4.10 reflow) a column never pushes past the screen. */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 0 24px; }
 .choice { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
 .choice input { margin-top: 5px; }
 .choice .desc { flex-basis: 100%; margin-left: 28px; font-size: 0.9rem; color: var(--muted); }
@@ -81,6 +82,9 @@ progress { width: 100%; max-width: 640px; height: 18px; }
 .chart { color: #222222; background: #ffffff; }
 .chart text { fill: #333333 !important; color: #222222 !important; }
 .filters { display: flex; flex-wrap: wrap; gap: 0 18px; align-items: flex-end; border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; margin: 8px 0; }
+/* A select as wide as its longest page URL would scroll the screen sideways at 320 px (WCAG 1.4.10). */
+.filters .field { min-width: 0; max-width: 100%; }
+.filters select { max-width: 100%; }
 .detail { border: 2px solid var(--accent); border-radius: 6px; padding: 8px 14px; margin: 12px 0; }
 .detail dt { font-weight: 600; }
 .detail dd { margin: 0 0 6px; }

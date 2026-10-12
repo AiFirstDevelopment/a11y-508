@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Target size - a11y-508 test site</title>
+<!--
+  Round 4b, AC 5 (2.5.8 target size, minimum 24 by 24 CSS px).
+  - #bt-a and #bt-b: 16x16 buttons 4 px apart. Their centres are 20 px apart, under 24, so the
+    24 px circles overlap: both are violations.
+  - #bt-alone: the same 16x16 button with 32 px of clear space all round: the spacing exception.
+  - #bt-inline-1 and #bt-inline-2: links in a sentence, 14 px text, one above the other (16 px
+    line height, so their centres are about 16 px apart). Without the inline exception they would
+    fail the spacing test; inline in a sentence, they are not reported.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus, select:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  .icon { display: inline-block; width: 16px; height: 16px; padding: 0; border: 0; margin: 0 4px 0 0; background: #036; vertical-align: middle; }
+  .alone { padding: 32px; }
+  .sentence { font-size: 14px; line-height: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Target size</h1>
+  <p>Page <button type="button" class="icon" id="bt-a" aria-label="Previous page"></button><button type="button" class="icon" id="bt-b" aria-label="Next page"></button></p>
+  <div class="alone"><button type="button" class="icon" id="bt-alone" aria-label="Close notice"></button></div>
+  <p class="sentence"><a id="bt-inline-1" href="/about.html">Sign up</a> for alerts about this office and its opening hours,<br><a id="bt-inline-2" href="/forms.html">Sign in</a> to change the alerts you already receive from us.</p>
+</main>
+</body>
+</html>

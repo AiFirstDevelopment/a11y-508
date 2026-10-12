@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<title>Best practices - a11y-508 test site</title>
+<!--
+  Round 4b, AC 11 (best practices, test BP), on a page with no h1 by design.
+  - #bp-stray: a paragraph outside every landmark: a review item (region).
+  - #bp-header and #bp-footer: text directly in the page's header (banner) and footer
+    (contentinfo) is inside a landmark: not reported.
+  - No h1 anywhere: a review item (page-has-heading-one).
+  - #bp-li: role="button" on an <li>, which ARIA in HTML does not allow: a review item.
+  - maximum-scale=2 caps zoom at 200%: allowed by 18.A, a review item here (meta-viewport-large).
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus, select:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  footer { border-top: 1px solid #ccc; padding: 12px 20px; }
+</style>
+</head>
+<body>
+<header id="bp-header">
+  <p>Department of Examples</p>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<div id="bp-stray"><p>Office hours are nine to five on weekdays.</p></div>
+<main>
+  <h2>Best practices</h2>
+  <p>This page has headings, but none of them is a level-one heading.</p>
+  <ul>
+    <li role="button" tabindex="0" id="bp-li">Expand the notices</li>
+    <li>Notices are posted every Monday.</li>
+  </ul>
+</main>
+<footer id="bp-footer"><p>Contact the office at the front desk.</p></footer>
+</body>
+</html>

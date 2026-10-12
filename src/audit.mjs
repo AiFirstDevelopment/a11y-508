@@ -2,8 +2,8 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { testInfo } from './checks/catalog.mjs';
-import { listenerProbe, keyboardPass, disclosurePass, zoomPass, routeDiscoveryPass, modalOnLoadPass, redismissModal } from './passes.mjs';
+import { BEYOND, testInfo } from './checks/catalog.mjs';
+import { listenerProbe, keyboardPass, disclosurePass, zoomPass, spacingPass, reflowPass, routeDiscoveryPass, modalOnLoadPass, redismissModal } from './passes.mjs';
 
 // The selector of the page-level 13.C item set by 60-sensory-contrast.js.
 const BETWEEN_IMAGES = 'text over images';
@@ -48,8 +48,11 @@ export async function auditPage(page, url, ctx) {
       details: f.details,
       state: f.state,
       screenshot: f.screenshot,
+      // Only beyond-508 findings carry the key, so a default report.json keeps its shape.
+      beyond508: f.beyond508 || BEYOND[f.test] ? true : undefined,
     });
   };
+  const beyond = !!opts.wcag && opts.wcag !== '2.0';
 
   let nav;
   try {
@@ -121,10 +124,20 @@ export async function auditPage(page, url, ctx) {
       }
     }
 
+    let clickable = [];
     try {
-      await listenerProbe(page, base.meta, add);
+      clickable = await listenerProbe(page, base.meta, add);
     } catch (e) {
       result.errors.push(`listener probe: ${e.message}`);
+    }
+    // 2.5.8 for elements the static checks cannot see as targets: those with a click listener.
+    if (opts.wcag === '2.2' && clickable.length) {
+      try {
+        const found = await page.evaluate(`window.__a11y508.targetSizeFor(${JSON.stringify(clickable)})`);
+        for (const f of found) add(f);
+      } catch (e) {
+        result.errors.push(`target size: ${e.message}`);
+      }
     }
 
     if (opts.interact) {
@@ -147,6 +160,19 @@ export async function auditPage(page, url, ctx) {
         result.passes.zoom = await zoomPass(page, add, shoot);
       } catch (e) {
         result.errors.push(`zoom pass: ${e.message}`);
+      }
+    }
+    // Beyond-508 profile only, so a default run costs nothing extra.
+    if (beyond) {
+      try {
+        result.passes.spacing = await spacingPass(page, add, shoot);
+      } catch (e) {
+        result.errors.push(`text spacing pass: ${e.message}`);
+      }
+      try {
+        result.passes.reflow = await reflowPass(page, add);
+      } catch (e) {
+        result.errors.push(`reflow pass: ${e.message}`);
       }
     }
 

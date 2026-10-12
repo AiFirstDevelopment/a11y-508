@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reflow at 320 pixels - a11y-508 test site</title>
+<!--
+  Round 4b, AC 9 (1.4.10 reflow). At 320 CSS px wide:
+  - #rf-wide: a 600 px wide block of text needs horizontal scrolling: violation.
+  - #rf-table: a data table 600 px wide needs two dimensions: exempt.
+  - #rf-pre: preformatted text with a long line: exempt.
+  The viewport is set back to 1280 px afterwards (passes.reflow.restored).
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus, select:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  #rf-wide { width: 600px; background: #eef; }
+  #rf-table { min-width: 600px; border-collapse: collapse; }
+  #rf-table th, #rf-table td { border: 1px solid #999; padding: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Reflow at 320 pixels</h1>
+  <div id="rf-wide"><p>This notice is set to a fixed width of six hundred pixels, so on a narrow screen it runs off the side.</p></div>
+  <table id="rf-table">
+    <caption>Opening hours by office</caption>
+    <thead><tr><th scope="col">Office</th><th scope="col">Monday</th><th scope="col">Tuesday</th><th scope="col">Wednesday</th></tr></thead>
+    <tbody><tr><th scope="row">North</th><td>9 to 5</td><td>9 to 5</td><td>10 to 4</td></tr></tbody>
+  </table>
+  <pre id="rf-pre">office-code   region        opening-hours        contact-number        notes-for-visitors</pre>
+</main>
+</body>
+</html>

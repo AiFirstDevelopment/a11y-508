@@ -10,7 +10,7 @@ import { troubleshoot, formatTroubleshoot } from './troubleshoot.mjs';
 import { loadConfig, printStatus, runLoop } from './loop.mjs';
 import { siteChecks } from './site-checks.mjs';
 import { summarize, shouldFail, writeReports, makeLogger, coverage, eventWriter } from './report.mjs';
-import { CATALOG, IMPACTS, TEST_IDS } from './checks/catalog.mjs';
+import { BEYOND, CATALOG, IMPACTS, TEST_IDS, WCAG_VERSIONS, beyondIds, beyondHeading } from './checks/catalog.mjs';
 
 const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
 
@@ -56,6 +56,10 @@ Options
                            whether the header went out) with the next step to take
   --no-interact            Skip the keyboard and disclosure-activation passes
   --no-zoom                Skip the 200% zoom pass
+  --wcag <version>         2.0 (default): the Trusted Tester checks only, as Section 508
+                           requires. 2.1 or 2.2 also runs the WCAG 2.1/2.2 rules and best
+                           practices beyond Section 508, listed under their own heading
+  --beyond-508             Same as --wcag 2.2
   --no-screenshots         Do not capture element screenshots
   --max-screenshots <n>    Screenshots per page (default 40)
   --max-tabs <n>           Maximum Tab presses per page (default 400)
@@ -70,7 +74,8 @@ Options
   --json                   Print the report summary as JSON on stdout
   --events                 Print one JSON event per line on stdout instead of the
                            human-readable output (for tools; see the README)
-  --list-tests             Print the Trusted Tester test catalog and exit
+  --list-tests             Print the Trusted Tester test catalog and exit (with --wcag
+                           2.1/2.2, also the rules beyond Section 508)
   -h, --help               Show this help
   -v, --version            Show the version
 
@@ -106,7 +111,7 @@ export function parseArgs(argv) {
     out: 'a11y-508-report', viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
     tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stateFile: null, troubleshoot: false, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
     maxTabs: 400, maxActivations: 12, maxClicks: 30, followClicks: true, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false, events: false,
-    listTests: false, help: false, version: false,
+    listTests: false, help: false, version: false, wcag: '2.0',
   };
   const args = [...argv];
   const next = (flag) => {
@@ -178,6 +183,13 @@ export function parseArgs(argv) {
       case '--no-interact': o.interact = false; break;
       case '--interact': o.interact = true; break;
       case '--no-zoom': o.zoom = false; break;
+      case '--wcag': {
+        const v = next(a).trim();
+        if (!WCAG_VERSIONS.includes(v)) throw new Error(`--wcag: unknown version "${v}" (use ${WCAG_VERSIONS.join(', ')}; 2.0 is Section 508's own level)`);
+        o.wcag = v;
+        break;
+      }
+      case '--beyond-508': o.wcag = '2.2'; break;
       case '--zoom': o.zoom = true; break;
       case '--no-screenshots': o.screenshots = false; break;
       case '--screenshots': o.screenshots = true; break;
@@ -317,6 +329,14 @@ async function run(argv) {
   }
   if (opts.listTests) {
     for (const id of TEST_IDS) process.stdout.write(`${id.padEnd(5)} ${CATALOG[id].automation.padEnd(8)} ${CATALOG[id].name.padEnd(46)} WCAG ${CATALOG[id].wcag}\n`);
+    const extra = beyondIds(opts.wcag);
+    if (extra.length) {
+      process.stdout.write(`\n${beyondHeading(opts.wcag)}\n`);
+      for (const id of extra) {
+        const t = BEYOND[id];
+        process.stdout.write(`${id.padEnd(6)} ${t.automation.padEnd(8)} ${t.name.padEnd(46)} ${t.level === 'best-practice' ? 'best practice' : `WCAG ${t.wcag} (${t.level})`}\n`);
+      }
+    }
     return 0;
   }
   if (!opts.url) {
@@ -461,13 +481,15 @@ async function run(argv) {
       tokenHeader: opts.auth ? opts.tokenHeader : null, authOrigins: opts.auth ? [...opts.auth.origins] : [],
       tokenStorage: opts.auth && opts.auth.storage ? opts.auth.storage.keys : [], cookies: opts.cookies.map((c) => c.name),
       session: opts.state ? { cookies: opts.state.cookies.length, origins: Object.keys(opts.state.storage || {}) } : null,
+      // Recorded only when the profile is on, so a default report.json keeps its shape.
+      ...(opts.wcag !== '2.0' ? { wcag: opts.wcag } : {}),
     },
     passed,
     summary,
     site: { findings: site.findings },
     manual: site.manual,
     pages,
-    catalog: CATALOG,
+    catalog: opts.wcag !== '2.0' ? { ...CATALOG, ...Object.fromEntries(beyondIds(opts.wcag).map((id) => [id, BEYOND[id]])) } : CATALOG,
   };
   const files = writeReports({ outDir, report });
   log.summary(report, files);

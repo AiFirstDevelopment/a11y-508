@@ -191,7 +191,9 @@
         covered = !!top && top !== el && !el.contains(top) && !top.contains(el);
       } catch {}
     }
+    const beyond = A.beyond() ? beyondSample(el, r, base, now, diff, inViewport) : {};
     return {
+      ...beyond,
       isBody: false,
       href: location.href,
       key: A.kb.index.get(el) ?? -1,
@@ -215,6 +217,60 @@
       composite: el.localName === 'iframe' || el.localName === 'audio' || el.localName === 'video' || !!el.shadowRoot ||
         (el.localName === 'input' && /^(date|time|datetime-local|month|week|color|file)$/.test(el.type)),
     };
+  };
+
+  // Beyond-508 profile only. obscured: 'full' when every sampled point of the focused element is
+  // under fixed or sticky author content (WCAG 2.2 2.4.11), 'partial' when some are. faint: hidden
+  // only by IBM's opacity-under-0.1 rule. weakIndicator: the focus change is a colour change of
+  // under 3:1 against the unfocused state, or a new outline under 3:1 against what is behind it
+  // (WCAG 2.1 1.4.11).
+  const pinned = (n) => {
+    for (; n && n.nodeType === 1; n = n.parentElement) {
+      const p = (A.cs(n) || {}).position;
+      if (p === 'fixed' || p === 'sticky') return n;
+    }
+    return null;
+  };
+  const COLOR_KEY = /(^|:)(background-color|color|border-(top|bottom|left|right)-color|outline-color)$/;
+  const beyondSample = (el, r, base, now, diff, inViewport) => {
+    const out = { faint: A.isFaint(el) };
+    if (inViewport) {
+      let points = 0;
+      let under = 0;
+      let by = null;
+      for (const fx of [0.1, 0.5, 0.9]) {
+        for (const fy of [0.1, 0.5, 0.9]) {
+          const x = r.left + r.width * fx;
+          const y = r.top + r.height * fy;
+          if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) continue;
+          points++;
+          const top = document.elementFromPoint(x, y);
+          if (!top || top === el || el.contains(top) || top.contains(el)) continue;
+          const pin = pinned(top);
+          if (!pin || pin.contains(el)) continue;
+          under++;
+          by = by || pin;
+        }
+      }
+      out.obscured = points && under === points ? 'full' : under ? 'partial' : null;
+      out.obscuredBy = by ? A.selector(by) : null;
+    }
+    if (base && diff.length) {
+      const visibleOutline = (o) => o['outline-style'] !== 'none' && parseFloat(o['outline-width']) > 0 && A.parseColor(o['outline-color']).a > 0;
+      const behind = A.surroundingBg ? A.surroundingBg(el) : null;
+      if (visibleOutline(now) && !visibleOutline(base) && behind) {
+        const ratio = A.contrast(A.blend(A.parseColor(now['outline-color']), behind), behind);
+        if (ratio < 3) out.weakIndicator = { prop: 'outline-color', from: A.hex(behind), to: A.hex(A.parseColor(now['outline-color'])), ratio: +ratio.toFixed(2), against: 'the background behind it' };
+      } else if (diff.every((k) => COLOR_KEY.test(k))) {
+        let best = null;
+        for (const k of diff) {
+          const ratio = A.contrast(A.blend(A.parseColor(base[k]), behind || { r: 255, g: 255, b: 255, a: 1 }), A.blend(A.parseColor(now[k]), behind || { r: 255, g: 255, b: 255, a: 1 }));
+          if (!best || ratio > best.ratio) best = { prop: k, from: A.hex(A.parseColor(base[k])), to: A.hex(A.parseColor(now[k])), ratio: +ratio.toFixed(2), against: 'its unfocused state' };
+        }
+        if (best && best.ratio < 3) out.weakIndicator = best;
+      }
+    }
+    return out;
   };
 
   A.focusSelector = (sel) => {

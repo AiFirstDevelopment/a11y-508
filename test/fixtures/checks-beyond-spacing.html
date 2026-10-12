@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Text spacing - a11y-508 test site</title>
+<!--
+  Round 4b, AC 6 (1.4.12 text spacing).
+  - #bs-important: inline letter-spacing:0 !important wins over a user's spacing: violation.
+  - #bs-clip: one line of 20 monospace characters in a 22ch box that clips (overflow hidden,
+    nowrap). It fits with 2ch to spare (about 18-19 px). The spacing pass adds 0.12em per character,
+    20 x 1.92 px = about 38 px, so it is clipped by about 19 px: violation. Word spacing alone adds
+    0.16em for its one space (2.6 px), which still fits.
+  - #bs-flow: an ordinary paragraph that reflows: not reported.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus, select:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  #bs-clip { width: 22ch; overflow: hidden; white-space: nowrap; font: 16px/1.2 monospace; background: #eef; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Text spacing</h1>
+  <p id="bs-important" style="letter-spacing:0 !important">Office hours are nine to five on weekdays, and the front desk closes for lunch at noon.</p>
+  <div id="bs-clip">ABCDEFGHIJ KLMNOPQRS</div>
+  <p id="bs-flow">This paragraph has no fixed size, so it simply wraps onto more lines when the spacing grows, and nothing is lost.</p>
+</main>
+</body>
+</html>

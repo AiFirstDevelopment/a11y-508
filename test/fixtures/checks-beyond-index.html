@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Beyond Section 508 - a11y-508 test site</title>
+<!--
+  Round 4b (docs/plans/checks-beyond-508.md): the start page of the second crawl in test/run.mjs,
+  which audits the checks-beyond-* pages with --wcag 2.2. It links to each of them and has nothing
+  to report itself.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus, select:focus, [tabindex]:focus { outline: 3px solid #f90; }
+
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Beyond Section 508</h1>
+  <p>Pages that check the WCAG 2.1 and 2.2 rules and best practices of the --wcag 2.2 profile:</p>
+  <ul>
+    <li><a href="/checks-beyond-names.html">Label in name and input purpose</a></li>
+    <li><a href="/checks-beyond-targets.html">Target size</a></li>
+    <li><a href="/checks-beyond-spacing.html">Text spacing</a></li>
+    <li><a href="/checks-beyond-orientation.html">Orientation</a></li>
+    <li><a href="/checks-beyond-focus.html">Focus not obscured</a></li>
+    <li><a href="/checks-beyond-reflow.html">Reflow at 320 pixels</a></li>
+    <li><a href="/checks-beyond-contrast.html">Non-text contrast and CJK text</a></li>
+    <li><a href="/checks-beyond-bp.html">Best practices</a></li>
+  </ul>
+</main>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orientation - a11y-508 test site</title>
+<!--
+  Round 4b, AC 7 (1.3.4 orientation): a stylesheet rule under an orientation media query that
+  rotates the application a quarter turn, which locks it to landscape: a review item. The fixture
+  is crawled in a landscape viewport, so the rule never applies here.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus, select:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  @media (orientation: portrait) { .app { transform: rotate(90deg); } }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main class="app">
+  <h1>Orientation</h1>
+  <p>This application turns itself sideways on a phone held upright.</p>
+</main>
+</body>
+</html>

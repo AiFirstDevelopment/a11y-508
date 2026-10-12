@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { Page } from '../src/page.mjs';
 import { shouldFail } from '../src/report.mjs';
 import { normalizeUrl } from '../src/crawler.mjs';
+import { CATALOG } from '../src/checks/catalog.mjs';
 import { startFixtureSite, TOKEN, COOKIE } from './fixture-site.mjs';
 import { parseEvents } from './event-schema.mjs';
 import { humanRun, readGolden, HUMAN_ARGS } from './human-golden.mjs';
@@ -23,6 +24,10 @@ const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
 if (only && !/^\/[\w.-]+$/.test(only)) throw new Error('--only takes one fixture path, such as /checks-focus.html');
+// The checks-beyond-* pages are asserted from a crawl with the WCAG 2.2 profile (--wcag 2.2). With
+// --only, that flag is passed through for them, and the page is also crawled once without it, for
+// the assertions about the default run.
+const beyondOnly = !!only && /^\/checks-beyond-/.test(only);
 
 const fixture = await startFixtureSite();
 const { externalHits, unauthorized, cookieHeaders, dangerHits } = fixture;
@@ -43,7 +48,7 @@ writeFileSync(stateFile, JSON.stringify({
 console.log(`fixture site at ${base}`);
 const t0 = Date.now();
 const run = await new Promise((resolve) => {
-  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), only ? base + only.slice(1) : base, ...(only ? ['--max-pages', '1'] : []), '--out', out, '--concurrency', '2', '--max-screenshots', '5', '--json', '--token-storage', 'fixture_custom_key', '--cookie', `session=${COOKIE}`, '--state', stateFile], {
+  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), only ? base + only.slice(1) : base, ...(only ? ['--max-pages', '1'] : []), ...(beyondOnly ? ['--wcag', '2.2'] : []), '--out', out, '--concurrency', '2', '--max-screenshots', '5', '--json', '--token-storage', 'fixture_custom_key', '--cookie', `session=${COOKIE}`, '--state', stateFile], {
     env: { ...process.env, TOKEN, NO_COLOR: '1' },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -80,6 +85,24 @@ const stuck = await runCli([base + 'checks-modal-stuck.html', '--out', modalOut,
 const stuckReport = existsSync(join(modalOut, 'report.json')) ? JSON.parse(readFileSync(join(modalOut, 'report.json'), 'utf8')) : null;
 rmSync(modalOut, { recursive: true, force: true });
 const tsText = await runCli([base + 'app.html', '--troubleshoot', '--quiet', '--no-token-storage'], { TOKEN });
+// Round 4b: the checks-beyond-* pages crawled again with the WCAG 2.2 profile. With --only on one of
+// them, the main crawl above had the flag, and this is the same page without it.
+const beyondOut = join(here, '.report-beyond');
+rmSync(beyondOut, { recursive: true, force: true });
+const beyondArgs = beyondOnly
+  ? [base + only.slice(1), '--max-pages', '1', '--out', beyondOut, '--json', '--fail-on', 'none']
+  : [base + 'checks-beyond-index.html', '--wcag', '2.2', '--include', 'checks-beyond-', '--out', beyondOut, '--concurrency', '2', '--max-screenshots', '2', '--json', '--fail-on', 'none'];
+const beyondRun = only && !beyondOnly ? { status: null, stdout: '', stderr: '' } : await runCliReal(beyondArgs, { TOKEN }, 300000);
+const beyondFile = (f) => (existsSync(join(beyondOut, f)) ? readFileSync(join(beyondOut, f), 'utf8') : '');
+const beyondReport = beyondFile('report.json') ? JSON.parse(beyondFile('report.json')) : null;
+const beyondMd = beyondFile('summary.md');
+const beyondHtml = beyondFile('report.html');
+rmSync(beyondOut, { recursive: true, force: true });
+// --list-tests needs no browser.
+const listDefault = await runCli(['--list-tests']);
+const list22 = await runCli(['--list-tests', '--wcag', '2.2']);
+const list21 = await runCli(['--list-tests', '--wcag', '2.1']);
+const listBad = await runCli(['--list-tests', '--wcag', '3']);
 site.close();
 external.close();
 rmSync(stateFile, { force: true });
@@ -98,20 +121,28 @@ rmSync(evOut, { recursive: true, force: true });
 console.log(`cli finished in ${((Date.now() - t0) / 1000).toFixed(1)}s with exit code ${run.status}`);
 if (run.status === null) throw new Error('CLI was killed after 300s');
 
-const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
+const mainReport = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
+// report: the default crawl. flagged: the crawl with --wcag 2.2 (null with --only on another page).
+const report = beyondOnly ? beyondReport : mainReport;
+const flagged = beyondOnly ? mainReport : beyondReport;
+if (!report) throw new Error(`the default crawl of ${only} wrote no report:\n${beyondRun.stderr}`);
 const pagesRaw = Object.fromEntries(report.pages.map((p) => [new URL(p.url).pathname, p]));
+const flaggedRaw = flagged ? Object.fromEntries(flagged.pages.map((p) => [new URL(p.url).pathname, p])) : {};
 // In --only mode, an assertion counts only if it read the chosen page and no other; the rest are skipped, pass or fail.
 let touchedOnly = false;
 class NeedsOtherPage extends Error {}
-const pages = only
-  ? new Proxy(pagesRaw, {
+const scoped = (raw) => only
+  ? new Proxy(raw, {
       get(t, k) {
         if (k === only) touchedOnly = true;
         else if (typeof k === 'string' && k.startsWith('/')) throw new NeedsOtherPage(k);
         return t[k];
       },
     })
-  : pagesRaw;
+  : raw;
+const pages = scoped(pagesRaw);
+// The pages of the --wcag 2.2 crawl.
+const bpages = scoped(flaggedRaw);
 const has = (path, test, level, re) => {
   const p = pages[path];
   assert.ok(p, `page ${path} was crawled`);
@@ -708,6 +739,166 @@ check('AC10 6.A: a link inside <summary> is a review item, not a violation', () 
   noneOn(FOLLOWUPS, '6.A', ['#pu-summary-link'], 'violation');
 });
 check('AC10 6.A: a link inside a button stays a violation', () => on(FOLLOWUPS, '6.A', '#pu-button-link', 'violation', /^This button contains a focusable <a>/));
+
+// Checks round 4b (docs/plans/checks-beyond-508.md): rules beyond Section 508, behind --wcag 2.2.
+// Each checks-beyond-* page holds a rule's failing case and, beside it, its passing ones; they are
+// asserted from the crawl with the profile (bpages) and, where the plan says so, from the default
+// crawl (pages).
+const BEYOND_PAGES = ['index', 'names', 'targets', 'spacing', 'orientation', 'focus', 'reflow', 'contrast', 'bp'].map((p) => `/checks-beyond-${p}.html`);
+const bFindingsOn = (path) => {
+  assert.ok(bpages[path], `page ${path} was crawled with --wcag 2.2`);
+  return bpages[path].findings || [];
+};
+const onB = (path, test, selector, level, re) => {
+  const hit = bFindingsOn(path).find((f) => f.test === test && f.selector === selector && (!level || f.level === level) && (!re || re.test(f.message)));
+  assert.ok(hit, `${path} (--wcag 2.2): expected ${test} ${level || ''} on ${selector} ${re || ''}\n  got: ${listed(bFindingsOn(path).filter((f) => f.test === test))}`);
+  return hit;
+};
+const noneB = (path, test, selectors, level) => {
+  const hits = bFindingsOn(path).filter((f) => (!test || f.test === test) && selectors.some((x) => f.selector === x || f.selector.startsWith(x + ' ')) && (!level || f.level === level));
+  assert.equal(hits.length, 0, `${path} (--wcag 2.2): unexpected ${test || 'findings'} on ${selectors.join(', ')}\n  got: ${listed(hits)}`);
+};
+const TT_IDS = new Set(Object.keys(CATALOG));
+const BEYOND_IDS = ['1.3.4', '1.3.5', '1.4.10', '1.4.11', '1.4.12', '2.4.11', '2.5.3', '2.5.8', 'BP'];
+const ttLines = (text) => text.split('\n').filter((l) => /^\d+\.[A-H] /.test(l));
+
+check('AC1 --list-tests: no flag prints the Trusted Tester catalog only; --wcag 2.2 adds the Beyond Section 508 section', () => {
+  assert.equal(listDefault.status, 0, listDefault.stderr);
+  assert.ok(!/Beyond Section 508/.test(listDefault.stdout), listDefault.stdout);
+  assert.equal(ttLines(listDefault.stdout).length, TT_IDS.size);
+  assert.equal(list22.status, 0, list22.stderr);
+  const [tt, beyond] = list22.stdout.split('\nBeyond Section 508 (WCAG 2.2)\n');
+  assert.equal(tt, listDefault.stdout, 'the Trusted Tester part is unchanged');
+  assert.deepEqual(beyond.trim().split('\n').map((l) => l.split(/\s+/)[0]), BEYOND_IDS);
+  assert.match(beyond, /^2\.5\.8\s+partial\s+2\.5\.8-target-size-minimum\s+WCAG 2\.5\.8 \(2\.2\)$/m);
+});
+check('AC1 --list-tests --wcag 2.1 lists the 2.1 rules only (not 2.5.8, 2.4.11); --wcag 3 exits 2 with a message', () => {
+  assert.equal(list21.status, 0, list21.stderr);
+  const beyond = list21.stdout.split('\nBeyond Section 508 (WCAG 2.1)\n')[1];
+  assert.ok(beyond, list21.stdout);
+  assert.deepEqual(beyond.trim().split('\n').map((l) => l.split(/\s+/)[0]), ['1.3.4', '1.3.5', '1.4.10', '1.4.11', '1.4.12', '2.5.3', 'BP']);
+  assert.equal(listBad.status, 2);
+  assert.match(listBad.stderr, /^error: --wcag: unknown version "3" \(use 2\.0, 2\.1, 2\.2/);
+});
+check('AC2: the default crawl reports no beyond508 finding and keeps the report.json shape', () => {
+  for (const k of Object.keys(pagesRaw)) {
+    const hits = (pages[k].findings || []).filter((f) => f.beyond508 || !TT_IDS.has(f.test));
+    assert.equal(hits.length, 0, `${k}: ${listed(hits)}`);
+    for (const pass of ['spacing', 'reflow']) assert.equal(pages[k].passes?.[pass], undefined, `${k}: the ${pass} pass ran without the profile`);
+  }
+  assert.ok((report.site.findings || []).every((f) => TT_IDS.has(f.test) && !f.beyond508));
+  assert.deepEqual(Object.keys(report.summary.byTest).filter((t) => !TT_IDS.has(t)), []);
+  assert.equal(report.options.wcag, undefined);
+  assert.ok(!report.summary.coverage.notes.some((n) => /profile/.test(n)), JSON.stringify(report.summary.coverage.notes));
+});
+check('AC2: the --wcag 2.2 crawl audits every beyond page, records the profile and tags each beyond finding', () => {
+  for (const p of BEYOND_PAGES) assert.equal(bpages[p]?.error, null, `${p} crawled without error`);
+  assert.equal(flagged.options.wcag, '2.2');
+  for (const id of BEYOND_IDS) assert.equal(flagged.catalog[id]?.beyond508, true, id);
+  const all = Object.keys(flaggedRaw).flatMap((k) => bpages[k].findings);
+  for (const f of all) if (BEYOND_IDS.includes(f.test)) assert.equal(f.beyond508, true, `${f.test} ${f.selector}`);
+  for (const id of BEYOND_IDS) assert.ok(all.some((f) => f.test === id), `some ${id} finding`);
+});
+check('AC2/plan item 3: with the profile, summary.md, report.html, the summary table and the coverage note name the Beyond Section 508 heading', () => {
+  assert.ok(flagged.summary.coverage.notes.some((n) => /^The WCAG 2\.2 profile was on \(--wcag 2\.2\)/.test(n)), JSON.stringify(flagged.summary.coverage.notes));
+  assert.match(beyondMd, /\n## Beyond Section 508 \(WCAG 2\.2\)\n\n\| Rule \| Name \| WCAG \| Violations \| Review \|\n/);
+  assert.match(beyondMd, /\n\| 2\.5\.8 \| 2\.5\.8-target-size-minimum \| 2\.5\.8 \| [1-9]\d* \| 0 \|\n/);
+  assert.match(beyondHtml, /<h2 id="beyond">Beyond Section 508 \(WCAG 2\.2\)<\/h2>\n<section class="test" id="test-1-3\.4" data-test="1\.3\.4">/);
+  assert.match(beyondRun.stderr, /\nBeyond Section 508 \(WCAG 2\.2\)\nrule +name +viol +review\n1\.3\.4 /);
+});
+
+const B_NAMES = '/checks-beyond-names.html';
+check('AC3 2.5.3: "Read more" named "Learn about pricing" is a violation showing both strings', () => {
+  onB(B_NAMES, '2.5.3', '#bn-mismatch', 'violation', /^The visible label "Read more" is not part of the accessible name "Learn about pricing" \(from aria-label\)/);
+});
+check('AC3 2.5.3: "Read more" named "Read more about pricing", and "search" named "Search the site", are not reported', () => noneB(B_NAMES, '2.5.3', ['#bn-match', '#bn-case']));
+check('AC4 1.3.5: autocomplete="e-mail" is a violation', () => onB(B_NAMES, '1.3.5', '#bn-email-bad', 'violation', /^autocomplete="e-mail": "e-mail" is not an autofill token/));
+check('AC4 1.3.5: "shipping email" and "section-blue billing tel" are valid', () => noneB(B_NAMES, '1.3.5', ['#bn-ship', '#bn-tel']));
+check('AC4 1.3.5: autocomplete="email" on a checkbox is a violation', () => onB(B_NAMES, '1.3.5', '#bn-check', 'violation', /"email" cannot be used on <input type="checkbox">/));
+
+const B_TARGETS = '/checks-beyond-targets.html';
+check('AC5 2.5.8: a 16x16 icon button beside another is a violation', () => {
+  const f = onB(B_TARGETS, '2.5.8', '#bt-a', 'violation', /^Target is 16x16 px, under 24x24, and a 24 px circle centred on it reaches #bt-b/);
+  assert.equal(f.beyond508, true);
+});
+check('AC5 2.5.8: the same button alone with clear space around it is not reported', () => noneB(B_TARGETS, '2.5.8', ['#bt-alone']));
+check('AC5 2.5.8: links inline in a sentence are not reported', () => noneB(B_TARGETS, '2.5.8', ['#bt-inline-1', '#bt-inline-2']));
+
+const B_SPACING = '/checks-beyond-spacing.html';
+check('AC6 1.4.12: inline letter-spacing:0 !important is a violation', () => onB(B_SPACING, '1.4.12', '#bs-important', 'violation', /^Inline style "letter-spacing: 0(px)? !important" overrides a user's text-spacing setting/));
+check('AC6 1.4.12: a container that clips its text under the spacing pass is reported with the clipped element', () => {
+  const f = onB(B_SPACING, '1.4.12', '#bs-clip', 'violation', /^Text "ABCDEFGHIJ KLMNOPQRS" is clipped when the user's text spacing is applied .*px cut horizontally/);
+  assert.ok(/(\d+)px cut/.exec(f.message)[1] >= 8, f.message);
+});
+check('AC6 1.4.12: text that reflows is not reported, and the spacing style is removed afterwards', () => {
+  noneB(B_SPACING, '1.4.12', ['#bs-flow']);
+  assert.equal(bpages[B_SPACING].passes.spacing.restored, true);
+});
+
+check('AC7 1.3.4: a rule rotating .app a quarter turn under (orientation: portrait) is a review item', () => {
+  onB('/checks-beyond-orientation.html', '1.3.4', '.app', 'review', /^Under @media \(orientation: portrait\), "\.app" rotates it a quarter turn \(rotate\(90deg\)\)/);
+});
+
+const B_FOCUS = '/checks-beyond-focus.html';
+check('AC8 2.4.11: focus landing entirely under the fixed bar is a violation with the profile, not a 4.D review', () => {
+  onB(B_FOCUS, '2.4.11', '#bf-under', 'violation', /entirely hidden by fixed or sticky content \(#bf-bar\)/);
+  noneB(B_FOCUS, '4.D', ['#bf-under']);
+});
+check('AC8 4.D: the same focus without the profile is a 4.D review, and no 2.4.11', () => {
+  on(B_FOCUS, '4.D', '#bf-under', 'review', /overlapped by another element/);
+  noneOn(B_FOCUS, '2.4.11', ['#bf-under']);
+});
+check('AC8 2.4.11: a partly covered focused link stays a 4.D review with the profile, never 2.4.11', () => {
+  noneB(B_FOCUS, '2.4.11', ['#bf-partial']);
+  onB(B_FOCUS, '4.D', '#bf-partial', 'review', /overlapped by another element/);
+});
+
+const B_REFLOW = '/checks-beyond-reflow.html';
+check('AC9 1.4.10: a 600 px wide block needs horizontal scrolling at 320 px', () => onB(B_REFLOW, '1.4.10', '#rf-wide', 'violation', /^At 320 CSS px wide \(400% zoom\), this element reaches \d+px \(it is 600px wide\)/));
+check('AC9 1.4.10: a wide table and a pre are not reported', () => noneB(B_REFLOW, '1.4.10', ['#rf-table', '#rf-pre']));
+check('AC9 1.4.10: the viewport is restored after the reflow pass', () => {
+  assert.equal(bpages[B_REFLOW].passes.reflow.restored, true, JSON.stringify(bpages[B_REFLOW].passes.reflow));
+  assert.equal(bpages[B_REFLOW].passes.reflow.issues, 1, JSON.stringify(bpages[B_REFLOW].passes.reflow));
+});
+
+const B_CONTRAST = '/checks-beyond-contrast.html';
+check('AC10 1.4.11: a text field with a #ddd border on white is a review item', () => onB(B_CONTRAST, '1.4.11', '#bc-light', 'review', /^The border of this text field is #dddddd on #ffffff, 1\.36:1, below the 3:1/));
+check('AC10 1.4.11: a #767676 border (3.99:1 on its #f0f0f0 panel) is not reported', () => noneB(B_CONTRAST, '1.4.11', ['#bc-dark']));
+check('plan item 12 1.4.11: a focus indicator that only changes the background #fff to #eee is a review item', () => {
+  onB(B_FOCUS, '1.4.11', '#bf-weak', 'review', /^The focus indicator is a change of background-color from #ffffff to #eeeeee, 1\.16:1 against its unfocused state/);
+  noneOn(B_FOCUS, '4.D', ['#bf-weak']);
+});
+
+const B_BP = '/checks-beyond-bp.html';
+check('AC11 BP: visible text outside every landmark is a review item', () => onB(B_BP, 'BP', '#bp-stray', 'review', /^Text "Office hours are nine to five on weekdays\." is outside every landmark/));
+check('AC11 BP: text directly in the header and footer is inside a landmark', () => noneB(B_BP, 'BP', ['#bp-header', '#bp-footer']));
+check('AC11 BP: a page with no h1, <li role="button">, and maximum-scale=2 are review items', () => {
+  onB(B_BP, 'BP', 'h1', 'review', /^The page has no level-one heading/);
+  onB(B_BP, 'BP', '#bp-li', 'review', /^role="button" is not allowed on <li>/);
+  onB(B_BP, 'BP', 'meta[name=viewport]', 'review', /limits zoom to 200% \(maximum-scale=2\)/);
+});
+
+check('AC12 13.C: 20 px bold CJK text at 4.00:1 is a violation with the profile, noted and tagged beyond508', () => {
+  const f = onB(B_CONTRAST, '13.C', '#bc-cjk', 'violation', /^Text contrast 4\.0\d?:1 is below 4\.5:1 \(20px bold, #7f7f7f on #ffffff\)\. \(CJK text counts as large only at 29\.3 px, or 24 px bold/);
+  assert.equal(f.beyond508, true);
+  assert.ok(Math.abs(f.details.ratio - 4.0) < 0.05, JSON.stringify(f.details));
+});
+check('AC12 13.C: the same text is large and passes 3:1 without the profile', () => noneOn(B_CONTRAST, '13.C', ['#bc-cjk']));
+check('AC12 4.D: a button at opacity 0.05 receiving focus is a violation with the profile, and nothing without it', () => {
+  assert.equal(onB(B_FOCUS, '4.D', '#bf-faint', 'violation', /almost transparent \(opacity under 0\.1/).beyond508, true);
+  noneOn(B_FOCUS, '4.D', ['#bf-faint']);
+});
+
+const LEGACY = '/checks-modal-legacy.html';
+check('AC15 4.A: a visible role="dialog" beside an aria-hidden app root (no aria-modal) is the open modal: no hidden-page finding', () => {
+  assert.equal(pages[LEGACY].modalOnLoad?.selector, '#ml-dialog', JSON.stringify(pages[LEGACY].modalOnLoad));
+  assert.equal(pages[LEGACY].modalOnLoad.name, 'Newsletter sign-up');
+  assert.equal(pages[LEGACY].modalOnLoad.dismissed, true);
+  noneOn(LEGACY, '4.A', ['#ml-root', 'body']);
+});
+check('AC15 4.A: the same root still aria-hidden with the dialog gone is a critical hidden-page finding', () => {
+  assert.equal(on('/checks-modal-legacy-gone.html', '4.A', '#ml-root', 'violation', /^#ml-root is aria-hidden="true" and holds \d+% of the page's visible text, while no modal dialog is open/).impact, 'critical');
+});
 
 {
   const { events, problems } = parseEvents(evRun.stdout);
