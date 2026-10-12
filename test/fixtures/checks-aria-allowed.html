@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ARIA attributes allowed on a role - a11y-508 test site</title>
+<!--
+  Plan rule 3 (5.C). aria-checked is not supported on a link; aria-label is prohibited on a span with
+  no role (generic, whose name is prohibited in WAI-ARIA 1.2). aria-label on a span with
+  role="button" names it; global attributes (aria-hidden, aria-describedby) are allowed anywhere.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .box { display: inline-block; width: 40px; height: 40px; background: #58a; margin: 4px; }
+  .slot { display: block; min-height: 24px; margin: 6px 0; border: 1px solid #888; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>ARIA attributes allowed on a role</h1>
+  <p><a href="#al-target" id="al-checked" aria-checked="true">Remember me</a></p>
+  <p><span id="al-span-label" aria-label="Order status">Shipped</span></p>
+  <p><span role="button" tabindex="0" id="al-button-label" aria-label="Close notice">x</span></p>
+  <p id="al-desc">Totals include tax.</p>
+  <p><span id="al-global" aria-describedby="al-desc" aria-hidden="false">Total: 40 dollars</span></p>
+  <p id="al-target">Target of the link.</p>
+</main>
+</body>
+</html>

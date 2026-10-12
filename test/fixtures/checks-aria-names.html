@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Widget and image names - a11y-508 test site</title>
+<!--
+  Plan rule 8. Unnamed textbox, combobox and switch are 5.A (20-forms.js); unnamed progressbar
+  and tooltip are 5.C; an unnamed role="img" and svg role="img" are 7.A. A textbox's content is not
+  its name (WAI-ARIA 1.2: textbox takes its name from the author only), so the one whose only text
+  is its content is reported too. The same widgets with aria-label, and the svg with a <title>,
+  are not.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .box { display: inline-block; width: 40px; height: 40px; background: #58a; margin: 4px; }
+  .slot { display: block; min-height: 24px; margin: 6px 0; border: 1px solid #888; }
+  .bar { display: block; width: 200px; height: 12px; background: #58a; margin: 6px 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Widget and image names</h1>
+  <div role="textbox" tabindex="0" id="nm-textbox" class="slot"></div>
+  <div role="textbox" tabindex="0" id="nm-textbox-content">Type here</div>
+  <div role="combobox" tabindex="0" id="nm-combobox" aria-expanded="false" class="slot"></div>
+  <div role="switch" tabindex="0" id="nm-switch" aria-checked="false" class="slot"></div>
+  <div role="progressbar" id="nm-progress" aria-valuenow="40" aria-valuemin="0" aria-valuemax="100" class="bar"></div>
+  <div role="tooltip" id="nm-tooltip" class="slot"></div>
+  <div role="img" id="nm-img" class="box"></div>
+  <svg role="img" id="nm-svg" width="40" height="40"><rect width="40" height="40" fill="#58a"></rect></svg>
+  <div role="textbox" tabindex="0" id="nm-textbox-ok" aria-label="Comment" class="slot"></div>
+  <div role="combobox" tabindex="0" id="nm-combobox-ok" aria-expanded="false" aria-label="Country" class="slot"></div>
+  <div role="switch" tabindex="0" id="nm-switch-ok" aria-checked="false" aria-label="Dark mode" class="slot"></div>
+  <div role="progressbar" id="nm-progress-ok" aria-valuenow="40" aria-valuemin="0" aria-valuemax="100" aria-label="Upload" class="bar"></div>
+  <div role="tooltip" id="nm-tooltip-ok" aria-label="Opens in a new tab" class="slot"></div>
+  <div role="img" id="nm-img-ok" aria-label="Agency seal" class="box"></div>
+  <svg role="img" id="nm-svg-ok" width="40" height="40"><title>Agency logo</title><rect width="40" height="40" fill="#58a"></rect></svg>
+</main>
+</body>
+</html>

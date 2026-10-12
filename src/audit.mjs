@@ -3,7 +3,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { testInfo } from './checks/catalog.mjs';
-import { listenerProbe, keyboardPass, disclosurePass, zoomPass, routeDiscoveryPass, modalOnLoadPass } from './passes.mjs';
+import { listenerProbe, keyboardPass, disclosurePass, zoomPass, routeDiscoveryPass, modalOnLoadPass, redismissModal } from './passes.mjs';
 
 export async function auditPage(page, url, ctx) {
   const { opts } = ctx;
@@ -73,6 +73,10 @@ export async function auditPage(page, url, ctx) {
   const reload = async () => {
     await page.goto(result.finalUrl, opts.timeout).catch(() => {});
     await page.ensureInjected().catch(() => {});
+    // The modal shown on load comes back with the page; dismiss it again as the first load did.
+    if (result.modalOnLoad && result.modalOnLoad.dismissed && (await redismissModal(page).catch(() => false))) {
+      result.modalOnLoad.redismissed = (result.modalOnLoad.redismissed || 0) + 1;
+    }
   };
 
   try {

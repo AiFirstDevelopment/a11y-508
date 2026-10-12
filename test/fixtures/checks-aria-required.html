@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Required ARIA attributes - a11y-508 test site</title>
+<!--
+  Plan rule 4 (5.C). WAI-ARIA 1.2 requires aria-checked on checkbox and aria-level on heading.
+  option does not require aria-selected in 1.2, so the option below is not reported for it.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .box { display: inline-block; width: 40px; height: 40px; background: #58a; margin: 4px; }
+  .slot { display: block; min-height: 24px; margin: 6px 0; border: 1px solid #888; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Required ARIA attributes</h1>
+  <div role="checkbox" tabindex="0" id="rq-checkbox">Subscribe to updates</div>
+  <div role="heading" id="rq-heading">Delivery options</div>
+  <div role="checkbox" tabindex="0" id="rq-checkbox-ok" aria-checked="false">Send me a copy</div>
+  <div role="heading" id="rq-heading-ok" aria-level="3">Return options</div>
+  <div role="listbox" tabindex="0" aria-label="Sizes" id="rq-listbox"><div role="option" id="rq-option">Medium</div></div>
+</main>
+</body>
+</html>

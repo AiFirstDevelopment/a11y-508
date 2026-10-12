@@ -291,7 +291,7 @@ Every report has a coverage section. It warns when only the start page could be 
 
 ### Modal dialogs open on load
 
-A page that opens a modal dialog as it loads (a cookie or consent banner shown with `showModal()`, or a visible `role="dialog"` with `aria-modal="true"`) hides everything else from assistive technology, and so from the checks. The crawler audits the dialog, presses Escape once, and if the dialog closed, audits the page behind it; those findings are labelled `after closing the modal shown on load`. The page result records `modalOnLoad: { selector, name, dismissed }`. When Escape does not close it, the page behind it was not audited: the coverage section warns, naming the dialog, and `summary.modalsNotDismissed` counts such pages. Dismiss it with `--cookie` or a saved session (`--login`, `--state`), or audit its close control by hand. The keyboard and disclosure passes run on whatever state the page is in afterwards.
+A page that opens a modal dialog as it loads (a cookie or consent banner shown with `showModal()`, or a visible `role="dialog"` with `aria-modal="true"`) hides everything else from assistive technology, and so from the checks. The crawler audits the dialog, presses Escape once, and if the dialog closed, audits the page behind it; those findings are labelled `after closing the modal shown on load`. The page result records `modalOnLoad: { selector, name, dismissed }`. A pass that reloads the page (the disclosure pass after a control navigates, and route discovery) brings the dialog back, so it presses Escape again and counts it in `modalOnLoad.redismissed`. When Escape does not close it, the page behind it was not audited: the coverage section warns, naming the dialog, and `summary.modalsNotDismissed` counts such pages. Dismiss it with `--cookie` or a saved session (`--login`, `--state`), or audit its close control by hand. The keyboard and disclosure passes run on whatever state the page is in afterwards.
 
 ### The event stream (--events)
 
@@ -328,29 +328,29 @@ Every finding carries a Trusted Tester test ID and the WCAG success criterion. `
 | 2.C | Auto-updating | `meta refresh` reload is a violation |
 | 2.D | Change notification (auto) | manual |
 | 3.A | Flashing | fast infinite animations are escalated |
-| 4.A | Keyboard access | widget roles and click handlers on non-focusable elements (found through DevTools event-listener inspection), `aria-hidden` focusables (content that is `inert`, in a disabled fieldset, or outside an open modal dialog is not focusable), custom controls that ignore Enter/Space |
+| 4.A | Keyboard access | widget roles and click handlers on non-focusable elements (found through DevTools event-listener inspection), `aria-hidden` focusables (content that is `inert`, in a disabled fieldset, or outside an open modal dialog is not focusable), custom controls that ignore Enter/Space; `aria-activedescendant` on a host that cannot take focus, or pointing at an id that does not exist, at an element outside the host (or what it owns or controls), or at one with no widget role |
 | 4.B | Keystroke timing | manual |
 | 4.C | Keyboard trap | a real Tab/Shift+Tab pass through every page |
 | 4.D | Focus visible | computed-style comparison of every element before and after it receives keyboard focus, plus off-screen and overlapped focus; for custom checkboxes, radios and switches whose input is visually hidden, the label and the box beside the input are compared instead, and the label is reported |
 | 4.E | On focus | navigation triggered by focus during the Tab pass |
 | 4.F | Focus order | positive `tabindex`, focus order that differs from DOM order (escalated) |
 | 4.G / 4.H | Focus into and out of revealed content | dialogs opened from disclosure buttons are checked for focus move and return |
-| 5.A | Label provided | missing, placeholder-only, title-only, aria-label-only labels; a field whose only label is hidden for everyone (`display:none`, `visibility:hidden`; an sr-only label still counts) is escalated; custom widgets (listbox, textbox, combobox ...) are never named by their own content; a label that wraps a control includes the control's value (`Show 10 rows`) |
+| 5.A | Label provided | missing, placeholder-only, title-only, aria-label-only labels; a field whose only label is hidden for everyone (`display:none`, `visibility:hidden`; an sr-only label still counts) is escalated; custom widgets (listbox, textbox, combobox ...) are never named by their own content; a label that wraps a control names it without the control's own value (`Show rows`, as Chrome does) and names anything else that points at it with the value (`Show 10 rows`) |
 | 5.B | Label descriptive | empty/punctuation labels; label inventory escalated |
-| 5.C | Programmatic associations | broken `for`/ARIA references, duplicate ids, visual-only required marks, missing widget states, role attributes with no valid token, abstract roles, unnamed dialogs, ungrouped radios |
+| 5.C | Programmatic associations | broken `for`/ARIA references, duplicate ids, visual-only required marks, role attributes with no valid token, abstract roles, unnamed dialogs, ungrouped radios. ARIA validity from a model of WAI-ARIA 1.2 and HTML-AAM (`src/checks/browser/05-aria-data.js`): `aria-*` attributes that do not exist (with a "did you mean"), values of the wrong type or outside the allowed tokens, attributes the role does not support, `aria-label`/`aria-labelledby` on roles that prohibit naming (a `div` or `span` with no role), required states missing (`role="checkbox"` without `aria-checked`), required children and parents (`tablist` with no `tab`, `tab` outside a `tablist`; wrappers, `aria-owns` and `aria-busy` respected), unnamed progressbar, meter, tooltip and menu checkboxes; `role="presentation"`/`none` that the browser ignores, and deprecated roles and attributes, escalated |
 | 5.D | On input | selects that submit on change (attribute or listener) |
 | 5.E | Change notification (form) | manual |
 | 5.F / 5.G | Error identification and suggestion | `aria-invalid` without a message; every form escalated with instructions |
 | 5.H | Error prevention | legal/financial forms escalated |
-| 6.A | Link and button purpose | no name (an icon-font glyph is not a name), generic text with/without context, same text to different targets, URL-as-text |
+| 6.A | Link and button purpose | no name (an icon-font glyph is not a name), generic text with/without context, same text to different targets, URL-as-text; a focusable element inside a control whose children are presentational (a link inside a button; escalated when it has `tabindex="-1"`) |
 | 6.B | Change notification (links) | manual |
-| 7.A | Meaningful image name | missing alt, filename/generic alt, long alt; inventory of every alt text escalated with screenshots; unnamed SVG/icon fonts |
-| 7.B | Decorative image | decorative images that still have a name; large decorative images escalated |
+| 7.A | Meaningful image name | missing alt, filename/generic alt, long alt; `role="img"` and `<svg role="img">` with no name; inventory of every alt text escalated with screenshots; unnamed SVG/icon fonts |
+| 7.B | Decorative image | decorative images that still have a name; large decorative images, and `alt=""` images that are focusable or carry a global ARIA attribute (the browser ignores the empty alt), escalated |
 | 7.C | Background images | CSS background images with no text equivalent escalated |
 | 7.D | CAPTCHA | detected CAPTCHAs escalated |
 | 7.E | Images of text | manual, using the 7.A inventory |
 | 8.A | Time limits | timed `meta refresh` redirect; session-timeout wording escalated |
-| 9.A | Bypass blocks | no skip link, `main`, or headings; broken skip-link targets |
+| 9.A | Bypass blocks | no skip link, `main`, or headings; broken skip-link targets; landmark structure escalated: more than one `main`, `banner` or `contentinfo`, a `banner` or `contentinfo` inside a sectioning landmark, `main` inside another landmark, and landmarks of one role a user cannot tell apart (the same name, or none) |
 | 9.B | Consistent navigation | relative order of shared navigation links compared across every crawled page |
 | 9.C | Consistent identification | same destination named differently across pages |
 | 10.A | Heading purpose | outline escalated per page |
@@ -362,7 +362,7 @@ Every finding carries a Trusted Tester test ID and the WCAG success criterion. `
 | 12.C / 12.D | Frame and iframe names | missing or generic titles |
 | 13.A | Color alone | inline links distinguished only by color (below 3:1) from the text of their nearest block, when that text is longer than the link's and the link has no underline, border, weight, style, size or background cue |
 | 13.B | Sensory characteristics | instructions that refer to shape, color, or position |
-| 13.C | Contrast | real computed contrast using the actual paint stack behind every line of text, sampled where it is painted (text outside the viewport is scrolled to, and the page is scrolled back), alpha included and opacity applied once per translucent layer; lines over different backgrounds that disagree are escalated; a background image is bounded by white and black (fails both: violation; passes one, or text colored between the two: escalated), a gradient by its worst stop (escalated); a thin outline-like text shadow counts, a soft halo escalates a failure; typed values, selected options and placeholders of form fields are checked; labels of disabled controls exempt; text over positioned `::before`/`::after` backgrounds, at 1:1, or of a single character escalated |
+| 13.C | Contrast | real computed contrast using the actual paint stack behind every line of text, sampled where it is painted (text outside the viewport is scrolled to, and the page is scrolled back), alpha included and opacity applied once per translucent layer; lines over different backgrounds that disagree are escalated; a background image is bounded by white and black (fails both: violation; passes one: escalated; text colored between the two: listed in one escalation per page), a gradient by its worst stop (escalated); a thin outline-like text shadow counts, a soft halo escalates a failure; typed values, selected options and placeholders of form fields are checked; labels of disabled controls exempt; text over positioned `::before`/`::after` backgrounds, at 1:1, or of a single character escalated |
 | 14.A / 14.B / 14.C | Tables | data tables without headers, missing scope, complex tables without `headers`, broken `headers` ids, layout tables with header markup |
 | 15.A | CSS generated content | text and images inserted via `::before`/`::after` |
 | 15.B | CSS positioning | reversed flex, CSS `order`, content positioned far from its DOM position |
@@ -397,7 +397,7 @@ npm test
 
 The test serves a fixture site that requires a bearer token on every request, runs the crawler against it, and asserts on about sixty expected findings, including that the token is never sent to another origin. `node test/run.mjs --only /checks-focus.html` crawls that one fixture page and runs only the assertions that read it, in seconds; use it while writing or mutation-testing a check, and the full `npm test` once before pushing. Set `A11Y_508_DEBUG=1` to trace navigation and request interception, or `A11Y_508_DEBUG=2` to also trace every DevTools Protocol call and its reply, which names a call that never returns when a crawl hangs.
 
-`npm test` also runs the remedies table (`test/remedies.mjs`) and the dashboard server's own tests (`ui/server/test/`), all with no install. The fixture site is `test/fixture-site.mjs`; `node test/fixture-site.mjs --port 4100` serves it on its own (token `fixture-token-123`), and `--auto-login` adds a stand-in sign-in portal.
+`npm test` also runs the remedies table (`test/remedies.mjs`), the ARIA model's facts (`test/aria-data.mjs`), and the dashboard server's own tests (`ui/server/test/`), all with no install. The fixture site is `test/fixture-site.mjs`; `node test/fixture-site.mjs --port 4100` serves it on its own (token `fixture-token-123`), and `--auto-login` adds a stand-in sign-in portal.
 
 Checks live in `src/checks/browser/`. Each file registers a function that runs inside the audited page and calls `A.add({ test, level, impact, el, message, details })`. The test catalog is `src/checks/catalog.mjs`. Interactive passes (keyboard, disclosure, zoom) are in `src/passes.mjs`; cross-page checks are in `src/site-checks.mjs`.
 

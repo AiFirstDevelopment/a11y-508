@@ -85,7 +85,7 @@ import { ChartPanel } from './chart-panel';
     <details class="raw" (toggle)="rawOpen.set($any($event.target).open)">
       <summary>Show raw output</summary>
       @if (rawOpen()) {
-        <pre data-testid="raw-output" tabindex="0" aria-label="Raw output">{{ s.raw().join('\\n') }}</pre>
+        <pre data-testid="raw-output" tabindex="0" role="region" aria-label="Raw output">{{ s.raw().join('\\n') }}</pre>
       }
     </details>
   `,

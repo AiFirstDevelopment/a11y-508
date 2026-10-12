@@ -7,6 +7,10 @@
   Plan item 10. A consent dialog opened with showModal() on load. Escape closes it (native
   behaviour). Behind it, an image with no alt is a 7.A violation that only the run after closing
   the dialog can see.
+  Round 3 item 14: the first disclosure below is a link to an anchor, so activating it changes the
+  URL and the disclosure pass reloads the page, which opens the dialog again. The pass dismisses
+  it again (modalOnLoad.redismissed), so the second disclosure can be focused and opened, and the
+  image without alt it reveals is reported.
 -->
 <style>
   body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
@@ -23,6 +27,10 @@
   <p>Page content behind the consent dialog.</p>
   <img id="behind-ok" src="/img/behind.png" width="40" height="40">
   <p><a href="/checks-modal-stuck.html">Modal on load that stays</a></p>
+  <p><a href="#me-more" id="me-nav" aria-expanded="false">More about cookies</a></p>
+  <button type="button" id="me-reveal" aria-expanded="false" aria-controls="me-panel">Show the policy</button>
+  <div id="me-panel" hidden><img id="me-hidden-img" src="/img/policy.png" width="40" height="40"></div>
+  <p id="me-more">More about cookies.</p>
 </main>
 <dialog id="consent-ok" aria-labelledby="consent-ok-title">
   <h2 id="consent-ok-title">Cookie preferences</h2>
@@ -33,6 +41,11 @@
   const d = document.getElementById('consent-ok');
   document.getElementById('consent-ok-accept').addEventListener('click', () => d.close());
   d.showModal();
+  document.getElementById('me-reveal').addEventListener('click', function () {
+    var open = this.getAttribute('aria-expanded') === 'true';
+    this.setAttribute('aria-expanded', String(!open));
+    document.getElementById('me-panel').hidden = open;
+  });
 </script>
 </body>
 </html>

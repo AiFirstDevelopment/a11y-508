@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ARIA required children and parents - a11y-508 test site</title>
+<!--
+  Plan rule 5 (5.C). A tablist must own a tab, and a tab must be inside a tablist. A div wrapper
+  between them is generic, which the accessibility tree flattens; aria-owns counts as ownership;
+  aria-busy="true" means the listbox is still loading, so it may be empty.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .box { display: inline-block; width: 40px; height: 40px; background: #58a; margin: 4px; }
+  .slot { display: block; min-height: 24px; margin: 6px 0; border: 1px solid #888; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>ARIA required children and parents</h1>
+  <div role="tablist" id="ow-empty" aria-label="Empty tabs"><div class="slot">Not a tab</div></div>
+  <div role="tab" tabindex="0" id="ow-orphan" aria-selected="false">Lonely tab</div>
+  <div role="tablist" id="ow-wrapped" aria-label="Wrapped tabs"><div><div role="tab" tabindex="0" aria-selected="true">First</div></div></div>
+  <div role="tablist" id="ow-owned" aria-label="Owned tabs" aria-owns="ow-t1 ow-t2" class="slot"></div>
+  <div role="tab" tabindex="0" id="ow-t1" aria-selected="true">Owned one</div>
+  <div role="tab" tabindex="-1" id="ow-t2" aria-selected="false">Owned two</div>
+  <div role="listbox" tabindex="0" id="ow-busy" aria-busy="true" aria-label="Search results" class="slot"></div>
+</main>
+</body>
+</html>

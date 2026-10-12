@@ -1,9 +1,116 @@
 // Trusted Tester 4.A/4.F static checks and ARIA integrity (reported under the test they affect).
+// ARIA attribute validity is derived from the model in 05-aria-data.js (WAI-ARIA 1.2): unknown
+// attributes, invalid values, broken ID references, attributes the role does not support, naming
+// on roles that prohibit it, required attributes, and deprecated roles and attributes (all 5.C).
+// Rule set informed by axe-core and IBM Equal Access; no code or tables taken from either.
 window.__a11y508.register(function ariaKeyboard(A) {
   const COMPOSITE = '[role="listbox"], [role="tablist"], [role="menu"], [role="menubar"], [role="tree"], [role="grid"], [role="treegrid"], [role="radiogroup"], [role="toolbar"]';
   const CHILD_ROLES = new Set(['option', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'treeitem', 'gridcell', 'row', 'radio']);
+  const FIELD = 'input, select, textarea, [role="textbox"], [role="searchbox"], [role="combobox"], [role="listbox"], [role="checkbox"], [role="radio"], [role="switch"], [role="slider"], [role="spinbutton"]';
+  const { aria } = A;
+  const KNOWN = Object.keys(aria.attrs);
   A.meta.pointerCandidates = [];
   A.meta.selectCandidates = [];
+
+  // Levenshtein distance, for "did you mean" on a misspelled attribute.
+  const distance = (a, b) => {
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i];
+      for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+    return prev[b.length];
+  };
+  const suggestion = (name) => {
+    let best = null;
+    let bestD = Infinity;
+    for (const k of KNOWN) {
+      const d = distance(name, k);
+      if (d < bestD) {
+        bestD = d;
+        best = k;
+      }
+    }
+    return bestD <= 2 ? best : null;
+  };
+  const orList = (vs) => (vs.length === 1 ? vs[0] : `${vs.slice(0, -1).join(', ')} or ${vs[vs.length - 1]}`);
+  const tokens = (v) => v.trim().split(/\s+/).filter(Boolean);
+  // A message when value is not valid for the attribute's type, else null. An empty value is the
+  // attribute's default (a required attribute left empty is reported as missing instead).
+  const valueProblem = (name, def, raw) => {
+    const v = raw.trim();
+    if (!v) return null;
+    const lower = v.toLowerCase();
+    if (def.type === 'boolean' || def.type === 'tristate' || def.type === 'token') {
+      const values = def.values || ['true', 'false'];
+      return values.includes(lower) ? null : `${name}="${v}" is not a valid value, so assistive technology ignores it. Use ${orList(values)}.`;
+    }
+    if (def.type === 'tokenlist') {
+      const bad = tokens(lower).filter((t) => !def.values.includes(t));
+      return bad.length ? `${name}="${v}" contains ${bad.map((t) => `"${t}"`).join(', ')}, not a valid value. Use one or more of ${orList(def.values)}.` : null;
+    }
+    if (def.type === 'integer') return /^[+-]?\d+$/.test(v) ? null : `${name}="${v}" is not an integer, so assistive technology ignores it.`;
+    if (def.type === 'number') return /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(v) ? null : `${name}="${v}" is not a number, so assistive technology ignores it.`;
+    return null;
+  };
+  // A required attribute the native element already provides (a checkbox input's checked state).
+  const nativeProvides = (el, attr) => {
+    const t = el.localName;
+    const type = t === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : '';
+    if (attr === 'aria-checked') return type === 'checkbox' || type === 'radio';
+    if (attr === 'aria-valuenow') return type === 'range' || type === 'number' || t === 'progress' || t === 'meter';
+    if (attr === 'aria-expanded') return t === 'select';
+    if (attr === 'aria-level') return /^h[1-6]$/.test(t);
+    return false;
+  };
+  const describeRole = (el, role, explicit) => (explicit ? `role="${role}"` : `<${el.localName}> (role ${role})`);
+
+  const checkAttributes = (el, ariaHidden) => {
+    const explicit = A.explicitRole(el);
+    const role = A.role(el);
+    const model = aria.roles[role];
+    let namingReported = false;
+    for (const { name, value } of Array.from(el.attributes)) {
+      if (!name.startsWith('aria-')) continue;
+      const def = aria.attrs[name];
+      if (!def) {
+        // Rule 1: not an ARIA attribute.
+        const near = suggestion(name);
+        A.add({ test: '5.C', impact: 'serious', el, message: near ? `${name} is not an ARIA attribute, so it does nothing. Did you mean ${near}?` : `${name} is not an ARIA attribute, so it does nothing. Remove it or use a valid aria-* attribute.` });
+        continue;
+      }
+      // Rule 2: the value fits the attribute's type; ID references resolve.
+      const problem = valueProblem(name, def, value);
+      if (problem) A.add({ test: '5.C', impact: 'serious', el, message: problem });
+      if ((def.type === 'idref' || def.type === 'idrefs') && name !== 'aria-activedescendant') {
+        const missing = tokens(value).filter((id) => !document.getElementById(id));
+        const naming = /^aria-(labelledby|describedby|errormessage)$/.test(name) || (name === 'aria-controls' && el.matches(FIELD));
+        if (missing.length) A.add({ test: '5.C', impact: naming ? 'serious' : 'moderate', el, message: `${name} references id(s) that do not exist: ${missing.join(', ')}.` });
+      }
+      if (ariaHidden || !value.trim()) continue;
+      // Rule 11: deprecated attributes.
+      if (def.deprecated) A.add({ test: '5.C', level: 'review', impact: 'minor', el, message: `${name} is deprecated in WAI-ARIA and ignored by most assistive technology; it has ${aria.replacements[name]}.` });
+      // Rule 3: attributes the role does not support, and naming where the role prohibits it.
+      // presentation/none are left to the presentation-conflict rule (88-aria-structure.js).
+      if (!model || role === 'presentation' || role === 'none') continue;
+      if (model.prohibitedAttrs.includes(name)) {
+        if (!namingReported) A.add({ test: '5.C', impact: 'serious', el, message: `${name} is not allowed on ${describeRole(el, role, explicit)}, whose role prohibits naming, so assistive technology ignores the name. Put the text in the content, or give the element a role that can be named.` });
+        namingReported = true;
+      } else if (!aria.allows(role, name)) {
+        A.add({ test: '5.C', impact: 'moderate', el, message: `${name} is not supported on ${describeRole(el, role, explicit)}, so assistive technology ignores it. Remove it, or use a role that supports it.` });
+      }
+    }
+    if (ariaHidden || !explicit || !aria.roles[explicit]) return;
+    // Rule 11: deprecated roles.
+    if (aria.roles[explicit].deprecated) A.add({ test: '5.C', level: 'review', impact: 'minor', el, message: `role="${explicit}" is deprecated in WAI-ARIA 1.2; use ${aria.replacements[explicit]}.` });
+    // Rule 4: required states and properties of an explicit role.
+    for (const attr of aria.roles[explicit].requiredAttrs) {
+      if ((el.getAttribute(attr) || '').trim() || nativeProvides(el, attr)) continue;
+      const empty = el.hasAttribute(attr) ? ` (${attr}="" is empty)` : '';
+      A.add({ test: '5.C', impact: /^(combobox|heading)$/.test(explicit) ? 'moderate' : 'serious', el, message: attr === 'aria-checked' ? `role="${explicit}" requires aria-checked to expose its state${empty}.` : `role="${explicit}" requires ${attr}${empty}.` });
+    }
+  };
 
   for (const el of A.allVisible(6000)) {
     const roleAttr = (el.getAttribute('role') || '').trim();
@@ -13,17 +120,12 @@ window.__a11y508.register(function ariaKeyboard(A) {
     const focusable = A.isFocusable(el);
     const ariaHidden = A.isHiddenFromAT(el);
 
-    if (roleAttr && !A.VALID_ROLES.has(role)) {
-      const abstract = roleAttr.toLowerCase().split(/\s+/).find((t) => A.ABSTRACT_ROLES.has(t));
+    if (roleAttr && !role) {
+      const abstract = roleAttr.toLowerCase().split(/\s+/).find((t) => aria.roles[t] && aria.roles[t].abstract);
       if (abstract) A.add({ test: '5.C', impact: 'moderate', el, message: `role="${roleAttr}" uses "${abstract}", an abstract ARIA role that authors must not use; browsers ignore it, so the element's role cannot be determined. Use a concrete role.` });
       else A.add({ test: '5.C', impact: 'moderate', el, message: `role="${roleAttr}" is not a valid ARIA role, so the element's role cannot be determined.` });
     }
-
-    for (const attr of ['aria-controls', 'aria-owns', 'aria-activedescendant', 'aria-flowto', 'aria-details']) {
-      if (!el.hasAttribute(attr)) continue;
-      const missing = el.getAttribute(attr).split(/\s+/).filter((id) => id && !document.getElementById(id));
-      if (missing.length) A.add({ test: '5.C', impact: 'moderate', el, message: `${attr} references id(s) that do not exist: ${missing.join(', ')}.` });
-    }
+    checkAttributes(el, ariaHidden);
 
     if (ariaHidden && A.isTabbable(el) && !el.matches('a, button, input, select, textarea, summary, [role="button"], [role="link"], [role="menuitem"], [role="tab"]')) {
       A.add({ test: '4.A', impact: 'serious', el, message: 'Focusable element is inside aria-hidden="true": keyboard users reach it but assistive technology does not announce it.' });
@@ -70,8 +172,8 @@ window.__a11y508.register(function ariaKeyboard(A) {
 
   // Duplicate ids that break ARIA/label references
   const refIds = new Set();
-  for (const el of document.querySelectorAll('[aria-labelledby], [aria-describedby], [aria-controls], [aria-owns], [headers], label[for], [aria-errormessage]')) {
-    for (const attr of ['aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-owns', 'headers', 'for', 'aria-errormessage']) {
+  for (const el of document.querySelectorAll('[aria-labelledby], [aria-describedby], [aria-controls], [aria-owns], [headers], label[for], [aria-errormessage], [aria-activedescendant], [aria-details], [aria-flowto]')) {
+    for (const attr of ['aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-owns', 'headers', 'for', 'aria-errormessage', 'aria-activedescendant', 'aria-details', 'aria-flowto']) {
       const v = el.getAttribute(attr);
       if (v) v.split(/\s+/).forEach((id) => id && refIds.add(id));
     }

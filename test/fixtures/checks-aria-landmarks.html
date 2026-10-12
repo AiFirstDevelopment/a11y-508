@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Landmark structure - a11y-508 test site</title>
+<!--
+  Plan rule 10 (9.A review). Three main landmarks (one inside a nav); a banner landmark inside an
+  article; two navigation landmarks with no label. A <header> inside an article is not a banner
+  (HTML-AAM maps it to generic), so only role="banner" there is reported. The two navs labelled
+  "Chapters" and "Sections" differ, so they are not reported.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header, footer { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  main nav a, article nav a { color: #036; }
+  a:focus, button:focus, [tabindex]:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main id="lm-main-1">
+  <h1>Landmark structure</h1>
+  <article id="lm-article">
+    <header role="banner" id="lm-banner-nested"><h2>Article banner</h2></header>
+    <header id="lm-header-plain"><p>A plain article header</p></header>
+    <p>Article text.</p>
+  </article>
+  <nav id="lm-nav-a"><a href="#lm-article">Article</a></nav>
+  <nav id="lm-nav-b"><a href="#lm-main-2">Second main</a></nav>
+  <nav aria-label="Chapters" id="lm-nav-c"><a href="#lm-article">Chapter one</a></nav>
+  <nav aria-label="Sections" id="lm-nav-d"><a href="#lm-article">Section one</a></nav>
+</main>
+<main id="lm-main-2"><p>A second main landmark.</p></main>
+<nav aria-label="Footer links" id="lm-nav-e"><main id="lm-main-3"><p>A main landmark inside a navigation landmark.</p></main></nav>
+</body>
+</html>

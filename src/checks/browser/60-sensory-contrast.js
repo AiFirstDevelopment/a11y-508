@@ -298,15 +298,18 @@ window.__a11y508.register(function sensoryContrast(A) {
     return out;
   };
   // Messages for the outcomes decide() can return, for text (who = 'Text') and form controls.
-  const imageMessage = (who, d, t) => d.between
-    ? `${who} over a background image passes ${t.need}:1 if the image is white (${fmt(d.s.white.ratio)}:1) or black (${fmt(d.s.black.ratio)}:1), but its color (${A.hex(d.s.min.fg)}) lies between the two, so parts of the image close to that color would hide it. Check it visually.`
-    : d.level === 'violation'
+  // (Text colored between the two bounds is listed in one review item per page, below.)
+  const imageMessage = (who, d, t) => d.level === 'violation'
     ? `${who} over a background image fails ${t.need}:1 over any background: ${fmt(d.s.white.ratio)}:1 if the image is white, ${fmt(d.s.black.ratio)}:1 if it is black (${A.hex(d.s.min.fg)}).`
     : `${who} over a background image has contrast between ${fmt(d.s.min.ratio)}:1 and ${fmt(d.s.max.ratio)}:1 depending on the image (${fmt(d.s.white.ratio)}:1 if it is white, ${fmt(d.s.black.ratio)}:1 if it is black); it needs ${t.need}:1. Check it visually.`;
   const gradientMessage = (who, d, t) => `${who} over a gradient has contrast ${fmt(d.s.min.ratio)}:1 at the gradient's worst point (${A.hex(d.s.min.fg)} on ${A.hex(d.s.min.bg)}), below ${t.need}:1. Check it visually.`;
 
   let count = 0;
   let checked = 0;
+  // Text that passes against both image bounds but is colored between them: one review item per
+  // page lists them all, since the check cannot tell which images actually hide it.
+  const between = [];
+  const betweenItem = (el, d, t, text) => ({ selector: A.selector(el), text, foreground: A.hex(d.s.min.fg), white: +d.s.white.ratio.toFixed(2), black: +d.s.black.ratio.toFixed(2), required: t.need });
   try {
     for (const el of A.allVisible(6000)) {
       if (count >= 100) break;
@@ -347,6 +350,10 @@ window.__a11y508.register(function sensoryContrast(A) {
       const details = detailsOf(d, t, text);
       const w = d.s.min;
       const measured = `${fmt(w.ratio)}:1, ${A.hex(w.fg)} on ${A.hex(w.bg)}`;
+      if (d.between) {
+        between.push(betweenItem(el, d, t, text));
+        continue;
+      }
       if (d.kind === 'image') {
         A.add({ test: '13.C', level: d.level, impact: d.level === 'violation' ? 'serious' : 'moderate', el, message: imageMessage('Text', d, t), details });
         continue;
@@ -401,6 +408,10 @@ window.__a11y508.register(function sensoryContrast(A) {
       checked++;
       if (!d) continue;
       formCount++;
+      if (d.between) {
+        between.push(betweenItem(el, d, t, placeholder ? placeholder.slice(0, 80) : undefined));
+        continue;
+      }
       const who = placeholder ? `Placeholder text "${placeholder.slice(0, 60)}"` : 'Text in this field';
       const details = detailsOf(d, t, placeholder ? placeholder.slice(0, 80) : undefined);
       const w = d.s.min;
@@ -414,6 +425,15 @@ window.__a11y508.register(function sensoryContrast(A) {
     restoreScroll();
   }
   A.meta.contrastChecked = checked;
+  if (between.length) {
+    const shown = between.slice(0, 20).map((b) => b.selector).join(', ');
+    const more = between.length > 20 ? ` and ${between.length - 20} more` : '';
+    A.add({
+      test: '13.C', level: 'review', impact: 'moderate', selector: 'text over images',
+      message: `${between.length} text element(s) over a background image pass contrast whether the image is white or black, but their color lies between the two, so parts of an image close to that color would hide them. Check each visually: ${shown}${more}.`,
+      details: { elements: between.slice(0, 20), total: between.length },
+    });
+  }
 
   // 13.A: links distinguished from surrounding text by color alone (WCAG F73 / G183). The
   // surrounding text is the text of the link's nearest block-level ancestor outside links and

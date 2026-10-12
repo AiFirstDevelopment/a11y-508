@@ -3,7 +3,6 @@ window.__a11y508.register(function forms(A) {
   const FIELD_SEL = 'input, select, textarea, [role="textbox"], [role="searchbox"], [role="combobox"], [role="listbox"], [role="checkbox"], [role="radio"], [role="switch"], [role="slider"], [role="spinbutton"]';
   const SKIP_TYPES = new Set(['hidden', 'submit', 'reset', 'button', 'image']);
   const labelList = [];
-  const missingIds = (el, attr) => (el.getAttribute(attr) || '').split(/\s+/).filter((id) => id && !document.getElementById(id));
 
   const labelHasVisualRequired = (el) => {
     const labels = el.labels ? Array.from(el.labels) : [];
@@ -24,10 +23,7 @@ window.__a11y508.register(function forms(A) {
     const role = A.role(el);
     const { name, source } = A.accName(el);
 
-    for (const attr of ['aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-errormessage']) {
-      const missing = missingIds(el, attr);
-      if (missing.length) A.add({ test: '5.C', impact: 'serious', el, message: `${attr} references id(s) that do not exist: ${missing.join(', ')}.` });
-    }
+    // Broken ID references and required ARIA states are reported by 87-aria-keyboard.js for every element.
 
     if (!name) {
       A.add({ test: '5.A', impact: 'critical', el, message: `${role || el.localName} has no label or accessible name.` });
@@ -55,19 +51,6 @@ window.__a11y508.register(function forms(A) {
 
     if (el.getAttribute('aria-invalid') === 'true' && !el.getAttribute('aria-describedby') && !el.getAttribute('aria-errormessage')) {
       A.add({ test: '5.F', impact: 'serious', el, message: 'Field is marked aria-invalid="true" but no error message is associated via aria-describedby or aria-errormessage.' });
-    }
-
-    const explicitRole = (el.getAttribute('role') || '').toLowerCase();
-    if (explicitRole) {
-      if (['checkbox', 'radio', 'switch'].includes(explicitRole) && el.localName !== 'input' && !el.hasAttribute('aria-checked')) {
-        A.add({ test: '5.C', impact: 'serious', el, message: `role="${explicitRole}" requires aria-checked to expose its state.` });
-      }
-      if (explicitRole === 'combobox' && !el.hasAttribute('aria-expanded') && el.localName !== 'select') {
-        A.add({ test: '5.C', impact: 'moderate', el, message: 'role="combobox" requires aria-expanded.' });
-      }
-      if (['slider', 'spinbutton'].includes(explicitRole) && el.localName !== 'input' && !el.hasAttribute('aria-valuenow')) {
-        A.add({ test: '5.C', impact: 'serious', el, message: `role="${explicitRole}" requires aria-valuenow.` });
-      }
     }
 
     if (el.localName === 'select') {
