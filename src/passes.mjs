@@ -1,6 +1,8 @@
 // Interactive passes that run after the static in-page checks:
 // event-listener probe (4.A, 5.D), keyboard tab-through (4.C, 4.D, 4.E, 4.F),
-// disclosure activation (4.A, 4.G, 4.H + re-check of revealed content), 200% zoom (18.A).
+// disclosure activation (4.A, 4.G, 4.H + re-check of revealed content), 200% zoom (18.A);
+// with the beyond-508 profile (--wcag 2.1 / 2.2), text spacing (1.4.12) and reflow at 320 px (1.4.10),
+// and in the Tab pass, focus not obscured (2.4.11) and focus indicator contrast (1.4.11).
 
 import { sleep } from './page.mjs';
 
@@ -9,7 +11,8 @@ const CLICKY = new Set(['click', 'mousedown', 'mouseup', 'pointerdown', 'pointer
 export async function listenerProbe(page, meta, add) {
   const pointer = meta.pointerCandidates || [];
   const selects = meta.selectCandidates || [];
-  if (!pointer.length && !selects.length) return;
+  const clickable = [];
+  if (!pointer.length && !selects.length) return clickable;
   let delegated = false;
   try {
     const docTypes = await page.listenerTypes('document', true);
@@ -28,6 +31,7 @@ export async function listenerProbe(page, meta, add) {
     }
     if (types.some((t) => CLICKY.has(t))) {
       direct++;
+      clickable.push(sel);
       const kb = types.some((t) => /^key/.test(t));
       add({ test: '4.A', level: 'violation', impact: 'serious', selector: sel, message: `Element has a ${types.filter((t) => CLICKY.has(t)).join('/')} listener but is not keyboard focusable${kb ? ' (it has a key handler, but focus can never reach it)' : ''}. Use a <button>/<a>, or add tabindex="0", a role, and key handling.` });
     } else if (delegated) {
@@ -46,9 +50,13 @@ export async function listenerProbe(page, meta, add) {
       add({ test: '5.D', level: 'review', impact: 'moderate', selector: sel, message: 'Select has a change/input listener. Confirm changing the selection does not submit the form, navigate, or move focus unexpectedly without warning.' });
     }
   }
+  // The elements with a click listener of their own: pointer targets the static checks cannot see.
+  return clickable;
 }
 
 export async function keyboardPass(page, add, opts) {
+  const beyond = !!opts.wcag && opts.wcag !== '2.0';
+  const wcag22 = opts.wcag === '2.2';
   const prep = await page.evaluate('window.__a11y508.kbPrepare()');
   const startHref = prep.href;
   const max = Math.min(opts.maxTabs, prep.count * 2 + 10);
@@ -123,14 +131,23 @@ export async function keyboardPass(page, add, opts) {
     seq.push(s);
     last = s;
     if (s.inIframe) continue;
-    if (!s.visible || !s.inViewport) {
+    if (beyond && s.faint && s.inViewport) {
+      add({ test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, beyond508: true, message: 'Keyboard focus landed on an element that is almost transparent (opacity under 0.1, counting its ancestors), so the focus cannot be seen. Make it visible when it has focus, or remove it from the tab order. (IBM Equal Access treats opacity under 0.1 as hidden, a rule stricter than WCAG; beyond-508 profile.)' });
+    } else if (!s.visible || !s.inViewport) {
       add({ test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: `Keyboard focus landed on an element that is not visible (${!s.visible ? 'hidden or zero-size' : 'outside the viewport'}). Focus must be visible; hidden controls should be removed from the tab order or revealed on focus.` });
+    } else if (wcag22 && s.obscured === 'full') {
+      add({ test: '2.4.11', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, details: { obscuredBy: s.obscuredBy }, message: `Keyboard focus landed on an element that is entirely hidden by ${s.obscuredBy ? `fixed or sticky content (${s.obscuredBy})` : 'fixed or sticky content'}. Users cannot see where focus is; add scroll-padding for the sticky area, or keep the focused element out from under it.` });
     } else if (s.covered) {
       add({ test: '4.D', level: 'review', impact: 'moderate', selector: s.selector, html: s.html, rect: s.rect, message: 'Focused element is overlapped by another element (for example a sticky header or overlay). Confirm the focus indicator is actually visible.' });
     } else if (s.hadBaseline && s.diff.length === 0 && s.proxied) {
       add({ test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: `No visible change on this label or the custom ${s.proxied} box when its visually hidden ${s.proxied} input receives keyboard focus. Style the label or the box on :focus-visible (for example input:focus-visible + label).` });
     } else if (s.hadBaseline && s.diff.length === 0) {
       add({ test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: 'No visible change when this element receives keyboard focus (no outline, border, background, or other style change). Provide a visible focus indicator.' });
+    } else if (beyond && s.weakIndicator) {
+      const w = s.weakIndicator;
+      add({ test: '1.4.11', level: 'review', impact: 'moderate', selector: s.selector, html: s.html, rect: s.rect, details: w, message: w.prop === 'outline-color'
+        ? `The focus indicator is a ${w.to} outline on ${w.from}, ${w.ratio}:1, below the 3:1 a focus indicator needs against what is behind it. Confirm focus is visible, or use a darker or lighter outline.`
+        : `The focus indicator is a change of ${w.prop} from ${w.from} to ${w.to}, ${w.ratio}:1 against ${w.against}, below the 3:1 a focus indicator needs to be seen. Confirm focus is visible, or make the change stronger.` });
     }
   }
 
@@ -324,4 +341,59 @@ export async function zoomPass(page, add, shoot) {
     await sleep(150);
   }
   return { clipped: after ? after.clipped.length : 0, overlaps: after ? after.overlaps.length : 0 };
+}
+
+// WCAG 1.4.12 (beyond-508 profile): apply the text-spacing values as a bookmarklet would, then look
+// for text that is clipped or overlaps only with them, like the zoom pass. The style is removed
+// afterwards; restored says it is gone.
+export async function spacingPass(page, add, shoot) {
+  const before = await page.evaluate('window.__a11y508.layoutIssues()');
+  await page.evaluate('window.__a11y508.applyTextSpacing()');
+  await sleep(200);
+  let after;
+  let restored = false;
+  try {
+    after = await page.evaluate('window.__a11y508.layoutIssues()');
+    const clipped = after.clipped.filter((c) => !before.clipped.some((b) => b.selector === c.selector));
+    const overlaps = after.overlaps.filter((o) => !before.overlaps.some((b) => b.a === o.a && b.b === o.b));
+    for (const c of clipped) {
+      const f = { test: '1.4.12', level: 'violation', impact: 'serious', selector: c.selector, html: c.html, rect: c.rect, message: `Text "${c.text}" is clipped when the user's text spacing is applied (line height 1.5, letter spacing 0.12em, word spacing 0.16em, paragraph spacing 2em; overflow hidden, ${c.overflowX > 4 ? `${c.overflowX}px cut horizontally` : `${c.overflowY}px cut vertically`}). Let the container grow with its text.` };
+      if (shoot) await shoot(f);
+      add(f);
+    }
+    for (const o of overlaps) {
+      const f = { test: '1.4.12', level: 'violation', impact: 'moderate', selector: o.a, html: o.html, rect: o.rect, message: `With the user's text spacing applied, text "${o.textA}" overlaps "${o.textB}" (${o.b}), making one or both unreadable.` };
+      if (shoot) await shoot(f);
+      add(f);
+    }
+  } finally {
+    restored = await page.evaluate('window.__a11y508.removeTextSpacing()').catch(() => false);
+    await sleep(100);
+  }
+  return { clipped: after ? after.clipped.length : 0, overlaps: after ? after.overlaps.length : 0, restored };
+}
+
+// WCAG 1.4.10 (beyond-508 profile): lay the page out 320 CSS px wide and report what still needs
+// horizontal scrolling. The viewport is set back afterwards, as the zoom pass does; restored says
+// the page is at its configured width again.
+export async function reflowPass(page, add) {
+  const width = page.viewport.width;
+  let restored = false;
+  let found = 0;
+  await page.setViewportWidth(320);
+  await sleep(400);
+  try {
+    const r = await page.evaluate('window.__a11y508.reflowIssues()');
+    for (const i of r.issues) {
+      found++;
+      // No rect: it was measured at 320 px, and screenshots are taken at the configured width.
+      const f = { test: '1.4.10', level: 'violation', impact: 'serious', selector: i.selector, html: i.html, details: { right: i.right, width: i.width, viewport: r.viewport }, message: `At 320 CSS px wide (400% zoom), this element reaches ${i.right}px (it is ${i.width}px wide), so the page has to be scrolled sideways to read it. Let it shrink or wrap; only content that needs two dimensions (tables, images, maps, code) may scroll.` };
+      add(f);
+    }
+  } finally {
+    await page.setViewportWidth(width);
+    await sleep(150);
+    restored = await page.evaluate('window.innerWidth').then((w) => w === width).catch(() => false);
+  }
+  return { issues: found, restored };
 }

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Focus not obscured - a11y-508 test site</title>
+<!--
+  Round 4b, AC 8 (2.4.11 focus not obscured), AC 12 (IBM's opacity rule) and the focus part of
+  plan item 12 (1.4.11 focus indicator contrast).
+  - #bf-bar: a fixed bar, 90 px tall, over the top of the page; the page starts below it.
+  - #bf-under: a link at top 20 px, 30 px tall, entirely under the bar when focused: 2.4.11 with
+    --wcag 2.2; a 4.D review (overlapped) without it.
+  - #bf-partial: a link at top 60 px, 40 px tall: its top 30 px (centre included) are under the
+    bar. Partly covered: a 4.D review with or without the profile, never 2.4.11.
+  - #bf-faint: a button at opacity 0.05 with an outline on focus: 4.D (not visible) with the
+    profile; without it, the outline is a visible change and nothing is reported.
+  - #bf-weak: a button whose only focus change is its background, #ffffff to #eeeeee (1.16:1):
+    a 1.4.11 review item with the profile; a change, so no 4.D without it.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus, select:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  body { padding-top: 100px; }
+  #bf-bar { position: fixed; top: 0; left: 0; right: 0; height: 90px; background: #223; color: #fff; z-index: 10; padding: 0 20px; }
+  .under { position: absolute; left: 20px; }
+  #bf-under { top: 20px; height: 30px; line-height: 30px; }
+  #bf-partial { top: 60px; left: 300px; height: 40px; line-height: 40px; }
+  #bf-faint { opacity: 0.05; }
+  #bf-weak { background: #fff; color: #222; border: 2px solid #222; padding: 4px 10px; }
+  #bf-weak:focus { background: #eee; outline: none; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<div id="bf-bar"><p>Department of Examples</p></div>
+<a href="/about.html" class="under" id="bf-under">Jump to the notices</a>
+<a href="/forms.html" class="under" id="bf-partial">Read the form guide</a>
+<main>
+  <h1>Focus not obscured</h1>
+  <p>The bar at the top stays put while the page scrolls under it.</p>
+  <p><button type="button" id="bf-faint">Hidden helper</button></p>
+  <p><button type="button" id="bf-weak">Save draft</button></p>
+</main>
+</body>
+</html>

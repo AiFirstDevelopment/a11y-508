@@ -4,7 +4,9 @@ export type AuthMode = 'token' | 'env' | 'state' | 'cookies' | 'none';
 
 // Advanced flags: [flag, label, kind]. Everything parseArgs accepts that the
 // form may set; --out, --json, --quiet and --events belong to the server.
-export const ADVANCED: [string, string, 'value' | 'list' | 'switch'][] = [
+// 'profile' is a checkbox for --wcag 2.2, the rules beyond Section 508.
+export const ADVANCED: [string, string, 'value' | 'list' | 'switch' | 'profile'][] = [
+  ['wcag', 'Also check WCAG 2.2 (beyond Section 508)', 'profile'],
   ['max-depth', 'Maximum link depth', 'value'],
   ['concurrency', 'Parallel tabs', 'value'],
   ['viewport', 'Viewport (WIDTHxHEIGHT)', 'value'],
@@ -56,6 +58,8 @@ export class FormStore {
       const v = this.advanced()[flag];
       if (kind === 'switch') {
         if (v === true) o[flag] = true;
+      } else if (kind === 'profile') {
+        if (v === true) o[flag] = '2.2';
       } else if (kind === 'list') {
         if (typeof v === 'string' && lines(v).length) o[flag] = lines(v);
       } else if (typeof v === 'string' && v.trim()) o[flag] = v.trim();

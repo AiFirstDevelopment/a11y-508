@@ -2,7 +2,10 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CATALOG, IMPACTS, TEST_IDS } from './checks/catalog.mjs';
+import { CATALOG, IMPACTS, TEST_IDS, beyondIds, beyondHeading, testInfo } from './checks/catalog.mjs';
+
+// The beyond-508 profile of a report: its WCAG version, or null for a default run.
+const profileOf = (r) => (r.options && r.options.wcag && r.options.wcag !== '2.0' ? r.options.wcag : null);
 
 export function summarize(pages, site) {
   const byTest = {};
@@ -54,6 +57,7 @@ export function coverage(pages, crawl, opts) {
     warnings.push(`A modal dialog (${p.modalOnLoad.name || p.modalOnLoad.selector}) was open when ${short(p.finalUrl || p.url)} loaded and did not close with Escape; the page behind it was not audited. Dismiss it with --cookie or a saved session, or audit the dialog's close control.`);
   }
   if (crawl.overflow) warnings.push(`Stopped at --max-pages ${opts.maxPages}: ${crawl.overflow} more link(s) were found but not audited.`);
+  if (opts.wcag && opts.wcag !== '2.0') notes.push(`The WCAG ${opts.wcag} profile was on (--wcag ${opts.wcag}): rules beyond Section 508 ran too. Their findings are listed under "${beyondHeading(opts.wcag)}" and count toward --fail-on like any other; Section 508 itself requires WCAG 2.0 AA.`);
   if (!opts.followClicks) notes.push('Click discovery was off (--no-follow-clicks); pages reachable only through click handlers were not looked for.');
   if (crawl.clickOnly) notes.push(`${crawl.clickOnly} page(s) were reachable only by clicking a control with no link (href); they were found by clicking and audited. Screen reader users cannot discover these destinations as links (check WCAG 2.1.1, 4.1.2).`);
   return { complete: warnings.length === 0, warnings, notes };
@@ -112,6 +116,18 @@ export function renderMarkdown(r) {
     if (!c || (!c.violations && !c.reviews)) continue;
     lines.push(`| ${id} | ${CATALOG[id].name} | ${CATALOG[id].wcag} | ${c.violations} | ${c.reviews} |`);
   }
+  const wcag = profileOf(r);
+  if (wcag) {
+    lines.push('');
+    lines.push(`## ${beyondHeading(wcag)}`);
+    lines.push('');
+    const ids = beyondIds(wcag).filter((id) => s.byTest[id] && (s.byTest[id].violations || s.byTest[id].reviews));
+    if (ids.length) {
+      lines.push('| Rule | Name | WCAG | Violations | Review |');
+      lines.push('|---|---|---|---|---|');
+      for (const id of ids) lines.push(`| ${id} | ${testInfo(id).name} | ${testInfo(id).wcag} | ${s.byTest[id].violations} | ${s.byTest[id].reviews} |`);
+    } else lines.push('No findings.');
+  }
   lines.push('');
   lines.push('## Pages');
   lines.push('');
@@ -137,6 +153,8 @@ export function renderHtml(r) {
   for (const p of r.pages) for (const f of p.findings || []) push(f, p.finalUrl || p.url);
   for (const f of r.site.findings || []) push(f, null);
   const testIds = TEST_IDS.filter((id) => groups.has(id));
+  const wcag = profileOf(r);
+  const beyond = wcag ? beyondIds(wcag).filter((id) => groups.has(id)) : [];
   const pageOptions = r.pages.filter((p) => (p.findings || []).length).map((p) => `<option value="${esc(p.finalUrl || p.url)}">${esc(short(p.finalUrl || p.url))}</option>`).join('');
 
   const finding = (f, i) => {
@@ -151,16 +169,18 @@ export function renderHtml(r) {
 </li>`;
   };
 
-  const sections = testIds.map((id) => {
+  const section = (id) => {
     const list = groups.get(id);
     const v = list.filter((f) => f.level === 'violation').length;
-    const c = CATALOG[id];
+    const c = testInfo(id);
     return `<section class="test" id="test-${esc(id.replace('.', '-'))}" data-test="${esc(id)}">
 <h3>${esc(id)} <span class="tn">${esc(c.name)}</span> <span class="wc">WCAG ${esc(c.wcag)}</span> <span class="cnt"><b>${v}</b> violation${v === 1 ? '' : 's'}, <b>${list.length - v}</b> for review</span></h3>
 <p class="cond">${esc(c.condition)}</p>
 <ol class="findings">${list.map(finding).join('\n')}</ol>
 </section>`;
-  }).join('\n');
+  };
+  const sections = testIds.map(section).join('\n') +
+    (wcag ? `\n<h2 id="beyond">${esc(beyondHeading(wcag))}</h2>\n${beyond.length ? beyond.map(section).join('\n') : '<p>No findings.</p>'}` : '');
 
   const manualRows = r.manual.map((m) => `<tr><th scope="row">${esc(m.test)}</th><td>${esc(m.name)}</td><td>${esc(m.wcag)}</td><td>${esc(m.automation)}</td><td>${esc(m.condition)}${m.note ? `<br><small>${esc(m.note)}</small>` : ''}</td></tr>`).join('\n');
 
@@ -198,7 +218,7 @@ code,pre{font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;back
 pre{padding:8px;max-height:320px;overflow:auto}figure{margin:8px 0}figure img{max-width:100%;border:1px solid var(--line);max-height:300px}
 table{border-collapse:collapse;width:100%;font-size:14px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}th{background:#f4f4f4}
 .err{color:var(--crit)}.skip{color:var(--muted)}a{color:#0b4f9c}a:focus,button:focus,input:focus,select:focus{outline:3px solid #0b4f9c;outline-offset:2px}
-.toc{columns:3;font-size:14px}.toc a{display:block}@media(max-width:800px){.toc{columns:1}}
+.toc{columns:3;font-size:14px}.toc a{display:block;padding:2px 0}@media(max-width:800px){.toc{columns:1}}
 .hiddencount{font-size:13px;color:var(--muted)}
 </style>
 </head>
@@ -219,7 +239,7 @@ ${s.coverage && (s.coverage.warnings.length || s.coverage.notes.length) ? `<sect
 <main>
 <h2 id="contents">Tests with findings</h2>
 <nav aria-labelledby="contents" class="toc">
-${testIds.map((id) => `<a href="#test-${esc(id.replace('.', '-'))}">${esc(id)} ${esc(CATALOG[id].name)} (${groups.get(id).length})</a>`).join('\n')}
+${testIds.map((id) => `<a href="#test-${esc(id.replace('.', '-'))}">${esc(id)} ${esc(CATALOG[id].name)} (${groups.get(id).length})</a>`).join('\n')}${wcag ? `\n<a href="#beyond">${esc(beyondHeading(wcag))}</a>\n${beyond.map((id) => `<a href="#test-${esc(id.replace('.', '-'))}">${esc(id)} ${esc(testInfo(id).name)} (${groups.get(id).length})</a>`).join('\n')}` : ''}
 </nav>
 <form class="filters" aria-label="Filter findings" onsubmit="return false">
 <fieldset><legend>Level</legend>
@@ -362,6 +382,19 @@ export function makeLogger({ quiet, json, events, maxPages }) {
           const t = s.byTest[id];
           lines.push(`${id.padEnd(6)} ${CATALOG[id].name.slice(0, 44).padEnd(44)} ${String(t.violations).padStart(5)} ${String(t.reviews).padStart(7)}`);
         }
+        lines.push('');
+      }
+      const wcag = profileOf(report);
+      if (wcag) {
+        lines.push(beyondHeading(wcag));
+        const extra = beyondIds(wcag).filter((id) => s.byTest[id] && (s.byTest[id].violations || s.byTest[id].reviews));
+        if (extra.length) {
+          lines.push(`${'rule'.padEnd(6)} ${'name'.padEnd(44)} ${'viol'.padStart(5)} ${'review'.padStart(7)}`);
+          for (const id of extra) {
+            const t = s.byTest[id];
+            lines.push(`${id.padEnd(6)} ${testInfo(id).name.slice(0, 44).padEnd(44)} ${String(t.violations).padStart(5)} ${String(t.reviews).padStart(7)}`);
+          }
+        } else lines.push('no findings');
         lines.push('');
       }
       lines.push(`report: ${files.html}`);

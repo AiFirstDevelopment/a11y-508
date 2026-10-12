@@ -26,6 +26,12 @@
   const NON_TEXT = /[\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u200B-\u200D\u2060\uFEFF]/gu;
   A.stripGlyphs = (str) => (str || '').replace(NON_TEXT, '');
 
+  // The --wcag profile: '2.0' (the default, Trusted Tester only), '2.1' or '2.2'. The Node side
+  // sets A.profile when the bundle is injected; A.run(opts) may override it for one run.
+  A.wcag = () => (A.opts && A.opts.wcag) || (A.profile && A.profile.wcag) || '2.0';
+  // Is the beyond-508 profile on at version v or later ('2.1' when omitted)?
+  A.beyond = (v = '2.1') => parseFloat(A.wcag()) >= parseFloat(v);
+
   A.text = (el) => (el && el.textContent ? el.textContent : '').replace(/\s+/g, ' ').trim();
 
   A.cs = (el, pseudo) => {
@@ -50,12 +56,27 @@
     return true;
   };
 
-  // Visually hidden but still in the accessibility tree (sr-only patterns, opacity 0, off-screen)
+  // Opacity of el and every ancestor multiplied: what is painted, whatever layer sets it.
+  A.effectiveOpacity = (el) => {
+    let o = 1;
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+      const s = A.cs(n);
+      if (s) o *= parseFloat(s.opacity);
+    }
+    return o;
+  };
+  // IBM Equal Access treats content under opacity 0.1 as not visible, a choice stricter than WCAG;
+  // only under the beyond-508 profile. True when that rule alone hides el.
+  A.isFaint = (el) => A.beyond() && A.effectiveOpacity(el) < 0.1 && parseFloat((A.cs(el) || {}).opacity) !== 0;
+
+  // Visually hidden but still in the accessibility tree (sr-only patterns, opacity 0, off-screen;
+  // with the beyond-508 profile, an effective opacity under 0.1)
   A.isVisuallyHidden = (el) => {
     const s = A.cs(el);
     if (!s) return false;
     const r = el.getBoundingClientRect();
     if (parseFloat(s.opacity) === 0) return true;
+    if (A.isFaint(el)) return true;
     if (s.clipPath && s.clipPath !== 'none' && /inset\(\s*(100%|50%)/.test(s.clipPath)) return true;
     if (s.clip && /rect\(\s*0(px)?,?\s*0(px)?,?\s*0(px)?,?\s*0(px)?\s*\)/.test(s.clip) && s.position === 'absolute') return true;
     if (r.width <= 1 && r.height <= 1 && s.overflow === 'hidden') return true;
@@ -68,9 +89,23 @@
 
   A.isAriaHiddenAttr = (el) => !!el.closest('[aria-hidden="true" i]');
   const isInert = (el) => !!el.closest('[inert]');
-  // The open modal dialog, if any: a native dialog shown with showModal(), or a visible element
-  // with role="dialog"/"alertdialog" and aria-modal="true". Looked up once per A.run() (cached
-  // for the run's duration) and on every call outside a run.
+  // The open modal dialog, if any: a native dialog shown with showModal(), a visible element
+  // with role="dialog"/"alertdialog" and aria-modal="true", or an older library's modal (react-modal,
+  // older Bootstrap, jQuery UI) that sets no aria-modal and hides the page instead: a visible
+  // dialog-role element outside anything aria-hidden, beside an aria-hidden sibling of it or of one
+  // of its ancestors that holds most of the rest of the page's visible text. Looked up once per
+  // A.run() (cached for the run's duration) and on every call outside a run.
+  const hiddenAttr = (el) => (el.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true';
+  const legacyModal = (d) => {
+    if (d.closest('[aria-hidden="true" i], [inert]') || !A.isVisible(d)) return false;
+    const rest = A.renderedTextLength(document.body) - A.renderedTextLength(d);
+    if (rest <= 0) return false;
+    let hidden = 0;
+    for (let n = d; n && n !== document.body && n.parentElement; n = n.parentElement) {
+      for (const sib of n.parentElement.children) if (sib !== n && hiddenAttr(sib)) hidden += A.renderedTextLength(sib);
+    }
+    return hidden / rest >= 0.5;
+  };
   const findModal = () => {
     try {
       const native = document.querySelector('dialog:modal');
@@ -79,8 +114,22 @@
     for (const d of document.querySelectorAll('[role="dialog"][aria-modal="true" i], [role="alertdialog"][aria-modal="true" i]')) {
       if (A.isVisible(d)) return d;
     }
-    return null;
+    if (!document.body || !document.body.querySelector('[aria-hidden="true" i]')) return null;
+    // Measuring text is costly and this runs per element outside a run (the Tab pass asks for
+    // every element), so the answer is kept for 200 ms.
+    const now = performance.now();
+    if (legacyMemo && now - legacyMemo.at < 200) return legacyMemo.dialog;
+    let found = null;
+    for (const d of document.querySelectorAll('[role="dialog"], [role="alertdialog"]')) {
+      if (legacyModal(d)) {
+        found = d;
+        break;
+      }
+    }
+    legacyMemo = { at: now, dialog: found };
+    return found;
   };
+  let legacyMemo = null;
   let modalCache;
   A.openModal = () => (modalCache !== undefined ? modalCache : findModal());
   const outsideModal = (el) => {
@@ -468,6 +517,7 @@
       rect: el ? A.rect(el) : f.rect || null,
       details: f.details || undefined,
     };
+    if (f.beyond508) out.beyond508 = true;
     A.findings.push(out);
     return out;
   };

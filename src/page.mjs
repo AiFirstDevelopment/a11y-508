@@ -259,7 +259,10 @@ export class Page {
   async ensureInjected() {
     const ok = await this.evaluate('typeof window.__a11y508 === "object" && typeof window.__a11y508.run === "function"').catch(() => false);
     if (ok) return;
-    await this.evaluate(checksBundle(), { awaitPromise: false });
+    // The --wcag profile reaches the in-page checks as A.profile (read by A.wcag()). Nothing is
+    // set for a default run, so the bundle behaves exactly as it does without the profile.
+    const wcag = this.opts.wcag && this.opts.wcag !== '2.0' ? this.opts.wcag : null;
+    await this.evaluate(checksBundle() + (wcag ? `\n;window.__a11y508.profile = ${JSON.stringify({ wcag })};` : ''), { awaitPromise: false });
   }
 
   async click(x, y) {
@@ -308,6 +311,11 @@ export class Page {
     const w = Math.round(this.viewport.width / factor);
     const h = Math.round(this.viewport.height / factor);
     await this.s.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: factor, mobile: false });
+  }
+
+  // The viewport at another CSS width (the reflow pass), or back to the configured one.
+  async setViewportWidth(width) {
+    await this.s.send('Emulation.setDeviceMetricsOverride', { width, height: this.viewport.height, deviceScaleFactor: 1, mobile: false });
   }
 
   // Returns the event listener types attached directly to the element matched by `selector`.

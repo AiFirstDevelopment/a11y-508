@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Older modal library, dialog closed - a11y-508 test site</title>
+<!--
+  Round 4b, plan item 15 (round 4a follow-up), AC 15: an older modal library (react-modal, older
+  Bootstrap, jQuery UI) sets no aria-modal. While its dialog is open it hides the application root
+  with aria-hidden="true" and puts the dialog beside it. Here the dialog is gone but the root is still aria-hidden (the library
+  left it behind): a critical hidden-page finding.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus, select:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  #ml-dialog { position: fixed; top: 120px; left: 50%; transform: translateX(-50%); width: 360px; background: #fff; border: 2px solid #223; padding: 16px; z-index: 5; }
+</style>
+</head>
+<body>
+
+<div id="ml-root" aria-hidden="true">
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Older modal library</h1>
+  <p>The application lives in this root element. A modal library hides it from assistive technology while its dialog is open, and shows it again when the dialog closes.</p>
+  <p>A second paragraph of ordinary page content inside the root.</p>
+</main>
+</div>
+
+</body>
+</html>

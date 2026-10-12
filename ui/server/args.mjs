@@ -17,7 +17,7 @@ export const FLAGS = {
   viewport: 'value', timeout: 'value', settle: 'value', header: 'list', 'token-header': 'value', 'auth-origin': 'list',
   'token-storage': 'list', 'no-token-storage': 'switch', 'no-interact': 'switch', 'no-zoom': 'switch', 'no-screenshots': 'switch',
   'max-screenshots': 'value', 'max-tabs': 'value', 'max-activations': 'value', 'max-clicks': 'value', 'no-follow-clicks': 'switch',
-  'user-agent': 'value', chrome: 'value', 'no-sandbox': 'switch',
+  'user-agent': 'value', chrome: 'value', 'no-sandbox': 'switch', wcag: 'value',
 };
 
 export const AUTH_MODES = ['token', 'env', 'state', 'cookies', 'none'];

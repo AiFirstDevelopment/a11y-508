@@ -54,6 +54,20 @@ interface Row extends Finding {
         <ngx-charts-bar-horizontal [view]="[640, 360]" [results]="worstData()" [xAxis]="true" [yAxis]="true" [animations]="animations" [tooltipDisabled]="true" />
       </app-chart-panel>
 
+      @if (beyondHeading(); as bh) {
+        <h2 id="beyond-h" data-testid="beyond-heading">{{ bh }}</h2>
+        <p class="hint">Rules from WCAG 2.1 and 2.2 and best practices, run because the profile was on (<code>--wcag {{ r.options.wcag }}</code>). Section 508 itself requires WCAG 2.0 AA.</p>
+        @if (beyondRows().length) {
+          <table data-testid="beyond-tests">
+            <caption>Findings beyond Section 508, by rule</caption>
+            <thead><tr><th scope="col">Rule</th><th scope="col">Name</th><th scope="col">WCAG</th><th scope="col">Violations</th><th scope="col">Review</th></tr></thead>
+            <tbody>@for (b of beyondRows(); track b.test) { <tr><th scope="row">{{ b.test }}</th><td>{{ b.name }}</td><td>{{ b.wcag }}</td><td>{{ b.violations }}</td><td>{{ b.reviews }}</td></tr> }</tbody>
+          </table>
+        } @else {
+          <p>No findings beyond Section 508.</p>
+        }
+      }
+
       <h2 id="findings-h">Findings</h2>
       <form class="filters" aria-labelledby="findings-h" (submit)="$event.preventDefault()">
         <div class="field">
@@ -66,7 +80,15 @@ interface Row extends Finding {
         </div>
         <div class="field">
           <label for="f-test">Test</label>
-          <select id="f-test" (change)="test.set(val($event))"><option value="">All</option>@for (t of tests(); track t) { <option [value]="t">{{ t }}</option> }</select>
+          <select id="f-test" (change)="test.set(val($event))">
+            <option value="">All</option>
+            @if (beyondHeading(); as bh) {
+              <optgroup label="Trusted Tester">@for (t of ttTests(); track t) { <option [value]="t">{{ t }}</option> }</optgroup>
+              <optgroup [label]="bh" data-testid="beyond-tests-filter">@for (t of beyondTests(); track t) { <option [value]="t">{{ t }}</option> }</optgroup>
+            } @else {
+              @for (t of tests(); track t) { <option [value]="t">{{ t }}</option> }
+            }
+          </select>
         </div>
         <div class="field">
           <label for="f-page">Page</label>
@@ -197,6 +219,21 @@ export class ReportScreen {
     return out;
   });
   readonly tests = computed(() => [...new Set(this.rows().map((f) => f.test))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
+  // With the beyond-508 profile (--wcag 2.1 / 2.2), its rules are listed under a heading of their own.
+  readonly beyondHeading = computed(() => {
+    const w = this.report()?.options?.wcag;
+    return w && w !== '2.0' ? `Beyond Section 508 (WCAG ${w})` : '';
+  });
+  private isBeyond = (t: string) => !!this.report()?.catalog?.[t]?.beyond508;
+  readonly ttTests = computed(() => this.tests().filter((t) => !this.isBeyond(t)));
+  readonly beyondTests = computed(() => this.tests().filter((t) => this.isBeyond(t)));
+  readonly beyondRows = computed(() => {
+    const r = this.report();
+    if (!r) return [];
+    return Object.entries(r.summary.byTest)
+      .filter(([t, c]) => this.isBeyond(t) && (c.violations || c.reviews))
+      .map(([test, c]) => ({ test, name: r.catalog[test].name, wcag: r.catalog[test].wcag, violations: c.violations, reviews: c.reviews }));
+  });
   readonly pageNames = computed(() => [...new Set(this.rows().map((f) => f.page))]);
   readonly filtered = computed(() => {
     const q = this.text().toLowerCase().trim();

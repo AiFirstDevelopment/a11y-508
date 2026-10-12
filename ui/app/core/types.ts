@@ -111,6 +111,7 @@ export interface Finding {
   details?: unknown;
   page?: string;
   pages?: string[];
+  beyond508?: boolean;
 }
 
 export interface ReportPage {
@@ -129,7 +130,7 @@ export interface Report {
   baseUrl: string;
   finishedAt: string;
   passed: boolean;
-  options: { failOn: string[] };
+  options: { failOn: string[]; wcag?: string };
   summary: {
     pages: number;
     audited: number;
@@ -144,7 +145,7 @@ export interface Report {
   site: { findings: Finding[] };
   manual: { test: string; name: string; wcag: string; automation: string; condition: string; note?: string }[];
   pages: ReportPage[];
-  catalog: Record<string, { name: string; wcag: string; condition: string; automation: string }>;
+  catalog: Record<string, { name: string; wcag: string; condition: string; automation: string; level?: string; beyond508?: boolean }>;
 }
 
 export interface ReportListEntry {

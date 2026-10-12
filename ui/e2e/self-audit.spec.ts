@@ -1,5 +1,6 @@
 // AC 20: a11y-508 audits the dashboard itself, through the tool's own auth
-// features, and finds no critical or serious violations on any screen.
+// features, and finds no critical or serious violations on any screen, with the
+// WCAG 2.2 profile on (checks-beyond-508 AC 13).
 // Folder picker AC 12: the picker's dialog is opened and checked on each one.
 
 import { test, expect } from '@playwright/test';
@@ -41,7 +42,8 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     // Asynchronously: this process also serves the fixture site, which a blocking spawn would freeze.
     const r = await run(
       process.execPath,
-      [BIN, dash.origin + '/run', '--token-header', SECRET_HEADER, '--token-storage', 'a11y508.secret', '--no-follow-clicks', '--max-pages', '30', '--out', out, '--json'],
+      // With the WCAG 2.2 profile on (docs/plans/checks-beyond-508.md): the dashboard passes its own rules beyond Section 508 too.
+      [BIN, dash.origin + '/run', '--token-header', SECRET_HEADER, '--token-storage', 'a11y508.secret', '--no-follow-clicks', '--max-pages', '30', '--wcag', '2.2', '--out', out, '--json'],
       // In CI, the core's debug log, so a page that never finishes is named.
       { env: { ...process.env, TOKEN: dash.secret, ...(process.env.CI ? { A11Y_508_DEBUG: '1' } : {}) }, timeout: 200_000 }
     );
@@ -50,6 +52,7 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
     const paths = report.pages.map((p: any) => new URL(p.finalUrl || p.url).pathname);
     for (const route of ROUTES) expect(paths, `audited ${route}`).toContain(route);
+    expect(report.options.wcag, 'the self-audit ran with the profile').toBe('2.2');
     for (const p of report.pages) expect(p.error, `${p.url}: ${p.error}`).toBeNull();
     const bad = [...report.pages.flatMap((p: any) => p.findings.map((f: any) => ({ ...f, page: p.url }))), ...report.site.findings].filter(
       (f: any) => f.level === 'violation' && ['critical', 'serious'].includes(f.impact)

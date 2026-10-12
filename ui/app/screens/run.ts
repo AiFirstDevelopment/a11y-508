@@ -93,6 +93,11 @@ import { ageText } from '../core/format';
                   <input type="checkbox" [id]="'adv-' + a[0]" [checked]="adv()[a[0]] === true" (change)="form.setAdvanced(a[0], $any($event.target).checked)" />
                   <label [for]="'adv-' + a[0]">{{ a[1] }} <code>--{{ a[0] }}</code></label>
                 </div>
+              } @else if (a[2] === 'profile') {
+                <div class="choice">
+                  <input type="checkbox" [id]="'adv-' + a[0]" [checked]="adv()[a[0]] === true" (change)="form.setAdvanced(a[0], $any($event.target).checked)" />
+                  <label [for]="'adv-' + a[0]">{{ a[1] }} <code>--{{ a[0] }} 2.2</code></label>
+                </div>
               } @else if (a[2] === 'list') {
                 <div class="field">
                   <label [for]="'adv-' + a[0]">{{ a[1] }} <code>--{{ a[0] }}</code></label>
