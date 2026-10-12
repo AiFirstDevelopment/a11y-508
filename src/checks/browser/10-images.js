@@ -147,8 +147,8 @@ window.__a11y508.register(function images(A) {
     A.add({ test: '7.A', level: 'review', impact: 'moderate', el, message: 'Icon-font element is exposed to assistive technology without a name. Add aria-hidden="true" if decorative, or role="img" plus aria-label if it conveys meaning.' });
   }
 
-  // Every loaded <object> needs a text alternative, whatever it embeds: fallback content, a
-  // labelling attribute or a title. An image <embed> has no fallback content and is escalated.
+  // Every loaded <object> and every <embed> needs a text alternative, whatever it embeds: fallback
+  // content (an object's only), a labelling attribute or a title.
   for (const el of A.all('object[data], embed')) {
     if (!A.isVisible(el) || A.isAriaHidden(el)) continue;
     if (el.localName === 'object') {
@@ -156,11 +156,8 @@ window.__a11y508.register(function images(A) {
       if (!A.accName(el).name && !A.nameFromContent(el, true)) A.add({ test: '7.A', impact: 'serious', el, message: `<object data="${(el.getAttribute('data') || '').slice(0, 80)}"> has no text alternative. Put a description of what it shows as its fallback content (between <object> and </object>), or give it aria-label or a title.` });
       continue;
     }
-    const type = (el.getAttribute('type') || '').toLowerCase();
-    const data = el.getAttribute('src') || '';
-    if (/image|svg/.test(type) || FILE.test(data)) {
-      if (!A.accName(el).name) A.add({ test: '7.A', level: 'review', impact: 'moderate', el, message: 'Embedded image (object/embed) has no accessible name. Provide fallback content or aria-label.' });
-    }
+    if (el.parentElement && el.parentElement.closest('object')) continue; // fallback content of an object
+    if (!A.accName(el).name) A.add({ test: '7.A', impact: 'serious', el, message: `<embed src="${(el.getAttribute('src') || '').slice(0, 80)}"> has no text alternative. An embed has no fallback content, so give it aria-label (or aria-labelledby, or a title) describing what it shows.` });
   }
 
   if (A.one('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="turnstile" i], script[src*="recaptcha" i], script[src*="hcaptcha" i], script[src*="turnstile" i], [class*="captcha" i], [id*="captcha" i], img[src*="captcha" i]')) {

@@ -292,6 +292,45 @@ export class Page {
     }
   }
 
+  // A remote object for the element a checks selector names, in the main frame or a same-origin
+  // frame's context; fn gets its objectId. null when there is no such element.
+  async withElement(selector, contextId, fn) {
+    const { result, exceptionDetails } = await this.s.send('Runtime.evaluate', { expression: `window.__a11y508.query(${JSON.stringify(selector)})`, returnByValue: false, ...(contextId ? { contextId } : {}) });
+    if (exceptionDetails || !result || !result.objectId) return null;
+    try {
+      return await fn(result.objectId);
+    } finally {
+      this.s.send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => {});
+    }
+  }
+
+  // The name Chrome's own accessibility tree gives the element, or null when the element is not
+  // found or not in the tree (ignored).
+  axName(selector, contextId) {
+    return this.withElement(selector, contextId, async (objectId) => {
+      const { nodes } = await this.s.send('Accessibility.getPartialAXTree', { objectId, fetchRelatives: false });
+      const n = nodes && nodes[0];
+      if (!n || n.ignored) return null;
+      return (n.name && typeof n.name.value === 'string' && n.name.value) || '';
+    });
+  }
+
+  // True when the element has a closed shadow root holding text of its own (outside slots), read
+  // over DOM.describeNode, which sees closed roots the page cannot.
+  closedRootHasText(selector, contextId) {
+    return this.withElement(selector, contextId, async (objectId) => {
+      const { node } = await this.s.send('DOM.describeNode', { objectId, depth: -1, pierce: true });
+      const root = (node.shadowRoots || []).find((r) => r.shadowRootType === 'closed');
+      if (!root) return false;
+      const text = (n) => {
+        if (n.nodeType === 3) return /\S/.test(n.nodeValue || '');
+        if (n.nodeType === 1 && /^(SLOT|STYLE|SCRIPT|TEMPLATE)$/i.test(n.nodeName)) return false;
+        return (n.children || []).some(text) || (n.shadowRoots || []).some(text);
+      };
+      return text(root);
+    });
+  }
+
   async click(x, y) {
     await this.s.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
     await this.s.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });

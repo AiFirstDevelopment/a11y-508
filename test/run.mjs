@@ -824,6 +824,11 @@ check('AC5 2.5.8: a 16x16 icon button beside another is a violation', () => {
 });
 check('AC5 2.5.8: the same button alone with clear space around it is not reported', () => noneB(B_TARGETS, '2.5.8', ['#bt-alone']));
 check('AC5 2.5.8: links inline in a sentence are not reported', () => noneB(B_TARGETS, '2.5.8', ['#bt-inline-1', '#bt-inline-2']));
+check('FU AC6 2.5.8: text fields an author rule sizes to 16x16 are not the browser\'s controls: reported', () => {
+  onB(B_TARGETS, '2.5.8', '#bt-sized-a', 'violation', /^Target is 16x16 px, under 24x24, and a 24 px circle centred on it reaches #bt-sized-b/);
+  onB(B_TARGETS, '2.5.8', '#bt-sized-b', 'violation');
+});
+check('FU AC6 2.5.8: browser-drawn checkboxes the author did not size keep the exception', () => noneB(B_TARGETS, '2.5.8', ['#bt-check-a', '#bt-check-b']));
 
 const B_SPACING = '/checks-beyond-spacing.html';
 check('AC6 1.4.12: inline letter-spacing:0 !important is a violation', () => onB(B_SPACING, '1.4.12', '#bs-important', 'violation', /^Inline style "letter-spacing: 0(px)? !important" overrides a user's text-spacing setting/));
@@ -982,6 +987,69 @@ check('AC10: no "focus entered an iframe" review for the frame the Tab pass went
   const entered = findingsOn(FRAMES).filter((f) => /Keyboard focus entered an iframe/.test(f.message));
   assert.equal(entered.length, 0, listed(entered));
 });
+
+// Follow-up round (docs/plans/checks-followups.md): what the verifiers of rounds 2-5 deferred.
+check('follow-up fixture pages were crawled without error', () => {
+  for (const p of ['lang', 'misc', 'drawer-on', 'drawer-off', 'frames']) assert.equal(pages[`/checks-fu-${p}.html`]?.error, null, `/checks-fu-${p}.html crawled without error`);
+});
+check('FU AC1 4.D: the load-time modal\'s OK button with no focus style is reported by the Tab pass before Escape', () => {
+  on(MODAL_OK, '4.D', '#consent-ok-ok', 'violation', /^No visible change when this element receives keyboard focus/);
+  assert.ok(pages[MODAL_OK].passes.keyboardModal && pages[MODAL_OK].passes.keyboardModal.tabbed >= 2, JSON.stringify(pages[MODAL_OK].passes));
+});
+check('FU AC1: the modal\'s Accept button, focused on load and styled on focus, is not reported; no keyboard trap in the modal', () => {
+  noneOn(MODAL_OK, '4.D', ['#consent-ok-accept']);
+  noneOn(MODAL_OK, '4.C', ['#consent-ok-ok', '#consent-ok-accept']);
+});
+
+const FU_LANG = '/checks-fu-lang.html';
+check('FU AC2 11.A/11.B: "xyz" is not an ISO 639 code, on <html> and on an element with text', () => {
+  on(FU_LANG, '11.A', '', 'violation', /^lang="xyz": "xyz" is not an ISO 639 language code/);
+  on(FU_LANG, '11.B', '#fl-xyz', 'violation', /^lang="xyz": "xyz" is not an ISO 639 language code/);
+});
+check('FU AC2 11.B: haw, yue, abc (Ambala Ayta) and qaa (private use) are valid', () => noneOn(FU_LANG, '11.B', ['#fl-haw', '#fl-yue', '#fl-abc', '#fl-qaa']));
+
+const FU_MISC = '/checks-fu-misc.html';
+check('FU AC3 7.A: an <embed> with no text alternative is a serious violation; one with a title is not', () => {
+  assert.equal(on(FU_MISC, '7.A', '#fm-embed', 'violation', /^<embed src="\/img\/chart\.png"> has no text alternative/).impact, 'serious');
+  noneOn(FU_MISC, '7.A', ['#fm-embed-ok']);
+});
+check('FU AC4 9.A: skip links revealed by a nested &:focus rule or an @imported rule are not reported', () => noneOn(FU_MISC, '9.A', ['#fm-skip-nested', '#fm-skip-imported']));
+check('FU AC4 9.A: a visually hidden skip link with no reveal rule is still a review item', () => on(FU_MISC, '9.A', '#fm-skip-none', 'review', /is visually hidden and no :focus style reveals it/));
+check('FU AC8: a closed-root component with light-DOM children is in the closed-root note; a plain or slot-only one is not', () => {
+  const note = pageNotes(FU_MISC).find((n) => /closed shadow root/.test(n)) || '';
+  assert.match(note, /were not audited: .*\bclosed-panel\b/, JSON.stringify(pageNotes(FU_MISC)));
+  assert.ok(!/plain-panel|slot-panel/.test(note), note);
+  assert.ok(pages[FU_MISC].unaudited.closedShadow.includes('closed-panel'), JSON.stringify(pages[FU_MISC].unaudited));
+});
+check('FU AC9 6.A: a button Chrome names from a closed root ("Save") is a review quoting Chrome\'s name', () => {
+  const f = on(FU_MISC, '6.A', '#fm-ax-closed', 'review', /^Chrome's accessibility tree names this element "Save", which the checks could not compute: Button has no accessible name\./);
+  assert.equal(f.impact, 'moderate');
+  assert.equal(f.details.chromeName, 'Save');
+});
+check('FU AC9 6.A: a button whose only content is an icon-font glyph stays a violation', () => on(FU_MISC, '6.A', '#fm-ax-glyph', 'violation', /^Button has no accessible name\./));
+check('FU AC9: passes.axNames counts the lookups and the one Chrome named', () => {
+  const ax = pages[FU_MISC].passes.axNames;
+  assert.ok(ax && ax.candidates >= 2 && ax.checked === ax.candidates && ax.named === 1, JSON.stringify(ax));
+});
+
+check('FU AC5: a focused role=dialog drawer beside a small aria-hidden panel is the modal on load', () => {
+  assert.equal(pages['/checks-fu-drawer-on.html'].modalOnLoad?.selector, '#fd-drawer', JSON.stringify(pages['/checks-fu-drawer-on.html'].modalOnLoad));
+  assert.equal(pages['/checks-fu-drawer-on.html'].modalOnLoad.dismissed, true);
+});
+check('FU AC5: the same drawer without focus is not the modal on load', () => assert.equal(pages['/checks-fu-drawer-off.html'].modalOnLoad, undefined, JSON.stringify(pages['/checks-fu-drawer-off.html'].modalOnLoad)));
+
+const FU_FRAMES = '/checks-fu-frames.html';
+check('FU AC7 13.C: the frame\'s "text over images" elements merge into the page\'s one item, with the frame prefix', () => {
+  const items = findingsOn(FU_FRAMES).filter((f) => f.test === '13.C' && f.selector === 'text over images');
+  assert.equal(items.length, 1, listed(items));
+  assert.deepEqual(items[0].details.elements.map((e) => [e.selector, e.frame]), [['#fu-between', undefined], ['#fu-frame >>> #fb-between', '#fu-frame']]);
+  assert.match(items[0].message, /^2 text element\(s\) .*Check each visually: #fu-between, #fu-frame >>> #fb-between\.$/);
+});
+check('FU AC7 7.A: the frame\'s image inventory names its image with the frame prefix', () => {
+  const inv = on(FU_FRAMES, '7.A', '#fu-frame >>> img', 'review', /meaningful image\(s\) have alt text/);
+  assert.deepEqual(inv.details.images.map((i) => i.selector), ['#fu-frame >>> #fb-photo']);
+});
+check('FU AC7 4.D: the Tab pass reaches a control in a frame nested two deep', () => assert.equal(on(FRAMES, '4.D', '#fr-outer >>> #fr-inner >>> #fi-claim', 'violation', /^No visible change when this element receives keyboard focus/).frame, '#fr-outer >>> #fr-inner'));
 
 {
   const { events, problems } = parseEvents(evRun.stdout);

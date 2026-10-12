@@ -137,12 +137,35 @@
   // ---- 2.5.8 Target size (minimum) ----
   const TARGETS = 'a[href], button, input:not([type="hidden" i]), select, textarea, summary, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="switch"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="option"], [role="slider"], [onclick]';
   // A browser control whose size the author left to the browser (WCAG's user agent exception):
-  // form fields drawn by the browser, not buttons.
+  // form fields drawn by the browser, not buttons, and only when no author style sets their width,
+  // height, padding or font size (in the style attribute, or in a rule that matches the field).
   const NATIVE = /^(checkbox|radio|range|color|file|date|time|datetime-local|month|week|text|search|email|tel|url|number|password)$/;
+  const SIZING = /^(width|height|min-width|min-height|inline-size|block-size|min-inline-size|min-block-size|padding|padding-[a-z-]+|font-size)$/i;
+  // Values a CSS reset uses that leave a control at the browser's size (normalize.css's
+  // font-size: 100%, a preflight's font: inherit and padding: 0) are not sizing it.
+  const NEUTRAL = /^(inherit|initial|unset|revert|revert-layer|auto|100%|1em|1rem|0|0px|medium)$/i;
+  const sizes = (style) => {
+    for (let i = 0; i < style.length; i++) {
+      const prop = style[i];
+      if (SIZING.test(prop) && !NEUTRAL.test(style.getPropertyValue(prop).trim())) return true;
+    }
+    return false;
+  };
+  const authorSized = (el) => {
+    if (el.hasAttribute('style') && sizes(el.style)) return true;
+    for (const rule of A.styleRules(el.getRootNode())) {
+      if (!sizes(rule.style)) continue;
+      try {
+        if (el.matches(rule.selector)) return true;
+      } catch {}
+    }
+    return false;
+  };
   const isNative = (el) => {
-    if (el.localName === 'select' || el.localName === 'textarea') return (A.cs(el).appearance || 'auto') !== 'none';
-    if (el.localName !== 'input') return false;
-    return NATIVE.test((el.getAttribute('type') || 'text').toLowerCase()) && (A.cs(el).appearance || 'auto') !== 'none';
+    let drawn = false;
+    if (el.localName === 'select' || el.localName === 'textarea') drawn = (A.cs(el).appearance || 'auto') !== 'none';
+    else if (el.localName === 'input') drawn = NATIVE.test((el.getAttribute('type') || 'text').toLowerCase()) && (A.cs(el).appearance || 'auto') !== 'none';
+    return drawn && !authorSized(el);
   };
   const blockOf = (el) => {
     for (let n = el.parentElement; n; n = n.parentElement) {

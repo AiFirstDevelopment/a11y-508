@@ -11,6 +11,9 @@
   URL and the disclosure pass reloads the page, which opens the dialog again. The pass dismisses
   it again (modalOnLoad.redismissed), so the second disclosure can be focused and opened, and the
   image without alt it reveals is reported.
+  Follow-up round item 1: the dialog's own controls get the Tab pass before Escape closes it. The
+  OK button has no focus style (a 4.D violation); Accept, which showModal() focuses on load, has
+  one (not reported, though its baseline is taken with it focused unless the pass blurs first).
 -->
 <style>
   body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
@@ -19,6 +22,7 @@
   main { padding: 20px; max-width: 800px; }
   a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
   dialog { max-width: 420px; }
+  #consent-ok-ok:focus { outline: none; }
 </style>
 </head>
 <body>
@@ -36,10 +40,12 @@
   <h2 id="consent-ok-title">Cookie preferences</h2>
   <p>We use cookies to remember your settings.</p>
   <button type="button" id="consent-ok-accept">Accept</button>
+  <button type="button" id="consent-ok-ok">OK</button>
 </dialog>
 <script>
   const d = document.getElementById('consent-ok');
   document.getElementById('consent-ok-accept').addEventListener('click', () => d.close());
+  document.getElementById('consent-ok-ok').addEventListener('click', () => d.close());
   d.showModal();
   document.getElementById('me-reveal').addEventListener('click', function () {
     var open = this.getAttribute('aria-expanded') === 'true';

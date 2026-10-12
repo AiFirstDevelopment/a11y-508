@@ -82,7 +82,11 @@ const FRAMES = {
 <body><p><img src="/img/card-logo.png" id="ff-logo" width="40" height="24"> Pay by card</p><p><input type="text" id="ff-card"></p><p><button type="button" id="ff-pay">Pay now</button></p><div role="button" tabindex="0" aria-expanded="false" id="ff-more" style="outline: 2px solid transparent">More options</div><pay-badge id="ff-badge"></pay-badge>
 <script>customElements.define('pay-badge', class extends HTMLElement { connectedCallback() { this.attachShadow({ mode: 'open' }).innerHTML = '<img src="/img/badge.png" width="24" height="24">'; } });</script></body></html>`,
   '/frames/outer.html': '<!doctype html><html lang="en"><title>Partner offers</title><body style="margin:8px"><p>Offers from our partners.</p><iframe src="/frames/inner.html" title="Offer of the week" id="fr-inner" width="360" height="120" style="border:1px solid #888"></iframe></body></html>',
-  '/frames/inner.html': '<!doctype html><html lang="en"><title>Offer of the week</title><body style="margin:8px"><p>This week only.</p><img src="/img/offer.png" width="40" height="40"></body></html>',
+  // The button has no focus style: the Tab pass reaches it through two frames (follow-up round item 7).
+  '/frames/inner.html': '<!doctype html><html lang="en"><title>Offer of the week</title><body style="margin:8px"><p>This week only.</p><img src="/img/offer.png" width="40" height="40"> <button type="button" id="fi-claim" style="outline:none;border:1px solid #333;background:#fff;color:#222">Claim the offer</button></body></html>',
+  // Follow-up round item 7: text whose color lies between an image's bounds, inside a frame, and an
+  // image with alt text for the frame's 7.A inventory.
+  '/frames/between.html': '<!doctype html><html lang="en"><head><title>Photo caption</title><style>body { font-family: sans-serif; margin: 8px; background: #fff; } .photo { background: #fff url(/img/photo.png) center / cover; padding: 12px; } p { font-size: 16px; margin: 4px 0; }</style></head><body><div class="photo"><p id="fb-between" style="color:#767676">Mid grey caption inside the frame</p></div><img id="fb-photo" src="/img/harbour.png" alt="Harbour at dawn" width="40" height="40"></body></html>',
   '/frames/d1.html': nested(1),
   '/frames/d2.html': nested(2),
   '/frames/d3.html': nested(3),
@@ -160,6 +164,11 @@ export async function startFixtureSite({ port = 0, host = '127.0.0.1', token = T
     }
     // Documents for the iframes on checks-pack-c.html and the object on checks-pack-a.html: not
     // pages of their own, so the crawler never queues them.
+    if (path === '/css/skip.css') {
+      // @imported by checks-fu-misc.html: the only rule that reveals #fm-skip-imported.
+      res.writeHead(200, { 'content-type': 'text/css' });
+      return res.end('.skip-imported:focus { left: 8px; top: 8px; background: #fff; color: #000; padding: 6px; }\n');
+    }
     if (FRAMES[path]) {
       res.writeHead(200, { 'content-type': TYPES['.html'] });
       return res.end(FRAMES[path]);

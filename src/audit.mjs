@@ -4,10 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BEYOND, testInfo } from './checks/catalog.mjs';
 import { listenerProbe, keyboardPass, disclosurePass, zoomPass, spacingPass, reflowPass, routeDiscoveryPass, modalOnLoadPass, redismissModal } from './passes.mjs';
-import { discoverFrames, inFrame, MAX_FRAME_DEPTH } from './frames.mjs';
-
-// The selector of the page-level 13.C item set by 60-sensory-contrast.js.
-const BETWEEN_IMAGES = 'text over images';
+import { discoverFrames, inFrame, MAX_FRAME_DEPTH, BETWEEN_IMAGES } from './frames.mjs';
 
 export async function auditPage(page, url, ctx) {
   const { opts } = ctx;
@@ -117,6 +114,16 @@ export async function auditPage(page, url, ctx) {
     for (const [test, n] of Object.entries(base.meta.truncated || {})) result.errors.push(`${test}: ${n} additional finding(s) not listed (per-test cap)`);
     result.passes.static = { findings: base.findings.length, contrastChecked: base.meta.contrastChecked, scrollRestored: base.meta.scrollRestored };
     if (modal) {
+      // The modal's own controls get the Tab pass before Escape closes it; the page behind it gets
+      // its own pass later, as every page does.
+      if (opts.interact) {
+        try {
+          result.passes.keyboardModal = await keyboardPass(page, add, opts, { modal: true });
+          if (result.passes.keyboardModal.navigated) await reload();
+        } catch (e) {
+          result.errors.push(`keyboard pass in the modal: ${e.message}`);
+        }
+      }
       const behind = await modalOnLoadPass(page, add, fingerprints);
       result.modalOnLoad = { ...modal, dismissed: behind.dismissed };
       if (behind.run) {
@@ -131,8 +138,11 @@ export async function auditPage(page, url, ctx) {
     // behind a modal shown on load) are done. Closed shadow roots and frames from other origins
     // cannot be read: each is a coverage note on the page.
     const unaudited = { closedShadow: [...((base.meta && base.meta.closedShadow) || [])], crossOriginFrames: [], deepFrames: 0 };
+    // Custom elements with light-DOM content that may also render a closed root: { tag, selector, contextId }.
+    const closedCandidates = ((base.meta && base.meta.closedCandidates) || []).map((c) => ({ ...c }));
+    let found = { frames: [] };
     try {
-      const found = await discoverFrames(page);
+      found = await discoverFrames(page);
       unaudited.crossOriginFrames = found.crossOrigin;
       unaudited.deepFrames = found.deep;
       let inFrames = 0;
@@ -149,10 +159,26 @@ export async function auditPage(page, url, ctx) {
         if (run.meta.errors && run.meta.errors.length) result.errors.push(...run.meta.errors.map((e) => `check in frame ${fr.path}: ${e}`));
         for (const [test, n] of Object.entries(run.meta.truncated || {})) result.errors.push(`${test} in frame ${fr.path}: ${n} additional finding(s) not listed (per-test cap)`);
         for (const tag of run.meta.closedShadow || []) if (!unaudited.closedShadow.includes(tag)) unaudited.closedShadow.push(tag);
+        for (const c of run.meta.closedCandidates || []) closedCandidates.push({ ...c, contextId: fr.contextId });
       }
       if (found.frames.length) result.passes.frames = { audited: found.frames.length, findings: inFrames };
     } catch (e) {
       result.errors.push(`frames: ${e.message}`);
+    }
+    for (const c of closedCandidates) {
+      if (unaudited.closedShadow.includes(c.tag)) continue;
+      try {
+        if (await page.closedRootHasText(c.selector, c.contextId)) unaudited.closedShadow.push(c.tag);
+      } catch (e) {
+        result.errors.push(`closed shadow root: ${e.message}`);
+      }
+    }
+    // "No accessible name" violations, checked against Chrome's own accessibility tree.
+    try {
+      const ax = await confirmNames(page, result.findings, found.frames);
+      if (ax) result.passes.axNames = ax;
+    } catch (e) {
+      result.errors.push(`accessibility tree: ${e.message}`);
     }
     const notes = coverageNotes(unaudited);
     if (notes.length) {
@@ -237,6 +263,58 @@ export async function auditPage(page, url, ctx) {
 
   result.durationMs = Date.now() - t0;
   return result;
+}
+
+// The "no accessible name" violations: an element our name computation could not name. Chrome's
+// accessibility tree is the tiebreaker, since that is what assistive technology reads.
+const NO_NAME = {
+  '5.A': /has no label or accessible name\.$/,
+  '6.A': /^(Link|Button) has no accessible name\.|^Image button has no alt text or accessible name\.|^Image map area has no alt text;/,
+  '7.A': /^Image has no alt attribute and no accessible name\.|^<(object|embed) [^>]*> has no text alternative\.|^(<svg role="img">|role="img") has no accessible name\./,
+  '5.C': /^Dialog has no accessible name|^role="(dialog|alertdialog)" has no accessible name/,
+};
+export const MAX_AX_LOOKUPS = 50;
+// Characters that are not a name (icon-font glyphs, variation selectors, zero-width characters),
+// as 00-core.js strips them: a glyph Chrome puts in a name is still not a name anyone can hear.
+const NON_TEXT = /[\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u200B-\u200D\u2060\uFEFF]/gu;
+
+// Looks up each "no accessible name" violation's element in Chrome's accessibility tree (one call
+// each, none when a page has more than MAX_AX_LOOKUPS). Where Chrome names it, the finding becomes
+// a review item quoting Chrome's name; where Chrome agrees, it stays. Returns the counts, or null
+// when the page has no such finding.
+async function confirmNames(page, findings, frames) {
+  const cands = findings.filter((f) => f.level === 'violation' && NO_NAME[f.test] && NO_NAME[f.test].test(f.message));
+  if (!cands.length) return null;
+  if (cands.length > MAX_AX_LOOKUPS) return { candidates: cands.length, checked: 0, named: 0, note: `${cands.length} findings without an accessible name, more than ${MAX_AX_LOOKUPS}: not checked against Chrome's accessibility tree` };
+  let checked = 0;
+  let named = 0;
+  for (const f of cands) {
+    let selector = f.selector;
+    let contextId;
+    if (f.frame) {
+      const fr = frames.find((x) => x.path === f.frame);
+      if (!fr || !selector.startsWith(`${fr.path} >>> `)) continue;
+      selector = selector.slice(fr.path.length + 5);
+      contextId = fr.contextId;
+    }
+    let name;
+    try {
+      name = await page.axName(selector, contextId);
+    } catch {
+      continue;
+    }
+    if (name === null) continue;
+    checked++;
+    const text = name.replace(NON_TEXT, '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    named++;
+    const quoted = name.replace(/\s+/g, ' ').trim();
+    f.message = `Chrome's accessibility tree names this element "${quoted}", which the checks could not compute: ${f.message} Confirm "${quoted}" is the right name and that it comes from markup assistive technology reads, such as a label, aria-label or text content.`;
+    f.level = 'review';
+    f.impact = 'moderate';
+    f.details = { ...(f.details || {}), chromeName: quoted };
+  }
+  return { candidates: cands.length, checked, named };
 }
 
 // The page's coverage notes: what it holds that the checks could not read.
