@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launchChrome } from './chrome.mjs';
+import { launchChrome, browserField } from './chrome.mjs';
 import { crawl } from './crawler.mjs';
 import { interactiveLogin, loadState, saveState, stateSummary } from './login.mjs';
 import { troubleshoot, formatTroubleshoot } from './troubleshoot.mjs';
@@ -425,6 +425,7 @@ async function run(argv) {
   }
   const browserName = `${browser.version.product} (${browser.exe})`;
   log.info(`browser: ${browserName}`);
+  if (browser.launchRetries) log.warn(`browser: it did not answer on its first launch and was started again with a fresh profile (launchRetries ${browser.launchRetries})`);
 
   if (opts.troubleshoot) {
     let result;
@@ -471,7 +472,7 @@ async function run(argv) {
   const passed = !shouldFail(summary, opts.failOn);
   const report = {
     tool: { name: pkg.name, version: pkg.version },
-    browser: browserName,
+    browser: browserField(browser),
     baseUrl: startUrl.href,
     startedAt,
     finishedAt: new Date().toISOString(),

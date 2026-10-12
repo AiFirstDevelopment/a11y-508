@@ -235,17 +235,32 @@
   // with role="dialog"/"alertdialog" and aria-modal="true", or an older library's modal (react-modal,
   // older Bootstrap, jQuery UI) that sets no aria-modal and hides the page instead: a visible
   // dialog-role element outside anything aria-hidden, beside an aria-hidden sibling of it or of one
-  // of its ancestors that holds most of the rest of the page's visible text. Looked up once per
+  // of its ancestors, that has focus or whose hidden siblings hold most of the rest of the page's
+  // visible text. Looked up once per
   // A.run() (cached for the run's duration) and on every call outside a run.
   const hiddenAttr = (el) => (el.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true';
+  // A dialog that has focus, or holds the focused element, beside an aria-hidden sibling with text
+  // is the open modal however little text the siblings hold (an off-canvas drawer beside a small
+  // hidden panel); otherwise the siblings must hold at least half of the rest of the page's text.
+  const holdsFocus = (d) => {
+    let act = document.activeElement;
+    while (act && act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
+    return !!act && act !== document.body && (act === d || A.contains(d, act));
+  };
   const legacyModal = (d) => {
     if (d.closest('[aria-hidden="true" i], [inert]') || !A.isVisible(d)) return false;
+    const sibs = [];
+    for (let n = d; n && n !== document.body && n.parentElement; n = n.parentElement) {
+      for (const sib of n.parentElement.children) if (sib !== n && hiddenAttr(sib)) sibs.push(sib);
+    }
+    if (!sibs.length) return false;
+    let hidden = 0;
+    for (const sib of sibs) hidden += A.renderedTextLength(sib);
+    // A hidden sibling with no text at all (an aria-hidden icon) hides nothing of the page.
+    if (!hidden) return false;
+    if (holdsFocus(d)) return true;
     const rest = A.renderedTextLength(document.body) - A.renderedTextLength(d);
     if (rest <= 0) return false;
-    let hidden = 0;
-    for (let n = d; n && n !== document.body && n.parentElement; n = n.parentElement) {
-      for (const sib of n.parentElement.children) if (sib !== n && hiddenAttr(sib)) hidden += A.renderedTextLength(sib);
-    }
     return hidden / rest >= 0.5;
   };
   const findModal = () => {
@@ -719,24 +734,80 @@
     return n;
   };
 
+  // Every author style rule of a document or shadow root, flattened: { selector, style }. Rules are
+  // read wherever they are: inside grouping rules (@media, @supports, @layer; whether the media
+  // query matches is not judged), nested in another style rule (`.skip { &:focus { ... } }`, or a
+  // nested selector without `&`, which is relative to its parent), and in same-origin sheets
+  // brought in by @import, at any depth. Cross-origin sheets cannot be read and are skipped.
+  // Kept for the length of one A.run(), and computed on every call outside one.
+  const styleRuleMemo = new Map();
+  A.styleRules = (root = document) => {
+    if (treeRun && styleRuleMemo.has(root)) return styleRuleMemo.get(root);
+    const out = [];
+    const seen = new Set();
+    const full = (sel, parent) => (!parent ? sel : sel.includes('&') ? sel.replace(/&/g, `:is(${parent})`) : `:is(${parent}) ${sel}`);
+    const visit = (rules, parent) => {
+      for (const rule of rules) {
+        if (rule.styleSheet && rule.href !== undefined) {
+          let inner = null;
+          try {
+            inner = !seen.has(rule.styleSheet) ? rule.styleSheet.cssRules : null;
+          } catch {}
+          if (inner) {
+            seen.add(rule.styleSheet);
+            visit(inner, parent);
+          }
+          continue;
+        }
+        if (!rule.selectorText) {
+          if (rule.cssRules) visit(rule.cssRules, parent);
+          continue;
+        }
+        const selector = rule.selectorText.split(',').map((x) => full(x.trim(), parent)).join(', ');
+        if (rule.style) out.push({ selector, style: rule.style });
+        if (rule.cssRules && rule.cssRules.length) visit(rule.cssRules, selector);
+      }
+    };
+    const sheets = [...(root.styleSheets || []), ...(root.adoptedStyleSheets || [])];
+    for (const sheet of sheets) {
+      if (seen.has(sheet)) continue;
+      seen.add(sheet);
+      let rules = null;
+      try {
+        rules = sheet.cssRules;
+      } catch {}
+      if (rules) visit(rules, '');
+    }
+    if (treeRun) styleRuleMemo.set(root, out);
+    return out;
+  };
+
   A.bodyFontSize = () => parseFloat(A.cs(document.body || document.documentElement).fontSize) || 16;
 
   // Custom elements that render content from a shadow root the page cannot open (mode "closed"):
   // shadowRoot is null, yet the element is defined, has a box, and has no light-DOM content of its
   // own to draw. Their contents cannot be audited; the crawler lists their tag names as a coverage
   // note. Returns the tag names, once each.
+  // One with light-DOM content of its own may still render a closed root: the page cannot tell, so
+  // such elements are candidates (by selector, up to 20, one per tag) that the Node side looks
+  // inside over CDP (DOM.describeNode sees closed roots), naming the tag when the closed root holds
+  // text of its own.
   const closedHosts = () => {
     const tags = [];
+    const candidates = [];
     for (const el of A.all('*')) {
       const name = el.localName;
       if (!name.includes('-') || el.shadowRoot || tags.includes(name)) continue;
       if (!window.customElements || !customElements.get(name)) continue;
-      if (el.firstElementChild || (el.textContent || '').trim()) continue;
       const r = el.getBoundingClientRect();
       if (r.width < 1 || r.height < 1) continue;
+      if (el.firstElementChild || (el.textContent || '').trim()) {
+        if (candidates.length < 20 && !candidates.some((c) => c.tag === name)) candidates.push({ tag: name, selector: A.selector(el) });
+        continue;
+      }
       tags.push(name);
     }
-    return tags;
+    return { tags, candidates: candidates.filter((c) => !tags.includes(c.tag)) };
   };
 
   A.run = (opts) => {
@@ -758,9 +829,11 @@
         }
       }
       const closed = closedHosts();
-      if (closed.length) A.meta.closedShadow = closed;
+      if (closed.tags.length) A.meta.closedShadow = closed.tags;
+      if (closed.candidates.length) A.meta.closedCandidates = closed.candidates;
     } finally {
       modalCache = undefined;
+      styleRuleMemo.clear();
       treeRun = null;
       treeMemo = null;
     }

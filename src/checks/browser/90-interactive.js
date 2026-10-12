@@ -118,6 +118,12 @@
 
   A.kbPrepare = () => {
     A.kb = { baseline: new WeakMap(), proxies: new WeakMap(), index: new WeakMap(), count: 0 };
+    // Blur first, so a control that has focus already (autofocus, or the first control of a modal
+    // dialog shown on load) is recorded as it looks without focus.
+    try {
+      const active = A.activeElement();
+      if (active && active !== document.body) active.blur();
+    } catch {}
     const all = A.all('*');
     let i = 0;
     for (const el of all) {
@@ -128,10 +134,6 @@
         A.kb.count++;
       }
     }
-    try {
-      const active = A.activeElement();
-      if (active && active !== document.body) active.blur();
-    } catch {}
     window.scrollTo(0, 0);
     return { count: A.kb.count, href: location.href };
   };

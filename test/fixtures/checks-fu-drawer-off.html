@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Drawer beside a hidden panel (off) - a11y-508 test site</title>
+<!--
+  Follow-up round item 5. An off-canvas role="dialog" drawer with no aria-modal, beside a small
+  aria-hidden panel; the page's main content is not hidden. The same drawer without focus: the hidden panel holds well under half of the text, so it is not the modal on load.
+  Escape closes the drawer.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  #fd-drawer { position: fixed; top: 0; right: 0; width: 280px; height: 100%; background: #fff; border-left: 2px solid #333; padding: 12px; }
+</style>
+</head>
+<body>
+<div id="fd-panel" aria-hidden="true"><p>Menu</p></div>
+<main>
+  <h1>Drawer beside a hidden panel</h1>
+  <p>The office is open from nine to five on weekdays, and from ten to two on Saturdays. Closed on public holidays.</p>
+  <p>Appointments can be made by phone or online. Bring a form of identification and your reference number.</p>
+  <p>Parking is available behind the building. The entrance is step-free, and there is a lift to every floor.</p>
+  <p><a href="/about.html">About the office</a></p>
+</main>
+<div role="dialog" id="fd-drawer" tabindex="-1" aria-label="Filters">
+  <h2>Filters</h2>
+  <button type="button" id="fd-close">Close</button>
+</div>
+<script>
+  function closeDrawer() {
+    document.getElementById('fd-drawer').hidden = true;
+    document.getElementById('fd-panel').removeAttribute('aria-hidden');
+  }
+  document.getElementById('fd-close').addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDrawer(); });
+  
+</script>
+</body>
+</html>

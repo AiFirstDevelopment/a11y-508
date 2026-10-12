@@ -137,12 +137,25 @@
   // ---- 2.5.8 Target size (minimum) ----
   const TARGETS = 'a[href], button, input:not([type="hidden" i]), select, textarea, summary, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="switch"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="option"], [role="slider"], [onclick]';
   // A browser control whose size the author left to the browser (WCAG's user agent exception):
-  // form fields drawn by the browser, not buttons.
+  // form fields drawn by the browser, not buttons, and only when no author style sets their width,
+  // height, padding or font size (in the style attribute, or in a rule that matches the field).
   const NATIVE = /^(checkbox|radio|range|color|file|date|time|datetime-local|month|week|text|search|email|tel|url|number|password)$/;
+  const SIZING = /(^|;)\s*(width|height|min-width|min-height|inline-size|block-size|min-inline-size|min-block-size|padding|padding-[a-z-]+|font-size|font)\s*:/i;
+  const authorSized = (el) => {
+    if (SIZING.test(el.getAttribute('style') || '')) return true;
+    for (const rule of A.styleRules(el.getRootNode())) {
+      if (!SIZING.test(rule.style.cssText)) continue;
+      try {
+        if (el.matches(rule.selector)) return true;
+      } catch {}
+    }
+    return false;
+  };
   const isNative = (el) => {
-    if (el.localName === 'select' || el.localName === 'textarea') return (A.cs(el).appearance || 'auto') !== 'none';
-    if (el.localName !== 'input') return false;
-    return NATIVE.test((el.getAttribute('type') || 'text').toLowerCase()) && (A.cs(el).appearance || 'auto') !== 'none';
+    let drawn = false;
+    if (el.localName === 'select' || el.localName === 'textarea') drawn = (A.cs(el).appearance || 'auto') !== 'none';
+    else if (el.localName === 'input') drawn = NATIVE.test((el.getAttribute('type') || 'text').toLowerCase()) && (A.cs(el).appearance || 'auto') !== 'none';
+    return drawn && !authorSized(el);
   };
   const blockOf = (el) => {
     for (let n = el.parentElement; n; n = n.parentElement) {

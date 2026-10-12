@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="xyz">
+<head>
+<meta charset="utf-8">
+<title>Three-letter language codes - a11y-508 test site</title>
+<!--
+  Follow-up round item 2. Three-letter primary subtags are checked against the ISO 639-2/639-3
+  codes of the IANA Language Subtag Registry. "xyz" is not a language: lang="xyz" on <html> is an
+  11.A violation, and on the span with text an 11.B violation. "haw" (Hawaiian, ISO 639-2), "yue"
+  (Cantonese, ISO 639-3 only), "abc" (Ambala Ayta, ISO 639-3 only) and "qaa" (the private-use
+  range) are valid and not reported.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Three-letter language codes</h1>
+  <p><span lang="xyz" id="fl-xyz">Words in no language</span>.</p>
+  <p><span lang="haw" id="fl-haw">Aloha</span>, <span lang="yue" id="fl-yue">粵語</span>, <span lang="abc" id="fl-abc">Ayta words</span>, <span lang="qaa" id="fl-qaa">Private words</span>.</p>
+  <p><a href="/about.html">About</a></p>
+</main>
+</body>
+</html>

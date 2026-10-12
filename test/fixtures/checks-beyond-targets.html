@@ -11,6 +11,10 @@
   - #bt-inline-1 and #bt-inline-2: links in a sentence, 14 px text, one above the other (16 px
     line height, so their centres are about 16 px apart). Without the inline exception they would
     fail the spacing test; inline in a sentence, they are not reported.
+  Follow-up round item 6: the browser-control exception covers only fields whose size the author
+  left alone. #bt-sized-a and #bt-sized-b are text fields an author rule sizes to 16x16, 4 px apart:
+  both are violations. #bt-check-a and #bt-check-b are browser-drawn checkboxes (about 13x13) as
+  close together, with no author sizing: not reported.
 -->
 <style>
   body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
@@ -21,6 +25,7 @@
   .icon { display: inline-block; width: 16px; height: 16px; padding: 0; border: 0; margin: 0 4px 0 0; background: #036; vertical-align: middle; }
   .alone { padding: 32px; }
   .sentence { font-size: 14px; line-height: 16px; }
+  .sized-field { width: 16px; height: 16px; padding: 0; margin: 0 4px 0 0; border: 1px solid #333; box-sizing: border-box; vertical-align: middle; }
 </style>
 </head>
 <body>
@@ -38,6 +43,8 @@
   <p>Page <button type="button" class="icon" id="bt-a" aria-label="Previous page"></button><button type="button" class="icon" id="bt-b" aria-label="Next page"></button></p>
   <div class="alone"><button type="button" class="icon" id="bt-alone" aria-label="Close notice"></button></div>
   <p class="sentence"><a id="bt-inline-1" href="/about.html">Sign up</a> for alerts about this office and its opening hours,<br><a id="bt-inline-2" href="/forms.html">Sign in</a> to change the alerts you already receive from us.</p>
+  <p>Code <input type="text" class="sized-field" id="bt-sized-a" aria-label="First digit"><input type="text" class="sized-field" id="bt-sized-b" aria-label="Second digit"></p>
+  <p>Days <input type="checkbox" id="bt-check-a" aria-label="Monday"><input type="checkbox" id="bt-check-b" aria-label="Tuesday"></p>
 </main>
 </body>
 </html>

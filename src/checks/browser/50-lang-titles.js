@@ -1,12 +1,14 @@
 // Trusted Tester 11.A-11.B (language), 12.A-12.D (titles, frames).
-// The primary language subtag is checked against ISO 639-1 (06-lang-data.js, A.lang); technique
+// The primary language subtag is checked against ISO 639-1, and a three-letter one against the
+// ISO 639-2/3 codes of the IANA registry (06-lang-data.js, A.lang); technique
 // informed by axe-core and IBM Equal Access, no code or tables taken from either.
 window.__a11y508.register(function langTitles(A) {
   const BCP47 = /^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$/;
-  const { ISO_639_1, DEPRECATED, THREE_TO_TWO, LIKELY } = A.lang;
+  const { ISO_639_1, ISO_639_3, DEPRECATED, THREE_TO_TWO, LIKELY } = A.lang;
   // What is wrong with a syntactically valid tag's primary subtag: { level, message } or null.
-  // Two letters must be an ISO 639-1 code. Three letters are accepted when the language has no
-  // two-letter code (haw, yue ...); when it has one, BCP 47 says to use it (review).
+  // Two letters must be an ISO 639-1 code. Three letters must be an ISO 639-2/3 code: one with no
+  // two-letter code (haw, yue ...) is accepted; one that has a two-letter code is escalated, since
+  // BCP 47 says to use the short one; anything else is not a language.
   const primaryProblem = (tag) => {
     const primary = tag.split('-')[0].toLowerCase();
     if (primary.length === 2) {
@@ -17,7 +19,8 @@ window.__a11y508.register(function langTitles(A) {
     }
     const two = THREE_TO_TWO[primary];
     if (two) return { level: 'review', message: `lang="${tag}": "${primary}" has the two-letter code "${two}", which BCP 47 requires and assistive technology recognises more reliably. Use lang="${two}${tag.slice(primary.length)}".` };
-    return null;
+    if (ISO_639_3.has(primary)) return null;
+    return { level: 'violation', message: `lang="${tag}": "${primary}" is not an ISO 639 language code (it is not in the ISO 639-2/639-3 list of the IANA Language Subtag Registry), so assistive technology cannot choose a voice for it.` };
   };
 
   const html = document.documentElement;

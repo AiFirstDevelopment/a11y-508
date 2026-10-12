@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Follow-ups: embeds, skip links, closed roots, names - a11y-508 test site</title>
+<!--
+  Follow-up round items 3, 4, 8 and 9.
+  - Item 3: #fm-embed, an <embed> with no name, is a 7.A violation; #fm-embed-ok has a title.
+  - Item 4: three visually hidden skip links. #fm-skip-nested is revealed by a nested rule
+    (.skip-nested { &:focus { ... } }), #fm-skip-imported by a rule in /css/skip.css, which this
+    page's style sheet @imports; neither is reported. #fm-skip-none has no reveal rule: a 9.A review.
+  - Item 8: <closed-panel> has light-DOM children and a closed shadow root with text of its own:
+    named in the closed-root coverage note. <plain-panel> is a defined custom element with light-DOM
+    children and no shadow root, and <slot-panel> has a closed root holding only a slot: neither
+    is named.
+  - Item 9: #fm-ax-closed is a button whose only content is a closed-root component that renders
+    "Save": the checks find no name, Chrome's accessibility tree names it, so the 6.A finding is a
+    review quoting "Save". #fm-ax-glyph's only content is an icon-font glyph: Chrome's name is the
+    glyph, which is not a name, so the 6.A violation stays.
+-->
+<style>
+  @import url(/css/skip.css);
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus { outline: 3px solid #f90; }
+  .skip-nested { position: absolute; left: -9999px; &:focus { left: 8px; top: 8px; background: #fff; color: #000; padding: 6px; } }
+  .skip-imported { position: absolute; left: -9999px; }
+  .skip-none { position: absolute; left: -9999px; }
+  closed-panel, plain-panel, slot-panel { display: block; margin: 8px 0; }
+</style>
+</head>
+<body>
+<a href="#fm-main" class="skip-nested" id="fm-skip-nested">Skip to main content</a>
+<a href="#fm-main" class="skip-imported" id="fm-skip-imported">Skip to the content</a>
+<a href="#fm-main" class="skip-none" id="fm-skip-none">Jump to main content</a>
+<main id="fm-main">
+  <h1>Follow-ups</h1>
+  <p><embed id="fm-embed" src="/img/chart.png" type="image/png" width="80" height="60"></p>
+  <p><embed id="fm-embed-ok" src="/img/chart.png" type="image/png" width="80" height="60" title="Sales by month, chart"></p>
+  <closed-panel id="fm-closed"><span>Panel label</span></closed-panel>
+  <plain-panel id="fm-plain"><span>Plain panel text</span></plain-panel>
+  <slot-panel id="fm-slot"><span>Slotted text only</span></slot-panel>
+  <p><button type="button" id="fm-ax-closed"><save-label></save-label></button>
+  <button type="button" id="fm-ax-glyph">&#xe900;</button></p>
+  <p><a href="/about.html">About</a></p>
+</main>
+<script>
+  customElements.define('closed-panel', class extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: 'closed' }).innerHTML = '<p>Text only the closed root renders</p><slot></slot>'; }
+  });
+  customElements.define('plain-panel', class extends HTMLElement {});
+  customElements.define('slot-panel', class extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: 'closed' }).innerHTML = '<slot></slot>'; }
+  });
+  customElements.define('save-label', class extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: 'closed' }).innerHTML = 'Save'; }
+  });
+</script>
+</body>
+</html>

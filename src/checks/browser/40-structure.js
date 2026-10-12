@@ -145,33 +145,19 @@ window.__a11y508.register(function structure(A) {
   // Does an author style rule for :focus, :focus-visible or :focus-within (on the link or an
   // ancestor) apply to the link and change how it is laid out or shown?
   const REVEAL = /(^|;)\s*(left|right|top|bottom|inset|position|clip|clip-path|transform|translate|width|height|max-width|max-height|margin[\w-]*|opacity|overflow|z-index|font-size|text-indent|visibility|display)\s*:/i;
+  // Every author rule counts, wherever it is (A.styleRules: grouping rules, nested rules, and
+  // same-origin @import sheets).
   const focusReveals = (a) => {
-    const visit = (rules) => {
-      for (const rule of rules) {
-        if (rule.cssRules && !rule.selectorText) {
-          if (visit(rule.cssRules)) return true;
-          continue;
-        }
-        if (!rule.selectorText || !/:focus/.test(rule.selectorText) || !REVEAL.test(rule.style.cssText)) continue;
-        for (const sel of rule.selectorText.split(',')) {
-          if (!/:focus/.test(sel)) continue;
-          try {
-            // A rule that hides the link only while it lacks focus (:not(:focus), as Bootstrap's
-            // visually-hidden-focusable does) reveals it on focus just as a :focus rule does.
-            if (a.matches(sel.replace(/:not\(\s*:focus(-visible|-within)?\s*\)/g, '').replace(/:focus(-visible|-within)?/g, '') || '*')) return true;
-          } catch {}
-        }
+    for (const rule of A.styleRules()) {
+      if (!/:focus/.test(rule.selector) || !REVEAL.test(rule.style.cssText)) continue;
+      for (const sel of rule.selector.split(/,(?![^(]*\))/)) {
+        if (!/:focus/.test(sel)) continue;
+        try {
+          // A rule that hides the link only while it lacks focus (:not(:focus), as Bootstrap's
+          // visually-hidden-focusable does) reveals it on focus just as a :focus rule does.
+          if (a.matches(sel.replace(/:not\(\s*:focus(-visible|-within)?\s*\)/g, '').replace(/:focus(-visible|-within)?/g, '') || '*')) return true;
+        } catch {}
       }
-      return false;
-    };
-    for (const sheet of document.styleSheets) {
-      let rules;
-      try {
-        rules = sheet.cssRules;
-      } catch {
-        continue; // a cross-origin sheet cannot be read
-      }
-      if (rules && visit(rules)) return true;
     }
     return false;
   };

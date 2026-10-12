@@ -50,6 +50,13 @@ export function findChrome(explicit) {
   );
 }
 
+// The report's browser field: the browser's name, or { name, launchRetries } when it needed a
+// second launch, so a default report keeps its shape.
+export function browserField(browser) {
+  const name = `${browser.version.product} (${browser.exe})`;
+  return browser.launchRetries ? { name, launchRetries: browser.launchRetries } : name;
+}
+
 const delay = (ms) => new Promise((r) => setTimeout(r, ms).unref());
 
 // Chrome's child processes can keep files in the profile directory open for a
@@ -67,8 +74,34 @@ async function removeDir(dir) {
   return !existsSync(dir);
 }
 
-export async function launchChrome({ chromePath, viewport = { width: 1280, height: 800 }, noSandbox = false, headless = true } = {}) {
+// How long a launched browser has to answer its first DevTools call.
+const LAUNCH_TIMEOUT = 30000;
+
+// A browser that never answers its first call (seen once on a Windows CI runner, where the same
+// commit then passed) gets one more launch with a fresh profile directory before the run fails.
+// launchRetries on the result says it happened. A browser that exits with an error is not retried.
+export async function launchChrome({ chromePath, viewport = { width: 1280, height: 800 }, noSandbox = false, headless = true, launchTimeout = LAUNCH_TIMEOUT } = {}) {
   const exe = findChrome(chromePath);
+  let first;
+  try {
+    first = await startBrowser({ exe, viewport, noSandbox, headless, launchTimeout });
+  } catch (e) {
+    if (!e.noAnswer) throw e;
+    let second;
+    try {
+      second = await startBrowser({ exe, viewport, noSandbox, headless, launchTimeout });
+    } catch (e2) {
+      if (e2.noAnswer) e2.message += ', on two launches';
+      throw e2;
+    }
+    second.launchRetries = 1;
+    second.firstProfile = e.userDataDir;
+    return second;
+  }
+  return first;
+}
+
+async function startBrowser({ exe, viewport, noSandbox, headless, launchTimeout }) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'a11y-508-'));
   const args = [
     ...(headless ? ['--headless=new', '--disable-gpu'] : []),
@@ -94,7 +127,10 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
   if (noSandbox || process.env.A11Y_508_NO_SANDBOX === '1') args.push('--no-sandbox');
   args.push('about:blank');
 
-  const proc = spawn(exe, args, {
+  // A .js/.mjs "browser" is a stand-in run with Node (test/chrome-launch.mjs), so a test can play
+  // the browser's side of the pipe on every platform without a native executable.
+  const script = /\.m?js$/i.test(exe);
+  const proc = spawn(script ? process.execPath : exe, script ? [exe, ...args] : args, {
     stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
     env: { ...process.env },
   });
@@ -116,7 +152,11 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
         throw new Error(`Chrome exited with code ${code} before connecting.\n${stderr.join('')}`);
       }),
       new Promise((_, rej) => {
-        timer = setTimeout(() => rej(new Error('Chrome did not respond within 30s')), 30000);
+        timer = setTimeout(() => {
+          const err = new Error(`Chrome did not respond within ${Math.round(launchTimeout / 1000)}s`);
+          err.noAnswer = true;
+          rej(err);
+        }, launchTimeout);
       }),
     ]);
     clearTimeout(timer);
@@ -125,7 +165,16 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
     try {
       proc.kill('SIGKILL');
     } catch {}
+    // The killed browser must be gone, and its pipes closed, before its profile can be removed
+    // (Windows keeps open files locked) and before a second browser starts.
+    await Promise.race([exited, delay(5000)]);
+    for (const stream of [proc.stdio[3], proc.stdio[4], proc.stderr]) {
+      try {
+        if (stream) stream.destroy();
+      } catch {}
+    }
     await removeDir(userDataDir);
+    e.userDataDir = userDataDir;
     throw e;
   }
 
@@ -174,5 +223,5 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
     return { userDataDir, removed };
   }
 
-  return { exe, proc, cdp, version, newPage, closePage, close };
+  return { exe, proc, cdp, version, userDataDir, newPage, closePage, close };
 }

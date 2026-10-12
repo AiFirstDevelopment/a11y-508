@@ -74,7 +74,10 @@ const fromFrame = (outer, inner, fr) => ({
   frame: fr.path,
 });
 
-export async function keyboardPass(page, add, opts) {
+// scope.modal: the pass runs inside a modal dialog open on load, before Escape closes it. A modal
+// keeps focus inside itself by design and Escape is its way out, so focus that cannot leave it is
+// not judged a keyboard trap there.
+export async function keyboardPass(page, add, opts, scope = {}) {
   const beyond = !!opts.wcag && opts.wcag !== '2.0';
   const wcag22 = opts.wcag === '2.2';
   const prep = await page.evaluate('window.__a11y508.kbPrepare()');
@@ -131,7 +134,10 @@ export async function keyboardPass(page, add, opts) {
     }
     if (s.isBody) {
       bodyHits++;
-      if (seq.length) break; // wrapped past the last tabbable element
+      // Wrapped past the last tabbable element. In a modal, focus left the dialog's last control for
+      // the browser, and the next Tab brings it back to the first, which the pass may not have seen
+      // yet: it started after the control the dialog focused on opening.
+      if (seq.length && !(scope.modal && bodyHits === 1)) break;
       if (bodyHits > 2) break;
       continue;
     }
@@ -152,7 +158,7 @@ export async function keyboardPass(page, add, opts) {
       } catch {
         break;
       }
-      if (back && !back.isBody && back.key === s.key) {
+      if (back && !back.isBody && back.key === s.key && !scope.modal) {
         trap = true;
         add({ frame: s.frame, test: '4.C', level: 'violation', impact: 'critical', selector: s.selector, html: s.html, rect: s.rect, message: 'Keyboard trap: neither Tab nor Shift+Tab moves focus away from this element. Keyboard users cannot move past it.' });
       }

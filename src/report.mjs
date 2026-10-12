@@ -239,7 +239,7 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{border:1px solid 
 <body>
 <header>
 <h1>Section 508 audit: ${esc(r.baseUrl)}</h1>
-<p>${esc(r.finishedAt)} · ${s.pages} page(s) crawled, ${s.audited} audited · <span class="result ${r.passed ? 'pass' : 'fail'}">${r.passed ? 'PASS' : 'FAIL'}</span>${s.coverage && !s.coverage.complete ? ' <span class="result fail">COVERAGE INCOMPLETE</span>' : ''} <small>(fails on: ${esc(r.options.failOn.join(', ') || 'none')})</small> · ${esc(r.tool.name)} ${esc(r.tool.version)} · ${esc(r.browser || '')}</p>
+<p>${esc(r.finishedAt)} · ${s.pages} page(s) crawled, ${s.audited} audited · <span class="result ${r.passed ? 'pass' : 'fail'}">${r.passed ? 'PASS' : 'FAIL'}</span>${s.coverage && !s.coverage.complete ? ' <span class="result fail">COVERAGE INCOMPLETE</span>' : ''} <small>(fails on: ${esc(r.options.failOn.join(', ') || 'none')})</small> · ${esc(r.tool.name)} ${esc(r.tool.version)} · ${esc((r.browser && r.browser.name) || r.browser || '')}</p>
 ${s.coverage && (s.coverage.warnings.length || s.coverage.notes.length) ? `<section class="coverage"><h2>Coverage</h2><ul>${s.coverage.warnings.map((w) => `<li><strong>Warning:</strong> ${esc(w)}</li>`).join('')}${s.coverage.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></section>` : ''}
 <div class="tiles">
 <div class="tile critical"><b>${s.byImpact.critical}</b>critical</div>
