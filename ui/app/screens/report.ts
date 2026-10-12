@@ -3,6 +3,7 @@ import { Title } from '@angular/platform-browser';
 import { RouterLink } from '@angular/router';
 import { BarChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
+import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
 import { resultLine, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
@@ -138,6 +139,7 @@ interface Row extends Finding {
 export class ReportScreen {
   private api = inject(Api);
   private run = inject(RunStore);
+  private env = inject(EnvStore);
   readonly id = input<string>();
   readonly report = signal<Report | null>(null);
   readonly loading = signal(true);
@@ -224,8 +226,10 @@ export class ReportScreen {
   constructor() {
     // Each report has a title of its own.
     effect(() => this.title.setTitle(`${this.heading()} - a11y-508`));
+    // The report, again whenever the working directory changes.
     effect(() => {
       const id = this.reportId();
+      this.env.cwd();
       untracked(() => void this.load(id, true));
     });
     // When a run finishes while this screen is open, show its report, in place.
@@ -243,16 +247,21 @@ export class ReportScreen {
 
   private seenRun: string | undefined;
 
+  private loads = 0;
   private async load(id: string, blank: boolean): Promise<void> {
+    const n = ++this.loads;
     if (blank) this.loading.set(true);
     this.selected.set(null);
+    let r: Report | null = null;
     try {
-      this.report.set(await this.api.get<Report>(`/api/reports/${encodeURIComponent(id)}`));
+      r = await this.api.get<Report>(`/api/reports/${encodeURIComponent(id)}`);
     } catch {
-      this.report.set(null);
-    } finally {
-      this.loading.set(false);
+      r = null;
     }
+    // Only the latest request decides what is shown.
+    if (n !== this.loads) return;
+    this.report.set(r);
+    this.loading.set(false);
   }
 
   val(e: Event): string {

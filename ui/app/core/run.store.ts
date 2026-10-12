@@ -186,6 +186,15 @@ export class RunStore {
     }
   }
 
+  // After a switch of directory: the finished run belonged to the old one.
+  forget(): void {
+    this.abort?.abort();
+    this.abort = null;
+    this.connected.set(false);
+    this.reset();
+    this.run.set(null);
+  }
+
   async start(body: unknown): Promise<void> {
     await this.api.post('/api/runs', body);
     void this.connect();

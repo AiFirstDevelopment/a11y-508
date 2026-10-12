@@ -12,8 +12,8 @@ export const tmp = (p) => realpathSync(mkdtempSync(join(tmpdir(), p)));
 export { stub } from './platform.mjs';
 
 // The real server, as a person starts it, in its own working directory.
-export async function startServer({ cwd = tmp('a11y-508-srv-'), env = {} } = {}) {
-  const proc = spawn(process.execPath, [MAIN, '--no-open', '--port', '0'], { cwd, env: mergeEnv(process.env, { TOKEN: '', ...env }), stdio: ['ignore', 'pipe', 'pipe'] });
+export async function startServer({ cwd = tmp('a11y-508-srv-'), env = {}, args = [] } = {}) {
+  const proc = spawn(process.execPath, [MAIN, '--no-open', '--port', '0', ...args], { cwd, env: mergeEnv(process.env, { TOKEN: '', ...env }), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   proc.stdout.on('data', (d) => (out += d));
   proc.stderr.on('data', (d) => (out += d));

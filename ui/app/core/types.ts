@@ -41,8 +41,37 @@ export interface RunInfo {
   meta: Record<string, unknown>;
 }
 
+// What a folder holds, as the picker's badges show it.
+export interface DirFacts {
+  git: boolean;
+  config: boolean;
+  report: boolean;
+  ledger: boolean;
+  session: boolean;
+}
+export const FACTS: (keyof DirFacts)[] = ['git', 'config', 'report', 'ledger', 'session'];
+
+export interface DirEntry {
+  name: string;
+  path: string;
+  hidden: boolean;
+  facts: DirFacts;
+}
+
+// GET /api/dirs: the roots (path null), or one directory's subdirectories.
+export interface DirListing {
+  roots: boolean;
+  path: string | null;
+  parent: string | null;
+  crumbs: { name: string; path: string }[];
+  facts: DirFacts | null;
+  dirs: DirEntry[];
+}
+
 export interface EnvInfo {
   cwd: string;
+  cwdFacts: DirFacts;
+  launchDir: string;
   version: string;
   platform: string;
   browser: { found: boolean; path: string | null; error?: string };

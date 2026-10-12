@@ -5,7 +5,7 @@
 // loop's agent) runs them, which is a .cmd wrapper beside each one.
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { killTreeWindows } from '../runs.mjs';
 
@@ -138,3 +138,33 @@ export function processList() {
   return spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', maxBuffer: 64 << 20 }).stdout;
 }
 
+
+// A directory hidden the platform's way: a leading dot names it hidden
+// everywhere; on Windows the hidden attribute does too, which this sets.
+export function setHiddenAttribute(dir) {
+  if (!WIN) return false;
+  const r = spawnSync('attrib', ['+h', dir], { encoding: 'utf8', windowsHide: true });
+  if (r.status !== 0) throw new Error(`attrib +h ${dir}: ${r.stdout}${r.stderr}`);
+  return true;
+}
+
+// A link to a directory: a symlink, or on Windows a junction (no privilege needed).
+export function linkDir(target, link) {
+  symlinkSync(target, link, WIN ? 'junction' : 'dir');
+}
+
+// A directory the server cannot read, and the status it should answer with.
+// POSIX: mode 000 (403). Windows has no mode 000, so the unreadable case is a
+// path on a drive that does not exist (404). Running as root reads anything,
+// so there it is null.
+export function unreadableDir(parent) {
+  if (WIN) {
+    const free = 'ZYXWVUTSRQPONMLKJIHGFED'.split('').find((d) => !existsSync(`${d}:\\`));
+    return { path: `${free}:\\a11y-508-no-such-drive`, status: 404, cleanup() {} };
+  }
+  if (process.getuid && process.getuid() === 0) return null;
+  const dir = join(parent, 'locked');
+  mkdirSync(dir);
+  chmodSync(dir, 0o000);
+  return { path: dir, status: 403, cleanup: () => chmodSync(dir, 0o755) };
+}

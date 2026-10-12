@@ -16,10 +16,10 @@ import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
 import { listReports, readReport, confinedFile, moveLatestToHistory, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
+import { CONFIG_FILE, factsOf, listDirs, realDir } from './dirs.mjs';
 
 const pkg = JSON.parse(readFileSync(join(UI_DIR, '..', 'package.json'), 'utf8'));
 export const SECRET_HEADER = 'x-a11y-508-secret';
-const CONFIG_FILE = 'a11y-508.config.json';
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8',
@@ -42,12 +42,15 @@ ${JSON.stringify({ kind: 'test', resultFile }, null, 2)}
 \`\`\`
 `;
 
-export function createDashboard({ cwd = process.cwd(), env = process.env, platform = process.platform, distDir = join(UI_DIR, 'dist'), uiDir = UI_DIR, agentTestTimeout = 180000 } = {}) {
+export function createDashboard({ cwd: startDir = process.cwd(), env = process.env, platform = process.platform, distDir = join(UI_DIR, 'dist'), uiDir = UI_DIR, agentTestTimeout = 180000 } = {}) {
   const secret = randomBytes(24).toString('hex');
   // Report files (<img>, a new tab) cannot send the header, so they take a
   // cookie instead: a separate value that opens report files and nothing else.
   const fileSecret = randomBytes(24).toString('hex');
-  const state = { token: null, port: null, presets: null, detecting: null, lastTest: {}, shell: null };
+  // cwd is the working directory every handler reads at the time of each
+  // request. It is set in exactly two places: here at launch (--dir, else
+  // process.cwd()), and by PUT /api/cwd. launchDir is where it started.
+  const state = { cwd: resolve(startDir), launchDir: resolve(startDir), token: null, port: null, presets: null, detecting: null, lastTest: {}, shell: null };
   // The shell the shown command line is written for; looked up once.
   const shellKind = () => (state.shell ||= detectShell(env, platform)).kind;
   const runs = new Runs({ onExit: () => {} });
@@ -147,6 +150,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
 
   async function startRun(body) {
     const kind = body.kind;
+    const cwd = state.cwd;
     if (!['crawl', 'troubleshoot', 'login', 'loop', 'dry-run'].includes(kind)) throw new BadRequest(`unknown run kind "${kind}"`);
     if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is already active`, 409);
     const auth = body.auth || { mode: 'none' };
@@ -169,6 +173,8 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
       built = crawlArgs({ kind, url: body.url, options: body.options, auth });
     }
     const runEnv = childEnv(built.token);
+    // A switch that landed while this request waited must not start a run in the old directory.
+    if (cwd !== state.cwd) throw new BadRequest('the working directory changed while the run was starting; start it again', 409);
     let moved = null;
     if (kind === 'crawl') moved = moveLatestToHistory(cwd);
     return runs.start({
@@ -186,7 +192,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
     const command = preset.install;
     const [file, args] = shellInvocation(d.shell, command);
     return runs.start({
-      kind: 'install', file, args, env: agentEnv(env), cwd, events: false, secrets: tokens(),
+      kind: 'install', file, args, env: agentEnv(env), cwd: state.cwd, events: false, secrets: tokens(),
       meta: { agent: body.agent, command, shell: d.shell.name },
       finish: async ({ code, output }) => {
         const again = await detect(true);
@@ -220,6 +226,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
   const redactorFor = () => (t) => tokens().reduce((s, tok) => s.split(tok).join('[redacted]'), t);
 
   function envInfo(d) {
+    const cwd = state.cwd;
     let browser;
     try {
       browser = { found: true, path: findChrome() };
@@ -238,7 +245,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
     }
     const latest = readReport(cwd, 'latest');
     return {
-      cwd, version: pkg.version, platform, browser,
+      cwd, cwdFacts: factsOf(cwd), launchDir: state.launchDir, version: pkg.version, platform, browser,
       config: { exists: existsSync(join(cwd, CONFIG_FILE)), file: CONFIG_FILE },
       session,
       report: latest ? { exists: true, finishedAt: latest.finishedAt, baseUrl: latest.baseUrl } : { exists: false },
@@ -252,7 +259,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
   const runSummary = (r) => ({ id: r.id, kind: r.kind, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt || null, code: r.code, meta: r.meta });
 
   function ledgerInfo() {
-    const file = join(cwd, WORK_DIR, 'ledger.json');
+    const file = join(state.cwd, WORK_DIR, 'ledger.json');
     if (!existsSync(file)) return { exists: false };
     const ledger = loadLedger(file);
     const pick = (status) => byStatus(ledger, status).map((e) => ({ test: e.test, impact: e.impact, message: e.message, pages: e.pages.length, attempts: e.attempts.length, reason: e.reason || null, selector: e.selector }));
@@ -263,7 +270,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
   }
 
   function readConfig() {
-    const c = loadConfig(CONFIG_FILE, cwd);
+    const c = loadConfig(CONFIG_FILE, state.cwd);
     const { _path, _missing, ...config } = c;
     return { exists: !_missing, file: CONFIG_FILE, config: _missing ? {} : config };
   }
@@ -281,10 +288,26 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
       throw err;
     }
     // Whole or not at all: a reader (the loop, an editor) never sees it half written.
+    const cwd = state.cwd;
     const tmpFile = join(cwd, `.${CONFIG_FILE}.${process.pid}.tmp`);
     writeFileSync(tmpFile, JSON.stringify(config, null, 2) + '\n');
     renameSync(tmpFile, join(cwd, CONFIG_FILE));
     return { ...readConfig(), warnings: errors.filter((e) => /^no agent/.test(e)) };
+  }
+
+  // PUT /api/cwd: switch the working directory, never during a run, and only
+  // to a readable directory; on any error state.cwd is unchanged.
+  async function switchCwd(body) {
+    const keys = Object.keys(body || {});
+    if (keys.length !== 1 || keys[0] !== 'path' || typeof body.path !== 'string') throw new BadRequest('body must be exactly { "path": "<absolute path>" }');
+    if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is active; switch when it has finished`, 409);
+    const dir = realDir(body.path);
+    state.cwd = dir;
+    // A finished run belongs to the directory it ran in.
+    runs.forget();
+    // Cached detection (the assistants, the shell, npm's prefix) does not
+    // depend on the directory, so nothing else is invalidated today.
+    return envInfo(await detect());
   }
 
   // ---- routing
@@ -301,7 +324,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
       } catch {
         return send(res, 404, { error: 'not found' });
       }
-      const file = confinedFile(cwd, decodeURIComponent(reportFile[1]), rel);
+      const file = confinedFile(state.cwd, decodeURIComponent(reportFile[1]), rel);
       if (!file) return send(res, 404, { error: 'not found' });
       return sendFile(res, file, { 'cache-control': 'no-store' });
     }
@@ -309,6 +332,8 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
       const d = await detect(url.searchParams.get('refresh') === '1');
       return send(res, 200, envInfo(d), { 'set-cookie': `${cookieName()}=${fileSecret}; Path=/api/reports; HttpOnly; SameSite=Strict` });
     }
+    if (m === 'GET' && path === '/api/dirs') return send(res, 200, listDirs(url.searchParams.get('path'), platform));
+    if (m === 'PUT' && path === '/api/cwd') return send(res, 200, await switchCwd(await readBody(req)));
     if (m === 'POST' && path === '/api/agent/install') return send(res, 202, runSummary(await startInstall(await readBody(req))));
     if (m === 'POST' && path === '/api/agent/test') return send(res, 200, await testAgent(await readBody(req)));
     if (m === 'POST' && path === '/api/runs') return send(res, 202, runSummary(await startRun(await readBody(req))));
@@ -329,10 +354,10 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
       runs.continue();
       return send(res, 200, { ok: true });
     }
-    if (m === 'GET' && path === '/api/reports') return send(res, 200, listReports(cwd));
+    if (m === 'GET' && path === '/api/reports') return send(res, 200, listReports(state.cwd));
     const rm = /^\/api\/reports\/([^/]+)$/.exec(path);
     if (m === 'GET' && rm) {
-      const r = readReport(cwd, decodeURIComponent(rm[1]));
+      const r = readReport(state.cwd, decodeURIComponent(rm[1]));
       return r ? send(res, 200, r) : send(res, 404, { error: 'no such report' });
     }
     if (m === 'GET' && path === '/api/ledger') return send(res, 200, ledgerInfo());
@@ -346,7 +371,7 @@ export function createDashboard({ cwd = process.cwd(), env = process.env, platfo
         throw new BadRequest('form must be JSON');
       }
       const built = form.kind === 'loop' || form.kind === 'dry-run' ? loopArgs(form) : crawlArgs(form);
-      return send(res, 200, { command: commandLine({ cwd, args: built.args, token: built.token, shell: shellKind() }) });
+      return send(res, 200, { command: commandLine({ cwd: state.cwd, args: built.args, token: built.token, shell: shellKind() }) });
     }
     return send(res, 404, { error: 'not found' });
   }

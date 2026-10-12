@@ -214,6 +214,12 @@ export class Runs {
     return () => run.listeners.delete(listener);
   }
 
+  // Drops a finished run, so GET /api/runs/current is null again.
+  forget() {
+    if (this.active) throw new BadRequest('a run is active', 409);
+    this.current = null;
+  }
+
   killAll() {
     if (this.active) this.signal('SIGKILL');
   }

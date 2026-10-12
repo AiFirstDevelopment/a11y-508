@@ -121,6 +121,7 @@ A local web dashboard does everything the command line does, as screens instead 
 ```sh
 npm run ui                 # in this repository
 node ui/server/main.mjs    # the same thing
+node ui/server/main.mjs --dir ../my-app   # for another repository
 ```
 
 In a repository that vendors the tool, add a script next to the existing one:
@@ -129,7 +130,9 @@ In a repository that vendors the tool, add a script next to the existing one:
 "e2e:a11y-508:ui": "node tools/a11y-508/ui/server/main.mjs"
 ```
 
-Nothing has to be installed: the server uses only Node's own modules (Node 18 or newer), and the built app is committed under `ui/dist/`. It listens on `127.0.0.1` only (port 5508, or the next free one; `--port <n>` to choose) and opens your browser; `--no-open` prints the address instead. Run it in the repository you want to audit or fix: it reads and writes `a11y-508-report/`, `a11y-508-work/`, `a11y-508-state.json` and `a11y-508.config.json` there, exactly as the CLI does.
+Nothing has to be installed: the server uses only Node's own modules (Node 18 or newer), and the built app is committed under `ui/dist/`. It listens on `127.0.0.1` only (port 5508, or the next free one; `--port <n>` to choose) and opens your browser; `--no-open` prints the address instead. Run it in the repository you want to audit or fix, or point it there with `--dir <path>` (relative to where you start it): it reads and writes `a11y-508-report/`, `a11y-508-work/`, `a11y-508-history/`, `a11y-508-state.json` and `a11y-508.config.json` there, exactly as the CLI does.
+
+- **Changing the working directory.** The header shows the working directory on every screen. **Change…** opens a folder picker: browse the machine's folders (each marked *git*, *config*, *report*, *ledger* or *session* when it holds one), paste a path (`~` is your home folder), or pick one of the last eight you chose, and **Choose this folder**. Every screen then reads the new directory, and the next run starts there. It is disabled while a run is active. A browser cannot hand a page a path from the system's own folder dialog, so the local server lists the folders, behind the same secret as everything else; it lists folder names only, never files. The recent folders are kept in your browser.
 
 - **The address carries a secret.** Each launch makes a random secret and puts it in the address it opens. The app keeps it for the tab and sends it on every request; anything without it gets 401, and a request for any host other than `127.0.0.1:<port>` or `localhost:<port>` gets 403.
 - **The token stays in memory.** Type it into the Run screen, or start the dashboard with `TOKEN` set and choose *use TOKEN from my shell*. It is passed to the CLI in its environment only, never written to disk, never sent back to the browser, and blanked out of the CLI's output if it ever appears there.

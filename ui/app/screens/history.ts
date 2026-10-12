@@ -1,6 +1,7 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, effect, inject, signal, untracked } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Api } from '../core/api';
+import { EnvStore } from '../core/env.store';
 import { resultWord } from '../core/format';
 import { ReportListEntry } from '../core/types';
 
@@ -31,17 +32,28 @@ import { ReportListEntry } from '../core/types';
     }
   `,
 })
-export class HistoryScreen implements OnInit {
+export class HistoryScreen {
   private api = inject(Api);
+  private env = inject(EnvStore);
   readonly list = signal<ReportListEntry[]>([]);
   readonly word = resultWord;
+  private loads = 0;
 
-  async ngOnInit(): Promise<void> {
+  constructor() {
+    // The list, again whenever the working directory changes.
+    effect(() => {
+      this.env.cwd();
+      untracked(() => void this.load());
+    });
+  }
+
+  private async load(): Promise<void> {
+    const n = ++this.loads;
+    let l: ReportListEntry[] = [];
     try {
-      this.list.set(await this.api.get<ReportListEntry[]>('/api/reports'));
-    } catch {
-      this.list.set([]);
-    }
+      l = await this.api.get<ReportListEntry[]>('/api/reports');
+    } catch {}
+    if (n === this.loads) this.list.set(l);
   }
 
   name(r: ReportListEntry): string {
