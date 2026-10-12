@@ -16,11 +16,12 @@ test('checks-shadow-frames AC 11: the finding detail shows a " >>> " selector an
 
     const report = readReport(dash.cwd);
     const findings = report.pages.flatMap((p: any) => p.findings);
-    const badge = findings.find((f: any) => f.test === '7.A' && f.selector === '#fr-same >>> #ff-badge >>> img');
+    // The image inside the web component inside the frame, found by what it renders.
+    const badge = findings.find((f: any) => f.test === '7.A' && /badge\.png/.test(f.html || ''));
     expect(badge, JSON.stringify(findings.map((f: any) => f.selector))).toBeTruthy();
 
     await nav(page, 'Report');
-    await page.getByLabel('Text', { exact: true }).fill('#ff-badge');
+    await page.getByLabel('Text', { exact: true }).fill('badge.png');
     await page.getByTestId('finding-row').filter({ hasText: badge.message }).first().getByRole('button', { name: /Details/ }).click();
     const detail = page.getByTestId('detail');
     await expect(detail.getByTestId('detail-selector')).toHaveText('#fr-same >>> #ff-badge >>> img');
