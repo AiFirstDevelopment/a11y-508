@@ -85,6 +85,7 @@ window.__a11y508.register(function images(A) {
     if (inNamed && A.accName(inNamed).name) continue;
     const { name } = A.accName(svg);
     const role = svg.getAttribute('role');
+    // An unnamed <svg role="img"> is a 7.A violation from 88-aria-structure.js (widget and image names).
     if (!name && role !== 'img') {
       svgCount++;
       A.add({ test: '7.A', level: 'review', impact: 'moderate', el: svg, message: 'Inline SVG has no accessible name and is not hidden from assistive technology. If meaningful add role="img" and a <title>/aria-label; if decorative add aria-hidden="true".' });

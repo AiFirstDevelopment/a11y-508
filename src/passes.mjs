@@ -165,6 +165,17 @@ export async function modalOnLoadPass(page, add, fingerprints) {
   return { dismissed: true, run, added };
 }
 
+// A reload brings back the modal dialog the page opens on load. When the first load's modal closed
+// with Escape, press it once more so the pass that reloaded sees the page, not the dialog.
+// Returns true when a modal was open and is now closed.
+export async function redismissModal(page) {
+  const open = await page.evaluate('window.__a11y508.modalOnLoad()');
+  if (!open) return false;
+  await page.press('Escape');
+  await sleep(400);
+  return !(await page.evaluate('window.__a11y508.modalOnLoad()'));
+}
+
 export async function disclosurePass(page, add, fingerprints, opts, reload) {
   const cands = await page.evaluate(`window.__a11y508.disclosureCandidates(${opts.maxActivations})`);
   const out = { candidates: cands.length, activated: 0, revealedFindings: 0 };

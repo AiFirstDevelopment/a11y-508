@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Presentation role conflicts - a11y-508 test site</title>
+<!--
+  Plan rule 6. alt="" (or role="presentation") is ignored by the browser on an element that is
+  focusable or has a global ARIA attribute: a 7.B review item for the image, 5.C for the div.
+  A plain decorative image is not reported.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .box { display: inline-block; width: 40px; height: 40px; background: #58a; margin: 4px; }
+  .slot { display: block; min-height: 24px; margin: 6px 0; border: 1px solid #888; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Presentation role conflicts</h1>
+  <img src="/img/pr-focus.png" alt="" tabindex="0" id="pr-img-focus" width="40" height="40">
+  <div role="presentation" aria-label="Decoration" id="pr-div-label" class="box"></div>
+  <img src="/img/pr-plain.png" alt="" id="pr-img-plain" width="40" height="40">
+</main>
+</body>
+</html>

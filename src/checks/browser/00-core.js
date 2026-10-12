@@ -15,27 +15,10 @@
   ]);
   A.INTERACTIVE_ROLES = INTERACTIVE_ROLES;
 
-  A.VALID_ROLES = new Set((
-    'alert alertdialog application article banner blockquote button caption cell checkbox code columnheader combobox ' +
-    'complementary contentinfo definition deletion dialog directory document emphasis feed figure form generic grid gridcell ' +
-    'group heading img insertion link list listbox listitem log main marquee math menu menubar menuitem menuitemcheckbox ' +
-    'menuitemradio meter navigation none note option paragraph presentation progressbar radio radiogroup region row rowgroup ' +
-    'rowheader scrollbar search searchbox separator slider spinbutton status strong subscript superscript switch tab table ' +
-    'tablist tabpanel term textbox time timer toolbar tooltip tree treegrid treeitem doc-abstract doc-acknowledgments ' +
-    'doc-afterword doc-appendix doc-backlink doc-biblioentry doc-bibliography doc-biblioref doc-chapter doc-colophon ' +
-    'doc-conclusion doc-cover doc-credit doc-credits doc-dedication doc-endnote doc-endnotes doc-epigraph doc-epilogue ' +
-    'doc-errata doc-example doc-footnote doc-foreword doc-glossary doc-glossref doc-index doc-introduction doc-noteref ' +
-    'doc-notice doc-pagebreak doc-pagelist doc-part doc-preface doc-prologue doc-pullquote doc-qna doc-subtitle doc-tip doc-toc ' +
-    'graphics-document graphics-object graphics-symbol'
-  ).split(' '));
-  // WAI-ARIA abstract roles: authors must not use them, and browsers ignore them.
-  A.ABSTRACT_ROLES = new Set('command composite input landmark range roletype section sectionhead select structure widget window'.split(' '));
-  // Roles whose accessible name may come from their content (WAI-ARIA "name from: contents").
-  A.NAME_FROM_CONTENT_ROLES = new Set((
-    'button cell checkbox columnheader gridcell heading link menuitem menuitemcheckbox menuitemradio option radio ' +
-    'row rowheader switch tab tooltip treeitem'
-  ).split(' '));
-  // Native elements named from content whose implicit role A.role does not return.
+  // Valid, abstract and name-from-content roles come from the ARIA model (05-aria-data.js, A.aria),
+  // which is loaded after this file and read only when a check runs.
+  // Native elements named from their content whatever their role (caption's role prohibits naming,
+  // legend has none, but each names its table or fieldset).
   const NAME_FROM_CONTENT_TAGS = new Set(['summary', 'legend', 'caption', 'td', 'th', 'tr', 'option']);
 
   // Characters that render as nothing a listener can interpret: Unicode private-use areas (icon-font
@@ -250,49 +233,22 @@
     const tokens = (el.getAttribute('role') || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
     for (const t of tokens) {
       const r = t === 'image' ? 'img' : t;
-      if (A.VALID_ROLES.has(r)) return r;
+      if (A.aria.isConcrete(r)) return r;
     }
     return '';
   };
 
-  A.role = (el) => {
-    const r = A.explicitRole(el);
-    if (r) return r;
-    const t = el.localName;
-    if (t === 'a' && el.hasAttribute('href')) return 'link';
-    if (t === 'area' && el.hasAttribute('href')) return 'link';
-    if (t === 'button') return 'button';
-    if (t === 'select') return el.multiple || el.size > 1 ? 'listbox' : 'combobox';
-    if (t === 'textarea') return 'textbox';
-    if (t === 'input') {
-      const type = (el.getAttribute('type') || 'text').toLowerCase();
-      if (['button', 'submit', 'reset', 'image'].includes(type)) return 'button';
-      if (type === 'checkbox') return 'checkbox';
-      if (type === 'radio') return 'radio';
-      if (type === 'range') return 'slider';
-      if (type === 'number') return 'spinbutton';
-      if (type === 'search') return 'searchbox';
-      if (type === 'hidden') return '';
-      return 'textbox';
-    }
-    if (t === 'img') return el.getAttribute('alt') === '' ? 'presentation' : 'img';
-    if (/^h[1-6]$/.test(t)) return 'heading';
-    if (t === 'table') return 'table';
-    if (t === 'ul' || t === 'ol') return 'list';
-    if (t === 'li') return 'listitem';
-    if (t === 'nav') return 'navigation';
-    if (t === 'main') return 'main';
-    if (t === 'dialog') return 'dialog';
-    if (t === 'summary') return 'button';
-    return '';
-  };
+  // The explicit role, else the implicit one from HTML-AAM ('generic' for div and span, '' for
+  // elements with no corresponding role).
+  A.role = (el) => A.explicitRole(el) || A.aria.implicitRole(el);
 
-  const refText = (el, attr) => {
+  // self: the element being named, when it is not el (see contentName).
+  const refText = (el, attr, self = el) => {
     const ids = (el.getAttribute(attr) || '').split(/\s+/).filter(Boolean);
     const parts = [];
     for (const id of ids) {
       const t = document.getElementById(id);
-      if (t) parts.push(nameFromContent(t, true));
+      if (t) parts.push(nameFromContent(t, true, self));
     }
     return parts.join(' ').replace(/\s+/g, ' ').trim();
   };
@@ -338,7 +294,11 @@
   // Simplified accessible-name-from-content: text, alt of images, aria-label of descendants,
   // and the value of embedded controls.
   // Returns { name, raw }: raw keeps icon-font glyphs so a message can show what is there.
-  function contentName(el, includeHidden) {
+  // self is the element whose name is being computed when el is something else (its label, or an
+  // element its aria-labelledby points at). As Chrome does, self contributes nothing to its own
+  // name: <label>Show <select>…</select> rows</label> names the select "Show rows", while a button
+  // labelled by that label is "Show 10 rows".
+  function contentName(el, includeHidden, self = el) {
     const parts = [];
     const raws = [];
     const push = (text, raw) => {
@@ -351,6 +311,7 @@
         return;
       }
       if (node.nodeType !== 1) return;
+      if (node === self && node !== el) return;
       if ((node.getAttribute('aria-hidden') || '').toLowerCase() === 'true') return;
       if (!includeHidden && !A.isVisible(node) && !A.isVisuallyHidden(node)) return;
       const al = node.getAttribute('aria-label');
@@ -359,7 +320,7 @@
         return;
       }
       if (node.hasAttribute('aria-labelledby') && node !== el) {
-        const t = refText(node, 'aria-labelledby');
+        const t = refText(node, 'aria-labelledby', self);
         if (t) {
           push(t);
           return;
@@ -395,14 +356,17 @@
     const clean = (a) => a.join(' ').replace(/\s+/g, ' ').trim();
     return { name: clean(parts), raw: clean(raws) };
   }
-  function nameFromContent(el, includeHidden) {
-    return contentName(el, includeHidden).name;
+  function nameFromContent(el, includeHidden, self) {
+    return contentName(el, includeHidden, self).name;
   }
   A.nameFromContent = nameFromContent;
 
   // Content names an element only when its role allows it (WAI-ARIA "name from: contents"),
   // or for the native summary, legend and caption; otherwise only labelling attributes and title do.
-  A.namedFromContent = (el) => A.NAME_FROM_CONTENT_ROLES.has(A.role(el)) || NAME_FROM_CONTENT_TAGS.has(el.localName);
+  A.namedFromContent = (el) => {
+    const r = A.aria.roles[A.role(el)];
+    return (!!r && r.nameFromContent) || NAME_FROM_CONTENT_TAGS.has(el.localName);
+  };
 
   // Returns { name, source } where source is one of:
   // aria-labelledby | aria-label | label | alt | value | content | title | placeholder | caption | legend | ''
@@ -430,7 +394,7 @@
         if (v && v.trim()) return { name: v.trim(), source: 'value' };
       }
       const labels = [];
-      if (el.labels) for (const l of el.labels) labels.push(nameFromContent(l, true));
+      if (el.labels) for (const l of el.labels) labels.push(nameFromContent(l, true, el));
       const lt = labels.join(' ').trim();
       if (lt) return { name: lt, source: 'label' };
       const title = el.getAttribute('title');

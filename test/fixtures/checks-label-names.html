@@ -4,9 +4,12 @@
 <meta charset="utf-8">
 <title>Labels with embedded controls - a11y-508 test site</title>
 <!--
-  Plan items 8 and 9. A label that wraps a control reads the control's value, as the browser does:
-  "Show 10 rows", "Search for maps nearby" (the value is typed by the script below, so only the
-  value property, not an attribute, holds it). A label hidden with display:none or by a
+  Plan items 8 and 9 (round 2), corrected by round 3 item 12. A control named by the label that
+  wraps it does not read its own value, as Chrome does: the select is "Show rows" and the text
+  field "Search for nearby". Anything else the label names reads the value: the button that
+  points at the label with aria-labelledby is "Show 10 rows" (it is marked aria-expanded and does
+  nothing, so the disclosure pass reports it by name). The field's value is typed by the script
+  below, so only the value property, not an attribute, holds it. A label hidden with display:none or by a
   visibility:hidden ancestor is not a visible label; an sr-only (clipped) label is.
 -->
 <style>
@@ -31,8 +34,9 @@
 </header>
 <main>
   <h1>Labels with embedded controls</h1>
-  <label>Show <select id="show-rows"><option>5</option><option selected>10</option><option>25</option></select> rows</label>
+  <label id="show-label">Show <select id="show-rows"><option>5</option><option selected>10</option><option>25</option></select> rows</label>
   <label>Search for <input id="typed" type="text"> nearby</label>
+  <button type="button" id="ref-button" aria-labelledby="show-label" aria-expanded="false">Rows</button>
   <label for="hid-none" style="display:none">Email address</label>
   <input id="hid-none" type="text">
   <div style="visibility:hidden"><label for="hid-vis">Postal code</label></div>

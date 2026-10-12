@@ -77,7 +77,7 @@ const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Pending verifi
       @if (store.kind() === 'install') {
         <section aria-labelledby="install-h" data-testid="install-run">
           <h3 id="install-h">Installing {{ store.run()?.['agent'] }}</h3>
-          <pre data-testid="install-output" tabindex="0" aria-label="Install output">{{ installOutput() }}</pre>
+          <pre data-testid="install-output" tabindex="0" role="region" aria-label="Install output">{{ installOutput() }}</pre>
           @if (store.done(); as d) {
             @if (d['found']) {
               <p class="ok" role="status" data-testid="install-result">Installed. {{ store.run()?.['agent'] }} is ready to use.</p>
@@ -88,7 +88,7 @@ const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Pending verifi
                   <div class="remedy" [attr.data-remedy]="r.id">
                     <p>{{ r.text }}</p>
                     @if (r.command) {
-                      <pre data-testid="remedy-command" tabindex="0" aria-label="Remedy command">{{ r.command }}</pre>
+                      <pre data-testid="remedy-command" tabindex="0" role="region" aria-label="Remedy command">{{ r.command }}</pre>
                       <button type="button" class="secondary small" (click)="copy(r.command)">Copy<span class="visually-hidden"> the command for {{ r.id }}</span></button>
                     }
                   </div>
@@ -105,7 +105,7 @@ const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Pending verifi
       </div>
       @if (testResult(); as t) {
         @if (t.status !== 'ready' && t.output.length) {
-          <pre data-testid="test-output" tabindex="0" aria-label="Assistant output">{{ t.output.join('\\n') }}</pre>
+          <pre data-testid="test-output" tabindex="0" role="region" aria-label="Assistant output">{{ t.output.join('\\n') }}</pre>
         }
       }
     </section>

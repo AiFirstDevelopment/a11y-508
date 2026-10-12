@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nested interactive controls - a11y-508 test site</title>
+<!--
+  Plan rule 7 (6.A). The children of a button are presentational: a link inside one is a stop
+  keyboard users reach with no name (violation); an element with tabindex="-1" inside is reachable
+  only by script (review). A button with plain text is not reported.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .box { display: inline-block; width: 40px; height: 40px; background: #58a; margin: 4px; }
+  .slot { display: block; min-height: 24px; margin: 6px 0; border: 1px solid #888; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Nested interactive controls</h1>
+  <button type="button" id="ns-button-link">Open <a href="#ns-target">the details</a></button>
+  <div role="button" tabindex="0" id="ns-div-span">Save <span tabindex="-1">draft</span></div>
+  <button type="button" id="ns-plain">Plain text button</button>
+  <p id="ns-target">Details.</p>
+</main>
+</body>
+</html>

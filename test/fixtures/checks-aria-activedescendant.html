@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>aria-activedescendant - a11y-508 test site</title>
+<!--
+  Plan rule 9 (4.A). The host must be focusable; the id must exist; the target must be inside the
+  host (or an element it owns or controls); and it must have a widget role. The last listbox,
+  focusable and pointing at its own option, is not reported.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .box { display: inline-block; width: 40px; height: 40px; background: #58a; margin: 4px; }
+  .slot { display: block; min-height: 24px; margin: 6px 0; border: 1px solid #888; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>aria-activedescendant</h1>
+  <div role="listbox" id="ad-nofocus" aria-label="Not focusable" aria-activedescendant="ad-a"><div role="option" id="ad-a" aria-selected="true">Apples</div></div>
+  <div role="listbox" tabindex="0" id="ad-missing" aria-label="Missing target" aria-activedescendant="ad-nowhere"><div role="option" aria-selected="false">Bananas</div></div>
+  <div role="listbox" tabindex="0" id="ad-elsewhere" aria-label="Elsewhere" aria-activedescendant="ad-outside"><div role="option" aria-selected="false">Cherries</div></div>
+  <div role="listbox" tabindex="-1" aria-label="Other list"><div role="option" id="ad-outside" aria-selected="false">Dates</div></div>
+  <div role="listbox" tabindex="0" id="ad-norole" aria-label="Plain target" aria-activedescendant="ad-plain"><div role="option" aria-selected="false">Figs</div><span id="ad-plain">Grapes</span></div>
+  <div role="listbox" tabindex="0" id="ad-ok" aria-label="Good" aria-activedescendant="ad-good"><div role="option" id="ad-good" aria-selected="true">Lemons</div></div>
+</main>
+</body>
+</html>

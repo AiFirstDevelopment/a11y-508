@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Landmark structure that passes - a11y-508 test site</title>
+<!--
+  Plan rule 10, the passing case: one main, a top-level header and footer, and two navigation
+  landmarks with different labels. A header inside role="complementary" is scoped to it (HTML-AAM),
+  so it is not a second banner. No landmark finding.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header, footer { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  main nav a, article nav a { color: #036; }
+  a:focus, button:focus, [tabindex]:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main id="lk-main">
+  <h1>Landmark structure that passes</h1>
+  <nav aria-label="In this section" id="lk-nav-2"><a href="#lk-main">Top</a></nav>
+  <article><header><h2>Article header</h2></header><p>Article text.</p></article>
+</main>
+<div role="complementary" aria-label="Related"><header id="lk-header-in-role"><h2>Related</h2></header><p>Related links.</p></div>
+<footer id="lk-footer"><p>Footer text.</p></footer>
+</body>
+</html>

@@ -12,7 +12,7 @@
   "scripts": {
     "e2e:a11y-508": "node bin/a11y-508.mjs",
     "ui": "node ui/server/main.mjs",
-    "test": "node test/run.mjs && node test/loop.mjs && node test/remedies.mjs && node ui/server/test/index.mjs"
+    "test": "node test/run.mjs && node test/loop.mjs && node test/remedies.mjs && node test/aria-data.mjs && node ui/server/test/index.mjs"
   },
   "files": [
     "bin",

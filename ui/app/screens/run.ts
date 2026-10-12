@@ -111,7 +111,7 @@ import { ageText } from '../core/format';
       <section class="command" aria-labelledby="cmd-h">
         <h2 id="cmd-h">The same run on the command line</h2>
         <p class="hint">Run it in <code data-testid="command-cwd">{{ env.cwd() }}</code></p>
-        <pre data-testid="command" tabindex="0" aria-label="Equivalent command">{{ command() || '(enter a start URL)' }}</pre>
+        <pre data-testid="command" tabindex="0" role="region" aria-label="Equivalent command">{{ command() || '(enter a start URL)' }}</pre>
         <button type="button" class="secondary" (click)="copy()" [disabled]="!command()">Copy command</button>
         <span role="status" class="hint">{{ copied() }}</span>
       </section>

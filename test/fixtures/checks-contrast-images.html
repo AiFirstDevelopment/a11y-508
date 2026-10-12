@@ -16,6 +16,9 @@
   color would hide it:
     #img-between #767676 (L 0.18116) on a bare image: over #fff 1.05/0.23116 = 4.54; over #000 0.23116/0.05 = 4.62
                -> both pass, but its luminance lies between the bounds: review.
+    #img-between-2, the same color on the same image: listed in the same single review item for the page.
+    #img-between-3, revealed by the "More photos" disclosure: the disclosure pass's run of the checks
+               merges it into that same item, with its state, rather than adding a second one.
   A gradient linear-gradient(#fff, #f5f5f5): stops #fff and #f5f5f5 (L 0.91310), midpoint #fafafa (L 0.95597).
     #grad-grey #999: on #fff 2.85, on #fafafa 2.73, on #f5f5f5 0.96310/0.36855 = 2.61 -> review at the worst stop, 2.61.
     #grad-dark #333 (L 0.03310): worst on #f5f5f5 0.96310/0.08310 = 11.59 -> no finding.
@@ -52,11 +55,23 @@
   </div></div>
   <div class="photo bare">
     <p id="img-between" style="color:#767676">Mid grey text straight on a photo</p>
+    <p id="img-between-2" style="color:#767676">More mid grey text on the same photo</p>
+  </div>
+  <button type="button" id="more-photos" aria-expanded="false" aria-controls="more-panel">More photos</button>
+  <div class="photo bare" id="more-panel" hidden>
+    <p id="img-between-3" style="color:#767676">Mid grey text on a photo revealed later</p>
   </div>
   <div class="grad">
     <p id="grad-grey" style="color:#999">Grey text on a subtle gradient</p>
     <p id="grad-dark" style="color:#333">Dark text on a subtle gradient</p>
   </div>
 </main>
+<script>
+  document.getElementById('more-photos').addEventListener('click', function () {
+    var open = this.getAttribute('aria-expanded') === 'true';
+    this.setAttribute('aria-expanded', String(!open));
+    document.getElementById('more-panel').hidden = open;
+  });
+</script>
 </body>
 </html>

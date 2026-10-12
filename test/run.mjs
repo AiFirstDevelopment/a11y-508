@@ -448,9 +448,12 @@ check('AC3 13.C: #ccc over a background image fails over any background', () => 
 });
 check('AC3 13.C: #000 over the image has no finding', () => noneOn(IMAGES, '13.C', ['#img-dark']));
 check('AC3 13.C: text passing both bounds but colored between them is a review item', () => {
-  const f = on(IMAGES, '13.C', '#img-between', 'review', /lies between the two/);
-  near(f.details.bounds.white, 4.54, 'if white');
-  near(f.details.bounds.black, 4.62, 'if black');
+  // Round 3 AC 13: listed in the page's one review item for this case (see below), with its bounds.
+  const f = on(IMAGES, '13.C', 'text over images', 'review', /color lies between the two/);
+  const item = f.details.elements.find((e) => e.selector === '#img-between');
+  assert.ok(item, JSON.stringify(f.details));
+  near(item.white, 4.54, 'if white');
+  near(item.black, 4.62, 'if black');
 });
 check('AC3 13.C: #999 on a light gradient is a review item at the worst stop', () => near(on(IMAGES, '13.C', '#grad-grey', 'review', /gradient's worst point/).details.ratio, 2.61, 'worst stop'));
 check('AC3 13.C: #333 on the gradient has no finding', () => noneOn(IMAGES, '13.C', ['#grad-dark']));
@@ -474,8 +477,10 @@ check('AC6 13.A: a link with less text around it than its own: no finding', () =
 const LABELS = '/checks-label-names.html';
 const inventory = (path) => (findingsOn(path).find((f) => f.test === '5.B' && f.selector === 'form fields')?.details?.fields || []);
 const labelOf = (path, selector) => inventory(path).find((x) => x.selector === selector)?.label;
-check('AC7 5.B: a label wrapping a select reads its selected option', () => assert.equal(labelOf(LABELS, '#show-rows'), 'Show 10 rows', JSON.stringify(inventory(LABELS))));
-check('AC7 5.B: a label wrapping a text field includes its typed value', () => assert.equal(labelOf(LABELS, '#typed'), 'Search for maps nearby', JSON.stringify(inventory(LABELS))));
+// Round 3 AC 12 corrects these two, as Chrome names them: a control named by the label that wraps
+// it does not read its own value.
+check('AC7 5.B: a label wrapping a select names it without its own selected option', () => assert.equal(labelOf(LABELS, '#show-rows'), 'Show rows', JSON.stringify(inventory(LABELS))));
+check('AC7 5.B: a label wrapping a text field names it without its own typed value', () => assert.equal(labelOf(LABELS, '#typed'), 'Search for nearby', JSON.stringify(inventory(LABELS))));
 check('AC8 5.A: a control whose only label is hidden for everyone is a review item', () => {
   on(LABELS, '5.A', '#hid-none', 'review', /only label \("Email address"\) is hidden/);
   on(LABELS, '5.A', '#hid-vis', 'review', /only label \("Postal code"\) is hidden/);
@@ -486,7 +491,8 @@ const MODAL_OK = '/checks-modal-escape.html';
 const MODAL_STUCK = '/checks-modal-stuck.html';
 const STUCK_WARNING = "A modal dialog (Consent required) was open when /checks-modal-stuck.html loaded and did not close with Escape; the page behind it was not audited. Dismiss it with --cookie or a saved session, or audit the dialog's close control.";
 check('AC9: a modal on load that closes with Escape: dismissed, and the page behind it audited with the state label', () => {
-  assert.deepEqual(pages[MODAL_OK].modalOnLoad, { selector: '#consent-ok', name: 'Cookie preferences', dismissed: true });
+  const { redismissed, ...modal } = pages[MODAL_OK].modalOnLoad; // redismissed: round 3 AC 14, below
+  assert.deepEqual(modal, { selector: '#consent-ok', name: 'Cookie preferences', dismissed: true });
   assert.equal(on(MODAL_OK, '7.A', '#behind-ok', 'violation', /no alt attribute/).state, 'after closing the modal shown on load');
   assert.ok(!report.summary.coverage.warnings.some((w) => /Cookie preferences/.test(w)), JSON.stringify(report.summary.coverage.warnings));
 });
@@ -498,6 +504,111 @@ check('AC9: a modal on load that ignores Escape: not dismissed, the page behind 
   assert.ok(stuckReport, stuck.stdout + stuck.stderr);
   assert.deepEqual(stuckReport.summary.coverage.warnings, [STUCK_WARNING]);
   assert.ok(/^PASS on the 2 page\(s\) audited, but COVERAGE IS INCOMPLETE/m.test(stuck.stdout), stuck.stdout);
+});
+
+// Checks round 3 (docs/plans/checks-aria.md): the ARIA model and the rules derived from it. Each
+// fixture page holds the failing cases and, beside them, the passing ones.
+check('round 3 fixture pages were crawled without error', () => {
+  for (const p of ['attrs', 'allowed', 'required', 'owned', 'presentation', 'nested', 'names', 'activedescendant', 'landmarks', 'landmarks-ok', 'deprecated']) assert.equal(pages[`/checks-aria-${p}.html`]?.error, null, `/checks-aria-${p}.html crawled without error`);
+});
+
+const ATTRS = '/checks-aria-attrs.html';
+check('AC2 5.C: aria-labeledby is not an attribute, and the message suggests aria-labelledby', () => on(ATTRS, '5.C', '#at-misspelled', 'violation', /^aria-labeledby is not an ARIA attribute.*Did you mean aria-labelledby\?$/));
+check('AC2 5.C: aria-expanded="yes" is an invalid value, and the message names the allowed values', () => on(ATTRS, '5.C', '#at-expanded-yes', 'violation', /^aria-expanded="yes" is not a valid value.*Use true, false or undefined\.$/));
+check('AC2 5.C: aria-level="x" is not an integer', () => on(ATTRS, '5.C', '#at-level-x', 'violation', /^aria-level="x" is not an integer/));
+check('AC2 5.C: aria-controls naming a missing id is reported', () => on(ATTRS, '5.C', '#at-controls-missing', 'violation', /^aria-controls references id\(s\) that do not exist: at-nowhere\.$/));
+check('AC2 5.C: aria-expanded="true" and aria-level="2" are not reported', () => noneOn(ATTRS, '5.C', ['#at-expanded-ok', '#at-level-ok']));
+
+const ALLOWED = '/checks-aria-allowed.html';
+check('AC3 5.C: aria-checked on a link is not supported', () => on(ALLOWED, '5.C', '#al-checked', 'violation', /^aria-checked is not supported on <a> \(role link\)/));
+check('AC3 5.C: aria-label on a span with no role gets the naming-prohibited message', () => on(ALLOWED, '5.C', '#al-span-label', 'violation', /^aria-label is not allowed on <span> \(role generic\), whose role prohibits naming/));
+check('AC3 5.C: aria-label on a span with role="button" is not reported', () => noneOn(ALLOWED, '5.C', ['#al-button-label']));
+check('AC3 5.C: global attributes (aria-hidden, aria-describedby) are allowed on any element', () => noneOn(ALLOWED, '5.C', ['#al-global']));
+
+const REQUIRED = '/checks-aria-required.html';
+check('AC4 5.C: role="checkbox" without aria-checked, and role="heading" without aria-level, are violations', () => {
+  on(REQUIRED, '5.C', '#rq-checkbox', 'violation', /^role="checkbox" requires aria-checked/);
+  on(REQUIRED, '5.C', '#rq-heading', 'violation', /^role="heading" requires aria-level/);
+});
+check('AC4 5.C: with the attributes present, and an option without aria-selected, no finding', () => noneOn(REQUIRED, '5.C', ['#rq-checkbox-ok', '#rq-heading-ok', '#rq-option']));
+
+const OWNED = '/checks-aria-owned.html';
+check('AC5 5.C: a tablist with no tab is a violation', () => on(OWNED, '5.C', '#ow-empty', 'violation', /^role="tablist" must contain an element with role "tab"/));
+check('AC5 5.C: a tab outside a tablist is a violation', () => on(OWNED, '5.C', '#ow-orphan', 'violation', /^role="tab" must be inside an element with role "tablist"/));
+check('AC5 5.C: tabs inside a div wrapper, or owned with aria-owns, are not reported', () => noneOn(OWNED, '5.C', ['#ow-wrapped', '#ow-owned', '#ow-t1', '#ow-t2']));
+check('AC5 5.C: an empty listbox with aria-busy="true" is not reported', () => noneOn(OWNED, '5.C', ['#ow-busy']));
+
+const PRESENTATION = '/checks-aria-presentation.html';
+check('AC6 7.B: a focusable image with alt="" is a review item', () => on(PRESENTATION, '7.B', '#pr-img-focus', 'review', /^alt="" marks this image as decorative, but it is focusable/));
+check('AC6 5.C: role="presentation" with aria-label is a review item', () => on(PRESENTATION, '5.C', '#pr-div-label', 'review', /^role="presentation" removes this element's semantics, but it has aria-label/));
+check('AC6: an image with alt="" alone is not reported', () => noneOn(PRESENTATION, null, ['#pr-img-plain']));
+
+const NESTED = '/checks-aria-nested.html';
+check('AC7 6.A: a link inside a button is a violation', () => on(NESTED, '6.A', '#ns-button-link', 'violation', /^This button contains a focusable <a>/));
+check('AC7 6.A: a tabindex="-1" span inside role="button" is a review item, not a violation', () => {
+  on(NESTED, '6.A', '#ns-div-span', 'review', /^This button contains a <span> with tabindex="-1"/);
+  noneOn(NESTED, '6.A', ['#ns-div-span'], 'violation');
+});
+check('AC7 6.A: a button with plain text is not reported', () => noneOn(NESTED, '6.A', ['#ns-plain']));
+
+const WIDGETS = '/checks-aria-names.html';
+check('AC8: unnamed textbox, combobox and switch are 5.A; progressbar and tooltip 5.C; role="img" and svg role="img" 7.A', () => {
+  for (const id of ['#nm-textbox', '#nm-combobox', '#nm-switch']) on(WIDGETS, '5.A', id, 'violation', /has no label or accessible name/);
+  for (const id of ['#nm-progress', '#nm-tooltip']) on(WIDGETS, '5.C', id, 'violation', /has no accessible name/);
+  on(WIDGETS, '7.A', '#nm-img', 'violation', /^role="img" has no accessible name/);
+  on(WIDGETS, '7.A', '#nm-svg', 'violation', /^<svg role="img"> has no accessible name/);
+});
+check('AC8: a textbox whose only text is its content is unnamed', () => on(WIDGETS, '5.A', '#nm-textbox-content', 'violation', /^textbox has no label or accessible name/));
+check('AC8: the same widgets with aria-label, and the svg with a <title>, are not reported', () => {
+  const ok = ['#nm-textbox-ok', '#nm-combobox-ok', '#nm-switch-ok', '#nm-progress-ok', '#nm-tooltip-ok', '#nm-img-ok', '#nm-svg-ok'];
+  noneOn(WIDGETS, null, ok, 'violation');
+  noneOn(WIDGETS, '7.A', ok);
+});
+
+const ACTIVE = '/checks-aria-activedescendant.html';
+check('AC9 4.A: aria-activedescendant on a host that cannot take focus', () => on(ACTIVE, '4.A', '#ad-nofocus', 'violation', /^aria-activedescendant is on an element that cannot receive keyboard focus/));
+check('AC9 4.A: aria-activedescendant to a missing id', () => on(ACTIVE, '4.A', '#ad-missing', 'violation', /^aria-activedescendant points at id "ad-nowhere", which does not exist/));
+check('AC9 4.A: aria-activedescendant to an element outside the host', () => on(ACTIVE, '4.A', '#ad-elsewhere', 'violation', /^aria-activedescendant points at "#ad-outside", which is not inside this element/));
+check('AC9 4.A: aria-activedescendant to a descendant with no widget role', () => on(ACTIVE, '4.A', '#ad-norole', 'violation', /^aria-activedescendant points at "#ad-plain", which has role generic/));
+check('AC9 4.A: a focusable listbox pointing at its own option is not reported', () => noneOn(ACTIVE, '4.A', ['#ad-ok']));
+
+const LANDMARKS = '/checks-aria-landmarks.html';
+const LANDMARKS_OK = '/checks-aria-landmarks-ok.html';
+check('AC10 9.A: more than one main is a review item', () => on(LANDMARKS, '9.A', '#lm-main-2', 'review', /^The page has 3 main landmarks/));
+check('AC10 9.A: a banner inside an article is a review item; a plain header there is not a banner', () => {
+  on(LANDMARKS, '9.A', '#lm-banner-nested', 'review', /^This banner landmark is inside <article>/);
+  noneOn(LANDMARKS, '9.A', ['#lm-header-plain']);
+});
+check('AC10 9.A: a main inside a nav is a review item', () => on(LANDMARKS, '9.A', '#lm-main-3', 'review', /^This main landmark is inside a navigation landmark/));
+check('AC10 9.A: two navs with no label are a review item', () => on(LANDMARKS, '9.A', '#lm-nav-b', 'review', /^2 navigation landmarks have no label/));
+check('AC10 9.A: navs with different labels are not reported', () => noneOn(LANDMARKS, '9.A', ['#lm-nav-c', '#lm-nav-d', '#lm-nav-e']));
+check('AC10 9.A: one main, a top-level header and footer, and two differently labelled navs: no landmark finding', () => {
+  const hits = findingsOn(LANDMARKS_OK).filter((f) => f.test === '9.A' && /landmark/.test(f.message));
+  assert.equal(hits.length, 0, listed(hits));
+});
+
+const DEPRECATED = '/checks-aria-deprecated.html';
+check('AC11 5.C: role="directory" is a review item naming role="list"', () => on(DEPRECATED, '5.C', '#dp-directory', 'review', /^role="directory" is deprecated.*use role="list"/));
+check('AC11 5.C: aria-grabbed is a review item saying what replaces it', () => on(DEPRECATED, '5.C', '#dp-grabbed', 'review', /^aria-grabbed is deprecated.*no replacement attribute; describe the drag state in text/));
+check('AC11 5.C: role="list" is not reported', () => noneOn(DEPRECATED, '5.C', ['#dp-list']));
+
+check('AC12: a button labelled by a label that wraps a select is named with the select\'s value', () => on(LABELS, '4.A', '#ref-button', 'review', /^"Show 10 rows" did not change aria-expanded/));
+check('AC13 13.C: text colored between the image bounds is one review item for the page, listing each element', () => {
+  const items = findingsOn(IMAGES).filter((f) => f.test === '13.C' && /color lies between the two/.test(f.message));
+  assert.equal(items.length, 1, listed(items));
+  assert.deepEqual(items[0].details.elements.map((e) => e.selector), ['#img-between', '#img-between-2', '#img-between-3']);
+  assert.match(items[0].message, /^3 text element\(s\) over a background image .*: #img-between, #img-between-2, #img-between-3\.$/);
+  assert.equal(items[0].details.elements[2].state, 'after activating "More photos" (#more-photos)');
+  noneOn(IMAGES, '13.C', ['#img-between', '#img-between-2', '#img-between-3']);
+});
+check('AC13 13.C: text that fails over any background is still a violation on its own element', () => on(IMAGES, '13.C', '#img-light', 'violation', /fails 4\.5:1 over any background/));
+check('AC14: after a reload the load-time modal is dismissed again, so the disclosure pass sees the page', () => {
+  const p = pages[MODAL_OK];
+  assert.ok(p.modalOnLoad.redismissed >= 1, JSON.stringify(p.modalOnLoad));
+  assert.ok(p.discovery, 'route discovery ran after its reload');
+  assert.equal(on(MODAL_OK, '7.A', '#me-hidden-img', 'violation', /no alt attribute/).state, 'after activating "Show the policy" (#me-reveal)');
+  noneOn(MODAL_OK, '4.G', ['#consent-ok', '#me-reveal', '#me-nav']);
+  noneOn(MODAL_OK, '4.H', ['#consent-ok', '#me-reveal', '#me-nav']);
 });
 
 {
