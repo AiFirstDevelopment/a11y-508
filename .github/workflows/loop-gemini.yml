@@ -34,7 +34,6 @@ jobs:
       # A free-tier model rather than the CLI's default. Gemini CLI reads GEMINI_MODEL
       # (argv.model || GEMINI_MODEL || settings), so no -m flag is needed.
       GEMINI_MODEL: gemini-2.5-flash
-      REPO_DIR: ${{ runner.temp }}\loop-repo
     defaults:
       run:
         shell: bash
@@ -64,7 +63,7 @@ jobs:
           gemini --version
       - name: Make the throwaway repository
         if: steps.key.outputs.present == 'true'
-        run: node test/loop-app/setup.mjs "$REPO_DIR" --agent gemini --port 4321
+        run: node test/loop-app/setup.mjs "$RUNNER_TEMP/loop-repo" --agent gemini --port 4321
       - name: Run the fix loop, two rounds
         if: steps.key.outputs.present == 'true'
         working-directory: ${{ runner.temp }}\loop-repo
@@ -87,7 +86,7 @@ jobs:
           exit 0
       - name: Check the outcome
         if: steps.key.outputs.present == 'true'
-        run: node test/loop-app/verify.mjs "$REPO_DIR" --rounds 2
+        run: node test/loop-app/verify.mjs "$RUNNER_TEMP/loop-repo" --rounds 2
       - name: Upload the loop's work directory
         if: always() && steps.key.outputs.present == 'true'
         uses: actions/upload-artifact@v4
