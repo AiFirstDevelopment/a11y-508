@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contrast in web components - a11y-508 test site</title>
+<!--
+  Round 5 AC 5. Text inside a host over the host's dark background. #sd-dark draws its background
+  with a positioned layer inside its shadow root (#222), behind text colored #555: 2.14:1, below
+  4.5:1 (L(#555) = 0.0908, L(#222) = 0.0159; (0.0908 + 0.05) / (0.0159 + 0.05)). Only the shadow
+  root's own hit test sees that layer; the document's stops at the host. #sd-dark-host has the
+  same colors with the background on :host. #sd-light has #ddd on #222 (11.2:1) and passes.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Contrast in web components</h1>
+  <dark-panel id="sd-dark" data-text="#555" data-layer></dark-panel>
+  <dark-panel id="sd-dark-host" data-text="#555"></dark-panel>
+  <dark-panel id="sd-light" data-text="#ddd" data-layer></dark-panel>
+</main>
+<script>
+  customElements.define('dark-panel', class extends HTMLElement {
+    connectedCallback() {
+      const layer = this.hasAttribute('data-layer');
+      this.attachShadow({ mode: 'open' }).innerHTML =
+        `<style>:host { display: block; position: relative; margin: 8px 0; padding: 12px; ${layer ? '' : 'background: #222;'} }
+          .bg { position: absolute; inset: 0; background: #222; }
+          p { position: relative; margin: 0; font-size: 16px; color: ${this.getAttribute('data-text')}; }</style>` +
+        (layer ? '<div class="bg"></div>' : '') + '<p id="panel-text">Opening hours are posted at the front desk.</p>';
+    }
+  });
+</script>
+</body>
+</html>

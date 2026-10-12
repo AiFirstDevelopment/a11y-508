@@ -41,7 +41,7 @@ window.__a11y508.register(function images(A) {
     }
   };
 
-  for (const img of document.querySelectorAll('img')) {
+  for (const img of A.all('img')) {
     if (!A.isVisible(img)) continue;
     const ariaHidden = A.isAriaHidden(img);
     const alt = img.getAttribute('alt');
@@ -105,16 +105,16 @@ window.__a11y508.register(function images(A) {
     });
   }
 
-  for (const el of document.querySelectorAll('input[type="image"]')) {
+  for (const el of A.all('input[type="image"]')) {
     if (!A.isVisible(el)) continue;
     if (!A.accName(el).name) A.add({ test: '6.A', impact: 'critical', el, message: 'Image button has no alt text or accessible name.' });
   }
-  for (const el of document.querySelectorAll('area[href]')) {
+  for (const el of A.all('area[href]')) {
     if (!A.accName(el).name) A.add({ test: '6.A', impact: 'serious', el, message: 'Image map area has no alt text; its link purpose cannot be determined.' });
   }
 
   let svgCount = 0;
-  for (const svg of document.querySelectorAll('svg')) {
+  for (const svg of A.all('svg')) {
     if (svgCount >= 30) break;
     if (!A.isVisible(svg) || A.isAriaHidden(svg)) continue;
     const r = svg.getBoundingClientRect();
@@ -133,7 +133,7 @@ window.__a11y508.register(function images(A) {
   }
 
   let iconCount = 0;
-  for (const el of document.querySelectorAll('i, span')) {
+  for (const el of A.all('i, span')) {
     if (iconCount >= 20) break;
     const cls = el.className && typeof el.className === 'string' ? el.className : '';
     if (!/(^|\s)(fa|fas|far|fab|fal|fad|glyphicon|material-icons|material-symbols[\w-]*|bi|icon|icon-[\w-]+|fa-[\w-]+|dashicons|oi|ti|mdi)(\s|$)/.test(cls)) continue;
@@ -149,7 +149,7 @@ window.__a11y508.register(function images(A) {
 
   // Every loaded <object> needs a text alternative, whatever it embeds: fallback content, a
   // labelling attribute or a title. An image <embed> has no fallback content and is escalated.
-  for (const el of document.querySelectorAll('object[data], embed')) {
+  for (const el of A.all('object[data], embed')) {
     if (!A.isVisible(el) || A.isAriaHidden(el)) continue;
     if (el.localName === 'object') {
       if (el.parentElement && el.parentElement.closest('object')) continue; // fallback content of an outer object
@@ -163,7 +163,7 @@ window.__a11y508.register(function images(A) {
     }
   }
 
-  if (document.querySelector('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="turnstile" i], script[src*="recaptcha" i], script[src*="hcaptcha" i], script[src*="turnstile" i], [class*="captcha" i], [id*="captcha" i], img[src*="captcha" i]')) {
+  if (A.one('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="turnstile" i], script[src*="recaptcha" i], script[src*="hcaptcha" i], script[src*="turnstile" i], [class*="captcha" i], [id*="captcha" i], img[src*="captcha" i]')) {
     A.add({ test: '7.D', level: 'review', impact: 'serious', selector: '[captcha]', message: 'CAPTCHA detected. Confirm an alternative form (e.g. audio CAPTCHA, or a non-visual verification method) is available.' });
   }
 

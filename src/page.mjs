@@ -61,10 +61,20 @@ export class Page {
     this.lifecycle = [];
     this.viewport = opts.viewport;
     this.closed = false;
+    // frameId -> id of that frame's main-world execution context, for auditing same-origin frames.
+    this.contexts = new Map();
   }
 
   async init() {
     const s = this.s;
+    s.on('Runtime.executionContextCreated', ({ context }) => {
+      const aux = context.auxData || {};
+      if (aux.isDefault && aux.frameId) this.contexts.set(aux.frameId, context.id);
+    });
+    s.on('Runtime.executionContextDestroyed', ({ executionContextId }) => {
+      for (const [frameId, id] of this.contexts) if (id === executionContextId) this.contexts.delete(frameId);
+    });
+    s.on('Runtime.executionContextsCleared', () => this.contexts.clear());
     await s.send('Page.enable');
     await s.send('Runtime.enable');
     await s.send('Network.enable', { maxResourceBufferSize: 1 << 20, maxTotalBufferSize: 4 << 20 });
@@ -256,13 +266,30 @@ export class Page {
     return this.s.evaluate(expression, opts);
   }
 
-  async ensureInjected() {
-    const ok = await this.evaluate('typeof window.__a11y508 === "object" && typeof window.__a11y508.run === "function"').catch(() => false);
+  // contextId: inject into a same-origin frame's context instead of the main frame's.
+  async ensureInjected(contextId) {
+    const ok = await this.evaluate('typeof window.__a11y508 === "object" && typeof window.__a11y508.run === "function"', { contextId }).catch(() => false);
     if (ok) return;
     // The --wcag profile reaches the in-page checks as A.profile (read by A.wcag()). Nothing is
     // set for a default run, so the bundle behaves exactly as it does without the profile.
     const wcag = this.opts.wcag && this.opts.wcag !== '2.0' ? this.opts.wcag : null;
-    await this.evaluate(checksBundle() + (wcag ? `\n;window.__a11y508.profile = ${JSON.stringify({ wcag })};` : ''), { awaitPromise: false });
+    await this.evaluate(checksBundle() + (wcag ? `\n;window.__a11y508.profile = ${JSON.stringify({ wcag })};` : ''), { awaitPromise: false, contextId });
+  }
+
+  // The execution context of the frame whose owner element the expression (evaluated in contextId,
+  // or the main frame's) returns: DOM.describeNode names the frame, and the context map its
+  // main-world context. null when it has none (not loaded, or in another process).
+  async frameContext(expression, contextId) {
+    const { result, exceptionDetails } = await this.s.send('Runtime.evaluate', { expression, returnByValue: false, ...(contextId ? { contextId } : {}) });
+    if (exceptionDetails || !result || !result.objectId) return null;
+    try {
+      const { node } = await this.s.send('DOM.describeNode', { objectId: result.objectId });
+      return (node && node.frameId && this.contexts.get(node.frameId)) || null;
+    } catch {
+      return null;
+    } finally {
+      this.s.send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => {});
+    }
   }
 
   async click(x, y) {
@@ -320,7 +347,8 @@ export class Page {
 
   // Returns the event listener types attached directly to the element matched by `selector`.
   async listenerTypes(selectorOrExpr, isExpr = false) {
-    const expr = isExpr ? selectorOrExpr : `document.querySelector(${JSON.stringify(selectorOrExpr)})`;
+    // A selector from the checks may cross into shadow roots (" >>> "); the bundle resolves it.
+    const expr = isExpr ? selectorOrExpr : `window.__a11y508.query(${JSON.stringify(selectorOrExpr)})`;
     const { result } = await this.s.send('Runtime.evaluate', { expression: expr, returnByValue: false });
     if (!result || !result.objectId) return [];
     try {

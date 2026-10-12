@@ -48,7 +48,7 @@
   const labelInName = () => {
     const sel = 'a[href], button, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"], input, select, textarea';
     let n = 0;
-    for (const el of document.querySelectorAll(sel)) {
+    for (const el of A.all(sel)) {
       if (n >= 30) break;
       if (!A.isVisible(el) || A.isVisuallyHidden(el) || A.isHiddenFromAT(el)) continue;
       const { name, source } = A.accName(el);
@@ -122,7 +122,7 @@
   };
   const inputPurpose = () => {
     let n = 0;
-    for (const el of document.querySelectorAll('input[autocomplete], select[autocomplete], textarea[autocomplete]')) {
+    for (const el of A.all('input[autocomplete], select[autocomplete], textarea[autocomplete]')) {
       if (n >= 30) break;
       const type = el.localName === 'input' ? (el.getAttribute('type') || 'text').trim().toLowerCase() : el.localName;
       if (type === 'hidden' || !A.isVisible(el) || el.disabled) continue;
@@ -156,7 +156,7 @@
   const SMALL = 24 - 0.5;
   const targetList = () => {
     const out = [];
-    for (const el of document.querySelectorAll(TARGETS)) {
+    for (const el of A.all(TARGETS)) {
       if (out.length >= 1500) break;
       if (el.parentElement && el.parentElement.closest(TARGETS)) continue; // part of a larger target
       if (!A.isVisible(el) || A.isVisuallyHidden(el) || el.disabled) continue;
@@ -220,7 +220,7 @@
     const els = [];
     for (const s of selectors || []) {
       try {
-        const el = document.querySelector(s);
+        const el = A.query(s);
         if (el && !el.matches(TARGETS) && !(el.parentElement && el.parentElement.closest(TARGETS)) && A.isVisible(el)) els.push(el);
       } catch {}
     }
@@ -239,7 +239,7 @@
   };
   const textSpacing = () => {
     let n = 0;
-    for (const el of document.querySelectorAll('[style]')) {
+    for (const el of A.all('[style]')) {
       if (n >= 15) break;
       if (!A.isVisible(el) || !A.text(el)) continue;
       for (const prop of Object.keys(SPACING)) {
@@ -267,7 +267,7 @@
         if (rule.style.getPropertyPriority(prop) !== 'important') continue;
         let el = null;
         try {
-          el = Array.from(document.querySelectorAll(rule.selectorText)).find((x) => A.isVisible(x) && A.text(x));
+          el = Array.from(A.all(rule.selectorText)).find((x) => A.isVisible(x) && A.text(x));
         } catch {}
         if (!el || !tooTight(el, prop)) continue;
         n++;
@@ -322,7 +322,7 @@
   const FIELD = 'input, textarea, select, button, [role="button"], [role="checkbox"], [role="radio"], [role="switch"], [role="textbox"], [role="combobox"]';
   const nonTextContrast = () => {
     let n = 0;
-    for (const el of document.querySelectorAll(FIELD)) {
+    for (const el of A.all(FIELD)) {
       if (n >= 20) break;
       const type = el.localName === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : '';
       if (/^(hidden|image|range|color|file)$/.test(type)) continue;
@@ -382,7 +382,7 @@
     }
   };
   const headingOne = () => {
-    const h1 = Array.from(document.querySelectorAll('h1, [role="heading"][aria-level="1"]')).some((h) => (A.isVisible(h) || A.isVisuallyHidden(h)) && !A.isHiddenFromAT(h));
+    const h1 = Array.from(A.all('h1, [role="heading"][aria-level="1"]')).some((h) => (A.isVisible(h) || A.isVisuallyHidden(h)) && !A.isHiddenFromAT(h));
     if (!h1) A.add({ test: 'BP', level: 'review', impact: 'moderate', selector: 'h1', details: { rule: 'page-has-heading-one' }, message: 'The page has no level-one heading. Screen reader users jump to the h1 to find the main content; give the page one that names it. (best practice: page-has-heading-one)' });
   };
   // ARIA in HTML: the roles authors may give these elements. Elements not listed are not judged.
@@ -419,7 +419,7 @@
   })();
   const allowedRole = () => {
     let n = 0;
-    for (const el of document.querySelectorAll('[role]')) {
+    for (const el of A.all('[role]')) {
       if (n >= 20) break;
       const role = A.explicitRole(el);
       if (!role || !ROLES_ALLOWED[el.localName]) continue;
@@ -432,7 +432,7 @@
   };
   // Header cells by ARIA role that name nothing (th elements are 14.B's).
   const emptyHeader = () => {
-    for (const el of document.querySelectorAll('[role="columnheader"], [role="rowheader"]')) {
+    for (const el of A.all('[role="columnheader"], [role="rowheader"]')) {
       if (el.localName === 'th' || !A.isVisible(el) || A.isHiddenFromAT(el)) continue;
       if (A.text(el) || A.accName(el).name) continue;
       A.add({ test: 'BP', level: 'review', impact: 'minor', el, details: { rule: 'empty-table-header' }, message: `This ${A.role(el)} is empty, so the cells it heads are announced without a header. Give it text. (best practice: empty-table-header)` });
@@ -440,7 +440,7 @@
   };
   // A viewport that caps zoom below 500% (below 200% is 18.A's violation).
   const viewportLarge = () => {
-    const vp = document.querySelector('meta[name="viewport" i]');
+    const vp = A.one('meta[name="viewport" i]');
     if (!vp) return;
     const m = /maximum-scale\s*=\s*([\d.]+)/i.exec(vp.getAttribute('content') || '');
     if (!m) return;
@@ -450,7 +450,8 @@
 
   A.register(function beyond508(A) {
     if (!A.beyond()) return;
-    const rules = [labelInName, inputPurpose, textSpacing, orientation, nonTextContrast, region, headingOne, allowedRole, emptyHeader, viewportLarge];
+    // A frame's document is part of the page around it: its landmarks and its h1 are the page's.
+    const rules = A.opts.frame ? [labelInName, inputPurpose, textSpacing, orientation, nonTextContrast, allowedRole, emptyHeader] : [labelInName, inputPurpose, textSpacing, orientation, nonTextContrast, region, headingOne, allowedRole, emptyHeader, viewportLarge];
     if (A.beyond('2.2')) rules.push(() => targetSize());
     const add = A.add;
     // Every finding from this check is beyond Section 508.

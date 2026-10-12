@@ -36,7 +36,7 @@ window.__a11y508.register(function langTitles(A) {
   }
 
   // Inner lang attributes matter only where there is text for them to apply to.
-  for (const el of document.querySelectorAll('[lang]')) {
+  for (const el of A.all('[lang]')) {
     if (el === html) continue;
     const v = (el.getAttribute('lang') || '').trim();
     if (!v || !A.text(el)) continue;
@@ -49,7 +49,7 @@ window.__a11y508.register(function langTitles(A) {
   }
 
   const title = (document.title || '').trim();
-  const titleEl = document.querySelector('title');
+  const titleEl = A.one('title');
   if (!titleEl || !title) {
     A.add({ test: '12.A', impact: 'critical', selector: 'head > title', message: 'The page has no <title> or the title is empty.' });
   } else {
@@ -59,7 +59,7 @@ window.__a11y508.register(function langTitles(A) {
     }
   }
 
-  for (const f of document.querySelectorAll('frame')) {
+  for (const f of A.all('frame')) {
     if (!(f.getAttribute('title') || '').trim()) A.add({ test: '12.C', impact: 'serious', el: f, message: '<frame> has no title attribute.' });
   }
 
@@ -67,7 +67,7 @@ window.__a11y508.register(function langTitles(A) {
   const GENERIC_IFRAME = /^(iframe|frame|embed|embedded content|content|widget|video|map|untitled)$/i;
   // Frames a user can tell apart only by title: grouped by title, whitespace and case normalised.
   const byTitle = new Map();
-  for (const f of document.querySelectorAll('iframe')) {
+  for (const f of A.all('iframe')) {
     const s = A.cs(f);
     const r = f.getBoundingClientRect();
     const hidden = !s || s.display === 'none' || s.visibility === 'hidden' || (r.width <= 1 && r.height <= 1) || f.closest('[hidden]');

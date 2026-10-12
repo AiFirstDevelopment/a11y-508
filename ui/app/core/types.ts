@@ -108,6 +108,8 @@ export interface Finding {
   html?: string;
   screenshot?: string;
   state?: string;
+  // The same-origin frame the element is in (its selector, " >>> " between nested frames).
+  frame?: string;
   details?: unknown;
   page?: string;
   pages?: string[];

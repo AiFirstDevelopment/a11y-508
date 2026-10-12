@@ -6,7 +6,7 @@ window.__a11y508.register(function forms(A) {
 
   const labelHasVisualRequired = (el) => {
     const labels = el.labels ? Array.from(el.labels) : [];
-    const ids = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean).map((id) => document.getElementById(id)).filter(Boolean);
+    const ids = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean).map((id) => A.byId(el, id)).filter(Boolean);
     for (const l of [...labels, ...ids]) {
       const t = A.text(l) + (A.cs(l, '::after') || {}).content + (A.cs(l, '::before') || {}).content;
       if (/\*|required|\(req\)|mandatory/i.test(t)) return true;
@@ -15,7 +15,7 @@ window.__a11y508.register(function forms(A) {
     return false;
   };
 
-  for (const el of document.querySelectorAll(FIELD_SEL)) {
+  for (const el of A.all(FIELD_SEL)) {
     const type = el.localName === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : '';
     if (SKIP_TYPES.has(type)) continue;
     if (!A.isVisible(el)) continue;
@@ -70,10 +70,11 @@ window.__a11y508.register(function forms(A) {
     if (labelList.length < 80 && name) labelList.push({ selector: A.selector(el), role: role || el.localName, label: name, source });
   }
 
-  for (const label of document.querySelectorAll('label[for]')) {
+  for (const label of A.all('label[for]')) {
     const id = label.getAttribute('for');
     if (!id) continue;
-    const matches = document.querySelectorAll('[id="' + id.replace(/"/g, '\\"') + '"]');
+    // The browser resolves for= in the label's own tree (the document, or its shadow root).
+    const matches = A.idMatches(label, id);
     if (!matches.length) {
       if (A.isVisible(label)) A.add({ test: '5.C', impact: 'moderate', el: label, message: `<label for="${id}"> does not match any element id.` });
     } else if (matches.length > 1) {
@@ -82,7 +83,7 @@ window.__a11y508.register(function forms(A) {
   }
 
   const radioGroups = new Map();
-  for (const r of document.querySelectorAll('input[type="radio"]')) {
+  for (const r of A.all('input[type="radio"]')) {
     if (!A.isVisible(r)) continue;
     const key = (r.form ? 'f' + Array.from(document.forms).indexOf(r.form) : 'none') + ':' + (r.name || A.selector(r));
     if (!radioGroups.has(key)) radioGroups.set(key, []);
@@ -100,7 +101,7 @@ window.__a11y508.register(function forms(A) {
   // Checkboxes that answer one question (the same name in the same form) need a group label, as
   // radios do: a fieldset with a legend, or role="group" with a name.
   const boxGroups = new Map();
-  for (const c of document.querySelectorAll('input[type="checkbox"]')) {
+  for (const c of A.all('input[type="checkbox"]')) {
     if (!c.name || !A.isVisible(c) || A.isHiddenFromAT(c) || A.explicitRole(c)) continue;
     const key = (c.form ? 'f' + Array.from(document.forms).indexOf(c.form) : 'none') + ':' + c.name;
     if (!boxGroups.has(key)) boxGroups.set(key, []);
@@ -117,7 +118,7 @@ window.__a11y508.register(function forms(A) {
 
   // fieldset structure: one legend, the first child, with text. A fieldset named by aria-label or
   // aria-labelledby has a group label without one.
-  for (const fs of document.querySelectorAll('fieldset')) {
+  for (const fs of A.all('fieldset')) {
     if (!A.isVisible(fs) || A.isHiddenFromAT(fs)) continue;
     const legends = Array.from(fs.children).filter((c) => c.localName === 'legend');
     const labelled = (fs.getAttribute('aria-label') || '').trim() || (fs.getAttribute('aria-labelledby') || '').trim();
@@ -129,7 +130,7 @@ window.__a11y508.register(function forms(A) {
     if (problem) A.add({ test: '5.C', impact: 'moderate', el: fs, message: `This fieldset ${problem}. Give it one <legend> with text, as its first child.` });
   }
 
-  const forms = Array.from(document.querySelectorAll('form')).filter((f) => A.isVisible(f) && f.querySelector(FIELD_SEL));
+  const forms = Array.from(A.all('form')).filter((f) => A.isVisible(f) && f.querySelector(FIELD_SEL));
   for (const form of forms) {
     const fields = Array.from(form.querySelectorAll(FIELD_SEL)).filter((f) => !SKIP_TYPES.has((f.getAttribute('type') || '').toLowerCase()) && A.isVisible(f));
     if (!fields.length) continue;

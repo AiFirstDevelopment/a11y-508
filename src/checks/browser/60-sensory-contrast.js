@@ -15,15 +15,24 @@ window.__a11y508.register(function sensoryContrast(A) {
   // its content is composited at full alpha, then the group is painted once at its opacity.
   const groupsOf = (n) => {
     const out = [];
-    for (let p = n; p && p.nodeType === 1; p = p.parentElement) if (opacityOf(p) < 1) out.push(p);
+    for (let p = n; p && p.nodeType === 1; p = A.parent(p)) if (opacityOf(p) < 1) out.push(p);
     return out;
   };
 
+  // The deepest tree el is rendered in: its own (document or shadow root), or, when it or an
+  // ancestor is slotted, the shadow root of the slot it is rendered through. That tree's hit test
+  // sees the elements painted around el inside hosts; the document's stops at each host.
+  const hitScope = (el) => {
+    if (!A.shadowRoots().length) return document;
+    // Only el's own tree: the ancestors past its host are rendered in shallower trees.
+    for (let n = el; n; n = n.parentElement) if (n.assignedSlot) return hitScope(n.assignedSlot);
+    return A.rootOf(el);
+  };
   // The nodes painted at (x, y), front to back, starting with el; null when el is not hit there.
   const chainAt = (el, x, y) => {
     let stack = null;
     try {
-      stack = document.elementsFromPoint(x, y);
+      stack = hitScope(el).elementsFromPoint(x, y);
     } catch {}
     if (!stack || !stack.includes(el)) return null;
     const chain = stack.slice(stack.indexOf(el));
@@ -34,7 +43,7 @@ window.__a11y508.register(function sensoryContrast(A) {
   // Only for a line the hit test cannot reach even in view (covered by another element).
   const domChain = (el) => {
     const chain = [];
-    for (let p = el; p; p = p.parentElement) chain.push(p);
+    for (let p = el; p; p = A.parent(p)) chain.push(p);
     return chain;
   };
 
@@ -81,7 +90,7 @@ window.__a11y508.register(function sensoryContrast(A) {
     let open = groupsOf(chain[0]);
     const over = (front, back) => (front.a === 0 ? back : A.blend(front, back));
     for (const n of chain) {
-      while (open.length && !open[0].contains(n)) {
+      while (open.length && !A.contains(open[0], n)) {
         acc = { ...acc, a: acc.a * opacityOf(open[0]) };
         open = open.slice(1);
       }
@@ -123,7 +132,7 @@ window.__a11y508.register(function sensoryContrast(A) {
   // the keyboard pass that follows would start tabbing from the last element sampled.
   const bringIntoView = (el) => {
     if (inView(el.getBoundingClientRect())) return;
-    for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    for (let p = A.parent(el); p && p !== document.body && p !== document.documentElement; p = A.parent(p)) {
       if (p.scrollHeight <= p.clientHeight && p.scrollWidth <= p.clientWidth) continue;
       const ps = A.cs(p);
       if (!ps || !/auto|scroll|hidden/.test(`${ps.overflowX} ${ps.overflowY}`)) continue;
@@ -145,11 +154,16 @@ window.__a11y508.register(function sensoryContrast(A) {
     hitSheet = new CSSStyleSheet();
     hitSheet.replaceSync('*, *::before, *::after { pointer-events: auto !important; }');
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, hitSheet];
+    // A document style sheet does not reach into shadow trees: each open root gets it too.
+    for (const r of A.shadowRoots()) r.adoptedStyleSheets = [...r.adoptedStyleSheets, hitSheet];
   } catch {
     hitSheet = null;
   }
   const restoreScroll = () => {
-    if (hitSheet) document.adoptedStyleSheets = document.adoptedStyleSheets.filter((x) => x !== hitSheet);
+    if (hitSheet) {
+      document.adoptedStyleSheets = document.adoptedStyleSheets.filter((x) => x !== hitSheet);
+      for (const r of A.shadowRoots()) r.adoptedStyleSheets = r.adoptedStyleSheets.filter((x) => x !== hitSheet);
+    }
     for (const [p, [l, t]] of scrolled) {
       p.scrollLeft = l;
       p.scrollTop = t;
@@ -248,10 +262,10 @@ window.__a11y508.register(function sensoryContrast(A) {
   // Inactive components are exempt (WCAG 1.4.3): labels of disabled controls, and text that names one.
   const disabledControl = (c) => !!c && (c.matches(':disabled') || c.getAttribute('aria-disabled') === 'true');
   const namesDisabled = new Set();
-  for (const c of document.querySelectorAll('[aria-labelledby]')) {
+  for (const c of A.all('[aria-labelledby]')) {
     if (!disabledControl(c)) continue;
     for (const id of c.getAttribute('aria-labelledby').split(/\s+/)) {
-      const t = id && document.getElementById(id);
+      const t = id && A.byId(c, id);
       if (t) namesDisabled.add(t);
     }
   }
@@ -412,7 +426,7 @@ window.__a11y508.register(function sensoryContrast(A) {
     // Form text: the value shown in a text field, textarea or select, and placeholder text,
     // each against the control's own background. Disabled controls are exempt.
     let formCount = 0;
-    for (const el of document.querySelectorAll('input, textarea, select')) {
+    for (const el of A.all('input, textarea, select')) {
       if (formCount >= 30) break;
       const type = el.localName === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : '';
       if (el.localName === 'input' && !/^(text|search|email|tel|url|number|password)$/.test(type)) continue;
@@ -494,7 +508,7 @@ window.__a11y508.register(function sensoryContrast(A) {
   };
   const decorated = (x) => /underline|overline|line-through/.test(x.textDecorationLine || x.textDecoration || '');
   let linkCount = 0;
-  for (const a of document.querySelectorAll('a[href]')) {
+  for (const a of A.all('a[href]')) {
     if (linkCount >= 20) break;
     if (!A.isVisible(a) || A.isAriaHidden(a)) continue;
     const parent = a.parentElement;
@@ -524,7 +538,7 @@ window.__a11y508.register(function sensoryContrast(A) {
   // 13.B: instructions that rely on sensory characteristics
   const SENSORY = /\b(?:(?:click|press|select|use|choose|see|find|tap)\s+(?:on\s+)?the\s+(?:(?:red|green|blue|yellow|orange|purple|grey|gray|black|white|round|square|circular|rectangular|small|large|big|wide|narrow)\s+)+(?:button|link|icon|box|arrow|tab|menu|item)|(?:button|link|icon|box|menu|arrow|field|image|section|column|sidebar|panel)\s+(?:on|to|at|in)\s+the\s+(?:left|right|top|bottom)\b|(?:on|to|in|at)\s+the\s+(?:left|right)[-\s](?:hand\s+)?(?:side|column|corner|menu|panel|sidebar)|(?:the\s+(?:left|right)\s+(?:button|link|icon|arrow|column|menu))|when you hear\b|\bbeep\b)/i;
   let sensoryCount = 0;
-  for (const el of document.querySelectorAll('p, li, td, dd, label, legend, figcaption, h1, h2, h3, h4, h5, h6, span, div, caption')) {
+  for (const el of A.all('p, li, td, dd, label, legend, figcaption, h1, h2, h3, h4, h5, h6, span, div, caption')) {
     if (sensoryCount >= 10) break;
     if (!hasOwnText(el) || !A.isVisible(el) || A.isAriaHidden(el)) continue;
     let own = '';

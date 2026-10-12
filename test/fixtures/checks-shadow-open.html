@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Web components - a11y-508 test site</title>
+<!--
+  Round 5 (docs/plans/checks-shadow-frames.md) AC 1-3. The checks see open shadow roots:
+  #sd-bad's shadow root holds an image with no alt and an unlabelled field (7.A, 5.A, selectors
+  "#sd-bad >>> ..."); #sd-good holds the same with alt text and a label (nothing reported).
+  #sd-outer's root holds <inner-el>, whose own root holds an image with no alt: a two-level
+  selector. #sd-slot has two light-DOM images and a stray <li>: the first image is assigned to the
+  root's slot and is reported once, under the host's path; the second image and the <li> are
+  assigned to no slot, so they are not rendered and not reported.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Web components</h1>
+  <p>Each card below is a custom element that renders its content from an open shadow root.</p>
+  <my-card id="sd-bad"></my-card>
+  <my-card id="sd-good" data-good></my-card>
+  <outer-el id="sd-outer"></outer-el>
+  <slot-card id="sd-slot"><img src="/img/slotted.png" slot="media"><img src="/img/unassigned.png" slot="nowhere" id="sd-unassigned-img"><li id="sd-unassigned-li">Not rendered</li></slot-card>
+</main>
+<script>
+  const css = '<style>:host { display: block; margin: 8px 0; } input:focus { outline: 3px solid #f90; }</style>';
+  customElements.define('my-card', class extends HTMLElement {
+    connectedCallback() {
+      const good = this.hasAttribute('data-good');
+      this.attachShadow({ mode: 'open' }).innerHTML = css + (good
+        ? '<img src="/img/card.png" alt="A sample card"><label>Card name <input type="text"></label>'
+        : '<img src="/img/card.png"><input type="text">');
+    }
+  });
+  customElements.define('inner-el', class extends HTMLElement {
+    connectedCallback() {
+      this.attachShadow({ mode: 'open' }).innerHTML = css + '<img src="/img/inner.png">';
+    }
+  });
+  customElements.define('outer-el', class extends HTMLElement {
+    connectedCallback() {
+      this.attachShadow({ mode: 'open' }).innerHTML = css + '<p>The outer component.</p><inner-el></inner-el>';
+    }
+  });
+  customElements.define('slot-card', class extends HTMLElement {
+    connectedCallback() {
+      this.attachShadow({ mode: 'open' }).innerHTML = css + '<figure><slot name="media"></slot><figcaption>A slotted image</figcaption></figure>';
+    }
+  });
+</script>
+</body>
+</html>

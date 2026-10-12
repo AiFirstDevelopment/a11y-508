@@ -67,9 +67,28 @@ const LOGIN_PAGE = (value) => `<!doctype html>
 </body>
 </html>`;
 
+// A chain of frames four deep for checks-frames.html: each holds the next, and the fourth an image
+// with no alt, which is past the depth the crawler audits.
+const nested = (n) => `<!doctype html><html lang="en"><title>Nested frame ${n}</title><body style="margin:0"><p>Frame ${n}.</p>${
+  n < 4 ? `<iframe src="/frames/d${n + 1}.html" title="Nested frame ${n + 1}" id="d${n + 1}" width="${420 - n * 40}" height="${360 - n * 80}" style="border:1px solid #888"></iframe>` : '<img src="/img/deep.png" width="40" height="40">'
+}</body></html>`;
 const FRAMES = {
   '/frames/text.html': '<!doctype html><html lang="en"><title>Frame text</title><p>Plain text in a frame, with nothing to focus.</p></html>',
   '/frames/link.html': '<!doctype html><html lang="en"><title>Frame with a link</title><p>Office hours are 9 to 5. <a href="/about.html" id="frame-link">About the office</a></p></html>',
+  // checks-frames.html (round 5): no lang, an image with no alt, an unlabelled field, a button with
+  // no focus style, a custom disclosure control that ignores Enter and Space, and a web component
+  // holding another image with no alt.
+  '/frames/form.html': `<!doctype html><html><head><title>Payment form</title><style>body { font-family: sans-serif; margin: 8px; color: #222; background: #fff; } button { outline: none; border: 1px solid #333; background: #fff; color: #222; padding: 4px 10px; font: inherit; } input:focus { outline: 3px solid #f90; }</style></head>
+<body><p><img src="/img/card-logo.png" id="ff-logo" width="40" height="24"> Pay by card</p><p><input type="text" id="ff-card"></p><p><button type="button" id="ff-pay">Pay now</button></p><div role="button" tabindex="0" aria-expanded="false" id="ff-more" style="outline: 2px solid transparent">More options</div><pay-badge id="ff-badge"></pay-badge>
+<script>customElements.define('pay-badge', class extends HTMLElement { connectedCallback() { this.attachShadow({ mode: 'open' }).innerHTML = '<img src="/img/badge.png" width="24" height="24">'; } });</script></body></html>`,
+  '/frames/outer.html': '<!doctype html><html lang="en"><title>Partner offers</title><body style="margin:8px"><p>Offers from our partners.</p><iframe src="/frames/inner.html" title="Offer of the week" id="fr-inner" width="360" height="120" style="border:1px solid #888"></iframe></body></html>',
+  '/frames/inner.html': '<!doctype html><html lang="en"><title>Offer of the week</title><body style="margin:8px"><p>This week only.</p><img src="/img/offer.png" width="40" height="40"></body></html>',
+  '/frames/d1.html': nested(1),
+  '/frames/d2.html': nested(2),
+  '/frames/d3.html': nested(3),
+  '/frames/d4.html': nested(4),
+  '/frames/tiny.html': '<!doctype html><html lang="en"><title>Small frame</title><body><img src="/img/tiny.png" id="ft-img" width="40" height="40"></body></html>',
+  '/frames/modal-behind.html': '<!doctype html><html lang="en"><title>Account summary</title><body><p>Your balance.</p><img src="/img/balance.png" id="fm-img" width="40" height="40"></body></html>',
 };
 
 const listen = (server, port, host) => new Promise((resolve, reject) => {

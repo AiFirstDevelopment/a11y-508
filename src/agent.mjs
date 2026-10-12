@@ -228,7 +228,7 @@ Condition tested: ${condition}
 Message: ${finding.message}
 Seen on ${finding.pages.length} page(s): ${finding.pages.slice(0, 5).join(', ')}${finding.pages.length > 5 ? ', ...' : ''}
 Element selector: ${finding.selector || '(page level)'}
-${finding.state ? `State when seen: ${finding.state}\n` : ''}Rendered HTML:
+${finding.frame ? `Inside the same-origin frame: ${finding.frame}\n` : ''}${/ >>> /.test(finding.selector || '') ? 'In the selector, " >>> " steps into the shadow root of the element before it (a web component) or into the document of the frame before it; the part after it is a path inside that component or frame, so the fix usually belongs in that component\'s template or the framed page.\n' : ''}${finding.state ? `State when seen: ${finding.state}\n` : ''}Rendered HTML:
 
 \`\`\`html
 ${(finding.html || '').slice(0, 2000)}
@@ -248,7 +248,7 @@ If you made no change, write it with "fixed": false and a note explaining why.
 
 Machine-readable copy of the finding:
 
-${block({ kind: 'fix', finding: { test: finding.test, name: finding.name, wcag: finding.wcag, impact: finding.impact, message: finding.message, selector: finding.selector, html: finding.html, pages: finding.pages }, sourceDirs, resultFile })}
+${block({ kind: 'fix', finding: { test: finding.test, name: finding.name, wcag: finding.wcag, impact: finding.impact, message: finding.message, selector: finding.selector, ...(finding.frame ? { frame: finding.frame } : {}), html: finding.html, pages: finding.pages }, sourceDirs, resultFile })}
 `;
 }
 

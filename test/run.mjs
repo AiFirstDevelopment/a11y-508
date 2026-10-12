@@ -531,7 +531,8 @@ check('AC9: a modal on load that ignores Escape: not dismissed, the page behind 
   assert.deepEqual(pages[MODAL_STUCK].modalOnLoad, { selector: '#consent-stuck', name: 'Consent required', dismissed: false });
   noneOn(MODAL_STUCK, '7.A', ['#behind-stuck']);
   assert.ok(report.summary.coverage.warnings.includes(STUCK_WARNING), JSON.stringify(report.summary.coverage.warnings));
-  assert.equal(report.summary.modalsNotDismissed, 1);
+  // Two pages keep their modal open: this one, and round 5's checks-frames-modal.html.
+  assert.equal(report.summary.modalsNotDismissed, 2);
   assert.ok(stuckReport, stuck.stdout + stuck.stderr);
   assert.deepEqual(stuckReport.summary.coverage.warnings, [STUCK_WARNING]);
   assert.ok(/^PASS on the 2 page\(s\) audited, but COVERAGE IS INCOMPLETE/m.test(stuck.stdout), stuck.stdout);
@@ -898,6 +899,88 @@ check('AC15 4.A: a visible role="dialog" beside an aria-hidden app root (no aria
 });
 check('AC15 4.A: the same root still aria-hidden with the dialog gone is a critical hidden-page finding', () => {
   assert.equal(on('/checks-modal-legacy-gone.html', '4.A', '#ml-root', 'violation', /^#ml-root is aria-hidden="true" and holds \d+% of the page's visible text, while no modal dialog is open/).impact, 'critical');
+});
+
+// Checks round 5 (docs/plans/checks-shadow-frames.md): open shadow roots, slots, and same-origin
+// frames. Each fixture page holds the failing cases and, beside them, the passing ones.
+check('round 5 fixture pages were crawled without error', () => {
+  for (const p of ['shadow-open', 'shadow-ids', 'shadow-contrast', 'shadow-focus', 'shadow-closed', 'frames', 'frames-modal']) assert.equal(pages[`/checks-${p}.html`]?.error, null, `/checks-${p}.html crawled without error`);
+});
+const pageNotes = (path) => pages[path].coverageNotes || [];
+const summaryNotes = () => report.summary.coverage.notes;
+
+const SD_OPEN = '/checks-shadow-open.html';
+check('AC1 7.A: an image with no alt in an open shadow root is reported, its selector starting with the host', () => on(SD_OPEN, '7.A', '#sd-bad >>> img', 'violation', /^Image has no alt attribute/));
+check('AC1 5.A: an unlabelled field in the same shadow root is reported', () => on(SD_OPEN, '5.A', '#sd-bad >>> input', 'violation', /^textbox has no label or accessible name/));
+check('AC1: the same component with alt text and a label is not reported', () => noneOn(SD_OPEN, null, ['#sd-good'], 'violation'));
+check('AC2 7.A: an image in a root nested in another root is reported with a two-level selector', () => on(SD_OPEN, '7.A', '#sd-outer >>> inner-el >>> img', 'violation', /^Image has no alt attribute/));
+check('AC3 7.A: a slotted light-DOM image with no alt is reported once, under the host', () => {
+  const hits = findingsOn(SD_OPEN).filter((f) => f.test === '7.A' && f.selector === '#sd-slot > img:nth-of-type(1)');
+  assert.equal(hits.length, 1, listed(findingsOn(SD_OPEN).filter((f) => f.test === '7.A')));
+  assert.equal(hits[0].level, 'violation');
+});
+check('AC3: light-DOM children assigned to no slot are not rendered, and not reported', () => noneOn(SD_OPEN, null, ['#sd-unassigned-img', '#sd-unassigned-li']));
+
+const SD_IDS = '/checks-shadow-ids.html';
+check('AC4 5.A: <label for="x"> and <input id="x"> in the same shadow root label the field', () => noneOn(SD_IDS, '5.A', ['#sd-ids-a', '#sd-ids-b']));
+check('AC4 5.A: a light-DOM label for= cannot reach a field inside a root', () => on(SD_IDS, '5.A', '#sd-cross >>> #sd-lx', 'violation', /^textbox has no label/));
+check('AC4 5.A: a light-DOM aria-labelledby target cannot name a field inside a root', () => on(SD_IDS, '5.A', '#sd-cross-ref >>> #sd-ref-field', 'violation', /^textbox has no label/));
+check('AC4 5.C: id="x" in two shadow roots is not a duplicate id', () => noneOn(SD_IDS, '5.C', ['#sd-ids-a', '#sd-ids-b']));
+
+const SD_CONTRAST = '/checks-shadow-contrast.html';
+check('AC5 13.C: #555 text over a dark layer inside its host is a violation inside the host (2.14:1)', () => near(on(SD_CONTRAST, '13.C', '#sd-dark >>> #panel-text', 'violation', /below 4\.5:1 \(16px, #555555 on #222222\)/).details.ratio, 2.14, 'ratio'));
+check('AC5 13.C: the same text over the host\'s own background is a violation; #ddd passes', () => {
+  near(on(SD_CONTRAST, '13.C', '#sd-dark-host >>> #panel-text', 'violation').details.ratio, 2.14, 'ratio');
+  noneOn(SD_CONTRAST, '13.C', ['#sd-light']);
+});
+
+const SD_FOCUS = '/checks-shadow-focus.html';
+check('AC6 4.D: a button inside a host with no focus style is reported by the Tab pass', () => on(SD_FOCUS, '4.D', '#sd-focus-bad >>> button', 'violation', /^No visible change when this element receives keyboard focus/));
+check('AC6 4.D: the same button with a :focus-visible outline is not reported', () => noneOn(SD_FOCUS, '4.D', ['#sd-focus-good']));
+
+const SD_CLOSED = '/checks-shadow-closed.html';
+check('AC7: a closed shadow root is one coverage note on the page naming the tag, and nothing from inside it', () => {
+  const notes = pageNotes(SD_CLOSED).filter((n) => /closed shadow root/.test(n));
+  assert.equal(notes.length, 1, JSON.stringify(pageNotes(SD_CLOSED)));
+  assert.match(notes[0], /^1 component\(s\) with a closed shadow root were not audited: closed-card\./);
+  noneOn(SD_CLOSED, null, ['#sd-closed']);
+  assert.ok(summaryNotes().some((n) => /component\(s\) with a closed shadow root on \d+ page\(s\) were not audited: .*closed-card/.test(n)), JSON.stringify(summaryNotes()));
+});
+
+const FRAMES = '/checks-frames.html';
+check('AC8 7.A/5.A: an image with no alt and an unlabelled field in a same-origin frame are reported on the page', () => {
+  on(FRAMES, '7.A', '#fr-same >>> #ff-logo', 'violation', /^Image has no alt attribute/);
+  on(FRAMES, '5.A', '#fr-same >>> #ff-card', 'violation', /^textbox has no label/);
+});
+check('AC8: findings from inside the frame name the frame', () => {
+  for (const f of findingsOn(FRAMES).filter((x) => x.selector.startsWith('#fr-same >>> '))) assert.equal(f.frame, '#fr-same', `${f.test} ${f.selector}`);
+  assert.equal(on(FRAMES, '7.A', '#fr-same >>> #ff-logo').frame, '#fr-same');
+});
+check('AC8 11.A: the frame\'s own missing lang is attributed to the frame', () => assert.equal(on(FRAMES, '11.A', '#fr-same >>> html', 'violation', /no lang attribute/).frame, '#fr-same'));
+check('AC8 7.A: a frame nested in a frame (depth 2) is audited', () => assert.equal(on(FRAMES, '7.A', '#fr-outer >>> #fr-inner >>> body > img', 'violation').frame, '#fr-outer >>> #fr-inner'));
+check('AC8: a frame four deep is not audited, with a coverage note', () => {
+  noneOn(FRAMES, null, ['#fr-deep >>> #d2 >>> #d3 >>> #d4']);
+  assert.ok(pageNotes(FRAMES).includes('1 frame(s) nested more than 3 levels deep were not audited.'), JSON.stringify(pageNotes(FRAMES)));
+});
+check('AC9: a cross-origin (data: URL) frame is a coverage note naming it, and nothing from inside it', () => {
+  noneOn(FRAMES, null, ['#fr-cross']);
+  assert.ok(pageNotes(FRAMES).includes('1 frame(s) from other origins were not audited: a data: URL. Audit those origins separately.'), JSON.stringify(pageNotes(FRAMES)));
+  assert.ok(summaryNotes().some((n) => /^\d+ frame\(s\) from other origins on \d+ page\(s\) were not audited: .*a data: URL/.test(n)), JSON.stringify(summaryNotes()));
+});
+check('AC9: a 20x10 px same-origin frame is skipped silently', () => {
+  noneOn(FRAMES, null, ['#fr-tiny']);
+  assert.ok(!pageNotes(FRAMES).some((n) => /tiny|small|20/.test(n)), JSON.stringify(pageNotes(FRAMES)));
+});
+const FRAMES_MODAL = '/checks-frames-modal.html';
+check('AC9: a same-origin frame behind an open modal is skipped', () => {
+  assert.equal(pages[FRAMES_MODAL].modalOnLoad?.dismissed, false, JSON.stringify(pages[FRAMES_MODAL].modalOnLoad));
+  noneOn(FRAMES_MODAL, null, ['#fm-frame']);
+});
+check('AC10 4.D: the Tab pass samples a control inside the same-origin frame, with the frame prefix', () => assert.equal(on(FRAMES, '4.D', '#fr-same >>> #ff-pay', 'violation', /^No visible change when this element receives keyboard focus/).frame, '#fr-same'));
+check('plan item 7 4.A: the disclosure pass operates a control inside the same-origin frame', () => assert.equal(on(FRAMES, '4.A', '#fr-same >>> #ff-more', 'violation', /^Custom control "More options" did not respond to Enter or Space/).frame, '#fr-same'));
+check('AC10: no "focus entered an iframe" review for the frame the Tab pass went into', () => {
+  const entered = findingsOn(FRAMES).filter((f) => /Keyboard focus entered an iframe/.test(f.message));
+  assert.equal(entered.length, 0, listed(entered));
 });
 
 {

@@ -32,7 +32,149 @@
   // Is the beyond-508 profile on at version v or later ('2.1' when omitted)?
   A.beyond = (v = '2.1') => parseFloat(A.wcag()) >= parseFloat(v);
 
-  A.text = (el) => (el && el.textContent ? el.textContent : '').replace(/\s+/g, ' ').trim();
+  // ---- The composed tree: open shadow roots, slots, and the flat tree they render ----
+  // Written from the DOM standard (shadow trees, slot assignment, the flat tree) and the HTML standard.
+  // A page with no open shadow root takes the plain DOM paths below, so its elements and their order
+  // are exactly what document.querySelectorAll gives. With shadow roots, A.all and A.walk visit the
+  // flat tree: a host's shadow tree in place of its children, a slot's assigned nodes (flattened,
+  // or its fallback content) in place of the slot, and light-DOM children assigned to no slot not
+  // at all, since they are not rendered.
+  // The hosts and roots are found once per A.run(); outside a run (the passes' helpers) the scan is
+  // kept for 200 ms, because some helpers ask per element.
+  let treeMemo = null;
+  let treeRun = null;
+  const scanTree = () => {
+    const hosts = [];
+    const roots = [];
+    const visit = (root) => {
+      for (const el of root.querySelectorAll('*')) {
+        if (!el.shadowRoot) continue;
+        hosts.push(el);
+        roots.push(el.shadowRoot);
+        visit(el.shadowRoot);
+      }
+    };
+    visit(document);
+    return { hosts, roots, index: null, flat: null };
+  };
+  const tree = () => {
+    if (treeRun) return treeRun;
+    const now = performance.now();
+    if (!treeMemo || now - treeMemo.at > 200) treeMemo = { at: now, t: scanTree() };
+    return treeMemo.t;
+  };
+  A.shadowRoots = () => tree().roots;
+  const inShadow = (node) => {
+    const r = node.getRootNode && node.getRootNode();
+    return !!r && r.nodeType === 11 && !!r.host;
+  };
+  // The node's children in the flat tree.
+  const flatKids = (node) => {
+    if (node.shadowRoot) return node.shadowRoot.childNodes;
+    if (node.localName === 'slot' && inShadow(node)) return node.assignedNodes({ flatten: true });
+    return node.childNodes;
+  };
+  A.flatChildNodes = (node) => (tree().hosts.length ? flatKids(node) : node.childNodes);
+  const flatOrder = (t) => {
+    if (t.index) return t;
+    const index = new Map();
+    const flat = [];
+    const visit = (node) => {
+      for (const c of flatKids(node)) {
+        if (c.nodeType !== 1) continue;
+        index.set(c, flat.length);
+        flat.push(c);
+        visit(c);
+      }
+    };
+    const top = document.documentElement;
+    index.set(top, 0);
+    flat.push(top);
+    visit(top);
+    t.index = index;
+    t.flat = flat;
+    return t;
+  };
+  // The parent in the flat tree: the slot an element is assigned to, its parent element, or, at the
+  // top of a shadow tree, the host.
+  A.parent = (el) => el.assignedSlot || el.parentElement || (el.parentNode && el.parentNode.nodeType === 11 ? el.parentNode.host || null : null);
+  // a contains b in the flat tree (b itself included).
+  A.contains = (a, b) => {
+    if (!a || !b) return false;
+    if (a.contains(b)) return true;
+    if (!tree().hosts.length) return false;
+    for (let n = b; n; n = A.parent(n)) if (n === a) return true;
+    return false;
+  };
+  // The closest flat-tree ancestor (el itself included) matching sel.
+  A.closest = (el, sel) => {
+    const hit = el.closest(sel);
+    if (hit || !tree().hosts.length) return hit;
+    for (let n = el; n; n = A.parent(n)) if (n.matches(sel)) return n;
+    return null;
+  };
+  // The document or shadow root el is in: where its id references resolve and its hit tests look.
+  A.rootOf = (el) => {
+    const r = el && el.getRootNode ? el.getRootNode() : null;
+    return r && (r.nodeType === 9 || r.nodeType === 11) ? r : document;
+  };
+  // The elements matching sel, in flat-tree order, across the document and every open shadow root.
+  // root (an element) limits them to those inside it.
+  A.all = (sel, root = document) => {
+    const t = tree();
+    if (!t.hosts.length) return Array.from(root.querySelectorAll(sel));
+    flatOrder(t);
+    const out = [];
+    for (const scope of [document, ...t.roots]) {
+      for (const el of scope.querySelectorAll(sel)) if (t.index.has(el) && (root === document || A.contains(root, el))) out.push(el);
+    }
+    return out.sort((a, b) => t.index.get(a) - t.index.get(b));
+  };
+  A.one = (sel) => (tree().hosts.length ? A.all(sel)[0] || null : document.querySelector(sel));
+  // Visits every element under root (root excluded) in flat-tree order.
+  A.walk = (root, fn) => {
+    const visit = (node) => {
+      for (const c of A.flatChildNodes(node)) {
+        if (c.nodeType !== 1) continue;
+        fn(c);
+        visit(c);
+      }
+    };
+    visit(root);
+  };
+  // Resolves a selector A.selector made, " >>> " included, to its element (null when it is gone).
+  A.query = (sel) => {
+    const parts = String(sel).split(' >>> ');
+    let el = document.querySelector(parts[0]);
+    // A path inside a shadow root starts at the root's top-level child, so querySelector could
+    // match a nested element first: take the match whose own path is this one.
+    for (const p of parts.slice(1)) {
+      const root = el && el.shadowRoot;
+      el = root ? Array.from(root.querySelectorAll(p)).find((c) => pathIn(c, root) === p) || null : null;
+    }
+    return el;
+  };
+  // The elements with this id in the referencing element's own tree (document or shadow root), as
+  // the browser resolves for, aria-labelledby and the other id references.
+  A.idMatches = (el, id) => Array.from(A.rootOf(el).querySelectorAll(`[id="${CSS.escape(id)}"]`));
+  A.byId = (el, id) => A.idMatches(el, id)[0] || null;
+
+  // Text content, through shadow trees and slots when the page has any. A shadow tree's own style
+  // and script elements hold no text anyone sees; in the light DOM they count, as textContent does.
+  const flatText = (node) => {
+    if (node.nodeType === 3) return node.nodeValue;
+    if (node.nodeType !== 1) return '';
+    if (/^(script|style)$/.test(node.localName) && inShadow(node)) return '';
+    let s = '';
+    for (const c of flatKids(node)) s += flatText(c);
+    return s;
+  };
+  const rawText = (el) => {
+    if (!el) return '';
+    if (el.nodeType === 1 && tree().hosts.length) return flatText(el);
+    return el.textContent || '';
+  };
+  A.text = (el) => rawText(el).replace(/\s+/g, ' ').trim();
 
   A.cs = (el, pseudo) => {
     try {
@@ -87,8 +229,8 @@
     return false;
   };
 
-  A.isAriaHiddenAttr = (el) => !!el.closest('[aria-hidden="true" i]');
-  const isInert = (el) => !!el.closest('[inert]');
+  A.isAriaHiddenAttr = (el) => !!A.closest(el, '[aria-hidden="true" i]');
+  const isInert = (el) => !!A.closest(el, '[inert]');
   // The open modal dialog, if any: a native dialog shown with showModal(), a visible element
   // with role="dialog"/"alertdialog" and aria-modal="true", or an older library's modal (react-modal,
   // older Bootstrap, jQuery UI) that sets no aria-modal and hides the page instead: a visible
@@ -108,10 +250,10 @@
   };
   const findModal = () => {
     try {
-      const native = document.querySelector('dialog:modal');
+      const native = A.one('dialog:modal');
       if (native) return native;
     } catch {}
-    for (const d of document.querySelectorAll('[role="dialog"][aria-modal="true" i], [role="alertdialog"][aria-modal="true" i]')) {
+    for (const d of A.all('[role="dialog"][aria-modal="true" i], [role="alertdialog"][aria-modal="true" i]')) {
       if (A.isVisible(d)) return d;
     }
     if (!document.body || !document.body.querySelector('[aria-hidden="true" i]')) return null;
@@ -120,7 +262,7 @@
     const now = performance.now();
     if (legacyMemo && now - legacyMemo.at < 200) return legacyMemo.dialog;
     let found = null;
-    for (const d of document.querySelectorAll('[role="dialog"], [role="alertdialog"]')) {
+    for (const d of A.all('[role="dialog"], [role="alertdialog"]')) {
       if (legacyModal(d)) {
         found = d;
         break;
@@ -134,7 +276,7 @@
   A.openModal = () => (modalCache !== undefined ? modalCache : findModal());
   const outsideModal = (el) => {
     const modal = A.openModal();
-    return !!modal && !modal.contains(el);
+    return !!modal && !A.contains(modal, el);
   };
   // { selector, name } of the modal dialog open now, or null. The crawler calls it after load.
   A.modalOnLoad = () => {
@@ -153,27 +295,36 @@
   A.isHiddenFromAT = (el) => A.isAriaHiddenAttr(el) || isInert(el) || outsideModal(el);
   A.isAriaHidden = (el) => A.isHiddenFromAT(el);
 
-  A.selector = (el) => {
-    if (!el || el.nodeType !== 1) return '';
-    if (el.id && document.querySelectorAll('#' + CSS.escape(el.id)).length === 1) return '#' + el.id;
+  // A CSS path to el within scope (the document, or the shadow root el is in).
+  const pathIn = (el, scope) => {
+    const unique = (id) => scope.querySelectorAll('#' + CSS.escape(id)).length === 1;
+    if (el.id && unique(el.id)) return '#' + el.id;
     const parts = [];
     let cur = el;
     while (cur && cur.nodeType === 1 && cur !== document.documentElement) {
       let part = cur.localName;
-      if (cur.id && document.querySelectorAll('#' + CSS.escape(cur.id)).length === 1) {
+      if (cur.id && unique(cur.id)) {
         parts.unshift('#' + cur.id);
         break;
       }
-      const parent = cur.parentElement;
+      // At the top of a shadow tree the parent is the shadow root, whose children are siblings too.
+      const parent = cur.parentElement || (cur.parentNode && cur.parentNode.nodeType === 11 ? cur.parentNode : null);
       if (parent) {
         const same = Array.from(parent.children).filter((c) => c.localName === cur.localName);
         if (same.length > 1) part += `:nth-of-type(${same.indexOf(cur) + 1})`;
       }
       parts.unshift(part);
-      cur = parent;
+      cur = cur.parentElement;
       if (parts.length > 12) break;
     }
     return parts.join(' > ');
+  };
+  // Inside a shadow root: the host's selector, " >>> ", then the path within the root, per level.
+  A.selector = (el) => {
+    if (!el || el.nodeType !== 1) return '';
+    const root = el.getRootNode();
+    if (root.nodeType === 11 && root.host) return `${A.selector(root.host)} >>> ${pathIn(el, root)}`;
+    return pathIn(el, document);
   };
 
   A.html = (el, max = 300) => {
@@ -296,7 +447,7 @@
     const ids = (el.getAttribute(attr) || '').split(/\s+/).filter(Boolean);
     const parts = [];
     for (const id of ids) {
-      const t = document.getElementById(id);
+      const t = A.byId(el, id);
       if (t) parts.push(nameFromContent(t, true, self));
     }
     return parts.join(' ').replace(/\s+/g, ' ').trim();
@@ -397,7 +548,7 @@
       }
       const [before, after] = pseudoText(node);
       if (before && before.raw) push(before.text, before.raw);
-      for (const c of node.childNodes) walk(c);
+      for (const c of A.flatChildNodes(node)) walk(c);
       if (after && after.raw) push(after.text, after.raw);
       if (!parts.length && node.getAttribute('title')) push(node.getAttribute('title'));
     };
@@ -522,12 +673,27 @@
     return out;
   };
 
+  const SKIP_TAGS = /^(script|style|noscript|template|head|meta|link|title)$/;
   A.allVisible = (limit = 5000) => {
     const out = [];
+    const t = tree();
+    if (t.hosts.length) {
+      // The flat tree: everything after body in flat-tree order is inside it.
+      flatOrder(t);
+      const body = document.body || document.documentElement;
+      const start = t.index.has(body) ? t.index.get(body) + 1 : 0;
+      for (let i = start; i < t.flat.length; i++) {
+        const n = t.flat[i];
+        if (SKIP_TAGS.test(n.localName)) continue;
+        if (A.isVisible(n)) out.push(n);
+        if (out.length >= limit) break;
+      }
+      return out;
+    }
     const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_ELEMENT);
     let n;
     while ((n = walker.nextNode())) {
-      if (/^(script|style|noscript|template|head|meta|link|title)$/.test(n.localName)) continue;
+      if (SKIP_TAGS.test(n.localName)) continue;
       if (A.isVisible(n)) out.push(n);
       if (out.length >= limit) break;
     }
@@ -555,6 +721,24 @@
 
   A.bodyFontSize = () => parseFloat(A.cs(document.body || document.documentElement).fontSize) || 16;
 
+  // Custom elements that render content from a shadow root the page cannot open (mode "closed"):
+  // shadowRoot is null, yet the element is defined, has a box, and has no light-DOM content of its
+  // own to draw. Their contents cannot be audited; the crawler lists their tag names as a coverage
+  // note. Returns the tag names, once each.
+  const closedHosts = () => {
+    const tags = [];
+    for (const el of A.all('*')) {
+      const name = el.localName;
+      if (!name.includes('-') || el.shadowRoot || tags.includes(name)) continue;
+      if (!window.customElements || !customElements.get(name)) continue;
+      if (el.firstElementChild || (el.textContent || '').trim()) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) continue;
+      tags.push(name);
+    }
+    return tags;
+  };
+
   A.run = (opts) => {
     A.opts = opts || {};
     A.findings = [];
@@ -563,6 +747,7 @@
     A.meta = { errors: [] };
     const sx = window.scrollX;
     const sy = window.scrollY;
+    treeRun = scanTree();
     modalCache = findModal();
     try {
       for (const check of A.checks) {
@@ -572,8 +757,12 @@
           A.meta.errors.push(`${check.name}: ${e && e.message ? e.message : e}`);
         }
       }
+      const closed = closedHosts();
+      if (closed.length) A.meta.closedShadow = closed;
     } finally {
       modalCache = undefined;
+      treeRun = null;
+      treeMemo = null;
     }
     // Checks may scroll (contrast scrolls text into view to sample it); they must leave the page where it was.
     A.meta.scrollRestored = Math.abs(window.scrollX - sx) < 1 && Math.abs(window.scrollY - sy) < 1;

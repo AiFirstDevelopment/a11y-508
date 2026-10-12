@@ -88,6 +88,7 @@ progress { width: 100%; max-width: 640px; height: 18px; }
 .detail { border: 2px solid var(--accent); border-radius: 6px; padding: 8px 14px; margin: 12px 0; }
 .detail dt { font-weight: 600; }
 .detail dd { margin: 0 0 6px; }
+.detail code { overflow-wrap: anywhere; }
 .detail img { max-width: 100%; border: 1px solid var(--line); }
 .timeline li { margin: 2px 0; }
 .status { font-weight: 600; }

@@ -293,7 +293,7 @@ The crawl stays on the start URL's origin, ignores binary links (PDF, images, ar
 
 The crawler finds pages by following `href` links. Many single-page apps navigate from buttons, menu items or `routerLink` elements that have no `href`, and a crawler that only reads links would audit the first page and stop, which looks like a complete run. To avoid that, after auditing a page the crawler clicks up to `--max-clicks` controls that look like navigation but have no link: elements with a router or `data-href` attribute, `role="link"`, `menuitem`, `tab` or `treeitem`, and pointer-cursor items or buttons inside navigation, menus, headers and sidebars. Any same-origin URL a click leads to, including `pushState` routes and `#/` hash routes, is queued and audited, and is marked `foundBy: "click"` in the report. Controls whose name looks like an action (Save, Delete, Submit, Sign out, Approve, Export and similar) and anything inside a form or dialog are never clicked. `--no-follow-clicks` turns this off.
 
-Every report has a coverage section. It warns when only the start page could be audited, when controls were skipped because they look like actions, when `--max-clicks` or `--max-pages` cut the crawl short, when a modal dialog open on load could not be dismissed (see below), and notes pages that were reachable only by clicking (keyboard and screen reader users cannot discover those as links). A run that passes on violations but has coverage warnings prints `PASS on the N page(s) audited, but COVERAGE IS INCOMPLETE` rather than a plain PASS.
+Every report has a coverage section. It warns when only the start page could be audited, when controls were skipped because they look like actions, when `--max-clicks` or `--max-pages` cut the crawl short, when a modal dialog open on load could not be dismissed (see below), and notes pages that were reachable only by clicking (keyboard and screen reader users cannot discover those as links), components with a closed shadow root, frames from other origins and frames nested too deep to audit (see [Shadow DOM and frames](#shadow-dom-and-frames)). A run that passes on violations but has coverage warnings prints `PASS on the N page(s) audited, but COVERAGE IS INCOMPLETE` rather than a plain PASS.
 
 ### Modal dialogs open on load
 
@@ -381,6 +381,16 @@ Every finding carries a Trusted Tester test ID and the WCAG success criterion. `
 
 Each page is also re-checked after the tool opens every disclosure button, accordion, and menu it can find, so content that only appears after interaction is audited too. Findings from that pass are labelled with the control that revealed them.
 
+### Shadow DOM and frames
+
+The checks see the page the way the browser renders it: the **composed tree**. Open shadow roots are walked at any depth, a `<slot>` stands for the light-DOM nodes assigned to it (flattened, or its fallback content), and light-DOM children assigned to no slot are skipped, since they are not rendered. Names and text are computed through the same tree. Id references (`for`, `aria-labelledby`, `aria-describedby`, `aria-controls`, `aria-owns`, `aria-activedescendant`, `headers`) resolve in the referencing element's own tree, as the browser does, so a light-DOM `<label for>` does not label a field inside a shadow root, and the same id in two roots is not a duplicate. Contrast is sampled with the hit test of the tree the text is rendered in, so a background painted inside a component counts, and the Tab pass follows focus into a component through `shadowRoot.activeElement`. A page without shadow roots is walked exactly as before.
+
+Same-origin `iframe` and `frame` documents are audited **as part of the page**, after its own checks, nested up to three levels: the checks run in the frame's own document (its execution context, found through the DevTools Protocol), and each finding carries `frame` (the frame element's selector) with its selector prefixed by the frame's. The frame's `lang`, title, headings, landmarks and ids are judged within the frame; the frame's title (12.C/12.D) is still judged on the element in the parent page, and the page-level bypass check (9.A) and best practices (`region`, `page-has-heading-one`) and the viewport meta tag are left to the top document. Frames hidden, smaller than 30×15 px, hidden from assistive technology or behind an open modal, and `about:blank` frames with nothing in them are skipped. The Tab pass moves through a same-origin frame's controls as the browser does, and the disclosure pass opens disclosure controls inside it too. A frame's URL is never queued as a page of its own.
+
+A selector inside a shadow root or a frame names each step with ` >>> `: `#checkout >>> payment-form >>> input:nth-of-type(2)` is the second input inside the shadow root of the `payment-form` inside the document of the frame `#checkout`. The report, the dashboard's finding detail (with the frame) and the fix loop's prompt show it whole.
+
+Some content cannot be read from the page, and each is a **coverage note** on the page (`coverageNotes`, with the details in `unaudited`) and in the summary's coverage section, never silence: custom elements with a **closed** shadow root (listed by tag name: a defined custom element with a box, no light-DOM content and no open root), frames from **other origins** (listed by host; `data:` URL and sandboxed frames count), and frames nested **more than three levels** deep.
+
 A page that opens a modal dialog on load is audited behind it once Escape closes it. Besides a native `<dialog>` shown with `showModal()` and a dialog with `aria-modal="true"`, a visible `role="dialog"` or `"alertdialog"` that older modal libraries (react-modal, older Bootstrap, jQuery UI) show beside an `aria-hidden` application root counts as the open modal, so the hidden root is not reported as a page left hidden.
 
 ## Beyond Section 508
@@ -408,7 +418,7 @@ The rule set is informed by axe-core (MPL-2.0) and IBM Equal Access (Apache-2.0)
 `a11y-508-report/` contains:
 
 - `report.html`: everything, filterable by level, impact, page, and text. Each finding shows the test condition, the element's selector and HTML, a screenshot, and any supporting data. The manual checklist and the page table are at the bottom.
-- `report.json`: the same data for tooling. Top-level `summary` has counts by test and by impact; `pages[].findings[]` and `site.findings[]` hold the items.
+- `report.json`: the same data for tooling. Top-level `summary` has counts by test and by impact; `pages[].findings[]` and `site.findings[]` hold the items. A finding inside a same-origin frame has `frame`; a page with content the checks could not read has `coverageNotes` and `unaudited` (`closedShadow`, `crossOriginFrames`, `deepFrames`), and one with audited frames has `passes.frames`.
 - `summary.md`: a short Markdown summary suitable for a pull-request comment.
 - `screenshots/`: element screenshots referenced by the report.
 
