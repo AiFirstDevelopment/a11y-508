@@ -113,6 +113,7 @@ console.log('assertions:');
 check('exit code 1 because violations exist', () => assert.equal(run.status, 1));
 check('crawled all five html pages and the 404', () => {
   for (const p of ['/', '/forms.html', '/tables.html', '/media.html', '/about.html']) assert.ok(pages[p], p);
+  for (const p of ['focus', 'opacity', 'contrast-exempt', 'hidden', 'roles', 'lists-audio', 'icons', 'names']) assert.equal(pages[`/checks-${p}.html`]?.error, null, `/checks-${p}.html crawled without error`);
   assert.ok(pages['/missing.html'] && /404/.test(pages['/missing.html'].error), 'broken link recorded as HTTP 404');
 });
 check('token sent to the site, never to the other origin', () => {
@@ -284,6 +285,101 @@ check('9.C inconsistent identification', () => siteHas('9.C', 'review', /About/)
 check('19.A multiple ways', () => siteHas('19.A', 'review'));
 check('manual checklist present', () => assert.ok(report.manual.some((m) => m.test === '4.B')));
 check('html report written', () => assert.ok(existsSync(join(out, 'report.html')) && existsSync(join(out, 'summary.md'))));
+
+// Checks round 1 (docs/plans/checks-false-positives.md): each fixture page holds the false
+// positive that must be gone and, beside it, the true positive that must still be reported.
+const findingsOn = (path) => {
+  assert.ok(pages[path], `page ${path} was crawled`);
+  return pages[path].findings || [];
+};
+const listed = (fs) => fs.map((f) => `${f.selector} [${f.level}] ${f.message}${f.state ? ` (${f.state})` : ''}`).join('\n       ') || '(none)';
+const on = (path, test, selector, level, re) => {
+  const hit = findingsOn(path).find((f) => f.test === test && f.selector === selector && (!level || f.level === level) && (!re || re.test(f.message)));
+  assert.ok(hit, `${path}: expected ${test} ${level || ''} on ${selector} ${re || ''}\n  got: ${listed(findingsOn(path).filter((f) => f.test === test))}`);
+  return hit;
+};
+const noneOn = (path, test, selectors, level) => {
+  const hits = findingsOn(path).filter((f) => (!test || f.test === test) && selectors.some((s) => f.selector === s || f.selector.startsWith(s + ' ')) && (!level || f.level === level));
+  assert.equal(hits.length, 0, `${path}: unexpected ${test || 'findings'} on ${selectors.join(', ')}\n  got: ${listed(hits)}`);
+};
+
+const FOCUS = '/checks-focus.html';
+check('AC1 4.D: hidden checkbox, radio and switch that show focus on the label or box are not reported', () => {
+  noneOn(FOCUS, '4.D', ['#cb-styled-label', '#cb-uswds-label', '#rd-styled-label', '#sw-styled-label', '#cb-styled', '#cb-uswds', '#rd-styled', '#sw-styled']);
+});
+check('AC1 4.D: hidden checkbox, radio and switch with no focus style anywhere are reported on the label', () => {
+  on(FOCUS, '4.D', '#cb-bare-label', 'violation', /visually hidden checkbox input/);
+  on(FOCUS, '4.D', '#rd-bare-label', 'violation', /visually hidden radio input/);
+  on(FOCUS, '4.D', '#sw-bare-label', 'violation', /visually hidden switch input/);
+});
+
+const OPACITY = '/checks-opacity.html';
+check('AC2 13.C: #aaa on a .9-opacity #222 card is not a violation (5.55:1)', () => {
+  noneOn(OPACITY, '13.C', ['#op-light'], 'violation');
+  for (const f of findingsOn(OPACITY).filter((x) => x.test === '13.C' && x.selector === '#op-light')) assert.ok(Math.abs(f.details.ratio - 5.55) <= 0.05, `ratio ${f.details.ratio}`);
+});
+check('AC2 13.C: #777 on the same card is reported at the hand-computed 3.16:1', () => {
+  const f = on(OPACITY, '13.C', '#op-mid', 'violation');
+  assert.ok(Math.abs(f.details.ratio - 3.16) <= 0.05, `ratio ${f.details.ratio}, expected 3.16 ± 0.05`);
+});
+
+const EXEMPT = '/checks-contrast-exempt.html';
+check('AC3 13.C: grey labels of disabled controls are exempt', () => noneOn(EXEMPT, '13.C', ['#ex-dis-label', '#ex-wrap-label', '#ex-lb']));
+check('AC3 13.C: the same grey label of an enabled control is reported', () => on(EXEMPT, '13.C', '#ex-en-label', 'violation', /below 4.5:1/));
+check('AC3 13.C: 1:1, single-character and pseudo-element-background text are review items', () => {
+  on(EXEMPT, '13.C', '#ex-same', 'review', /same color \(1:1/);
+  on(EXEMPT, '13.C', '#ex-char', 'review', /Single-character text "x"/);
+  on(EXEMPT, '13.C', '#ex-pill', 'review', /positioned ::before background covering/);
+  noneOn(EXEMPT, '13.C', ['#ex-same', '#ex-char', '#ex-pill'], 'violation');
+});
+
+const HIDDEN = '/checks-hidden.html';
+check('AC4 4.A: links in an inert, aria-hidden off-canvas nav are not reported', () => noneOn(HIDDEN, null, ['#oc-inert-1', '#oc-inert-2', '#oc-inert']));
+check('AC4: nothing in an inert off-canvas nav is reported, even unnamed controls', () => noneOn(HIDDEN, null, ['#oc-inert-only-1', '#oc-inert-only-2', '#oc-inert-only']));
+check('AC4 4.A: the same nav with aria-hidden and no inert is still reported', () => on(HIDDEN, '4.A', '#oc-hidden-1', 'violation', /inside aria-hidden/));
+check('AC4 4.A: controls in a disabled, aria-hidden fieldset are not reported', () => noneOn(HIDDEN, '4.A', ['#fs-input', '#fs-button']));
+check('AC4 4.A: aria-hidden="TRUE" hides like "true"', () => on(HIDDEN, '4.A', '#upper-link', 'violation', /inside aria-hidden/));
+check('AC4 4.A: a non-focusable role="scrollbar" is not reported', () => noneOn(HIDDEN, '4.A', ['#custom-scrollbar']));
+check('AC4 13.C: text revealed above the fold after the page scrolled is checked', () => {
+  const f = on(HIDDEN, '13.C', '#notice', 'violation');
+  assert.ok(/Show notice/.test(f.state || ''), `state: ${f.state}`);
+});
+
+const ROLES = '/checks-roles.html';
+check('AC5 5.C: role="toggle button" and role="image" are valid', () => noneOn(ROLES, '5.C', ['#role-toggle', '#role-image']));
+check('AC5 5.C: role="foo bar" is invalid', () => on(ROLES, '5.C', '#role-foo', 'violation', /not a valid ARIA role/));
+check('AC5 5.C: role="widget" gets the abstract-role message', () => on(ROLES, '5.C', '#role-widget', 'violation', /abstract ARIA role/));
+
+const LISTS = '/checks-lists-audio.html';
+check('AC6 10.D: a ul with another role, and a hidden child, are not reported', () => noneOn(LISTS, '10.D', ['#list-tablist', '#list-hidden-child']));
+check('AC6 10.D: a plain ul with a div child is still reported', () => on(LISTS, '10.D', '#list-plain', 'violation', /not <li> \(div\)/));
+check('AC6 2.A: 1-second autoplaying audio without controls is a review item', () => on(LISTS, '2.A', '#audio-short', 'review', /lasts 1\.0 s \(3 seconds or less\)/));
+check('AC6 2.A: the same audio with loop, and a 10-second one, are violations', () => {
+  on(LISTS, '2.A', '#audio-loop', 'violation', /no controls to pause it/);
+  on(LISTS, '2.A', '#audio-long', 'violation', /no controls to pause it/);
+});
+
+const ICONS = '/checks-icons.html';
+check('AC7 6.A: an icon-font glyph is not a name; the message shows the glyph', () => {
+  on(ICONS, '6.A', '#icon-bare', 'violation', /^Link has no accessible name\. Its only content is an icon-font glyph \("", U\+E900\)/);
+  on(ICONS, '6.A', '#icon-button', 'violation', /^Button has no accessible name\. Its only content is an icon-font glyph \("", U\+E901\)/);
+});
+check('AC7 6.A: the icon link with visible text, or with aria-label, is named', () => noneOn(ICONS, '6.A', ['#icon-text', '#icon-label']));
+check('AC7 6.A: a button named by CSS-generated words is still named', () => noneOn(ICONS, '6.A', ['#css-words']));
+
+const NAMES = '/checks-names.html';
+check('AC8 5.C: a dialog is not named by its content', () => {
+  on(NAMES, '5.C', '#name-dialog', 'violation', /Dialog has no accessible name/);
+  noneOn(NAMES, '5.C', ['#name-dialog-ok']);
+});
+check('AC8 5.C: a fieldset of radios with no legend is an unlabelled radio group', () => {
+  on(NAMES, '5.C', '#size-small', 'review', /Radio group of 2 has no group label/);
+  noneOn(NAMES, '5.C', ['#delivery-mail']);
+});
+check('AC8 5.A: a listbox is not named by its options', () => on(NAMES, '5.A', '#name-listbox', 'violation', /^listbox has no label or accessible name/));
+check('AC8 6.A: a button is still named by its text', () => noneOn(NAMES, '6.A', ['#name-save']));
+check('AC8: a link-styled disclosure without href keeps its text for the disclosure pass', () => on(NAMES, '4.A', '#name-disclosure', 'review', /^"More filters" did not change aria-expanded/));
+check('AC8 7.A: an <object> image with fallback text is named', () => noneOn(NAMES, '7.A', ['#name-object']));
 
 {
   const { events, problems } = parseEvents(evRun.stdout);

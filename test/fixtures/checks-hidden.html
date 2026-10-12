@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hidden from assistive technology - a11y-508 test site</title>
+<!--
+  Plan item 4 (4.A, 13.C). Off-canvas menus that are inert are neither focusable nor exposed,
+  so nothing in them is reported; the same menu with aria-hidden alone is a 4.A. A disabled
+  fieldset's controls are not focusable. aria-hidden="TRUE" hides like "true". A custom
+  scrollbar need not be focusable. The notice revealed at the top of this tall page by the
+  button at the bottom has low contrast and must be reported after the page has scrolled.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  .offcanvas { border: 1px solid #ccc; padding: 4px 8px; margin: 8px 0; }
+  .offcanvas a { margin-right: 12px; }
+  .scrollbar { width: 12px; height: 80px; background: #ccc; }
+  #notice { position: absolute; top: 8px; left: 8px; color: #bbb; background: #fff; padding: 4px; }
+  .spacer { height: 3000px; }
+</style>
+</head>
+<body>
+<div id="notice" hidden>Revealed notice with low contrast text</div>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Hidden from assistive technology</h1>
+  <nav class="offcanvas" id="oc-inert" aria-label="Off-canvas, inert" inert aria-hidden="true">
+    <a href="#section-one" id="oc-inert-1">Section one</a>
+    <a href="#section-two" id="oc-inert-2">Section two</a>
+  </nav>
+  <nav class="offcanvas" id="oc-inert-only" aria-label="Off-canvas, inert only" inert>
+    <a href="#section-one" id="oc-inert-only-1"><img src="/img/icon.png" alt="" width="16" height="16"></a>
+    <button type="button" id="oc-inert-only-2"></button>
+  </nav>
+  <nav class="offcanvas" id="oc-hidden" aria-label="Off-canvas, aria-hidden only" aria-hidden="true">
+    <a href="#section-three" id="oc-hidden-1">Section three</a>
+  </nav>
+  <fieldset disabled aria-hidden="true" id="fs-disabled">
+    <legend>Archived settings</legend>
+    <input type="text" id="fs-input" aria-label="Archived name">
+    <button type="button" id="fs-button">Restore</button>
+  </fieldset>
+  <div aria-hidden="TRUE" id="upper-hidden">
+    <a href="#section-four" id="upper-link">Section four</a>
+  </div>
+  <div role="scrollbar" id="custom-scrollbar" class="scrollbar" aria-controls="scrolled" aria-orientation="vertical" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+  <div id="scrolled"><p id="section-one">Section one content.</p><p id="section-two">Section two content.</p><p id="section-three">Section three content.</p><p id="section-four">Section four content.</p></div>
+  <div class="spacer"></div>
+  <button type="button" id="reveal" aria-expanded="false" aria-controls="notice">Show notice</button>
+</main>
+<script>
+  document.getElementById('reveal').addEventListener('click', function () {
+    var open = this.getAttribute('aria-expanded') === 'true';
+    this.setAttribute('aria-expanded', String(!open));
+    document.getElementById('notice').hidden = open;
+  });
+</script>
+</body>
+</html>

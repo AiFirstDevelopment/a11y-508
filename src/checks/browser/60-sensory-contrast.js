@@ -2,11 +2,8 @@
 window.__a11y508.register(function sensoryContrast(A) {
   const TRANSPARENT = { r: 0, g: 0, b: 0, a: 0 };
 
-  // Effective background color behind an element, following the real paint stack.
-  // Returns { color, uncertain } where uncertain is true when an image/gradient is involved.
-  const backgroundBehind = (el) => {
-    let acc = TRANSPARENT;
-    let uncertain = false;
+  // The nodes painted at a point inside the element, front to back, starting with the element.
+  const paintChain = (el) => {
     const r = el.getBoundingClientRect();
     const cx = Math.min(Math.max(r.left + Math.min(r.width / 2, 8), 0), window.innerWidth - 1);
     const cy = Math.min(Math.max(r.top + Math.min(r.height / 2, 8), 0), window.innerHeight - 1);
@@ -26,26 +23,93 @@ window.__a11y508.register(function sensoryContrast(A) {
         p = p.parentElement;
       }
     }
+    const end = chain.indexOf(document.documentElement);
+    if (end >= 0) chain.length = end + 1;
+    return chain;
+  };
+
+  const opacityOf = (n) => {
+    const o = parseFloat((A.cs(n) || {}).opacity);
+    return Number.isNaN(o) ? 1 : o;
+  };
+  // Elements with opacity < 1 that contain n (itself included), innermost first. Each is an opacity group:
+  // its content is composited at full alpha, then the group is painted once at its opacity.
+  const groupsOf = (n) => {
+    const out = [];
+    for (let p = n; p && p.nodeType === 1; p = p.parentElement) if (opacityOf(p) < 1) out.push(p);
+    return out;
+  };
+
+  // Flattens the paint chain front to back into one color over white. top is the text color (or
+  // null for the background alone). A group's opacity is applied once, when the walk leaves it.
+  // uncertain is true when an image/gradient is painted above the first opaque layer.
+  const flatten = (chain, top) => {
+    let acc = top || TRANSPARENT;
+    let uncertain = false;
+    let open = groupsOf(chain[0]);
+    const over = (front, back) => (front.a === 0 ? back : A.blend(front, back));
     for (const n of chain) {
+      while (open.length && !open[0].contains(n)) {
+        acc = { ...acc, a: acc.a * opacityOf(open[0]) };
+        open = open.slice(1);
+      }
       const s = A.cs(n);
       if (!s) continue;
       if (s.backgroundImage && s.backgroundImage !== 'none') uncertain = true;
       let c = A.parseColor(s.backgroundColor);
-      const op = parseFloat(s.opacity);
-      if (!Number.isNaN(op) && op < 1) c = { ...c, a: c.a * op };
       if (c.a > 0) {
-        acc = acc.a === 0 ? c : A.blend(acc, c);
-        if (acc.a >= 0.999) break;
+        // Groups around n that the text is not in (a translucent layer behind it): their opacity applies to n alone.
+        for (const g of groupsOf(n)) if (!open.includes(g)) c = { ...c, a: c.a * opacityOf(g) };
+        acc = over(acc, c);
       }
-      if (n === document.documentElement) break;
+      if (acc.a >= 0.999 && !open.length) break;
     }
-    if (acc.a < 0.999) acc = A.blend(acc, { r: 255, g: 255, b: 255, a: 1 });
-    return { color: acc, uncertain };
+    for (const g of open) acc = { ...acc, a: acc.a * opacityOf(g) };
+    return { color: acc.a < 0.999 ? A.blend(acc, { r: 255, g: 255, b: 255, a: 1 }) : acc, uncertain };
   };
 
   const hasOwnText = (el) => {
     for (const n of el.childNodes) if (n.nodeType === 3 && n.nodeValue.trim().length > 0) return true;
     return false;
+  };
+  const ownText = (el) => {
+    let t = '';
+    for (const n of el.childNodes) if (n.nodeType === 3) t += n.nodeValue;
+    return t.replace(/\s+/g, ' ').trim();
+  };
+
+  // Inactive components are exempt (WCAG 1.4.3): labels of disabled controls, and text that names one.
+  const disabledControl = (c) => !!c && (c.matches(':disabled') || c.getAttribute('aria-disabled') === 'true');
+  const namesDisabled = new Set();
+  for (const c of document.querySelectorAll('[aria-labelledby]')) {
+    if (!disabledControl(c)) continue;
+    for (const id of c.getAttribute('aria-labelledby').split(/\s+/)) {
+      const t = id && document.getElementById(id);
+      if (t) namesDisabled.add(t);
+    }
+  }
+  const labelsDisabled = (el) => {
+    const label = el.closest('label');
+    if (label && disabledControl(label.control)) return true;
+    for (let p = el; p; p = p.parentElement) if (namesDisabled.has(p)) return true;
+    return false;
+  };
+
+  // An absolutely positioned ::before/::after with a background behind 25% or more of the element:
+  // the real background is the pseudo-element, which the paint chain cannot see.
+  const pseudoBackground = (el) => {
+    const r = el.getBoundingClientRect();
+    const area = r.width * r.height;
+    if (!area) return null;
+    for (const p of ['::before', '::after']) {
+      const ps = A.cs(el, p);
+      if (!ps || !ps.content || ps.content === 'none' || ps.content === 'normal' || ps.display === 'none') continue;
+      if (ps.position !== 'absolute' && ps.position !== 'fixed') continue;
+      if (A.parseColor(ps.backgroundColor).a === 0 && (!ps.backgroundImage || ps.backgroundImage === 'none')) continue;
+      const covered = (parseFloat(ps.width) || 0) * (parseFloat(ps.height) || 0);
+      if (covered >= area * 0.25) return { pseudo: p, percent: Math.min(100, Math.round((covered / area) * 100)) };
+    }
+    return null;
   };
 
   let count = 0;
@@ -54,31 +118,24 @@ window.__a11y508.register(function sensoryContrast(A) {
   for (const el of A.allVisible(6000)) {
     if (count >= 100) break;
     if (!hasOwnText(el)) continue;
-    if (el.closest('option, script, style, [aria-hidden="true"]')) continue;
+    if (el.closest('option, script, style') || A.isHiddenFromAT(el)) continue;
     if (A.isVisuallyHidden(el)) continue;
     if (el.matches('[disabled], [aria-disabled="true"], :disabled') || el.closest('[disabled], [aria-disabled="true"], fieldset:disabled')) continue;
+    if (labelsDisabled(el)) continue;
     const s = A.cs(el);
     if (!s) continue;
     let fg = A.parseColor(s.color);
     const fill = s.webkitTextFillColor;
     if (fill && fill !== s.color && !/currentcolor/i.test(fill)) fg = A.parseColor(fill);
     if (fg.a === 0) continue;
-    // apply opacity of the element and ancestors up to the first opaque background
-    let op = 1;
-    let p = el;
-    while (p) {
-      const o = parseFloat(A.cs(p).opacity);
-      if (!Number.isNaN(o)) op *= o;
-      p = p.parentElement;
-    }
-    if (op < 1) fg = { ...fg, a: fg.a * op };
-    const { color: bg, uncertain } = backgroundBehind(el);
+    const chain = paintChain(el);
+    const { color: bg, uncertain } = flatten(chain, null);
     checked++;
     if (uncertain) {
       if (uncertainList.length < 15) uncertainList.push({ selector: A.selector(el), text: A.text(el).slice(0, 60) });
       continue;
     }
-    const fgFlat = fg.a < 1 ? A.blend(fg, bg) : fg;
+    const fgFlat = flatten(chain, fg).color;
     const ratio = A.contrast(fgFlat, bg);
     const size = parseFloat(s.fontSize) || 16;
     const weight = parseInt(s.fontWeight, 10) || (s.fontWeight === 'bold' ? 700 : 400);
@@ -86,11 +143,23 @@ window.__a11y508.register(function sensoryContrast(A) {
     const need = large ? 3 : 4.5;
     if (ratio + 0.005 < need) {
       count++;
-      A.add({
-        test: '13.C', impact: ratio < need - 1.5 ? 'serious' : 'moderate', el,
-        message: `Text contrast ${ratio.toFixed(2)}:1 is below ${need}:1 (${Math.round(size)}px${weight >= 700 ? ' bold' : ''}, ${A.hex(fgFlat)} on ${A.hex(bg)}).`,
-        details: { ratio: +ratio.toFixed(2), required: need, foreground: A.hex(fgFlat), background: A.hex(bg), fontSize: size, fontWeight: weight, text: A.text(el).slice(0, 80) },
-      });
+      const details = { ratio: +ratio.toFixed(2), required: need, foreground: A.hex(fgFlat), background: A.hex(bg), fontSize: size, fontWeight: weight, text: A.text(el).slice(0, 80) };
+      const measured = `${ratio.toFixed(2)}:1, ${A.hex(fgFlat)} on ${A.hex(bg)}`;
+      const pseudo = pseudoBackground(el);
+      const own = ownText(el);
+      if (pseudo) {
+        A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Text sits over an absolutely positioned ${pseudo.pseudo} background covering ${pseudo.percent}% of the element, so its contrast could not be measured (computed ${measured} without it). Check it visually.`, details });
+      } else if (ratio < 1.005) {
+        A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Text and background resolve to the same color (1:1, ${A.hex(fgFlat)}). This is usually hidden text or a background the check cannot see; check it visually.`, details });
+      } else if (Array.from(own).length === 1) {
+        A.add({ test: '13.C', level: 'review', impact: 'moderate', el, message: `Single-character text "${own}" has contrast ${measured}, below ${need}:1. Single characters are often icons; confirm whether it conveys information and check it visually.`, details });
+      } else {
+        A.add({
+          test: '13.C', impact: ratio < need - 1.5 ? 'serious' : 'moderate', el,
+          message: `Text contrast ${ratio.toFixed(2)}:1 is below ${need}:1 (${Math.round(size)}px${weight >= 700 ? ' bold' : ''}, ${A.hex(fgFlat)} on ${A.hex(bg)}).`,
+          details,
+        });
+      }
     }
   }
   if (uncertainList.length) {

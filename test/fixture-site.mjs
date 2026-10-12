@@ -24,7 +24,29 @@ export const COOKIE = 'fixture-cookie-456';
 export const SESSION_COOKIE = 'fixture_session';
 export const SESSION_VALUE = 'fixture-session-789';
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
-const TYPES = { '.html': 'text/html; charset=utf-8', '.png': 'image/png', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.png': 'image/png', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.wav': 'audio/wav' };
+
+// A valid WAV of silence: RIFF header plus 8 kHz, 8-bit mono samples (128 is silence).
+// /media/<name>-<n>s.wav is n seconds long, so no binary needs to be committed.
+export function silentWav(seconds) {
+  const rate = 8000;
+  const samples = Math.round(rate * seconds);
+  const buf = Buffer.alloc(44 + samples, 128);
+  buf.write('RIFF', 0, 'ascii');
+  buf.writeUInt32LE(36 + samples, 4);
+  buf.write('WAVE', 8, 'ascii');
+  buf.write('fmt ', 12, 'ascii');
+  buf.writeUInt32LE(16, 16); // fmt chunk size
+  buf.writeUInt16LE(1, 20); // PCM
+  buf.writeUInt16LE(1, 22); // mono
+  buf.writeUInt32LE(rate, 24);
+  buf.writeUInt32LE(rate, 28); // byte rate
+  buf.writeUInt16LE(1, 32); // block align
+  buf.writeUInt16LE(8, 34); // bits per sample
+  buf.write('data', 36, 'ascii');
+  buf.writeUInt32LE(samples, 40);
+  return buf;
+}
 
 const LOGIN_PAGE = (value) => `<!doctype html>
 <html lang="en">
@@ -101,6 +123,12 @@ export async function startFixtureSite({ port = 0, host = '127.0.0.1', token = T
     if (path === '/report.pdf') {
       res.writeHead(200, { 'content-type': 'application/pdf' });
       return res.end('%PDF-1.4 fixture');
+    }
+    const wav = /^\/media\/[\w-]+-(\d+)s\.wav$/.exec(path);
+    if (wav) {
+      const body = silentWav(Number(wav[1]));
+      res.writeHead(200, { 'content-type': TYPES['.wav'], 'content-length': body.length });
+      return res.end(body);
     }
     if (path.startsWith('/media/')) {
       res.writeHead(200, { 'content-type': TYPES[ext] || 'application/octet-stream' });

@@ -6,6 +6,17 @@ window.__a11y508.register(function mediaDynamic(A) {
     return scope && re.test(A.text(scope));
   };
 
+  // Seconds of audio the element will play: from a #t=start,end media fragment, or from the
+  // duration once metadata has loaded. null when it cannot be known.
+  const playable = (m) => {
+    const src = m.currentSrc || m.getAttribute('src') || (m.querySelector('source') || { getAttribute: () => '' }).getAttribute('src') || '';
+    const frag = /#.*\bt=(?:npt:)?([\d.]*)(?:,([\d.]+))?/.exec(src);
+    const start = frag && frag[1] ? parseFloat(frag[1]) : 0;
+    if (frag && frag[2]) return Math.max(0, parseFloat(frag[2]) - start);
+    if (Number.isFinite(m.duration) && m.duration > 0) return Math.max(0, m.duration - start);
+    return null;
+  };
+
   for (const m of document.querySelectorAll('audio, video')) {
     const isVideo = m.localName === 'video';
     const autoplay = m.hasAttribute('autoplay') || m.autoplay;
@@ -15,7 +26,9 @@ window.__a11y508.register(function mediaDynamic(A) {
     const src = (m.currentSrc || m.getAttribute('src') || (m.querySelector('source') || {}).src || '').slice(0, 200);
 
     if (autoplay && !muted) {
-      if (!controls) A.add({ test: '2.A', impact: 'critical', el: m, message: `${isVideo ? 'Video' : 'Audio'} plays automatically with sound and has no controls to pause it or change the volume.`, details: { src } });
+      const seconds = playable(m);
+      if (!controls && !loop && seconds !== null && seconds <= 3) A.add({ test: '2.A', level: 'review', impact: 'moderate', el: m, message: `${isVideo ? 'Video' : 'Audio'} plays automatically with sound and has no controls, but lasts ${seconds.toFixed(1)} s (3 seconds or less). Confirm it stops by itself within 3 seconds.`, details: { src, seconds: +seconds.toFixed(2) } });
+      else if (!controls) A.add({ test: '2.A', impact: 'critical', el: m, message: `${isVideo ? 'Video' : 'Audio'} plays automatically with sound and has no controls to pause it or change the volume.`, details: { src } });
       else A.add({ test: '2.A', level: 'review', impact: 'serious', el: m, message: `${isVideo ? 'Video' : 'Audio'} plays automatically with sound. Confirm it lasts under 3 seconds or can be paused/muted from the start.`, details: { src } });
     }
     if (isVideo && autoplay && muted) {

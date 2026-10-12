@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Custom checkbox focus - a11y-508 test site</title>
+<!--
+  Plan item 1 (4.D). Each custom control hides the native input (sr-only) and draws its own box.
+  The "styled" ones show focus on the box next to the input or on the label's ::before, so the
+  Tab pass must see that and report nothing. The "bare" ones show no focus anywhere and must be
+  reported as 4.D, naming the label as the element.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  nav a:focus { outline: 3px solid #f90; }
+  main { padding: 20px; max-width: 800px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .row { display: block; margin: 12px 0; position: relative; }
+  .box { display: inline-block; width: 16px; height: 16px; border: 2px solid #333; vertical-align: middle; margin-right: 8px; }
+  .round { border-radius: 50%; }
+  input:focus-visible + .box { outline: 3px solid #f90; outline-offset: 2px; }
+  /* USWDS-style: the input comes first and the label draws the box with ::before */
+  .uswds-label::before { content: ""; display: inline-block; width: 16px; height: 16px; border: 2px solid #333; margin-right: 8px; vertical-align: middle; }
+  input:focus-visible + .uswds-label::before { box-shadow: 0 0 0 3px #f90; }
+  input:focus { outline: none; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Custom checkbox, radio and switch focus</h1>
+  <p>The styled controls show focus on the box; the bare controls show nothing at all.</p>
+
+  <label class="row" id="cb-styled-label"><input type="checkbox" class="sr-only" id="cb-styled"><span class="box"></span>Agree to the terms</label>
+  <input type="checkbox" class="sr-only" id="cb-uswds"><label for="cb-uswds" class="row uswds-label" id="cb-uswds-label">Send me updates</label>
+  <label class="row" id="rd-styled-label"><input type="radio" name="contact-styled" class="sr-only" id="rd-styled"><span class="box round"></span>Contact me by email</label>
+  <label class="row" id="sw-styled-label"><input type="checkbox" role="switch" class="sr-only" id="sw-styled"><span class="box"></span>Dark mode</label>
+
+  <label class="row bare" id="cb-bare-label"><input type="checkbox" class="sr-only bare-input" id="cb-bare"><span class="bare-box"></span>Remember this device</label>
+  <label class="row bare" id="rd-bare-label"><input type="radio" name="contact-bare" class="sr-only bare-input" id="rd-bare"><span class="bare-box"></span>Contact me by phone</label>
+  <label class="row bare" id="sw-bare-label"><input type="checkbox" role="switch" class="sr-only bare-input" id="sw-bare"><span class="bare-box"></span>Notifications</label>
+</main>
+</body>
+</html>

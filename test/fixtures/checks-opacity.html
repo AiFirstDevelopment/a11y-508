@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Translucent cards - a11y-508 test site</title>
+<!--
+  Plan item 2 (13.C). A card at opacity .9 with a #222 background on a white page.
+  Chrome paints the card as one layer: text over #222 at full alpha, then the whole card at 90%.
+    background: 0.9 * 0x22 + 0.1 * 255 = 56.1  (#383838)
+    #aaa text:  0.9 * 0xaa + 0.1 * 255 = 178.5 (#b3b3b3)  ratio 5.55:1 -> passes 4.5:1
+    #777 text:  0.9 * 0x77 + 0.1 * 255 = 132.6 (#858585)  ratio 3.16:1 -> fails 4.5:1
+  Applying the opacity twice (to the background and again to the text) gives 4.40:1 and 2.39:1.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  .card { opacity: .9; background: #222; padding: 8px 16px; margin: 16px 0; }
+  .card p { font-size: 16px; font-weight: 400; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Translucent cards</h1>
+  <div class="card"><p id="op-light" style="color:#aaa">Light grey text on a translucent dark card</p></div>
+  <div class="card"><p id="op-mid" style="color:#777">Mid grey text on a translucent dark card</p></div>
+</main>
+</body>
+</html>
