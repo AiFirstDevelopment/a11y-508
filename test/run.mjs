@@ -855,6 +855,7 @@ check('AC8 2.4.11: a partly covered focused link stays a 4.D review with the pro
 
 const B_REFLOW = '/checks-beyond-reflow.html';
 check('AC9 1.4.10: a 600 px wide block needs horizontal scrolling at 320 px', () => onB(B_REFLOW, '1.4.10', '#rf-wide', 'violation', /^At 320 CSS px wide \(400% zoom\), this element reaches \d+px \(it is 600px wide\)/));
+check('fix round 1.4.10: a 600 px block cut off by an overflow:hidden wrapper is reported (its content is lost)', () => onB(B_REFLOW, '1.4.10', '#rf-clipped', 'violation', /^At 320 CSS px wide/));
 check('AC9 1.4.10: a wide table and a pre are not reported', () => noneB(B_REFLOW, '1.4.10', ['#rf-table', '#rf-pre']));
 check('AC9 1.4.10: the viewport is restored after the reflow pass', () => {
   assert.equal(bpages[B_REFLOW].passes.reflow.restored, true, JSON.stringify(bpages[B_REFLOW].passes.reflow));

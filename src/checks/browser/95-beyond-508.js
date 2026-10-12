@@ -180,13 +180,20 @@
     }
     return null;
   };
+  // Names are computed once per element: a page can have hundreds of targets.
+  const names = new Map();
+  const nameOf = (el) => {
+    if (!names.has(el)) names.set(el, A.accName(el).name.trim().toLowerCase());
+    return names.get(el);
+  };
   const sameTarget = (a, b) => {
     if (a.localName === 'a' && b.localName === 'a' && a.href && a.href === b.href) return true;
-    const na = A.accName(a).name.trim().toLowerCase();
-    return !!na && na === A.accName(b).name.trim().toLowerCase();
+    const na = nameOf(a);
+    return !!na && na === nameOf(b);
   };
   // Reports the undersized targets among els (all of the page's targets when els is omitted).
   const targetSize = (els) => {
+    names.clear();
     const all = targetList();
     const pick = els ? els.map((el) => {
       const r = el.getBoundingClientRect();
@@ -362,7 +369,8 @@
       const p = t.parentElement;
       if (!p || !t.nodeValue.trim() || /^(script|style|noscript|template)$/.test(p.localName)) continue;
       if (!A.isVisible(p) || A.isVisuallyHidden(p) || A.isHiddenFromAT(p)) continue;
-      if (p.closest('a[href^="#"]')) continue; // skip links sit before the landmarks by design
+      const skip = p.closest('a[href^="#"]');
+      if (skip && /skip|jump to/i.test(A.text(skip))) continue; // skip links sit before the landmarks by design
       if (inLandmark(p)) continue;
       let top = p;
       while (top.parentElement && top.parentElement !== document.body) top = top.parentElement;
@@ -479,8 +487,9 @@
   };
 
   // Reflow at 320 CSS px: elements that reach past the viewport's right edge, so the page scrolls
-  // sideways. Content that needs two dimensions (tables, images, maps, video, canvas, pre, code,
-  // iframes) is exempt, and so is anything inside a container that scrolls or clips on its own.
+  // sideways, or reach past the edge of an ancestor that clips them (content lost). Content that
+  // needs two dimensions (tables, images, maps, video, canvas, pre, code, iframes) is exempt, and so
+  // is anything inside a container that scrolls on its own.
   const TWO_D = 'table, img, picture, svg, video, canvas, map, object, embed, iframe, pre, code, math, [role="img"], [role="grid"], [role="table"], [role="treegrid"], [role="application"]';
   A.reflowIssues = () => {
     const vw = document.documentElement.clientWidth || window.innerWidth;
@@ -497,7 +506,7 @@
       let scrolls = false;
       for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
         const s = A.cs(n);
-        if (s && /auto|scroll|hidden|clip/.test(s.overflowX)) {
+        if (s && /auto|scroll/.test(s.overflowX)) {
           scrolls = true;
           break;
         }
