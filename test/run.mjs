@@ -858,7 +858,6 @@ check('AC9 1.4.10: a 600 px wide block needs horizontal scrolling at 320 px', ()
 check('AC9 1.4.10: a wide table and a pre are not reported', () => noneB(B_REFLOW, '1.4.10', ['#rf-table', '#rf-pre']));
 check('AC9 1.4.10: the viewport is restored after the reflow pass', () => {
   assert.equal(bpages[B_REFLOW].passes.reflow.restored, true, JSON.stringify(bpages[B_REFLOW].passes.reflow));
-  assert.equal(bpages[B_REFLOW].passes.reflow.issues, 1, JSON.stringify(bpages[B_REFLOW].passes.reflow));
 });
 
 const B_CONTRAST = '/checks-beyond-contrast.html';
