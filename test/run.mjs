@@ -64,6 +64,11 @@ const tsOk = await runCli([base + 'app.html', '--troubleshoot', '--json', '--qui
 const tsBounced = await runCli([base + 'app.html', '--troubleshoot', '--json', '--quiet', '--no-token-storage', '--state', stateFile], { TOKEN });
 const thin = await runCli([base + 'submit', '--json', '--quiet', '--no-interact', '--no-zoom', '--no-screenshots', '--out', join(here, '.report-thin')], { TOKEN });
 rmSync(join(here, '.report-thin'), { recursive: true, force: true });
+// A crawl that starts on a page whose modal ignores Escape: two pages, nothing else incomplete.
+const modalOut = join(here, '.report-modal');
+const stuck = await runCli([base + 'checks-modal-stuck.html', '--out', modalOut, '--fail-on', 'none', '--no-follow-clicks', '--no-zoom', '--no-screenshots'], { TOKEN });
+const stuckReport = existsSync(join(modalOut, 'report.json')) ? JSON.parse(readFileSync(join(modalOut, 'report.json'), 'utf8')) : null;
+rmSync(modalOut, { recursive: true, force: true });
 const tsText = await runCli([base + 'app.html', '--troubleshoot', '--quiet', '--no-token-storage'], { TOKEN });
 site.close();
 external.close();
@@ -380,6 +385,92 @@ check('AC8 5.A: a listbox is not named by its options', () => on(NAMES, '5.A', '
 check('AC8 6.A: a button is still named by its text', () => noneOn(NAMES, '6.A', ['#name-save']));
 check('AC8: a link-styled disclosure without href keeps its text for the disclosure pass', () => on(NAMES, '4.A', '#name-disclosure', 'review', /^"More filters" did not change aria-expanded/));
 check('AC8 7.A: an <object> image with fallback text is named', () => noneOn(NAMES, '7.A', ['#name-object']));
+
+// Checks round 2 (docs/plans/checks-foundations.md). Ratios are computed by hand in each fixture's comment.
+const near = (v, want, what) => assert.ok(typeof v === 'number' && Math.abs(v - want) <= 0.05, `${what}: ${v}, expected ${want} ± 0.05`);
+check('round 2 fixture pages were crawled without error', () => {
+  for (const p of ['contrast-lines', 'contrast-scroll', 'contrast-images', 'contrast-shadow', 'contrast-forms', 'link-color', 'label-names', 'modal-escape', 'modal-stuck']) assert.equal(pages[`/checks-${p}.html`]?.error, null, `/checks-${p}.html crawled without error`);
+});
+
+const LINES = '/checks-contrast-lines.html';
+check('AC1 13.C: text whose lines sit on different backgrounds is a review item naming the failing line', () => {
+  const f = on(LINES, '13.C', '#ln-mixed', 'review', /^Text contrast differs between its lines: line \d+ of \d+ is [\d.]+:1, #595959 on #222222, below 4\.5:1/);
+  near(f.details.ratio, 2.27, 'failing line');
+  near(f.details.lines.passingRatio, 7.0, 'passing line');
+});
+check('AC1 13.C: text that fails on every line is a violation at the worst ratio', () => near(on(LINES, '13.C', '#ln-fail', 'violation', /below 4\.5:1/).details.ratio, 1.71, 'worst line'));
+check('AC1 13.C: text that passes on every line has no finding', () => noneOn(LINES, '13.C', ['#ln-pass']));
+
+const SCROLL = '/checks-contrast-scroll.html';
+check('AC2 13.C: failing text 3000px down, over a positioned overlay that is not its ancestor, is reported', () => near(on(SCROLL, '13.C', '#scroll-low', 'violation').details.ratio, 2.27, 'ratio'));
+check('AC2: the checks leave every page scrolled where it was', () => {
+  for (const p of [pages[SCROLL], ...report.pages.filter((x) => !x.error && !x.skipped)]) assert.equal(p.passes.static.scrollRestored, true, `${p.url} scrollRestored`);
+});
+
+const IMAGES = '/checks-contrast-images.html';
+check('AC3 13.C: #555 over a background image is a review item with both bound ratios', () => {
+  const f = on(IMAGES, '13.C', '#img-mid', 'review', /^Text over a background image has contrast between/);
+  near(f.details.bounds.white, 7.46, 'if white');
+  near(f.details.bounds.black, 2.62, 'if black');
+});
+check('AC3 13.C: #ccc over a background image fails over any background', () => {
+  const f = on(IMAGES, '13.C', '#img-light', 'violation', /fails 4\.5:1 over any background/);
+  near(f.details.bounds.white, 1.61, 'if white');
+  near(f.details.bounds.black, 1.77, 'if black');
+});
+check('AC3 13.C: #000 over the image has no finding', () => noneOn(IMAGES, '13.C', ['#img-dark']));
+check('AC3 13.C: text passing both bounds but colored between them is a review item', () => {
+  const f = on(IMAGES, '13.C', '#img-between', 'review', /lies between the two/);
+  near(f.details.bounds.white, 4.54, 'if white');
+  near(f.details.bounds.black, 4.62, 'if black');
+});
+check('AC3 13.C: #999 on a light gradient is a review item at the worst stop', () => near(on(IMAGES, '13.C', '#grad-grey', 'review', /gradient's worst point/).details.ratio, 2.61, 'worst stop'));
+check('AC3 13.C: #333 on the gradient has no finding', () => noneOn(IMAGES, '13.C', ['#grad-dark']));
+
+const SHADOW = '/checks-contrast-shadow.html';
+check('AC4 13.C: white text with a halo on a light panel is a review item naming the shadow', () => on(SHADOW, '13.C', '#sh-halo', 'review', /text-shadow: rgb\(0, 0, 0\) 0px 0px 8px/));
+check('AC4 13.C: a stroke-like shadow, or a halo on text that passes, makes no finding', () => noneOn(SHADOW, '13.C', ['#sh-stroke', '#sh-pass-halo']));
+check('AC4 13.C: the same white text with no shadow is a violation', () => near(on(SHADOW, '13.C', '#sh-none', 'violation').details.ratio, 1.16, 'ratio'));
+
+const FORMTEXT = '/checks-contrast-forms.html';
+check('AC5 13.C: light typed text in a field is a violation', () => near(on(FORMTEXT, '13.C', '#f-value', 'violation', /^Text in this field has contrast/).details.ratio, 1.92, 'ratio'));
+check('AC5 13.C: a light placeholder is a violation with the placeholder message', () => near(on(FORMTEXT, '13.C', '#f-ph', 'violation', /^Placeholder text "Type a keyword" has contrast/).details.ratio, 1.92, 'ratio'));
+check('AC5 13.C: a select whose selected option is light is reported', () => near(on(FORMTEXT, '13.C', '#f-select', 'violation', /^Text in this field/).details.ratio, 1.92, 'ratio'));
+check('AC5 13.C: the same controls disabled have no finding', () => noneOn(FORMTEXT, '13.C', ['#f-dis', '#f-ph-dis']));
+
+const LINKCOLOR = '/checks-link-color.html';
+check('AC6 13.A: a link told apart only by color from the text around it in its block is reported', () => on(LINKCOLOR, '13.A', '#lk-plain', 'violation', /link\/text contrast is 1\.5:1 \(below 3:1\)/));
+check('AC6 13.A: an underline, a border-bottom, a background, or a color 3:1 from the text: no finding', () => noneOn(LINKCOLOR, '13.A', ['#lk-under', '#lk-border', '#lk-bg', '#lk-far']));
+check('AC6 13.A: a link with less text around it than its own: no finding', () => noneOn(LINKCOLOR, '13.A', ['#lk-short']));
+
+const LABELS = '/checks-label-names.html';
+const inventory = (path) => (findingsOn(path).find((f) => f.test === '5.B' && f.selector === 'form fields')?.details?.fields || []);
+const labelOf = (path, selector) => inventory(path).find((x) => x.selector === selector)?.label;
+check('AC7 5.B: a label wrapping a select reads its selected option', () => assert.equal(labelOf(LABELS, '#show-rows'), 'Show 10 rows', JSON.stringify(inventory(LABELS))));
+check('AC7 5.B: a label wrapping a text field includes its typed value', () => assert.equal(labelOf(LABELS, '#typed'), 'Search for maps nearby', JSON.stringify(inventory(LABELS))));
+check('AC8 5.A: a control whose only label is hidden for everyone is a review item', () => {
+  on(LABELS, '5.A', '#hid-none', 'review', /only label \("Email address"\) is hidden/);
+  on(LABELS, '5.A', '#hid-vis', 'review', /only label \("Postal code"\) is hidden/);
+});
+check('AC8 5.A: an sr-only label counts; a hidden label beside an aria-label makes no finding', () => noneOn(LABELS, '5.A', ['#sr-label', '#hid-aria']));
+
+const MODAL_OK = '/checks-modal-escape.html';
+const MODAL_STUCK = '/checks-modal-stuck.html';
+const STUCK_WARNING = "A modal dialog (Consent required) was open when /checks-modal-stuck.html loaded and did not close with Escape; the page behind it was not audited. Dismiss it with --cookie or a saved session, or audit the dialog's close control.";
+check('AC9: a modal on load that closes with Escape: dismissed, and the page behind it audited with the state label', () => {
+  assert.deepEqual(pages[MODAL_OK].modalOnLoad, { selector: '#consent-ok', name: 'Cookie preferences', dismissed: true });
+  assert.equal(on(MODAL_OK, '7.A', '#behind-ok', 'violation', /no alt attribute/).state, 'after closing the modal shown on load');
+  assert.ok(!report.summary.coverage.warnings.some((w) => /Cookie preferences/.test(w)), JSON.stringify(report.summary.coverage.warnings));
+});
+check('AC9: a modal on load that ignores Escape: not dismissed, the page behind it unaudited, and a coverage warning', () => {
+  assert.deepEqual(pages[MODAL_STUCK].modalOnLoad, { selector: '#consent-stuck', name: 'Consent required', dismissed: false });
+  noneOn(MODAL_STUCK, '7.A', ['#behind-stuck']);
+  assert.ok(report.summary.coverage.warnings.includes(STUCK_WARNING), JSON.stringify(report.summary.coverage.warnings));
+  assert.equal(report.summary.modalsNotDismissed, 1);
+  assert.ok(stuckReport, stuck.stdout + stuck.stderr);
+  assert.deepEqual(stuckReport.summary.coverage.warnings, [STUCK_WARNING]);
+  assert.ok(/^PASS on the 2 page\(s\) audited, but COVERAGE IS INCOMPLETE/m.test(stuck.stdout), stuck.stdout);
+});
 
 {
   const { events, problems } = parseEvents(evRun.stdout);

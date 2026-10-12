@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contrast below the fold - a11y-508 test site</title>
+<!--
+  Plan item 2 (13.C). A paragraph 3000px below the top of the page sits over an absolutely
+  positioned dark overlay that is its sibling, not its ancestor. Measured where it is painted:
+    #595959 on #222: L 0.09990 and 0.01600 -> (0.14990/0.06600) = 2.27, fails 4.5:1.
+  Measured against its DOM ancestors (the white page) it would pass at 7.00:1.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .spacer { height: 3000px; }
+  .low { position: relative; width: 600px; padding: 12px; }
+  .overlay { position: absolute; inset: 0; background: #222; z-index: 0; }
+  .low p { position: relative; z-index: 1; margin: 0; font-size: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Contrast below the fold</h1>
+  <div class="spacer"></div>
+  <div class="low"><div class="overlay"></div><p id="scroll-low" style="color:#595959">Grey text far down the page, over a dark overlay</p></div>
+</main>
+</body>
+</html>

@@ -119,7 +119,13 @@ export interface CrawlForm {
 }
 
 export async function fillRun(page: Page, f: CrawlForm): Promise<void> {
-  await page.getByLabel('Start URL').fill(f.url);
+  // The Run screen can still be re-rendering the previous run's settings when the field is
+  // filled, which left both URLs in it once ("…about.html…tables.html"): fill until it holds this one.
+  const url = page.getByLabel('Start URL');
+  await expect(async () => {
+    await url.fill(f.url);
+    await expect(url).toHaveValue(f.url, { timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
   if (f.token !== undefined) {
     await page.getByLabel('A token').check();
     await page.getByLabel(/^Token \(sent as/).fill(f.token);

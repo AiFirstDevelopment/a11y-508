@@ -64,6 +64,7 @@ caption { text-align: left; font-weight: 600; padding: 4px 0; }
 th, td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
 thead th { background: #f0f0f0; }
 td.num { text-align: right; }
+.modal-note { display: block; font-weight: normal; font-size: 0.9rem; color: var(--muted); }
 .progress-block { margin: 12px 0; }
 .progress-block label { display: block; font-weight: 600; margin-bottom: 4px; }
 progress { width: 100%; max-width: 640px; height: 18px; }

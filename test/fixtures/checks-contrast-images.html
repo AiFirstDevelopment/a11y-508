@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contrast over images - a11y-508 test site</title>
+<!--
+  Plan item 3 (13.C). A background image of unknown color, under a white veil at 60% alpha.
+  The image is bounded by white and by black: the veil over white is #fff, over black
+  0.6 * 255 = 153 = #999. L(#999) = 0.31855.
+    #img-mid   #555 (L 0.09084): over #fff 1.05/0.14084 = 7.46; over #999 0.36855/0.14084 = 2.62
+               -> mixed: review with both bounds.
+    #img-light #ccc (L 0.60383): over #fff 1.05/0.65383 = 1.61; over #999 0.65383/0.36855 = 1.77
+               -> fails over any background: violation.
+    #img-dark  #000: over #fff 21.00; over #999 0.36855/0.05 = 7.37 -> no finding.
+  With no veil, the bounds are #fff and #000, and a text color can pass both while an image of its own
+  color would hide it:
+    #img-between #767676 (L 0.18116) on a bare image: over #fff 1.05/0.23116 = 4.54; over #000 0.23116/0.05 = 4.62
+               -> both pass, but its luminance lies between the bounds: review.
+  A gradient linear-gradient(#fff, #f5f5f5): stops #fff and #f5f5f5 (L 0.91310), midpoint #fafafa (L 0.95597).
+    #grad-grey #999: on #fff 2.85, on #fafafa 2.73, on #f5f5f5 0.96310/0.36855 = 2.61 -> review at the worst stop, 2.61.
+    #grad-dark #333 (L 0.03310): worst on #f5f5f5 0.96310/0.08310 = 11.59 -> no finding.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus, select:focus { outline: 3px solid #f90; }
+  .photo { background: #fff url(/img/photo.png) center / cover; margin: 16px 0; }
+  .photo.bare { padding: 12px; }
+  .veil { background: rgba(255, 255, 255, 0.6); padding: 12px; }
+  .grad { background: linear-gradient(#fff, #f5f5f5); padding: 12px; margin: 16px 0; }
+  .photo p, .grad p { font-size: 16px; margin: 4px 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Contrast over images</h1>
+  <div class="photo"><div class="veil">
+    <p id="img-mid" style="color:#555">Mid grey text over a photo</p>
+    <p id="img-light" style="color:#ccc">Light grey text over a photo</p>
+    <p id="img-dark" style="color:#000">Black text over a photo</p>
+  </div></div>
+  <div class="photo bare">
+    <p id="img-between" style="color:#767676">Mid grey text straight on a photo</p>
+  </div>
+  <div class="grad">
+    <p id="grad-grey" style="color:#999">Grey text on a subtle gradient</p>
+    <p id="grad-dark" style="color:#333">Dark text on a subtle gradient</p>
+  </div>
+</main>
+</body>
+</html>
