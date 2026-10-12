@@ -43,6 +43,16 @@ check('every role\'s superclass chain ends at roletype, and every superclass is 
     assert.ok(ancestry(name).includes('roletype'), `${name}: chain ${ancestry(name).join(' > ')} reaches roletype`);
   }
 });
+check('roles with more than one superclass keep each of them (WAI-ARIA 1.2)', () => {
+  const multi = {
+    alertdialog: ['alert', 'dialog'], columnheader: ['cell', 'gridcell', 'sectionhead'], grid: ['composite', 'table'],
+    gridcell: ['cell', 'widget'], progressbar: ['range', 'widget'], row: ['group', 'widget'], rowheader: ['cell', 'gridcell', 'sectionhead'],
+    scrollbar: ['range', 'widget'], select: ['composite', 'group'], separator: ['structure', 'widget'], slider: ['input', 'range'],
+    spinbutton: ['composite', 'input', 'range'], tab: ['sectionhead', 'widget'], treegrid: ['grid', 'tree'], treeitem: ['listitem', 'option'],
+  };
+  for (const [name, sup] of Object.entries(multi)) same(role(name).superclass, sup, `${name} superclasses`);
+  assert.deepEqual(Object.keys(roles).filter((n) => roles[n].superclass.length > 1).sort(), Object.keys(multi).sort());
+});
 check('every attribute a role names exists in attrs; every owned and context role exists in roles', () => {
   for (const [name, r] of Object.entries(roles)) {
     for (const a of [...r.requiredAttrs, ...r.supportedAttrs, ...r.prohibitedAttrs]) assert.ok(attrs[a], `${name}: ${a} is an attribute`);

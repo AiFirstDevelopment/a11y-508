@@ -44,7 +44,9 @@ window.__a11y508.register(function ariaKeyboard(A) {
     const lower = v.toLowerCase();
     if (def.type === 'boolean' || def.type === 'tristate' || def.type === 'token') {
       const values = def.values || ['true', 'false'];
-      return values.includes(lower) ? null : `${name}="${v}" is not a valid value, so assistive technology ignores it. Use ${orList(values)}.`;
+      // For aria-current and aria-invalid, WAI-ARIA treats an unknown value as true.
+      const effect = name === 'aria-current' || name === 'aria-invalid' ? 'assistive technology treats it as "true"' : 'assistive technology ignores it';
+      return values.includes(lower) ? null : `${name}="${v}" is not a valid value, so ${effect}. Use ${orList(values)}.`;
     }
     if (def.type === 'tokenlist') {
       const bad = tokens(lower).filter((t) => !def.values.includes(t));

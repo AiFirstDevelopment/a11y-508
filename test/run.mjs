@@ -596,9 +596,10 @@ check('AC12: a button labelled by a label that wraps a select is named with the 
 check('AC13 13.C: text colored between the image bounds is one review item for the page, listing each element', () => {
   const items = findingsOn(IMAGES).filter((f) => f.test === '13.C' && /color lies between the two/.test(f.message));
   assert.equal(items.length, 1, listed(items));
-  assert.deepEqual(items[0].details.elements.map((e) => e.selector), ['#img-between', '#img-between-2']);
-  assert.match(items[0].message, /^2 text element\(s\) over a background image .*: #img-between, #img-between-2\.$/);
-  noneOn(IMAGES, '13.C', ['#img-between', '#img-between-2']);
+  assert.deepEqual(items[0].details.elements.map((e) => e.selector), ['#img-between', '#img-between-2', '#img-between-3']);
+  assert.match(items[0].message, /^3 text element\(s\) over a background image .*: #img-between, #img-between-2, #img-between-3\.$/);
+  assert.equal(items[0].details.elements[2].state, 'after activating "More photos" (#more-photos)');
+  noneOn(IMAGES, '13.C', ['#img-between', '#img-between-2', '#img-between-3']);
 });
 check('AC13 13.C: text that fails over any background is still a violation on its own element', () => on(IMAGES, '13.C', '#img-light', 'violation', /fails 4\.5:1 over any background/));
 check('AC14: after a reload the load-time modal is dismissed again, so the disclosure pass sees the page', () => {

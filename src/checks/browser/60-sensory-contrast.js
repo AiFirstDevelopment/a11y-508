@@ -429,6 +429,7 @@ window.__a11y508.register(function sensoryContrast(A) {
     const shown = between.slice(0, 20).map((b) => b.selector).join(', ');
     const more = between.length > 20 ? ` and ${between.length - 20} more` : '';
     A.add({
+      // The Node side (src/audit.mjs) merges later runs' elements into this one item by its selector.
       test: '13.C', level: 'review', impact: 'moderate', selector: 'text over images',
       message: `${between.length} text element(s) over a background image pass contrast whether the image is white or black, but their color lies between the two, so parts of an image close to that color would hide them. Check each visually: ${shown}${more}.`,
       details: { elements: between.slice(0, 20), total: between.length },

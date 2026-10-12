@@ -5,12 +5,32 @@ import { join } from 'node:path';
 import { testInfo } from './checks/catalog.mjs';
 import { listenerProbe, keyboardPass, disclosurePass, zoomPass, routeDiscoveryPass, modalOnLoadPass, redismissModal } from './passes.mjs';
 
+// The selector of the page-level 13.C item set by 60-sensory-contrast.js.
+const BETWEEN_IMAGES = 'text over images';
+
 export async function auditPage(page, url, ctx) {
   const { opts } = ctx;
   const t0 = Date.now();
   const result = { url, finalUrl: url, status: null, title: '', error: null, skipped: null, timedOut: false, findings: [], info: null, passes: {}, errors: [] };
   const fingerprints = new Set();
+  // 13.C lists text colored between an image's bounds in one review item per page. A later run of
+  // the checks (behind a load-time modal, after a disclosure) merges its new elements into that item
+  // instead of adding a second one; each merged element keeps the state it was found in.
+  const mergeBetween = (f) => {
+    const prev = result.findings.find((x) => x.test === f.test && x.selector === BETWEEN_IMAGES);
+    if (!prev) return false;
+    const known = new Set(prev.details.elements.map((e) => e.selector));
+    const fresh = f.details.elements.filter((e) => !known.has(e.selector)).map((e) => (f.state ? { ...e, state: f.state } : e));
+    if (!fresh.length) return true;
+    prev.details.elements.push(...fresh);
+    prev.details.total += fresh.length;
+    const total = prev.details.total;
+    const shown = prev.details.elements.slice(0, 20).map((e) => e.selector).join(', ');
+    prev.message = prev.message.replace(/^\d+ /, `${total} `).replace(/Check each visually: .*$/, `Check each visually: ${shown}${total > 20 ? ` and ${total - 20} more` : ''}.`);
+    return true;
+  };
   const add = (f) => {
+    if (f.test === '13.C' && f.selector === BETWEEN_IMAGES && f.details && f.details.elements && mergeBetween(f)) return;
     const fp = `${f.test}|${f.selector}|${f.message}`;
     if (fingerprints.has(fp)) return;
     fingerprints.add(fp);

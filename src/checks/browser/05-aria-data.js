@@ -258,7 +258,8 @@
 
   // ---- HTML-AAM implicit roles ----
   const hasName = (el) => ['aria-label', 'aria-labelledby', 'title'].some((a) => (el.getAttribute(a) || '').trim());
-  const SECTIONING = 'article, aside, main, nav, section';
+  // Sectioning content and the roles HTML-AAM scopes header and footer to.
+  const SECTIONING = 'article, aside, main, nav, section, [role="article"], [role="complementary"], [role="main"], [role="navigation"], [role="region"]';
   const INPUT_ROLES = { button: 'button', submit: 'button', reset: 'button', image: 'button', checkbox: 'checkbox', radio: 'radio', range: 'slider', number: 'spinbutton', search: 'searchbox' };
   const TAG_ROLES = {
     article: 'article', aside: 'complementary', blockquote: 'blockquote', button: 'button', caption: 'caption', code: 'code',
