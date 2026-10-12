@@ -391,7 +391,7 @@ No automated tool reaches full Section 508 conformance, and this one does not cl
 npm test
 ```
 
-The test serves a fixture site that requires a bearer token on every request, runs the crawler against it, and asserts on about sixty expected findings, including that the token is never sent to another origin. Set `A11Y_508_DEBUG=1` to trace navigation and request interception.
+The test serves a fixture site that requires a bearer token on every request, runs the crawler against it, and asserts on about sixty expected findings, including that the token is never sent to another origin. Set `A11Y_508_DEBUG=1` to trace navigation and request interception, or `A11Y_508_DEBUG=2` to also trace every DevTools Protocol call and its reply, which names a call that never returns when a crawl hangs.
 
 `npm test` also runs the remedies table (`test/remedies.mjs`) and the dashboard server's own tests (`ui/server/test/`), all with no install. The fixture site is `test/fixture-site.mjs`; `node test/fixture-site.mjs --port 4100` serves it on its own (token `fixture-token-123`), and `--auto-login` adds a stand-in sign-in portal.
 

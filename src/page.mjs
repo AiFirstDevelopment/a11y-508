@@ -271,7 +271,12 @@ export class Page {
   async press(name, modifiers = 0) {
     const k = KEYS[name];
     if (!k) throw new Error(`Unknown key ${name}`);
-    const base = { key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, nativeVirtualKeyCode: k.keyCode, modifiers };
+    // No nativeVirtualKeyCode: with one, headless Chrome on macOS wraps the
+    // event in a native NSEvent and runs it through the window's key-equivalent
+    // path, where menu validation stalls the browser process for good (or
+    // overflows its stack) after a few presses. The DOM event and the default
+    // action need only key, code and windowsVirtualKeyCode.
+    const base = { key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, modifiers };
     await this.s.send('Input.dispatchKeyEvent', { type: k.text ? 'keyDown' : 'rawKeyDown', ...base, ...(k.text ? { text: k.text, unmodifiedText: k.text } : {}) });
     await this.s.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
   }
