@@ -89,14 +89,42 @@
     return o;
   };
 
+  // Custom checkboxes, radios and switches: the native input is visually hidden and the visible
+  // box is its label or the element after it, often drawn with ::before/::after. Those are where
+  // the focus indicator shows, so they are watched too (own styles and pseudo-elements only:
+  // a label's first child or parent may be the hidden input or a container that says nothing).
+  const isCustomToggle = (el) => el.localName === 'input' &&
+    (/^(checkbox|radio)$/i.test(el.type) || (el.getAttribute('role') || '').toLowerCase().split(/\s+/).includes('switch')) &&
+    !!(el.labels && el.labels.length) && A.isVisuallyHidden(el);
+  const toggleProxies = (el) => {
+    const out = [];
+    for (const l of el.labels || []) if (!out.includes(l)) out.push(l);
+    const next = el.nextElementSibling;
+    if (next && !out.includes(next)) out.push(next);
+    return out;
+  };
+  const proxySnapshot = (el) => {
+    const o = {};
+    toggleProxies(el).forEach((p, i) => {
+      const s = A.cs(p);
+      for (const prop of FOCUS_PROPS) o[i + ':' + prop] = s.getPropertyValue(prop);
+      for (const pseudo of ['::before', '::after']) {
+        const ps = A.cs(p, pseudo);
+        for (const prop of FOCUS_PROPS) o[i + pseudo + prop] = ps.getPropertyValue(prop);
+      }
+    });
+    return o;
+  };
+
   A.kbPrepare = () => {
-    A.kb = { baseline: new WeakMap(), index: new WeakMap(), count: 0 };
+    A.kb = { baseline: new WeakMap(), proxies: new WeakMap(), index: new WeakMap(), count: 0 };
     const all = document.querySelectorAll('*');
     let i = 0;
     for (const el of all) {
       A.kb.index.set(el, i++);
       if (A.isTabbable(el) && A.isVisible(el)) {
         A.kb.baseline.set(el, snapshot(el));
+        if (isCustomToggle(el)) A.kb.proxies.set(el, proxySnapshot(el));
         A.kb.count++;
       }
     }
@@ -115,6 +143,36 @@
     const s = A.cs(el);
     const visible = A.isVisible(el) && !A.isVisuallyHidden(el) && s.visibility !== 'hidden';
     const inViewport = r.bottom > 0 && r.right > 0 && r.top < window.innerHeight && r.left < window.innerWidth && r.width > 0 && r.height > 0;
+    const pbase = A.kb.proxies.get(el);
+    if (pbase && isCustomToggle(el)) {
+      // Judge the label and the custom box, and name the label as the element.
+      const pnow = proxySnapshot(el);
+      const pdiff = Object.keys(pnow).filter((k) => pnow[k] !== pbase[k]);
+      const label = el.labels[0];
+      const lr = label.getBoundingClientRect();
+      return {
+        isBody: false,
+        href: location.href,
+        key: A.kb.index.get(el) ?? -1,
+        domIndex: A.kb.index.get(el) ?? -1,
+        selector: A.selector(label),
+        html: A.html(label),
+        tag: el.localName,
+        role: A.role(el),
+        name: A.accName(el).name.slice(0, 80),
+        rect: A.rect(label),
+        visible: true,
+        inViewport: lr.bottom > 0 && lr.right > 0 && lr.top < window.innerHeight && lr.left < window.innerWidth && lr.width > 0 && lr.height > 0,
+        covered: false,
+        hadBaseline: true,
+        diff: pdiff,
+        outlineVisible: false,
+        proxied: el.type === 'radio' ? 'radio' : (el.getAttribute('role') || '').toLowerCase().includes('switch') ? 'switch' : 'checkbox',
+        inDialog: !!el.closest('[role="dialog"], [role="alertdialog"], dialog'),
+        inIframe: false,
+        composite: false,
+      };
+    }
     const base = A.kb.baseline.get(el);
     const now = snapshot(el);
     const diff = [];
@@ -142,7 +200,8 @@
       html: A.html(el),
       tag: el.localName,
       role: A.role(el),
-      name: A.accName(el).name.slice(0, 80),
+      // A label for people reading the report, not an accessible name: generic elements keep their text.
+      name: (A.accName(el).name || A.nameFromContent(el, false)).slice(0, 80),
       rect: A.rect(el),
       visible,
       inViewport,

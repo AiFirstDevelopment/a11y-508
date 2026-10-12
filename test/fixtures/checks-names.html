@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Names from content - a11y-508 test site</title>
+<!--
+  Plan item 8 (5.A, 5.C). Only roles that allow it take their name from their content.
+  A dialog, a fieldset and a listbox are named by labelling attributes (or legend), never by
+  the text inside them, so the unnamed ones are reported. A button is still named by its text.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  [role="dialog"] { border: 1px solid #888; padding: 8px 16px; margin: 12px 0; }
+  [role="listbox"] { border: 1px solid #888; padding: 4px; width: 200px; }
+  label { margin-right: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Names from content</h1>
+  <div role="dialog" id="name-dialog"><h2>Settings</h2><p>The dialog has a heading but nothing names it.</p></div>
+  <div role="dialog" id="name-dialog-ok" aria-labelledby="name-dialog-ok-h"><h2 id="name-dialog-ok-h">Preferences</h2><p>This dialog is named by its heading.</p></div>
+  <fieldset id="name-fieldset">
+    <input type="radio" name="size" id="size-small"><label for="size-small">Small</label>
+    <input type="radio" name="size" id="size-large"><label for="size-large">Large</label>
+  </fieldset>
+  <fieldset id="name-fieldset-ok">
+    <legend>Delivery</legend>
+    <input type="radio" name="delivery" id="delivery-mail"><label for="delivery-mail">Mail</label>
+    <input type="radio" name="delivery" id="delivery-pickup"><label for="delivery-pickup">Pickup</label>
+  </fieldset>
+  <div role="listbox" tabindex="0" id="name-listbox">
+    <div role="option" aria-selected="true">Red</div>
+    <div role="option" aria-selected="false">Blue</div>
+  </div>
+  <button type="button" id="name-save">Save</button>
+</main>
+</body>
+</html>

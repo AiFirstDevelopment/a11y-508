@@ -127,6 +127,8 @@ export async function keyboardPass(page, add, opts) {
       add({ test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: `Keyboard focus landed on an element that is not visible (${!s.visible ? 'hidden or zero-size' : 'outside the viewport'}). Focus must be visible; hidden controls should be removed from the tab order or revealed on focus.` });
     } else if (s.covered) {
       add({ test: '4.D', level: 'review', impact: 'moderate', selector: s.selector, html: s.html, rect: s.rect, message: 'Focused element is overlapped by another element (for example a sticky header or overlay). Confirm the focus indicator is actually visible.' });
+    } else if (s.hadBaseline && s.diff.length === 0 && s.proxied) {
+      add({ test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: `No visible change on this label or the custom ${s.proxied} box when its visually hidden ${s.proxied} input receives keyboard focus. Style the label or the box on :focus-visible (for example input:focus-visible + label).` });
     } else if (s.hadBaseline && s.diff.length === 0) {
       add({ test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: 'No visible change when this element receives keyboard focus (no outline, border, background, or other style change). Provide a visible focus indicator.' });
     }

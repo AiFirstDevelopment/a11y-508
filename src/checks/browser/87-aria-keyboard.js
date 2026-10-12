@@ -7,13 +7,16 @@ window.__a11y508.register(function ariaKeyboard(A) {
 
   for (const el of A.allVisible(6000)) {
     const roleAttr = (el.getAttribute('role') || '').trim();
-    const role = roleAttr ? roleAttr.split(/\s+/)[0].toLowerCase() : '';
+    // The first valid token wins; the attribute is wrong only when no token is valid.
+    const role = A.explicitRole(el);
     const tabindex = A.tabindexOf(el);
     const focusable = A.isFocusable(el);
-    const ariaHidden = A.isAriaHidden(el);
+    const ariaHidden = A.isHiddenFromAT(el);
 
     if (roleAttr && !A.VALID_ROLES.has(role)) {
-      A.add({ test: '5.C', impact: 'moderate', el, message: `role="${roleAttr}" is not a valid ARIA role, so the element's role cannot be determined.` });
+      const abstract = roleAttr.toLowerCase().split(/\s+/).find((t) => A.ABSTRACT_ROLES.has(t));
+      if (abstract) A.add({ test: '5.C', impact: 'moderate', el, message: `role="${roleAttr}" uses "${abstract}", an abstract ARIA role that authors must not use; browsers ignore it, so the element's role cannot be determined. Use a concrete role.` });
+      else A.add({ test: '5.C', impact: 'moderate', el, message: `role="${roleAttr}" is not a valid ARIA role, so the element's role cannot be determined.` });
     }
 
     for (const attr of ['aria-controls', 'aria-owns', 'aria-activedescendant', 'aria-flowto', 'aria-details']) {

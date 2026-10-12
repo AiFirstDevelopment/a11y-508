@@ -29,7 +29,7 @@ window.__a11y508.register(function cssContent(A) {
       if (privateUse && !words) {
         // icon font glyph
         const owner = el.closest('a[href], button, [role="button"], [role="link"], label, [aria-label], [role="img"]');
-        if (owner && A.accName(owner).name) continue;
+        if (owner && (owner.localName === 'label' ? A.nameFromContent(owner, false) : A.accName(owner).name)) continue;
         if (A.text(el)) continue;
         const key = (el.className || '').toString().split(/\s+/).sort().join(' ');
         if (seenIcon.has(key)) continue;

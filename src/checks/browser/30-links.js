@@ -16,16 +16,18 @@ window.__a11y508.register(function links(A) {
   const controls = document.querySelectorAll('a[href], [role="link"], button, [role="button"], input[type="submit"], input[type="reset"], input[type="button"], summary, [role="menuitem"], [role="tab"]');
   for (const el of controls) {
     if (!A.isVisible(el)) continue;
-    if (A.isAriaHidden(el)) {
+    if (A.isHiddenFromAT(el)) {
       if (A.isTabbable(el)) A.add({ test: '4.A', impact: 'serious', el, message: 'Focusable control is inside aria-hidden="true", so keyboard users reach an element assistive technology cannot see.' });
       continue;
     }
     const role = A.role(el);
-    const { name } = A.accName(el);
+    const { name, raw } = A.accName(el);
     const isLink = role === 'link';
 
     if (!name) {
-      const hint = el.querySelector('img[alt=""], img[role="presentation"], img[role="none"]') ? ' A decorative image (alt="") is its only content; give the image alt text that describes the destination or action.'
+      const glyph = raw ? Array.from(raw).find((ch) => A.stripGlyphs(ch) === '' && /\S/.test(ch)) : null;
+      const hint = glyph ? ` Its only content is an icon-font glyph ("${raw}", U+${glyph.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}), which assistive technology cannot interpret; add aria-label or visually hidden text.`
+        : el.querySelector('img[alt=""], img[role="presentation"], img[role="none"]') ? ' A decorative image (alt="") is its only content; give the image alt text that describes the destination or action.'
         : el.querySelector('img:not([alt])') ? ' It contains an image without alt text.'
         : el.querySelector('img[aria-hidden="true"], svg[aria-hidden="true"]') ? ' Its only content is hidden from assistive technology with aria-hidden.'
         : el.querySelector('svg, i, span[class*="icon"]') ? ' It appears to be an icon-only control; add aria-label or visually hidden text.' : '';

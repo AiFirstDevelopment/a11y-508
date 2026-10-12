@@ -71,8 +71,15 @@ window.__a11y508.register(function structure(A) {
   }
 
   // Lists (10.D)
+  const renders = (c) => {
+    const s = A.cs(c);
+    return !!s && s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse';
+  };
   for (const list of document.querySelectorAll('ul, ol')) {
-    const bad = Array.from(list.children).filter((c) => !/^(li|script|template)$/.test(c.localName));
+    // An explicit role other than list (tablist, menu, none ...) means it is not a list to assistive technology.
+    const explicit = A.explicitRole(list);
+    if (explicit && explicit !== 'list') continue;
+    const bad = Array.from(list.children).filter((c) => !/^(li|script|template)$/.test(c.localName) && renders(c));
     if (bad.length) A.add({ test: '10.D', impact: 'moderate', el: list, message: `<${list.localName}> has ${bad.length} direct child(ren) that are not <li> (${bad.slice(0, 3).map((c) => c.localName).join(', ')}).` });
   }
   for (const li of document.querySelectorAll('li')) {

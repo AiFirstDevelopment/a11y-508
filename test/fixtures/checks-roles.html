@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Role parsing - a11y-508 test site</title>
+<!--
+  Plan item 5 (5.C). The role is the first valid token; the attribute is wrong only when no
+  token is valid; "image" is the ARIA 1.3 alias of img; an abstract role gets its own message.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus { outline: 3px solid #f90; }
+  .box { display: inline-block; width: 40px; height: 40px; background: #58a; margin: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Role parsing</h1>
+  <div role="toggle button" tabindex="0" aria-pressed="false" id="role-toggle">Bold</div>
+  <div role="image" aria-label="Agency seal" class="box" id="role-image"></div>
+  <div role="foo bar" id="role-foo">Unknown role tokens</div>
+  <div role="widget" id="role-widget">Abstract role</div>
+</main>
+</body>
+</html>

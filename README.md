@@ -319,26 +319,26 @@ Every finding carries a Trusted Tester test ID and the WCAG success criterion. `
 | TT test | Condition | Automation |
 |---|---|---|
 | 1.A–1.E | Conforming alternate version | manual |
-| 2.A | Audio control | autoplay with sound and no controls is a violation; embedded players are escalated |
+| 2.A | Audio control | autoplay with sound and no controls is a violation, unless it lasts 3 seconds or less without `loop` (escalated); embedded players are escalated |
 | 2.B | Moving, blinking, scrolling | `marquee`/`blink` are violations; infinite CSS animations, autoplaying video, carousels are escalated |
 | 2.C | Auto-updating | `meta refresh` reload is a violation |
 | 2.D | Change notification (auto) | manual |
 | 3.A | Flashing | fast infinite animations are escalated |
-| 4.A | Keyboard access | widget roles and click handlers on non-focusable elements (found through DevTools event-listener inspection), `aria-hidden` focusables, custom controls that ignore Enter/Space |
+| 4.A | Keyboard access | widget roles and click handlers on non-focusable elements (found through DevTools event-listener inspection), `aria-hidden` focusables (content that is `inert`, in a disabled fieldset, or outside an open modal dialog is not focusable), custom controls that ignore Enter/Space |
 | 4.B | Keystroke timing | manual |
 | 4.C | Keyboard trap | a real Tab/Shift+Tab pass through every page |
-| 4.D | Focus visible | computed-style comparison of every element before and after it receives keyboard focus, plus off-screen and overlapped focus |
+| 4.D | Focus visible | computed-style comparison of every element before and after it receives keyboard focus, plus off-screen and overlapped focus; for custom checkboxes, radios and switches whose input is visually hidden, the label and the box beside the input are compared instead, and the label is reported |
 | 4.E | On focus | navigation triggered by focus during the Tab pass |
 | 4.F | Focus order | positive `tabindex`, focus order that differs from DOM order (escalated) |
 | 4.G / 4.H | Focus into and out of revealed content | dialogs opened from disclosure buttons are checked for focus move and return |
-| 5.A | Label provided | missing, placeholder-only, title-only, aria-label-only labels |
+| 5.A | Label provided | missing, placeholder-only, title-only, aria-label-only labels; custom widgets (listbox, textbox, combobox ...) are never named by their own content |
 | 5.B | Label descriptive | empty/punctuation labels; label inventory escalated |
-| 5.C | Programmatic associations | broken `for`/ARIA references, duplicate ids, visual-only required marks, missing widget states, unknown roles, unnamed dialogs, ungrouped radios |
+| 5.C | Programmatic associations | broken `for`/ARIA references, duplicate ids, visual-only required marks, missing widget states, role attributes with no valid token, abstract roles, unnamed dialogs, ungrouped radios |
 | 5.D | On input | selects that submit on change (attribute or listener) |
 | 5.E | Change notification (form) | manual |
 | 5.F / 5.G | Error identification and suggestion | `aria-invalid` without a message; every form escalated with instructions |
 | 5.H | Error prevention | legal/financial forms escalated |
-| 6.A | Link and button purpose | no name, generic text with/without context, same text to different targets, URL-as-text |
+| 6.A | Link and button purpose | no name (an icon-font glyph is not a name), generic text with/without context, same text to different targets, URL-as-text |
 | 6.B | Change notification (links) | manual |
 | 7.A | Meaningful image name | missing alt, filename/generic alt, long alt; inventory of every alt text escalated with screenshots; unnamed SVG/icon fonts |
 | 7.B | Decorative image | decorative images that still have a name; large decorative images escalated |
@@ -352,13 +352,13 @@ Every finding carries a Trusted Tester test ID and the WCAG success criterion. `
 | 10.A | Heading purpose | outline escalated per page |
 | 10.B | Visual vs programmatic headings | empty headings; large bold text that is not a heading |
 | 10.C | Heading levels | skipped levels, multiple h1, headings smaller than body text |
-| 10.D | Lists | invalid list structure; bullet/number text that is not a list |
+| 10.D | Lists | invalid list structure (lists given another role, and hidden children, are ignored); bullet/number text that is not a list |
 | 11.A / 11.B | Language | missing or invalid `lang` |
 | 12.A / 12.B | Page title | missing, generic, or duplicated across pages |
 | 12.C / 12.D | Frame and iframe names | missing or generic titles |
 | 13.A | Color alone | inline links distinguished from text only by color |
 | 13.B | Sensory characteristics | instructions that refer to shape, color, or position |
-| 13.C | Contrast | real computed contrast using the actual paint stack behind each text node, alpha and opacity included; text over images escalated |
+| 13.C | Contrast | real computed contrast using the actual paint stack behind each text node, alpha included and opacity applied once per translucent layer; labels of disabled controls exempt; text over images, over positioned `::before`/`::after` backgrounds, at 1:1, or of a single character escalated |
 | 14.A / 14.B / 14.C | Tables | data tables without headers, missing scope, complex tables without `headers`, broken `headers` ids, layout tables with header markup |
 | 15.A | CSS generated content | text and images inserted via `::before`/`::after` |
 | 15.B | CSS positioning | reversed flex, CSS `order`, content positioned far from its DOM position |

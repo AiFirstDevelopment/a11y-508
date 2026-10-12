@@ -102,7 +102,8 @@ window.__a11y508.register(function images(A) {
     if (A.text(el) && !/material/.test(cls)) continue;
     if (el.getAttribute('aria-label') || el.getAttribute('role') === 'img') continue;
     const parent = el.parentElement && el.parentElement.closest('a[href], button, [role="button"], [role="link"], label');
-    if (parent && A.accName(parent).name) continue;
+    // A <label> has no role of its own; what matters is whether it holds text.
+    if (parent && (parent.localName === 'label' ? A.nameFromContent(parent, false) : A.accName(parent).name)) continue;
     iconCount++;
     A.add({ test: '7.A', level: 'review', impact: 'moderate', el, message: 'Icon-font element is exposed to assistive technology without a name. Add aria-hidden="true" if decorative, or role="img" plus aria-label if it conveys meaning.' });
   }

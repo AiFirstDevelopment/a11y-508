@@ -10,7 +10,7 @@
 
   const INTERACTIVE_ROLES = new Set([
     'button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
-    'option', 'treeitem', 'textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton', 'scrollbar',
+    'option', 'treeitem', 'textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton',
     'gridcell', 'row', 'columnheader', 'rowheader',
   ]);
   A.INTERACTIVE_ROLES = INTERACTIVE_ROLES;
@@ -28,6 +28,20 @@
     'doc-notice doc-pagebreak doc-pagelist doc-part doc-preface doc-prologue doc-pullquote doc-qna doc-subtitle doc-tip doc-toc ' +
     'graphics-document graphics-object graphics-symbol'
   ).split(' '));
+  // WAI-ARIA abstract roles: authors must not use them, and browsers ignore them.
+  A.ABSTRACT_ROLES = new Set('command composite input landmark range roletype section sectionhead select structure widget window'.split(' '));
+  // Roles whose accessible name may come from their content (WAI-ARIA "name from: contents").
+  A.NAME_FROM_CONTENT_ROLES = new Set((
+    'button cell checkbox columnheader gridcell heading link menuitem menuitemcheckbox menuitemradio option radio ' +
+    'row rowheader switch tab tooltip treeitem'
+  ).split(' '));
+  // Native elements named from content whose implicit role A.role does not return.
+  const NAME_FROM_CONTENT_TAGS = new Set(['summary', 'legend', 'caption', 'td', 'th', 'tr', 'option']);
+
+  // Characters that render as nothing a listener can interpret: Unicode private-use areas (icon-font
+  // glyphs, planes 15 and 16 included), variation selectors, and zero-width characters.
+  const NON_TEXT = /[\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u200B-\u200D\u2060\uFEFF]/gu;
+  A.stripGlyphs = (str) => (str || '').replace(NON_TEXT, '');
 
   A.text = (el) => (el && el.textContent ? el.textContent : '').replace(/\s+/g, ' ').trim();
 
@@ -62,13 +76,25 @@
     if (s.clipPath && s.clipPath !== 'none' && /inset\(\s*(100%|50%)/.test(s.clipPath)) return true;
     if (s.clip && /rect\(\s*0(px)?,?\s*0(px)?,?\s*0(px)?,?\s*0(px)?\s*\)/.test(s.clip) && s.position === 'absolute') return true;
     if (r.width <= 1 && r.height <= 1 && s.overflow === 'hidden') return true;
-    if (r.right < 0 || r.bottom < 0) return true;
+    // Off-screen means off the document, not off the viewport: a scrolled page must not hide what is above the fold.
+    if (r.right + window.scrollX < 0 || r.bottom + window.scrollY < 0) return true;
     if (parseFloat(s.fontSize) === 0) return true;
     if (s.color && A.parseColor(s.color).a === 0) return true;
     return false;
   };
 
-  A.isAriaHidden = (el) => !!el.closest('[aria-hidden="true"]');
+  A.isAriaHiddenAttr = (el) => !!el.closest('[aria-hidden="true" i]');
+  const isInert = (el) => !!el.closest('[inert]');
+  const outsideModal = (el) => {
+    let modal = null;
+    try {
+      modal = document.querySelector('dialog:modal');
+    } catch {}
+    return !!modal && !modal.contains(el);
+  };
+  // Hidden from assistive technology: aria-hidden (any case), an inert ancestor, or outside an open modal dialog.
+  A.isHiddenFromAT = (el) => A.isAriaHiddenAttr(el) || isInert(el) || outsideModal(el);
+  A.isAriaHidden = (el) => A.isHiddenFromAT(el);
 
   A.selector = (el) => {
     if (!el || el.nodeType !== 1) return '';
@@ -164,7 +190,8 @@
   A.isNativeFocusable = (el) => {
     if (!el.matches(NATIVE_FOCUSABLE)) return false;
     if (el.matches('input[type="hidden"]')) return false;
-    if (el.disabled) return false;
+    // :disabled also covers controls inside a disabled fieldset (outside its first legend).
+    if (el.disabled || el.matches(':disabled')) return false;
     if (el.localName === 'summary' && !(el.parentElement && el.parentElement.localName === 'details' && el.parentElement.firstElementChild === el)) return false;
     return true;
   };
@@ -175,6 +202,7 @@
     return Number.isNaN(n) ? null : n;
   };
   A.isFocusable = (el) => {
+    if (isInert(el) || outsideModal(el)) return false;
     if (A.isNativeFocusable(el)) return true;
     const t = A.tabindexOf(el);
     return t !== null;
@@ -191,9 +219,20 @@
     return !!p;
   };
 
+  // The explicit role is the first valid token of the role attribute ("image" is the ARIA 1.3 alias of img);
+  // '' when no token is valid, in which case the browser falls back to the implicit role.
+  A.explicitRole = (el) => {
+    const tokens = (el.getAttribute('role') || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+    for (const t of tokens) {
+      const r = t === 'image' ? 'img' : t;
+      if (A.VALID_ROLES.has(r)) return r;
+    }
+    return '';
+  };
+
   A.role = (el) => {
-    const r = (el.getAttribute('role') || '').trim().split(/\s+/)[0];
-    if (r) return r.toLowerCase();
+    const r = A.explicitRole(el);
+    if (r) return r;
     const t = el.localName;
     if (t === 'a' && el.hasAttribute('href')) return 'link';
     if (t === 'area' && el.hasAttribute('href')) return 'link';
@@ -233,66 +272,85 @@
     return parts.join(' ').replace(/\s+/g, ' ').trim();
   };
 
+  // CSS generated text of ::before/::after: { text, raw }. text has icon-font glyphs and other
+  // non-text characters removed, because a private-use glyph is not a name anyone can hear.
   const pseudoText = (el) => {
     const out = [];
     for (const p of ['::before', '::after']) {
       const c = A.cs(el, p);
-      if (!c) continue;
-      const v = c.content;
-      if (v && v !== 'none' && v !== 'normal' && /^"/.test(v)) out.push(v.slice(1, -1));
+      const v = c && c.content;
+      if (v && v !== 'none' && v !== 'normal' && /^"/.test(v)) {
+        const raw = v.slice(1, -1);
+        out.push({ text: A.stripGlyphs(raw), raw });
+      } else out.push(null);
     }
     return out;
   };
 
   // Simplified accessible-name-from-content: text, alt of images, aria-label of descendants.
-  function nameFromContent(el, includeHidden) {
+  // Returns { name, raw }: raw keeps icon-font glyphs so a message can show what is there.
+  function contentName(el, includeHidden) {
     const parts = [];
+    const raws = [];
+    const push = (text, raw) => {
+      parts.push(text);
+      raws.push(raw === undefined ? text : raw);
+    };
     const walk = (node) => {
       if (node.nodeType === 3) {
-        parts.push(node.nodeValue);
+        push(A.stripGlyphs(node.nodeValue), node.nodeValue);
         return;
       }
       if (node.nodeType !== 1) return;
-      if (node.getAttribute('aria-hidden') === 'true') return;
+      if ((node.getAttribute('aria-hidden') || '').toLowerCase() === 'true') return;
       if (!includeHidden && !A.isVisible(node) && !A.isVisuallyHidden(node)) return;
       const al = node.getAttribute('aria-label');
-      if (al && al.trim()) {
-        parts.push(al);
+      if (al && A.stripGlyphs(al).trim()) {
+        push(al);
         return;
       }
       if (node.hasAttribute('aria-labelledby') && node !== el) {
         const t = refText(node, 'aria-labelledby');
         if (t) {
-          parts.push(t);
+          push(t);
           return;
         }
       }
       if (node.localName === 'img' || node.localName === 'area') {
-        parts.push(node.getAttribute('alt') || '');
+        push(node.getAttribute('alt') || '');
         return;
       }
       if (node.localName === 'input' && /^(submit|reset|button|image)$/i.test(node.type)) {
-        parts.push(node.value || node.getAttribute('alt') || '');
+        push(node.value || node.getAttribute('alt') || '');
         return;
       }
       if (node.localName === 'svg') {
         const t = node.querySelector(':scope > title');
-        if (t) parts.push(A.text(t));
+        if (t) push(A.text(t));
         return;
       }
-      const ps = pseudoText(node);
-      if (ps[0]) parts.push(ps[0]);
+      const [before, after] = pseudoText(node);
+      if (before && before.raw) push(before.text, before.raw);
       for (const c of node.childNodes) walk(c);
-      if (ps[1]) parts.push(ps[1]);
-      if (!parts.length && node.getAttribute('title')) parts.push(node.getAttribute('title'));
+      if (after && after.raw) push(after.text, after.raw);
+      if (!parts.length && node.getAttribute('title')) push(node.getAttribute('title'));
     };
     walk(el);
-    return parts.join(' ').replace(/\s+/g, ' ').trim();
+    const clean = (a) => a.join(' ').replace(/\s+/g, ' ').trim();
+    return { name: clean(parts), raw: clean(raws) };
+  }
+  function nameFromContent(el, includeHidden) {
+    return contentName(el, includeHidden).name;
   }
   A.nameFromContent = nameFromContent;
 
+  // Content names an element only when its role allows it (WAI-ARIA "name from: contents"),
+  // or for the native summary, legend and caption; otherwise only labelling attributes and title do.
+  A.namedFromContent = (el) => A.NAME_FROM_CONTENT_ROLES.has(A.role(el)) || NAME_FROM_CONTENT_TAGS.has(el.localName);
+
   // Returns { name, source } where source is one of:
   // aria-labelledby | aria-label | label | alt | value | content | title | placeholder | caption | legend | ''
+  // and, when the element is unnamed but holds content that is not a name (an icon-font glyph), raw.
   A.accName = (el) => {
     const lb = el.getAttribute('aria-labelledby');
     if (lb) {
@@ -300,7 +358,7 @@
       if (t) return { name: t, source: 'aria-labelledby' };
     }
     const al = el.getAttribute('aria-label');
-    if (al && al.trim()) return { name: al.trim(), source: 'aria-label' };
+    if (al && A.stripGlyphs(al).trim()) return { name: al.trim(), source: 'aria-label' };
     const tag = el.localName;
     if (tag === 'input' || tag === 'select' || tag === 'textarea' || tag === 'meter' || tag === 'progress' || tag === 'output') {
       const type = (el.getAttribute('type') || '').toLowerCase();
@@ -353,11 +411,16 @@
       const t = el.querySelector(':scope > title');
       if (t && A.text(t)) return { name: A.text(t), source: 'svg-title' };
     }
-    const content = nameFromContent(el, false);
-    if (content) return { name: content, source: 'content' };
+    let raw = '';
+    if (A.namedFromContent(el)) {
+      const content = contentName(el, false);
+      if (content.name) return { name: content.name, source: 'content' };
+      raw = content.raw;
+    }
     const title = el.getAttribute('title');
-    if (title && title.trim()) return { name: title.trim(), source: 'title' };
-    return { name: '', source: '' };
+    if (title && A.stripGlyphs(title).trim()) return { name: title.trim(), source: 'title' };
+    // raw: content that was not a name, e.g. an icon-font glyph, kept for messages.
+    return raw ? { name: '', source: '', raw } : { name: '', source: '' };
   };
 
   A.accDescription = (el) => {
