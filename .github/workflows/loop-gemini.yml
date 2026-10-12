@@ -29,7 +29,7 @@ concurrency:
 jobs:
   loop-gemini:
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       # A free-tier model rather than the CLI's default. Gemini CLI reads GEMINI_MODEL
       # (argv.model || GEMINI_MODEL || settings), so no -m flag is needed.
@@ -75,6 +75,7 @@ jobs:
           node server.mjs --port 4321 > "$RUNNER_TEMP/server.log" 2>&1 &
           server=$!
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:4321/ > /dev/null && break; sleep 1; done
+          curl -sf http://127.0.0.1:4321/ > /dev/null || { echo "the loop app's server did not start:"; cat "$RUNNER_TEMP/server.log"; exit 1; }
           set +e
           node "$GITHUB_WORKSPACE/bin/a11y-508.mjs" loop --max-rounds 2
           echo "loop exit code $?"

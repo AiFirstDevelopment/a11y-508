@@ -118,8 +118,12 @@ await check('AC2: check.mjs fails when a page is not served', () => {
 
 // AC3: verify.mjs on repositories made to look like a loop run.
 // A run: the gate passes on one fix and the loop commits it; round 2 verified it.
-const fakeRun = (dir, { outside = false, skipGate = false, quotaAll = false } = {}) => {
+const fakeRun = (dir, { outside = false, skipGate = false, quotaAll = false, newDir = false } = {}) => {
   edit(join(dir, 'site/index.html'), '<img src="img/harbour.svg" width="160" height="100">', '<img src="img/harbour.svg" alt="The harbour at dawn" width="160" height="100">');
+  if (newDir) {
+    mkdirSync(join(dir, 'site/icons'));
+    writeFileSync(join(dir, 'site/icons/a.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  }
   if (outside) edit(join(dir, 'check.mjs'), '// The loop', '// Changed by the agent. The loop');
   if (!skipGate) assert.equal(node(['check.mjs'], dir).status, 0);
   git(dir, 'add', '-A');
@@ -130,7 +134,7 @@ const fakeRun = (dir, { outside = false, skipGate = false, quotaAll = false } = 
   const findings = {};
   for (let i = 0; i < 12; i++) {
     const fp = `T.${i}|#x${i}|m${i}`;
-    findings[fp] = { fingerprint: fp, test: 'T', status: i === 0 ? 'verified' : 'open', firstSeenRound: 1, attempts: i === 0 ? [{ round: 1, files: outside ? ['check.mjs', 'site/index.html'] : ['site/index.html'], outcome: 'verified', commit }] : [] };
+    findings[fp] = { fingerprint: fp, test: 'T', status: i === 0 ? 'verified' : 'open', firstSeenRound: 1, attempts: i === 0 ? [{ round: 1, files: outside ? ['check.mjs', 'site/index.html'] : newDir ? ['site/icons/', 'site/index.html'] : ['site/index.html'], outcome: 'verified', commit }] : [] };
   }
   writeFileSync(join(work, 'ledger.json'), JSON.stringify({ version: 1, rounds: [{ round: 1 }, { round: 2 }], findings }));
   const head = (quota) => agentLog({ code: quota ? 1 : 0, quota, quotaRetries: quota ? 2 : 0, result: quota ? null : {}, stdout: '', stderr: quota ? '429 RESOURCE_EXHAUSTED' : '' });
@@ -144,6 +148,14 @@ await check('AC3: verify.mjs passes on a run with a verified fix that went throu
   const r = verify(dir);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /all checks passed/);
+});
+await check('AC3: verify.mjs matches a commit that adds a new folder to its gate run (fix round)', () => {
+  const dir = repo();
+  fakeRun(dir, { newDir: true });
+  const r = verify(dir);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const gate = JSON.parse(readFileSync(join(dir, 'a11y-508-gate.log'), 'utf8').trim());
+  assert.deepEqual(gate.changed, ['site/icons/a.svg', 'site/index.html']);
 });
 await check('AC3: verify.mjs fails when a commit of the loop touches a file outside site/', () => {
   const dir = repo();
@@ -177,13 +189,16 @@ writeFileSync(counter, String(calls));
 const failFor = Number(process.env.FAIL_FOR || 0);
 if (calls <= failFor) {
   console.error(process.env.FAIL_KIND === 'other' ? 'Error: could not read the prompt' : 'Error: [API Error: got status: 429 Too Many Requests. RESOURCE_EXHAUSTED: quota exceeded]');
-  process.exit(1);
+  // HANG: backs off on its own past the call's time limit, as Gemini CLI does on 429s.
+  if (process.env.HANG) setTimeout(() => process.exit(1), 4000);
+  else process.exit(1);
+} else {
+  writeFileSync(resultFile, JSON.stringify({ fixed: false, note: 'call ' + calls }));
 }
-writeFileSync(resultFile, JSON.stringify({ fixed: false, note: 'call ' + calls }));
 `);
-const callAgent = async (label, env) => {
+const callAgent = async (label, env, timeout) => {
   const counter = join(tmp, `${label}.count`);
-  const res = await runAgent({ command: `"${process.execPath}" "${AGENT}" "${counter}" {resultFile}`, promptFile: join(tmp, 'p.md'), resultFile: join(tmp, `${label}.json`), cwd: tmp, env: { ...process.env, ...env }, quotaDelays: [10, 10] });
+  const res = await runAgent({ command: `"${process.execPath}" "${AGENT}" "${counter}" {resultFile}`, promptFile: join(tmp, 'p.md'), resultFile: join(tmp, `${label}.json`), cwd: tmp, env: { ...process.env, ...env }, quotaDelays: [10, 10], ...(timeout ? { timeout } : {}) });
   return { res, calls: Number(readFileSync(counter, 'utf8')) };
 };
 await check('AC4: a call refused with 429 is retried, and the retry\'s result is used', async () => {
@@ -201,6 +216,12 @@ await check('AC4: a call that fails for another reason is not retried', async ()
   const { res, calls } = await callAgent('other', { FAIL_FOR: '99', FAIL_KIND: 'other' });
   assert.equal(calls, 1);
   assert.deepEqual([res.quota, res.quotaRetries, res.code], [false, 0, 1]);
+});
+
+await check('AC4: a call that runs out its time while refused for quota is marked quota, and not run again (fix round)', async () => {
+  const { res, calls } = await callAgent('hang', { FAIL_FOR: '99', HANG: '1' }, 1500);
+  assert.equal(calls, 1);
+  assert.deepEqual([res.timedOut, res.quota, res.quotaRetries], [true, true, 0]);
 });
 
 // AC6: Gemini CLI's folder trust.

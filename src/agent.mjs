@@ -205,8 +205,10 @@ export async function runAgent({ command, promptFile, resultFile, cwd, timeout =
   let quotaRetries = 0;
   for (;;) {
     const r = await runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env });
-    const quota = !r.result && !r.timedOut && QUOTA.test(r.stdout + '\n' + r.stderr);
-    if (quota && quotaRetries < quotaDelays.length) {
+    // A call that ran out its time while the assistant backed off on its own counts as refused for
+    // quota too, but is not run again: it has already spent its time.
+    const quota = !r.result && QUOTA.test(r.stdout + '\n' + r.stderr);
+    if (quota && !r.timedOut && quotaRetries < quotaDelays.length) {
       await new Promise((res) => setTimeout(res, quotaDelays[quotaRetries]));
       quotaRetries++;
       continue;
@@ -229,8 +231,12 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env
     timedOut = true;
     child.kill('SIGKILL');
   }, timeout);
+  const closed = new Promise((r) => child.on('close', r));
   const code = await new Promise((r) => child.on('exit', r));
   clearTimeout(timer);
+  // The last of its output can arrive after it exits; wait for the pipes, but not for a grandchild
+  // that keeps them open.
+  await Promise.race([closed, new Promise((r) => setTimeout(r, 2000).unref())]);
   let result = null;
   if (existsSync(resultFile)) {
     try {

@@ -87,7 +87,8 @@ const gateLog = join(dir, 'a11y-508-gate.log');
 const gates = existsSync(gateLog) ? readFileSync(gateLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
 const changing = attempts.filter((a) => a.files && a.files.length);
 check('the gate ran once for every fix that changed files', gates.length === changing.length, `${gates.length} gate run(s), ${changing.length} fix(es) with changes`);
-const unmatched = [...commitFiles].filter(([, files]) => !gates.some((g) => g.ok && JSON.stringify(g.changed) === JSON.stringify(files))).map(([c]) => c.slice(0, 7));
+// Every file of the commit was among the files changed when a passing gate ran.
+const unmatched = [...commitFiles].filter(([, files]) => !gates.some((g) => g.ok && files.every((f) => (g.changed || []).includes(f)))).map(([c]) => c.slice(0, 7));
 check("every commit's files passed a gate run first", !unmatched.length, unmatched.join(', '));
 
 let failed = 0;

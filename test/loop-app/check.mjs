@@ -58,7 +58,7 @@ for (const file of pages) {
 }
 server.close();
 
-const changed = (spawnSync('git', ['status', '--porcelain', '--', 'site'], { cwd: here, encoding: 'utf8' }).stdout || '')
+const changed = (spawnSync('git', ['status', '--porcelain', '--untracked-files=all', '--no-renames', '--', 'site'], { cwd: here, encoding: 'utf8' }).stdout || '')
   .split('\n').filter((l) => l.length > 3).map((l) => l.slice(3).replace(/^"(.*)"$/, '$1')).sort();
 appendFileSync(join(here, 'a11y-508-gate.log'), JSON.stringify({ at: new Date().toISOString(), pages: pages.length, ok: !problems.length, changed, problems }) + '\n');
 
