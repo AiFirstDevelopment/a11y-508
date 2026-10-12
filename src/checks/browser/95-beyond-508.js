@@ -140,11 +140,21 @@
   // form fields drawn by the browser, not buttons, and only when no author style sets their width,
   // height, padding or font size (in the style attribute, or in a rule that matches the field).
   const NATIVE = /^(checkbox|radio|range|color|file|date|time|datetime-local|month|week|text|search|email|tel|url|number|password)$/;
-  const SIZING = /(^|;)\s*(width|height|min-width|min-height|inline-size|block-size|min-inline-size|min-block-size|padding|padding-[a-z-]+|font-size|font)\s*:/i;
+  const SIZING = /^(width|height|min-width|min-height|inline-size|block-size|min-inline-size|min-block-size|padding|padding-[a-z-]+|font-size)$/i;
+  // Values a CSS reset uses that leave a control at the browser's size (normalize.css's
+  // font-size: 100%, a preflight's font: inherit and padding: 0) are not sizing it.
+  const NEUTRAL = /^(inherit|initial|unset|revert|revert-layer|auto|100%|1em|1rem|0|0px|medium)$/i;
+  const sizes = (style) => {
+    for (let i = 0; i < style.length; i++) {
+      const prop = style[i];
+      if (SIZING.test(prop) && !NEUTRAL.test(style.getPropertyValue(prop).trim())) return true;
+    }
+    return false;
+  };
   const authorSized = (el) => {
-    if (SIZING.test(el.getAttribute('style') || '')) return true;
+    if (el.hasAttribute('style') && sizes(el.style)) return true;
     for (const rule of A.styleRules(el.getRootNode())) {
-      if (!SIZING.test(rule.style.cssText)) continue;
+      if (!sizes(rule.style)) continue;
       try {
         if (el.matches(rule.selector)) return true;
       } catch {}
