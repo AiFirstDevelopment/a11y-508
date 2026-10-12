@@ -35,7 +35,9 @@ export async function discoverFrames(page, { maxDepth = MAX_FRAME_DEPTH } = {}) 
         continue;
       }
       const scroll = (await page.evaluate('window.__a11y508.scrollPosition()', { contextId: ctx }).catch(() => null)) || { x: 0, y: 0 };
-      const fr = { path: prefix + c.selector, depth, contextId: ctx, offset: { x: offset.x + c.x - scroll.x, y: offset.y + c.y - scroll.y } };
+      // offset: from the frame's document coordinates to the top document's, at the frame's scroll
+      // when found (scroll), which the audit's checks restore; a Tab sample brings its own.
+      const fr = { path: prefix + c.selector, depth, contextId: ctx, scroll, offset: { x: offset.x + c.x - scroll.x, y: offset.y + c.y - scroll.y } };
       frames.push(fr);
       await visit(ctx, fr.path + ' >>> ', depth + 1, fr.offset);
     }

@@ -64,7 +64,12 @@ const fromFrame = (outer, inner, fr) => ({
   key: `${fr.path} >>> ${inner.key}`,
   domIndex: outer.domIndex + (inner.domIndex + 1) / 1e6,
   selector: `${fr.path} >>> ${inner.selector}`,
-  rect: inner.rect ? { ...inner.rect, x: Math.round(inner.rect.x + fr.offset.x), y: Math.round(inner.rect.y + fr.offset.y) } : inner.rect,
+  // The frame may have scrolled to show the focused element since it was found.
+  rect: inner.rect ? {
+    ...inner.rect,
+    x: Math.round(inner.rect.x + fr.offset.x + fr.scroll.x - ((inner.scroll && inner.scroll.x) || 0)),
+    y: Math.round(inner.rect.y + fr.offset.y + fr.scroll.y - ((inner.scroll && inner.scroll.y) || 0)),
+  } : inner.rect,
   inDialog: inner.inDialog || outer.inDialog,
   frame: fr.path,
 });

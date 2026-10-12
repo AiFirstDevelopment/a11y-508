@@ -146,7 +146,12 @@
   A.query = (sel) => {
     const parts = String(sel).split(' >>> ');
     let el = document.querySelector(parts[0]);
-    for (const p of parts.slice(1)) el = el && el.shadowRoot ? el.shadowRoot.querySelector(p) : null;
+    // A path inside a shadow root starts at the root's top-level child, so querySelector could
+    // match a nested element first: take the match whose own path is this one.
+    for (const p of parts.slice(1)) {
+      const root = el && el.shadowRoot;
+      el = root ? Array.from(root.querySelectorAll(p)).find((c) => pathIn(c, root) === p) || null : null;
+    }
     return el;
   };
   // The elements with this id in the referencing element's own tree (document or shadow root), as

@@ -180,6 +180,7 @@
         inDialog: !!el.closest('[role="dialog"], [role="alertdialog"], dialog'),
         inIframe: false,
         composite: false,
+        scroll: { x: window.scrollX, y: window.scrollY },
       };
     }
     const base = A.kb.baseline.get(el);
@@ -222,6 +223,8 @@
       outlineVisible,
       inDialog: !!el.closest('[role="dialog"], [role="alertdialog"], dialog'),
       inIframe: el.localName === 'iframe' || el.localName === 'frame',
+      // Where this document is scrolled now, so a sample from inside a frame is placed in the page.
+      scroll: { x: window.scrollX, y: window.scrollY },
       // Native composite widgets move focus internally while document.activeElement stays on the host.
       composite: el.localName === 'iframe' || el.localName === 'audio' || el.localName === 'video' || !!el.shadowRoot ||
         (el.localName === 'input' && /^(date|time|datetime-local|month|week|color|file)$/.test(el.type)),
