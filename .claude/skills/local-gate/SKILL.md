@@ -21,6 +21,7 @@ This repository has two halves with different rules:
 
 | layer | command | what it catches |
 |---|---|---|
+| one fixture page | `node test/run.mjs --only /checks-focus.html` | a check against one page in seconds: the narrowed run for writing and mutation-testing a core check |
 | UI typecheck | `npm --prefix ui run typecheck` | a component or spec that does not compile |
 | UI unit | `npm --prefix ui test` | services, pipes, the event-stream parser |
 | one Playwright spec | `npx --prefix ui playwright test ui/e2e/<area>.spec.ts` | the area you touched, and your new guard |
