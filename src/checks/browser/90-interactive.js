@@ -237,7 +237,9 @@
         const d = el.parentElement;
         if (!d || d.localName !== 'details' || d.open) continue;
       }
-      const name = A.accName(el).name;
+      // Content fallback: a link-styled control without href has no role that is named from content,
+      // but its text is what the danger filter and the messages need.
+      const name = A.accName(el).name || A.nameFromContent(el, false);
       if (/sign out|log ?out|delete|remove|submit|pay|purchase|buy|send/i.test(name)) continue;
       out.push({ selector: A.selector(el), name: name.slice(0, 60), native: el.localName === 'button' || el.localName === 'summary' || el.localName === 'a' });
     }

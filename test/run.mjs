@@ -378,6 +378,8 @@ check('AC8 5.C: a fieldset of radios with no legend is an unlabelled radio group
 });
 check('AC8 5.A: a listbox is not named by its options', () => on(NAMES, '5.A', '#name-listbox', 'violation', /^listbox has no label or accessible name/));
 check('AC8 6.A: a button is still named by its text', () => noneOn(NAMES, '6.A', ['#name-save']));
+check('AC8: a link-styled disclosure without href keeps its text for the disclosure pass', () => on(NAMES, '4.A', '#name-disclosure', 'review', /^"More filters" did not change aria-expanded/));
+check('AC8 7.A: an <object> image with fallback text is named', () => noneOn(NAMES, '7.A', ['#name-object']));
 
 {
   const { events, problems } = parseEvents(evRun.stdout);

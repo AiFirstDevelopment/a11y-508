@@ -113,7 +113,8 @@ window.__a11y508.register(function images(A) {
     const type = (el.getAttribute('type') || '').toLowerCase();
     const data = el.getAttribute('data') || el.getAttribute('src') || '';
     if (/image|svg/.test(type) || FILE.test(data)) {
-      if (!A.accName(el).name) A.add({ test: '7.A', level: 'review', impact: 'moderate', el, message: 'Embedded image (object/embed) has no accessible name. Provide fallback content or aria-label.' });
+      // An <object>'s fallback content is its text alternative.
+      if (!A.accName(el).name && !(el.localName === 'object' && A.nameFromContent(el, true))) A.add({ test: '7.A', level: 'review', impact: 'moderate', el, message: 'Embedded image (object/embed) has no accessible name. Provide fallback content or aria-label.' });
     }
   }
 
