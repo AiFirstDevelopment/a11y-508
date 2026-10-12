@@ -127,7 +127,16 @@ interface Row extends Finding {
             <dt>Test condition</dt><dd>{{ condition(f.test) }}</dd>
             <dt>WCAG</dt><dd data-testid="detail-wcag">{{ f.wcag }}</dd>
             <dt>Page</dt><dd>{{ f.page }}</dd>
-            <dt>Selector</dt><dd><code data-testid="detail-selector">{{ f.selector || '(page level)' }}</code></dd>
+            @if (f.frame) {
+              <dt>Frame</dt><dd><code data-testid="detail-frame">{{ f.frame }}</code></dd>
+            }
+            <dt>Selector</dt>
+            <dd>
+              <code data-testid="detail-selector">{{ f.selector || '(page level)' }}</code>
+              @if (f.selector && f.selector.includes(' >>> ')) {
+                <br /><small data-testid="detail-selector-hint">Each " &gt;&gt;&gt; " steps into the shadow root of a web component or the document of a frame; the path after it is inside that component or frame.</small>
+              }
+            </dd>
             <dt>HTML</dt><dd><code data-testid="detail-html">{{ f.html }}</code></dd>
           </dl>
           @if (f.screenshot) {

@@ -138,13 +138,15 @@ export class Session {
 
   // Evaluate an expression in the page and return its value.
   // Throws if the expression throws.
-  async evaluate(expression, { awaitPromise = true, returnByValue = true, timeout } = {}) {
+  // contextId: an execution context other than the main frame's (a same-origin frame's).
+  async evaluate(expression, { awaitPromise = true, returnByValue = true, timeout, contextId } = {}) {
     const res = await this.send('Runtime.evaluate', {
       expression,
       awaitPromise,
       returnByValue,
       userGesture: true,
       ...(timeout ? { timeout } : {}),
+      ...(contextId ? { contextId } : {}),
     });
     if (res.exceptionDetails) {
       const d = res.exceptionDetails;

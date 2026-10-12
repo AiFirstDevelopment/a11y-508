@@ -1,7 +1,7 @@
 // Trusted Tester 9.A (bypass), 10.A-10.D (headings, lists).
 window.__a11y508.register(function structure(A) {
   const body = A.bodyFontSize();
-  const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]')).filter((h) => A.isVisible(h) || A.isVisuallyHidden(h));
+  const headings = Array.from(A.all('h1, h2, h3, h4, h5, h6, [role="heading"]')).filter((h) => A.isVisible(h) || A.isVisuallyHidden(h));
   const levelOf = (h) => {
     const m = /^h([1-6])$/.exec(h.localName);
     if (h.getAttribute('role') === 'heading') {
@@ -47,7 +47,7 @@ window.__a11y508.register(function structure(A) {
 
   // Visual headings that are not programmatic headings (10.B)
   let fakeHeadings = 0;
-  const candidates = document.querySelectorAll('p, div, span, b, strong, td, dt, label, a');
+  const candidates = A.all('p, div, span, b, strong, td, dt, label, a');
   for (const el of candidates) {
     if (fakeHeadings >= 15) break;
     if (!A.isVisible(el) || A.isAriaHidden(el)) continue;
@@ -75,29 +75,29 @@ window.__a11y508.register(function structure(A) {
     const s = A.cs(c);
     return !!s && s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse';
   };
-  for (const list of document.querySelectorAll('ul, ol')) {
+  for (const list of A.all('ul, ol')) {
     // An explicit role other than list (tablist, menu, none ...) means it is not a list to assistive technology.
     const explicit = A.explicitRole(list);
     if (explicit && explicit !== 'list') continue;
     const bad = Array.from(list.children).filter((c) => !/^(li|script|template)$/.test(c.localName) && renders(c));
     if (bad.length) A.add({ test: '10.D', impact: 'moderate', el: list, message: `<${list.localName}> has ${bad.length} direct child(ren) that are not <li> (${bad.slice(0, 3).map((c) => c.localName).join(', ')}).` });
   }
-  for (const li of document.querySelectorAll('li')) {
+  for (const li of A.all('li')) {
     const p = li.parentElement;
     if (p && !/^(ul|ol|menu)$/.test(p.localName) && p.getAttribute('role') !== 'list') {
       A.add({ test: '10.D', impact: 'moderate', el: li, message: `<li> is not inside a <ul>, <ol>, or role="list" container (parent is <${p.localName}>).` });
     }
   }
-  for (const l of document.querySelectorAll('[role="list"]')) {
+  for (const l of A.all('[role="list"]')) {
     if (!l.querySelector('[role="listitem"]')) A.add({ test: '10.D', impact: 'moderate', el: l, message: 'role="list" contains no role="listitem" children.' });
   }
-  for (const li of document.querySelectorAll('[role="listitem"]')) {
+  for (const li of A.all('[role="listitem"]')) {
     if (!li.parentElement || !li.parentElement.closest('[role="list"], ul, ol')) A.add({ test: '10.D', impact: 'moderate', el: li, message: 'role="listitem" is not inside a role="list" container.' });
   }
   // Visually apparent lists built from text (bullet characters / numbering)
   const BULLET = /^\s*([•‣◦⁃∙▪●■○–—\-\*·→>]|\(?\d{1,3}[.)]|\(?[a-zA-Z][.)]|[ivxIVX]{1,5}[.)])\s+\S/;
   let fakeLists = 0;
-  const blocks = document.querySelectorAll('p, div, td, dd, section, article');
+  const blocks = A.all('p, div, td, dd, section, article');
   for (const block of blocks) {
     if (fakeLists >= 10) break;
     if (!A.isVisible(block) || A.isAriaHidden(block)) continue;
@@ -139,9 +139,9 @@ window.__a11y508.register(function structure(A) {
   // keyboard user can see it once it has focus, and its target exists and is not hidden.
   // Technique informed by axe-core; no code taken from it.
   const linkName = (a) => A.accName(a).name || A.nameFromContent(a, true);
-  const skipLinks = Array.from(document.querySelectorAll('a[href^="#"]')).filter((a) => /skip|jump|main content|to content|navigation/i.test(linkName(a)) && a.getAttribute('href').length > 1);
-  const main = document.querySelector('main, [role="main"]');
-  const navLinks = document.querySelectorAll('nav a[href], [role="navigation"] a[href], header a[href], [role="banner"] a[href]').length;
+  const skipLinks = Array.from(A.all('a[href^="#"]')).filter((a) => /skip|jump|main content|to content|navigation/i.test(linkName(a)) && a.getAttribute('href').length > 1);
+  const main = A.one('main, [role="main"]');
+  const navLinks = A.all('nav a[href], [role="navigation"] a[href], header a[href], [role="banner"] a[href]').length;
   // Does an author style rule for :focus, :focus-visible or :focus-within (on the link or an
   // ancestor) apply to the link and change how it is laid out or shown?
   const REVEAL = /(^|;)\s*(left|right|top|bottom|inset|position|clip|clip-path|transform|translate|width|height|max-width|max-height|margin[\w-]*|opacity|overflow|z-index|font-size|text-indent|visibility|display)\s*:/i;
@@ -177,7 +177,7 @@ window.__a11y508.register(function structure(A) {
   };
   const targetOf = (a) => {
     const id = decodeURIComponent(a.getAttribute('href').slice(1));
-    return { id, target: document.getElementById(id) || document.querySelector(`[name="${CSS.escape(id)}"]`) };
+    return { id, target: A.byId(a, id) || A.rootOf(a).querySelector(`[name="${CSS.escape(id)}"]`) };
   };
   // Why the skip link does not work, or '' when it does. level: violation, or review when a script
   // might still reveal it.
@@ -202,6 +202,8 @@ window.__a11y508.register(function structure(A) {
   }
   // A link that may yet be revealed by a script (review) still counts as a way to bypass blocks.
   const validSkip = problems.some(([, p]) => !p || p.level === 'review');
+  // A frame's document is part of the page around it: bypassing the page's blocks is the page's job.
+  if (A.opts.frame) return;
   if (!validSkip && !main && !outline.length) {
     A.add({ test: '9.A', impact: 'serious', selector: 'body', message: 'No mechanism to bypass repetitive content: no working skip link, no <main>/role="main" landmark, and no headings.' });
   } else if (!validSkip && navLinks >= 8) {

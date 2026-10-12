@@ -80,7 +80,7 @@ window.__a11y508.register(function cssContent(A) {
 
   // Positioned elements with text that appear far above DOM-earlier content
   let posCount = 0;
-  const textBlocks = Array.from(document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, td, dd, blockquote, figcaption, label'))
+  const textBlocks = Array.from(A.all('p, h1, h2, h3, h4, h5, h6, li, td, dd, blockquote, figcaption, label'))
     .filter((el) => A.isVisible(el) && !A.isAriaHidden(el) && A.text(el).length > 20)
     .slice(0, 400)
     .map((el) => ({ el, top: el.getBoundingClientRect().top + window.scrollY }));

@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BEYOND, testInfo } from './checks/catalog.mjs';
 import { listenerProbe, keyboardPass, disclosurePass, zoomPass, spacingPass, reflowPass, routeDiscoveryPass, modalOnLoadPass, redismissModal } from './passes.mjs';
+import { discoverFrames, inFrame, MAX_FRAME_DEPTH } from './frames.mjs';
 
 // The selector of the page-level 13.C item set by 60-sensory-contrast.js.
 const BETWEEN_IMAGES = 'text over images';
@@ -47,6 +48,8 @@ export async function auditPage(page, url, ctx) {
       rect: f.rect || null,
       details: f.details,
       state: f.state,
+      // Only findings inside a same-origin frame carry the frame's selector.
+      frame: f.frame,
       screenshot: f.screenshot,
       // Only beyond-508 findings carry the key, so a default report.json keeps its shape.
       beyond508: f.beyond508 || BEYOND[f.test] ? true : undefined,
@@ -122,6 +125,39 @@ export async function auditPage(page, url, ctx) {
         if (behind.run.meta.errors && behind.run.meta.errors.length) result.errors.push(...behind.run.meta.errors.map((e) => `check: ${e}`));
         base = behind.run;
       }
+    }
+
+    // Same-origin frames, audited as part of the page once the top document's checks (and the page
+    // behind a modal shown on load) are done. Closed shadow roots and frames from other origins
+    // cannot be read: each is a coverage note on the page.
+    const unaudited = { closedShadow: [...((base.meta && base.meta.closedShadow) || [])], crossOriginFrames: [], deepFrames: 0 };
+    try {
+      const found = await discoverFrames(page);
+      unaudited.crossOriginFrames = found.crossOrigin;
+      unaudited.deepFrames = found.deep;
+      let inFrames = 0;
+      for (const fr of found.frames) {
+        let run;
+        try {
+          run = await page.evaluate('window.__a11y508.run({ frame: true })', { contextId: fr.contextId });
+        } catch (e) {
+          result.errors.push(`frame ${fr.path}: ${e.message}`);
+          continue;
+        }
+        for (const f of run.findings) add(inFrame(f, fr));
+        inFrames += run.findings.length;
+        if (run.meta.errors && run.meta.errors.length) result.errors.push(...run.meta.errors.map((e) => `check in frame ${fr.path}: ${e}`));
+        for (const [test, n] of Object.entries(run.meta.truncated || {})) result.errors.push(`${test} in frame ${fr.path}: ${n} additional finding(s) not listed (per-test cap)`);
+        for (const tag of run.meta.closedShadow || []) if (!unaudited.closedShadow.includes(tag)) unaudited.closedShadow.push(tag);
+      }
+      if (found.frames.length) result.passes.frames = { audited: found.frames.length, findings: inFrames };
+    } catch (e) {
+      result.errors.push(`frames: ${e.message}`);
+    }
+    const notes = coverageNotes(unaudited);
+    if (notes.length) {
+      result.unaudited = unaudited;
+      result.coverageNotes = notes;
     }
 
     let clickable = [];
@@ -201,6 +237,15 @@ export async function auditPage(page, url, ctx) {
 
   result.durationMs = Date.now() - t0;
   return result;
+}
+
+// The page's coverage notes: what it holds that the checks could not read.
+function coverageNotes(u) {
+  const notes = [];
+  if (u.closedShadow.length) notes.push(`${u.closedShadow.length} component(s) with a closed shadow root were not audited: ${u.closedShadow.join(', ')}. Their contents cannot be read from the page; audit them in the component's own tests.`);
+  if (u.crossOriginFrames.length) notes.push(`${u.crossOriginFrames.length} frame(s) from other origins were not audited: ${[...new Set(u.crossOriginFrames)].join(', ')}. Audit those origins separately.`);
+  if (u.deepFrames) notes.push(`${u.deepFrames} frame(s) nested more than ${MAX_FRAME_DEPTH} levels deep were not audited.`);
+  return notes;
 }
 
 function makeShooter(page, ctx, result) {

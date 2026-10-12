@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ids in shadow roots - a11y-508 test site</title>
+<!--
+  Round 5 AC 4. Id references resolve in the referencing element's own tree, as the browser does.
+  #sd-ids-a and #sd-ids-b each hold <label for="x"> and <input id="x"> in their own shadow root:
+  each field is labelled, and id="x" in two roots is not a duplicate id. Across the boundary
+  nothing resolves: #sd-cross's field is the target of <label for="sd-lx"> in the light DOM, and
+  #sd-cross-ref's field points aria-labelledby at a span in the light DOM; both are unlabelled (5.A).
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, input:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Ids in shadow roots</h1>
+  <id-form id="sd-ids-a"></id-form>
+  <id-form id="sd-ids-b"></id-form>
+  <p><label for="sd-lx">Light label</label></p>
+  <cross-field id="sd-cross"></cross-field>
+  <p><span id="sd-light-name">Email address</span></p>
+  <cross-ref id="sd-cross-ref"></cross-ref>
+</main>
+<script>
+  const css = '<style>:host { display: block; margin: 8px 0; } input:focus { outline: 3px solid #f90; }</style>';
+  const define = (name, html) => customElements.define(name, class extends HTMLElement {
+    connectedCallback() {
+      this.attachShadow({ mode: 'open' }).innerHTML = css + html;
+    }
+  });
+  define('id-form', '<label for="x">Full name</label> <input type="text" id="x">');
+  define('cross-field', '<input type="text" id="sd-lx">');
+  define('cross-ref', '<input type="text" id="sd-ref-field" aria-labelledby="sd-light-name">');
+</script>
+</body>
+</html>

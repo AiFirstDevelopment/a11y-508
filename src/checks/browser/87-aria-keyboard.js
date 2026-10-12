@@ -86,7 +86,7 @@ window.__a11y508.register(function ariaKeyboard(A) {
       const problem = valueProblem(name, def, value);
       if (problem) A.add({ test: '5.C', impact: 'serious', el, message: problem });
       if ((def.type === 'idref' || def.type === 'idrefs') && name !== 'aria-activedescendant') {
-        const missing = tokens(value).filter((id) => !document.getElementById(id));
+        const missing = tokens(value).filter((id) => !A.byId(el, id));
         const naming = /^aria-(labelledby|describedby|errormessage)$/.test(name) || (name === 'aria-controls' && el.matches(FIELD));
         if (missing.length) A.add({ test: '5.C', impact: naming ? 'serious' : 'moderate', el, message: `${name} references id(s) that do not exist: ${missing.join(', ')}.` });
       }
@@ -184,7 +184,7 @@ window.__a11y508.register(function ariaKeyboard(A) {
     const s = el.ownerDocument.defaultView.getComputedStyle(el);
     return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && el.getClientRects().length > 0;
   };
-  for (const f of document.querySelectorAll('iframe[tabindex]')) {
+  for (const f of A.all('iframe[tabindex]')) {
     const t = A.tabindexOf(f);
     if (t === null || t >= 0 || !A.isVisible(f) || A.isHiddenFromAT(f)) continue;
     const r = f.getBoundingClientRect();
@@ -221,26 +221,37 @@ window.__a11y508.register(function ariaKeyboard(A) {
     A.add({ test: '4.A', level: 'review', impact: 'moderate', el, message: `This region scrolls (${sy ? 'vertically' : 'horizontally'}), but neither it nor anything in it can take keyboard focus. Chrome lets keyboard users focus it; on other browsers they cannot scroll to the content outside its box. Add tabindex="0" with a role and a name (for example role="region" and aria-label), or put a focusable element inside.` });
   }
 
-  // Duplicate ids that break ARIA/label references
-  const refIds = new Set();
-  for (const el of document.querySelectorAll('[aria-labelledby], [aria-describedby], [aria-controls], [aria-owns], [headers], label[for], [aria-errormessage], [aria-activedescendant], [aria-details], [aria-flowto]')) {
+  // Duplicate ids that break ARIA/label references. Ids are unique per tree: the document and each
+  // shadow root resolve their own references, so the same id in two roots is not a duplicate.
+  const refIds = new Map(); // id + root -> { id, el: a referencing element in that root }
+  for (const el of A.all('[aria-labelledby], [aria-describedby], [aria-controls], [aria-owns], [headers], label[for], [aria-errormessage], [aria-activedescendant], [aria-details], [aria-flowto]')) {
     for (const attr of ['aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-owns', 'headers', 'for', 'aria-errormessage', 'aria-activedescendant', 'aria-details', 'aria-flowto']) {
       const v = el.getAttribute(attr);
-      if (v) v.split(/\s+/).forEach((id) => id && refIds.add(id));
+      if (!v) continue;
+      const root = A.rootOf(el);
+      for (const id of v.split(/\s+/)) {
+        if (!id) continue;
+        let byRoot = refIds.get(id);
+        if (!byRoot) refIds.set(id, (byRoot = new Map()));
+        if (!byRoot.has(root)) byRoot.set(root, el);
+      }
     }
   }
   let dup = 0;
-  for (const id of refIds) {
+  for (const [id, byRoot] of refIds) {
     if (dup >= 10) break;
-    const matches = document.querySelectorAll(`[id="${id.replace(/"/g, '\\"')}"]`);
-    if (matches.length > 1) {
-      dup++;
-      A.add({ test: '5.C', impact: 'serious', el: matches[1], message: `id="${id}" is used ${matches.length} times and is referenced by a label or ARIA attribute. Only the first element will be associated.` });
+    for (const ref of byRoot.values()) {
+      if (dup >= 10) break;
+      const matches = A.idMatches(ref, id);
+      if (matches.length > 1) {
+        dup++;
+        A.add({ test: '5.C', impact: 'serious', el: matches[1], message: `id="${id}" is used ${matches.length} times and is referenced by a label or ARIA attribute. Only the first element will be associated.` });
+      }
     }
   }
 
   const keys = new Map();
-  for (const el of document.querySelectorAll('[accesskey]')) {
+  for (const el of A.all('[accesskey]')) {
     const k = (el.getAttribute('accesskey') || '').toLowerCase();
     if (!k) continue;
     if (keys.has(k)) A.add({ test: '4.A', level: 'review', impact: 'minor', el, message: `accesskey="${k}" is assigned to more than one element.` });

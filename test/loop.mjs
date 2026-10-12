@@ -85,6 +85,14 @@ check('prompts contain the finding and the result path, and no token', () => {
   const t = triagePrompt({ items: [{ id: 'r1-0', test: '6.A', name: 'n', wcag: 'w', condition: 'c', message: 'm', selector: 'a', html: '<a>', pages: ['/a'] }], resultFile: '/t.json' });
   assert.ok(t.includes('r1-0') && t.includes('/t.json'));
 });
+// docs/plans/checks-shadow-frames.md AC 11: a finding inside a web component in a same-origin frame
+// reaches the fixing assistant with its whole selector path and the frame it is in.
+check('the fix prompt shows a " >>> " selector path whole, and the frame', () => {
+  const finding = { test: '7.A', name: 'n', wcag: '1.1.1', impact: 'critical', message: 'no alt', selector: '#fr-same >>> #ff-badge >>> img', frame: '#fr-same', html: '<img src="/img/badge.png">', pages: ['/checks-frames.html'], attempts: [] };
+  const p = fixPrompt({ finding, sourceDirs: ['src'], protectedDirs: ['tools/a11y-508'], resultFile: '/r.json', condition: 'c' });
+  assert.ok(p.includes('Element selector: #fr-same >>> #ff-badge >>> img\nInside the same-origin frame: #fr-same\n'), p);
+  assert.ok(p.includes('"selector": "#fr-same >>> #ff-badge >>> img",\n    "frame": "#fr-same"'), p);
+});
 check('config validation catches the common mistakes', () => {
   assert.ok(normalizeConfig({}).errors.some((e) => /no start URL/.test(e)));
   assert.ok(normalizeConfig({ url: 'http://x' }).errors.some((e) => /no agent/.test(e)));

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Closed shadow root - a11y-508 test site</title>
+<!--
+  Round 5 AC 7. #sd-closed renders an image with no alt from a closed shadow root, which the page
+  cannot open: one coverage note names <closed-card>, and nothing inside it is reported.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Closed shadow root</h1>
+  <closed-card id="sd-closed"></closed-card>
+</main>
+<script>
+  customElements.define('closed-card', class extends HTMLElement {
+    connectedCallback() {
+      this.attachShadow({ mode: 'closed' }).innerHTML = '<style>:host { display: block; }</style><img src="/img/closed.png" width="40" height="40"><p>Rendered from a closed root.</p>';
+    }
+  });
+</script>
+</body>
+</html>

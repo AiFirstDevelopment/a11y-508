@@ -13,7 +13,7 @@ window.__a11y508.register(function links(A) {
     }
   };
 
-  const controls = document.querySelectorAll('a[href], [role="link"], button, [role="button"], input[type="submit"], input[type="reset"], input[type="button"], summary, [role="menuitem"], [role="tab"]');
+  const controls = A.all('a[href], [role="link"], button, [role="button"], input[type="submit"], input[type="reset"], input[type="button"], summary, [role="menuitem"], [role="tab"]');
   for (const el of controls) {
     if (!A.isVisible(el)) continue;
     if (A.isHiddenFromAT(el)) {
@@ -72,7 +72,7 @@ window.__a11y508.register(function links(A) {
     A.add({ test: '6.A', level: 'review', impact: 'moderate', el: first, message: `Link text "${text}" points to ${hrefs.size} different destinations on this page. Confirm context distinguishes them.`, details: { destinations: Array.from(hrefs.keys()).slice(0, 10) } });
   }
 
-  for (const el of document.querySelectorAll('[role="dialog"], [role="alertdialog"], dialog[open]')) {
+  for (const el of A.all('[role="dialog"], [role="alertdialog"], dialog[open]')) {
     if (!A.isVisible(el)) continue;
     if (!A.accName(el).name) A.add({ test: '5.C', impact: 'moderate', el, message: 'Dialog has no accessible name (aria-label or aria-labelledby).' });
   }

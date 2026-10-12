@@ -94,6 +94,8 @@ export function applyReport(ledger, report, round, { maxAttempts = 3 } = {}) {
       impact: f.impact,
       message: f.message,
       selector: f.selector || '',
+      // Only a finding inside a same-origin frame has one.
+      ...(f.frame ? { frame: f.frame } : {}),
       html: f.html || '',
       state: f.state || null,
       pages: [...cur.pages],

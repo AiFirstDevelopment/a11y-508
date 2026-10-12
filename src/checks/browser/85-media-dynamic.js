@@ -17,7 +17,7 @@ window.__a11y508.register(function mediaDynamic(A) {
     return null;
   };
 
-  for (const m of document.querySelectorAll('audio, video')) {
+  for (const m of A.all('audio, video')) {
     const isVideo = m.localName === 'video';
     const autoplay = m.hasAttribute('autoplay') || m.autoplay;
     const muted = m.muted || m.hasAttribute('muted');
@@ -36,7 +36,7 @@ window.__a11y508.register(function mediaDynamic(A) {
     }
 
     if (!isVideo) {
-      const transcript = near(m, /transcript/i) || document.querySelector('a[href*="transcript" i]');
+      const transcript = near(m, /transcript/i) || A.one('a[href*="transcript" i]');
       A.add({ test: '16.A', level: 'review', impact: 'serious', el: m, message: transcript ? 'Audio content: a transcript reference was found nearby. Confirm it is accurate and complete.' : 'Audio content with no transcript reference found nearby. Audio-only content requires a text transcript.', details: { src } });
       continue;
     }
@@ -62,7 +62,7 @@ window.__a11y508.register(function mediaDynamic(A) {
     }
   }
 
-  for (const f of document.querySelectorAll('iframe[src]')) {
+  for (const f of A.all('iframe[src]')) {
     const src = f.getAttribute('src') || '';
     if (!/youtube|youtu\.be|vimeo|wistia|brightcove|jwplayer|kaltura|vidyard|dailymotion|soundcloud|spotify|player/i.test(src)) continue;
     if (!A.isVisible(f)) continue;
@@ -71,7 +71,7 @@ window.__a11y508.register(function mediaDynamic(A) {
     A.add({ test: '17.A', level: 'review', impact: 'serious', el: f, message: 'Embedded media player. Confirm the media has accurate captions (17.A), audio description where needed (17.B), and keyboard-operable caption/description controls (17.D-17.F).', details: { src: src.slice(0, 200) } });
   }
 
-  for (const el of document.querySelectorAll('marquee, blink')) {
+  for (const el of A.all('marquee, blink')) {
     A.add({ test: '2.B', impact: 'serious', el, message: `<${el.localName}> scrolls or blinks content with no way to pause it.` });
   }
 
@@ -101,12 +101,12 @@ window.__a11y508.register(function mediaDynamic(A) {
     }
   }
 
-  const carousel = document.querySelector('[class*="carousel" i], [class*="slider" i]:not(input), [class*="slideshow" i], [data-ride], .swiper, .slick-slider, [class*="ticker" i]');
+  const carousel = A.one('[class*="carousel" i], [class*="slider" i]:not(input), [class*="slideshow" i], [data-ride], .swiper, .slick-slider, [class*="ticker" i]');
   if (carousel && A.isVisible(carousel)) {
     A.add({ test: '2.B', level: 'review', impact: 'moderate', el: carousel, message: 'Carousel/slider detected. If it auto-rotates for more than 5 seconds, confirm a visible, keyboard-operable pause control exists.' });
   }
 
-  for (const meta of document.querySelectorAll('meta[http-equiv="refresh" i]')) {
+  for (const meta of A.all('meta[http-equiv="refresh" i]')) {
     const content = meta.getAttribute('content') || '';
     const m = /^\s*(\d+)/.exec(content);
     const delay = m ? parseInt(m[1], 10) : 0;
@@ -120,7 +120,8 @@ window.__a11y508.register(function mediaDynamic(A) {
     A.add({ test: '8.A', level: 'review', impact: 'moderate', selector: 'body', message: `Page mentions a time limit ("${tm[0]}"). Confirm the user can turn it off, adjust it, or extend it with a simple action before it expires.` });
   }
 
-  const vp = document.querySelector('meta[name="viewport" i]');
+  // A viewport meta tag applies to the top-level document only, not to a frame's.
+  const vp = A.opts.frame ? null : A.one('meta[name="viewport" i]');
   if (vp) {
     const c = (vp.getAttribute('content') || '').toLowerCase();
     const maxScale = /maximum-scale\s*=\s*([\d.]+)/.exec(c);

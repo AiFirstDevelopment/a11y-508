@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Same-origin frames - a11y-508 test site</title>
+<!--
+  Round 5 (docs/plans/checks-shadow-frames.md) AC 8-11. Same-origin frames are audited as part of
+  this page. #fr-same's document (/frames/form.html, served by test/fixture-site.mjs) has no lang
+  (11.A), an image with no alt (7.A), an unlabelled field (5.A), a button with no focus style
+  (4.D, found by the Tab pass inside the frame), and a web component whose shadow root holds another
+  image with no alt. #fr-outer holds #fr-inner (depth 2), whose image has no alt. #fr-deep starts a
+  chain four frames deep: the fourth (an image with no alt) is not audited, with a coverage note.
+  #fr-cross is a data: URL frame from another origin (a coverage note, nothing from inside it), and
+  #fr-tiny (20 x 10 px, an image with no alt in its document) is skipped silently.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus { outline: 3px solid #f90; }
+  iframe { border: 1px solid #888; display: block; margin: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Same-origin frames</h1>
+  <iframe src="/frames/form.html" title="Payment form" id="fr-same" width="420" height="200"></iframe>
+  <iframe src="/frames/outer.html" title="Partner offers" id="fr-outer" width="420" height="200"></iframe>
+  <iframe src="/frames/d1.html" title="Nested frames" id="fr-deep" width="460" height="420"></iframe>
+  <iframe src="data:text/html,%3Cp%3EA%20partner%20widget%3C%2Fp%3E%3Cimg%20src%3D%22x.png%22%3E" title="Partner widget" id="fr-cross" width="300" height="80"></iframe>
+  <iframe src="/frames/tiny.html" title="Small frame" id="fr-tiny" width="20" height="10"></iframe>
+</main>
+</body>
+</html>

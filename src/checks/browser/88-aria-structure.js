@@ -9,7 +9,8 @@ window.__a11y508.register(function ariaStructure(A) {
   const model = (role) => aria.roles[role];
   const hiddenFor = (el) => A.isHiddenForEveryone(el) || A.isHiddenFromAT(el);
   const idList = (el, attr) => (el.getAttribute(attr) || '').trim().split(/\s+/).filter(Boolean);
-  const byIds = (ids) => ids.map((id) => document.getElementById(id)).filter(Boolean);
+  // Id references resolve in the referencing element's own tree (the document, or its shadow root).
+  const byIds = (el, ids) => ids.map((id) => A.byId(el, id)).filter(Boolean);
   const visible = A.allVisible(6000).filter((el) => !A.isHiddenFromAT(el));
 
   // Containers the accessibility tree flattens, so their children count as the parent's:
@@ -32,15 +33,15 @@ window.__a11y508.register(function ariaStructure(A) {
       if (TRANSPARENT.has(r)) {
         if (r === 'group') out.add(r);
         for (const c of n.children) visit(c);
-        for (const o of byIds(idList(n, 'aria-owns'))) visit(o);
+        for (const o of byIds(n, idList(n, 'aria-owns'))) visit(o);
       } else out.add(r);
     };
     for (const c of el.children) visit(c);
-    for (const o of byIds(idList(el, 'aria-owns'))) visit(o);
+    for (const o of byIds(el, idList(el, 'aria-owns'))) visit(o);
     return out;
   };
   // The element that owns el through aria-owns, if any.
-  const owner = (el) => (el.id ? document.querySelector(`[aria-owns~="${CSS.escape(el.id)}"]`) : null);
+  const owner = (el) => (el.id ? A.rootOf(el).querySelector(`[aria-owns~="${CSS.escape(el.id)}"]`) : null);
   const contextRoles = (el) => {
     const out = new Set();
     const seen = new Set();
@@ -155,13 +156,13 @@ window.__a11y508.register(function ariaStructure(A) {
       A.add({ test: '4.A', impact: 'serious', el: host, message: `aria-activedescendant is on an element that cannot receive keyboard focus, so keyboard users can never move through its items. Make it focusable (tabindex="0").` });
       continue;
     }
-    const target = document.getElementById(id);
+    const target = A.byId(host, id);
     if (!target) {
       A.add({ test: '4.A', impact: 'serious', el: host, message: `aria-activedescendant points at id "${id}", which does not exist, so assistive technology announces no active item.` });
       continue;
     }
     // The target is a descendant, or inside an element the host owns or controls (a combobox's popup).
-    const scopes = [host, ...byIds(idList(host, 'aria-owns')), ...byIds(idList(host, 'aria-controls'))];
+    const scopes = [host, ...byIds(host, idList(host, 'aria-owns')), ...byIds(host, idList(host, 'aria-controls'))];
     if (target === host || !scopes.some((s) => s.contains(target))) {
       A.add({ test: '4.A', impact: 'serious', el: host, message: `aria-activedescendant points at "#${id}", which is not inside this element or an element it owns (aria-owns) or controls (aria-controls), so assistive technology does not treat it as the active item.` });
       continue;

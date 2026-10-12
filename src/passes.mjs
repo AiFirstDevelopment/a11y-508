@@ -5,6 +5,7 @@
 // and in the Tab pass, focus not obscured (2.4.11) and focus indicator contrast (1.4.11).
 
 import { sleep } from './page.mjs';
+import { discoverFrames, inFrame } from './frames.mjs';
 
 const CLICKY = new Set(['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'dblclick']);
 
@@ -54,11 +55,50 @@ export async function listenerProbe(page, meta, add) {
   return clickable;
 }
 
+// A Tab sample from inside a same-origin frame, as part of the page: named with the frame's prefix,
+// placed in the top document, keyed and ordered after the frame element itself, with the top
+// document's address (the frame's own is not the page's).
+const fromFrame = (outer, inner, fr) => ({
+  ...inner,
+  href: outer.href,
+  key: `${fr.path} >>> ${inner.key}`,
+  domIndex: outer.domIndex + (inner.domIndex + 1) / 1e6,
+  selector: `${fr.path} >>> ${inner.selector}`,
+  rect: inner.rect ? { ...inner.rect, x: Math.round(inner.rect.x + fr.offset.x), y: Math.round(inner.rect.y + fr.offset.y) } : inner.rect,
+  inDialog: inner.inDialog || outer.inDialog,
+  frame: fr.path,
+});
+
 export async function keyboardPass(page, add, opts) {
   const beyond = !!opts.wcag && opts.wcag !== '2.0';
   const wcag22 = opts.wcag === '2.2';
   const prep = await page.evaluate('window.__a11y508.kbPrepare()');
   const startHref = prep.href;
+  // Focus moves into same-origin frames as the browser tabs through them: each frame's baseline is
+  // taken too, and a sample that lands on a frame element is followed into the frame's document.
+  let frames = [];
+  try {
+    frames = (await discoverFrames(page)).frames;
+    for (const fr of frames) {
+      const p = await page.evaluate('window.__a11y508.kbPrepare()', { contextId: fr.contextId }).catch(() => null);
+      if (p) prep.count += p.count;
+    }
+  } catch {}
+  const sample = async () => {
+    let s = await page.evaluate('window.__a11y508.kbSample()');
+    while (s && !s.isBody && s.inIframe) {
+      // A frame's path is its element's selector, prefixed as a sample from its parent frame is.
+      const fr = frames.find((f) => f.path === s.selector);
+      if (!fr) break;
+      let inner = null;
+      try {
+        inner = await page.evaluate('window.__a11y508.kbSample()', { contextId: fr.contextId });
+      } catch {}
+      if (!inner || inner.isBody) break;
+      s = fromFrame(s, inner, fr);
+    }
+    return s;
+  };
   const max = Math.min(opts.maxTabs, prep.count * 2 + 10);
   const seq = [];
   const seen = new Set();
@@ -74,14 +114,14 @@ export async function keyboardPass(page, add, opts) {
     await sleep(35);
     let s;
     try {
-      s = await page.evaluate('window.__a11y508.kbSample()');
+      s = await sample();
     } catch {
       break;
     }
     if (!s) break;
     if (s.href !== startHref) {
       navigated = true;
-      add({ test: '4.E', level: 'violation', impact: 'serious', selector: last ? last.selector : 'body', html: last ? last.html : '', message: `Moving keyboard focus ${last ? 'to this element' : 'into the page'} caused navigation to ${s.href}. Focus must not trigger a change of context.` });
+      add({ frame: last ? last.frame : undefined, test: '4.E', level: 'violation', impact: 'serious', selector: last ? last.selector : 'body', html: last ? last.html : '', message: `Moving keyboard focus ${last ? 'to this element' : 'into the page'} caused navigation to ${s.href}. Focus must not trigger a change of context.` });
       break;
     }
     if (s.isBody) {
@@ -92,7 +132,7 @@ export async function keyboardPass(page, add, opts) {
     }
     if (last && s.key === last.key && s.composite) {
       // Focus is moving inside an iframe, a native media player, or a shadow-DOM widget that this page cannot inspect.
-      if (++same === 1 && s.inIframe) add({ test: '4.A', level: 'review', impact: 'minor', selector: s.selector, html: s.html, rect: s.rect, message: 'Keyboard focus entered an iframe. Its contents were not tab-tested from this page; audit the frame URL separately.' });
+      if (++same === 1 && s.inIframe) add({ frame: s.frame, test: '4.A', level: 'review', impact: 'minor', selector: s.selector, html: s.html, rect: s.rect, message: 'Keyboard focus entered an iframe. Its contents were not tab-tested from this page; audit the frame URL separately.' });
       if (same > 25) break;
       continue;
     }
@@ -103,13 +143,13 @@ export async function keyboardPass(page, add, opts) {
       await sleep(35);
       let back;
       try {
-        back = await page.evaluate('window.__a11y508.kbSample()');
+        back = await sample();
       } catch {
         break;
       }
       if (back && !back.isBody && back.key === s.key) {
         trap = true;
-        add({ test: '4.C', level: 'violation', impact: 'critical', selector: s.selector, html: s.html, rect: s.rect, message: 'Keyboard trap: neither Tab nor Shift+Tab moves focus away from this element. Keyboard users cannot move past it.' });
+        add({ frame: s.frame, test: '4.C', level: 'violation', impact: 'critical', selector: s.selector, html: s.html, rect: s.rect, message: 'Keyboard trap: neither Tab nor Shift+Tab moves focus away from this element. Keyboard users cannot move past it.' });
       }
       break;
     }
@@ -123,7 +163,7 @@ export async function keyboardPass(page, add, opts) {
       // Skip links and focus styles often animate in; re-sample after transitions have had time to finish.
       await sleep(320);
       try {
-        const again = await page.evaluate('window.__a11y508.kbSample()');
+        const again = await sample();
         if (again && !again.isBody && again.key === s.key) s = again;
       } catch {}
     }
@@ -132,20 +172,20 @@ export async function keyboardPass(page, add, opts) {
     last = s;
     if (s.inIframe) continue;
     if (beyond && s.faint && s.inViewport) {
-      add({ test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, beyond508: true, message: 'Keyboard focus landed on an element that is almost transparent (opacity under 0.1, counting its ancestors), so the focus cannot be seen. Make it visible when it has focus, or remove it from the tab order. (IBM Equal Access treats opacity under 0.1 as hidden, a rule stricter than WCAG; beyond-508 profile.)' });
+      add({ frame: s.frame, test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, beyond508: true, message: 'Keyboard focus landed on an element that is almost transparent (opacity under 0.1, counting its ancestors), so the focus cannot be seen. Make it visible when it has focus, or remove it from the tab order. (IBM Equal Access treats opacity under 0.1 as hidden, a rule stricter than WCAG; beyond-508 profile.)' });
     } else if (!s.visible || !s.inViewport) {
-      add({ test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: `Keyboard focus landed on an element that is not visible (${!s.visible ? 'hidden or zero-size' : 'outside the viewport'}). Focus must be visible; hidden controls should be removed from the tab order or revealed on focus.` });
+      add({ frame: s.frame, test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: `Keyboard focus landed on an element that is not visible (${!s.visible ? 'hidden or zero-size' : 'outside the viewport'}). Focus must be visible; hidden controls should be removed from the tab order or revealed on focus.` });
     } else if (wcag22 && s.obscured === 'full') {
-      add({ test: '2.4.11', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, details: { obscuredBy: s.obscuredBy }, message: `Keyboard focus landed on an element that is entirely hidden by ${s.obscuredBy ? `fixed or sticky content (${s.obscuredBy})` : 'fixed or sticky content'}. Users cannot see where focus is; add scroll-padding for the sticky area, or keep the focused element out from under it.` });
+      add({ frame: s.frame, test: '2.4.11', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, details: { obscuredBy: s.obscuredBy }, message: `Keyboard focus landed on an element that is entirely hidden by ${s.obscuredBy ? `fixed or sticky content (${s.obscuredBy})` : 'fixed or sticky content'}. Users cannot see where focus is; add scroll-padding for the sticky area, or keep the focused element out from under it.` });
     } else if (s.covered) {
-      add({ test: '4.D', level: 'review', impact: 'moderate', selector: s.selector, html: s.html, rect: s.rect, message: 'Focused element is overlapped by another element (for example a sticky header or overlay). Confirm the focus indicator is actually visible.' });
+      add({ frame: s.frame, test: '4.D', level: 'review', impact: 'moderate', selector: s.selector, html: s.html, rect: s.rect, message: 'Focused element is overlapped by another element (for example a sticky header or overlay). Confirm the focus indicator is actually visible.' });
     } else if (s.hadBaseline && s.diff.length === 0 && s.proxied) {
-      add({ test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: `No visible change on this label or the custom ${s.proxied} box when its visually hidden ${s.proxied} input receives keyboard focus. Style the label or the box on :focus-visible (for example input:focus-visible + label).` });
+      add({ frame: s.frame, test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: `No visible change on this label or the custom ${s.proxied} box when its visually hidden ${s.proxied} input receives keyboard focus. Style the label or the box on :focus-visible (for example input:focus-visible + label).` });
     } else if (s.hadBaseline && s.diff.length === 0) {
-      add({ test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: 'No visible change when this element receives keyboard focus (no outline, border, background, or other style change). Provide a visible focus indicator.' });
+      add({ frame: s.frame, test: '4.D', level: 'violation', impact: 'serious', selector: s.selector, html: s.html, rect: s.rect, message: 'No visible change when this element receives keyboard focus (no outline, border, background, or other style change). Provide a visible focus indicator.' });
     } else if (beyond && s.weakIndicator) {
       const w = s.weakIndicator;
-      add({ test: '1.4.11', level: 'review', impact: 'moderate', selector: s.selector, html: s.html, rect: s.rect, details: w, message: w.prop === 'outline-color'
+      add({ frame: s.frame, test: '1.4.11', level: 'review', impact: 'moderate', selector: s.selector, html: s.html, rect: s.rect, details: w, message: w.prop === 'outline-color'
         ? `The focus indicator is a ${w.to} outline on ${w.from}, ${w.ratio}:1, below the 3:1 a focus indicator needs against what is behind it. Confirm focus is visible, or use a darker or lighter outline.`
         : `The focus indicator is a change of ${w.prop} from ${w.from} to ${w.to}, ${w.ratio}:1 against ${w.against}, below the 3:1 a focus indicator needs to be seen. Confirm focus is visible, or make the change stronger.` });
     }
@@ -194,13 +234,54 @@ export async function redismissModal(page) {
 }
 
 export async function disclosurePass(page, add, fingerprints, opts, reload) {
-  const cands = await page.evaluate(`window.__a11y508.disclosureCandidates(${opts.maxActivations})`);
-  const out = { candidates: cands.length, activated: 0, revealedFindings: 0 };
-  const state = (sel) => page.evaluate(`window.__a11y508.disclosureState(${JSON.stringify(sel)})`);
+  const out = { candidates: 0, activated: 0, revealedFindings: 0 };
+  // The top document first, then each same-origin frame's (found after the top document's
+  // activations, which may have reloaded the page), within one budget of --max-activations.
+  let budget = opts.maxActivations;
+  const top = await disclosureScope(page, add, fingerprints, reload, null, budget, out);
+  budget -= top;
+  if (budget > 0) {
+    let frames = [];
+    try {
+      frames = (await discoverFrames(page)).frames;
+    } catch {}
+    for (const fr of frames) {
+      if (budget <= 0) break;
+      budget -= await disclosureScope(page, add, fingerprints, reload, fr, budget, out);
+    }
+  }
+  return out;
+}
+
+// The disclosure pass over one document: the top one (fr null) or a same-origin frame's, whose
+// findings are named with the frame's prefix. Returns how many candidates it had.
+async function disclosureScope(page, add, fingerprints, reload, fr, max, out) {
+  let ctx = fr ? fr.contextId : undefined;
+  const ev = (expr) => page.evaluate(expr, { contextId: ctx });
+  const wrap = (sel) => (fr && sel ? `${fr.path} >>> ${sel}` : sel);
+  const put = (f) => add(fr ? { ...f, selector: wrap(f.selector), frame: fr.path } : f);
+  // After a reload the frame's context is new: find the frame again by its path.
+  const reopen = async () => {
+    await reload();
+    if (!fr) return true;
+    const again = (await discoverFrames(page).catch(() => ({ frames: [] }))).frames.find((x) => x.path === fr.path);
+    if (!again) return false;
+    ctx = again.contextId;
+    fr = again;
+    return true;
+  };
+  let cands = [];
+  try {
+    cands = await ev(`window.__a11y508.disclosureCandidates(${max})`);
+  } catch {
+    return 0;
+  }
+  out.candidates += cands.length;
+  const state = (sel) => ev(`window.__a11y508.disclosureState(${JSON.stringify(sel)})`);
   for (const c of cands) {
     let focused = false;
     try {
-      focused = await page.evaluate(`window.__a11y508.focusSelector(${JSON.stringify(c.selector)})`);
+      focused = await ev(`window.__a11y508.focusSelector(${JSON.stringify(c.selector)})`);
     } catch {
       break;
     }
@@ -215,8 +296,8 @@ export async function disclosurePass(page, add, fingerprints, opts, reload) {
       st = null;
     }
     if (!st || st.href !== before.href) {
-      add({ test: '6.A', level: 'review', impact: 'minor', selector: c.selector, message: `Activating "${c.name}" with Enter navigated to ${st ? st.href : 'another page'} although it is marked aria-expanded. Confirm the control's purpose is clear.` });
-      await reload();
+      put({ test: '6.A', level: 'review', impact: 'minor', selector: c.selector, message: `Activating "${c.name}" with Enter navigated to ${st ? st.href : 'another page'} although it is marked aria-expanded. Confirm the control's purpose is clear.` });
+      if (!(await reopen())) break;
       continue;
     }
     if (!st.expanded) {
@@ -226,37 +307,38 @@ export async function disclosurePass(page, add, fingerprints, opts, reload) {
       if (!st.exists) continue;
     }
     if (!st.expanded) {
-      if (c.native) add({ test: '4.A', level: 'review', impact: 'moderate', selector: c.selector, message: `"${c.name}" did not change aria-expanded after Enter or Space. Confirm it works with the keyboard and that its expanded state is updated.` });
-      else add({ test: '4.A', level: 'violation', impact: 'serious', selector: c.selector, message: `Custom control "${c.name}" did not respond to Enter or Space. Keyboard users cannot operate it.` });
+      if (c.native) put({ test: '4.A', level: 'review', impact: 'moderate', selector: c.selector, message: `"${c.name}" did not change aria-expanded after Enter or Space. Confirm it works with the keyboard and that its expanded state is updated.` });
+      else put({ test: '4.A', level: 'violation', impact: 'serious', selector: c.selector, message: `Custom control "${c.name}" did not respond to Enter or Space. Keyboard users cannot operate it.` });
       continue;
     }
     out.activated++;
     if (st.dialog) {
-      if (!st.focusInDialog) add({ test: '4.G', level: 'violation', impact: 'serious', selector: st.dialog, message: `Dialog opened by "${c.name}" but keyboard focus did not move into it (focus is on ${st.activeSelector || 'body'}).` });
+      if (!st.focusInDialog) put({ test: '4.G', level: 'violation', impact: 'serious', selector: st.dialog, message: `Dialog opened by "${c.name}" but keyboard focus did not move into it (focus is on ${st.activeSelector || 'body'}).` });
       await page.press('Escape');
       await sleep(300);
       const after = await state(c.selector);
       if (after.exists && !after.dialog) {
-        if (!after.focusOnTrigger) add({ test: '4.H', level: 'violation', impact: 'moderate', selector: c.selector, message: `After closing the dialog opened by "${c.name}", focus did not return to the triggering control (it is on ${after.activeSelector || 'body'}).` });
+        if (!after.focusOnTrigger) put({ test: '4.H', level: 'violation', impact: 'moderate', selector: c.selector, message: `After closing the dialog opened by "${c.name}", focus did not return to the triggering control (it is on ${after.activeSelector || 'body'}).` });
       } else if (after.exists) {
-        add({ test: '4.A', level: 'review', impact: 'moderate', selector: st.dialog, message: `Dialog opened by "${c.name}" did not close with Escape. Confirm a keyboard-operable close control exists and focus is managed (4.G/4.H).` });
+        put({ test: '4.A', level: 'review', impact: 'moderate', selector: st.dialog, message: `Dialog opened by "${c.name}" did not close with Escape. Confirm a keyboard-operable close control exists and focus is managed (4.G/4.H).` });
       }
     }
     let res;
     try {
-      res = await page.evaluate('window.__a11y508.run()');
+      res = await ev(fr ? 'window.__a11y508.run({ frame: true })' : 'window.__a11y508.run()');
     } catch {
       continue;
     }
     for (const f of res.findings) {
-      const fp = `${f.test}|${f.selector}|${f.message}`;
+      const g = fr ? inFrame(f, fr) : f;
+      const fp = `${g.test}|${g.selector}|${g.message}`;
       if (fingerprints.has(fp)) continue;
-      f.state = `after activating "${c.name}" (${c.selector})`;
-      add(f);
+      g.state = `after activating "${c.name}" (${wrap(c.selector)})`;
+      add(g);
       out.revealedFindings++;
     }
   }
-  return out;
+  return cands.length;
 }
 
 // Clicks controls that look like navigation but have no href (router links on

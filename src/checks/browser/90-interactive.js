@@ -5,7 +5,7 @@
 
   A.pageInfo = () => {
     const links = [];
-    for (const a of document.querySelectorAll('a[href], area[href]')) {
+    for (const a of A.all('a[href], area[href]')) {
       const href = a.getAttribute('href');
       if (!href) continue;
       try {
@@ -16,7 +16,7 @@
     const navSig = (sel) => {
       const out = [];
       const seen = new Set();
-      for (const a of document.querySelectorAll(sel)) {
+      for (const a of A.all(sel)) {
         if (!A.isVisible(a) && !A.isVisuallyHidden(a)) continue;
         const n = A.accName(a).name.toLowerCase().trim();
         if (!n || seen.has(n)) continue;
@@ -27,7 +27,7 @@
     };
     const linkNames = [];
     const here = location.href.replace(/#.*$/, '');
-    for (const a of document.querySelectorAll('a[href]')) {
+    for (const a of A.all('a[href]')) {
       if (linkNames.length >= 400) break;
       const raw = a.getAttribute('href') || '';
       if (raw.startsWith('#') || /^(javascript|mailto|tel):/i.test(raw)) continue;
@@ -41,10 +41,10 @@
         linkNames.push([u.href, n]);
       } catch {}
     }
-    const search = !!document.querySelector('input[type="search"], [role="search"], form[action*="search" i], input[name="q"], input[name="s"], input[name*="search" i], input[placeholder*="search" i], input[aria-label*="search" i]');
-    const sitemap = !!Array.from(document.querySelectorAll('a[href]')).find((a) => /sitemap|site map|site index/i.test(A.accName(a).name) || /sitemap/i.test(a.getAttribute('href') || ''));
-    const breadcrumb = !!document.querySelector('[aria-label*="breadcrumb" i], .breadcrumb, .breadcrumbs, nav[class*="breadcrumb" i], ol[class*="breadcrumb" i]');
-    const navCount = document.querySelectorAll('nav a[href], [role="navigation"] a[href]').length;
+    const search = !!A.one('input[type="search"], [role="search"], form[action*="search" i], input[name="q"], input[name="s"], input[name*="search" i], input[placeholder*="search" i], input[aria-label*="search" i]');
+    const sitemap = !!Array.from(A.all('a[href]')).find((a) => /sitemap|site map|site index/i.test(A.accName(a).name) || /sitemap/i.test(a.getAttribute('href') || ''));
+    const breadcrumb = !!A.one('[aria-label*="breadcrumb" i], .breadcrumb, .breadcrumbs, nav[class*="breadcrumb" i], ol[class*="breadcrumb" i]');
+    const navCount = A.all('nav a[href], [role="navigation"] a[href]').length;
     return {
       title: (document.title || '').trim(),
       lang: document.documentElement.getAttribute('lang') || '',
@@ -56,7 +56,7 @@
       breadcrumb,
       navCount,
       textLength: A.text(document.body).length,
-      h1: A.text(document.querySelector('h1') || { textContent: '' }),
+      h1: A.text(A.one('h1') || { textContent: '' }),
     };
   };
 
@@ -118,7 +118,7 @@
 
   A.kbPrepare = () => {
     A.kb = { baseline: new WeakMap(), proxies: new WeakMap(), index: new WeakMap(), count: 0 };
-    const all = document.querySelectorAll('*');
+    const all = A.all('*');
     let i = 0;
     for (const el of all) {
       A.kb.index.set(el, i++);
@@ -129,14 +129,23 @@
       }
     }
     try {
-      if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+      const active = A.activeElement();
+      if (active && active !== document.body) active.blur();
     } catch {}
     window.scrollTo(0, 0);
     return { count: A.kb.count, href: location.href };
   };
 
+  // The element that has focus, followed into open shadow roots (a host's shadowRoot.activeElement)
+  // as far as they go: document.activeElement stops at the outermost host.
+  A.activeElement = () => {
+    let el = document.activeElement;
+    while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+    return el;
+  };
+
   A.kbSample = () => {
-    const el = document.activeElement;
+    const el = A.activeElement();
     const isBody = !el || el === document.body || el === document.documentElement;
     if (isBody) return { isBody: true, href: location.href };
     const r = el.getBoundingClientRect();
@@ -187,7 +196,7 @@
       try {
         const cx = Math.min(Math.max(r.left + r.width / 2, 0), window.innerWidth - 1);
         const cy = Math.min(Math.max(r.top + r.height / 2, 0), window.innerHeight - 1);
-        const top = document.elementFromPoint(cx, cy);
+        const top = A.rootOf(el).elementFromPoint(cx, cy);
         covered = !!top && top !== el && !el.contains(top) && !top.contains(el);
       } catch {}
     }
@@ -212,7 +221,7 @@
       diff,
       outlineVisible,
       inDialog: !!el.closest('[role="dialog"], [role="alertdialog"], dialog'),
-      inIframe: el.localName === 'iframe',
+      inIframe: el.localName === 'iframe' || el.localName === 'frame',
       // Native composite widgets move focus internally while document.activeElement stays on the host.
       composite: el.localName === 'iframe' || el.localName === 'audio' || el.localName === 'video' || !!el.shadowRoot ||
         (el.localName === 'input' && /^(date|time|datetime-local|month|week|color|file)$/.test(el.type)),
@@ -225,7 +234,7 @@
   // under 3:1 against the unfocused state, or a new outline under 3:1 against what is behind it
   // (WCAG 2.1 1.4.11).
   const pinned = (n) => {
-    for (; n && n.nodeType === 1; n = n.parentElement) {
+    for (; n && n.nodeType === 1; n = A.parent(n)) {
       const p = (A.cs(n) || {}).position;
       if (p === 'fixed' || p === 'sticky') return n;
     }
@@ -244,10 +253,10 @@
           const y = r.top + r.height * fy;
           if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) continue;
           points++;
-          const top = document.elementFromPoint(x, y);
+          const top = A.rootOf(el).elementFromPoint(x, y);
           if (!top || top === el || el.contains(top) || top.contains(el)) continue;
           const pin = pinned(top);
-          if (!pin || pin.contains(el)) continue;
+          if (!pin || A.contains(pin, el)) continue;
           under++;
           by = by || pin;
         }
@@ -274,18 +283,65 @@
   };
 
   A.focusSelector = (sel) => {
-    const el = document.querySelector(sel);
+    const el = A.query(sel);
     if (!el) return false;
     el.scrollIntoView({ block: 'center', inline: 'nearest' });
     el.focus({ preventScroll: true });
-    return document.activeElement === el;
+    return A.activeElement() === el;
   };
+
+  // ---- frames ----
+  // The iframes and frames of this document (shadow roots included), for the Node side to audit the
+  // same-origin ones as part of the page. skip: why a frame is not audited ('hidden', 'small' under
+  // 30 x 15 px, 'unexposed' when hidden from assistive technology or behind an open modal, 'blank'
+  // for an about:blank frame with nothing in it), or null. sameOrigin: its document can be read.
+  // label: where a frame from another origin comes from (its host). x, y: the top-left of its
+  // content box in this document's coordinates, to place what is found inside it.
+  A.frameCandidates = () => {
+    A.frameEls = [];
+    const out = [];
+    for (const f of A.all('iframe, frame')) {
+      let doc = null;
+      try {
+        doc = f.contentDocument;
+      } catch {}
+      const r = f.getBoundingClientRect();
+      let skip = null;
+      if (!A.isVisible(f)) skip = 'hidden';
+      else if (r.width < 30 || r.height < 15) skip = 'small';
+      else if (A.isHiddenFromAT(f)) skip = 'unexposed';
+      else if (doc && doc.URL === 'about:blank' && !(doc.body && doc.body.childElementCount)) skip = 'blank';
+      const src = f.getAttribute('src') || '';
+      let label = 'a sandboxed frame';
+      if (/^\s*data:/i.test(src)) label = 'a data: URL';
+      else if (src) {
+        try {
+          label = new URL(src, location.href).host || src.slice(0, 60);
+        } catch {
+          label = src.slice(0, 60);
+        }
+      }
+      const s = A.cs(f) || {};
+      A.frameEls.push(f);
+      out.push({
+        i: A.frameEls.length - 1,
+        selector: A.selector(f),
+        sameOrigin: !!(doc && doc.documentElement),
+        skip,
+        label,
+        x: r.left + window.scrollX + f.clientLeft + (parseFloat(s.paddingLeft) || 0),
+        y: r.top + window.scrollY + f.clientTop + (parseFloat(s.paddingTop) || 0),
+      });
+    }
+    return out;
+  };
+  A.scrollPosition = () => ({ x: window.scrollX, y: window.scrollY });
 
   // ---- disclosure activation ----
   A.disclosureCandidates = (max) => {
     const out = [];
     const sel = 'button[aria-expanded="false"], [role="button"][aria-expanded="false"], a[aria-expanded="false"][href^="#"], a[aria-expanded="false"]:not([href]), summary, button[aria-haspopup]:not([aria-expanded="true"]), [role="button"][aria-haspopup]:not([aria-expanded="true"])';
-    for (const el of document.querySelectorAll(sel)) {
+    for (const el of A.all(sel)) {
       if (out.length >= max) break;
       if (!A.isVisible(el) || A.isAriaHidden(el)) continue;
       if (el.localName === 'button' && el.form && (el.getAttribute('type') || 'submit').toLowerCase() === 'submit') continue;
@@ -303,13 +359,13 @@
   };
 
   A.disclosureState = (sel) => {
-    const el = document.querySelector(sel);
+    const el = A.query(sel);
     if (!el) return { exists: false, href: location.href };
     let expanded = el.getAttribute('aria-expanded') === 'true';
     if (el.localName === 'summary') expanded = !!(el.parentElement && el.parentElement.open);
-    const active = document.activeElement;
-    const dialog = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], dialog[open]')).find((d) => A.isVisible(d));
-    const focusInDialog = !!(dialog && active && dialog.contains(active));
+    const active = A.activeElement();
+    const dialog = Array.from(A.all('[role="dialog"], [role="alertdialog"], dialog[open]')).find((d) => A.isVisible(d));
+    const focusInDialog = !!(dialog && active && A.contains(dialog, active));
     const focusOnTrigger = active === el;
     return { exists: true, expanded, href: location.href, dialog: dialog ? A.selector(dialog) : null, focusInDialog, focusOnTrigger, activeSelector: active ? A.selector(active) : '' };
   };
@@ -388,8 +444,8 @@
       }
       out.push({ selector: A.selector(el), name, why });
     };
-    for (const el of document.querySelectorAll(NAV_HINT)) consider(el, 'navigation attribute or role');
-    for (const area of document.querySelectorAll(NAV_AREA)) {
+    for (const el of A.all(NAV_HINT)) consider(el, 'navigation attribute or role');
+    for (const area of A.all(NAV_AREA)) {
       for (const el of area.querySelectorAll('button, [role="button"], li, span, div')) {
         if (el.localName !== 'button' && el.getAttribute('role') !== 'button') {
           const s = A.cs(el);
@@ -401,7 +457,7 @@
     }
     for (const sel of extraSelectors || []) {
       try {
-        consider(document.querySelector(sel), 'clickable element without a link');
+        consider(A.query(sel), 'clickable element without a link');
       } catch {}
     }
     const capped = Math.max(0, out.length - max);
@@ -411,7 +467,7 @@
   A.prepareClick = (sel) => {
     let el;
     try {
-      el = document.querySelector(sel);
+      el = A.query(sel);
     } catch {
       return null;
     }
@@ -421,7 +477,7 @@
     if (r.width < 1 || r.height < 1) return null;
     const x = r.left + r.width / 2;
     const y = r.top + r.height / 2;
-    const hit = document.elementFromPoint(x, y);
+    const hit = A.rootOf(el).elementFromPoint(x, y);
     if (!hit || (hit !== el && !el.contains(hit))) return null; // covered by something else
     return { x, y };
   };

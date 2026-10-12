@@ -91,7 +91,7 @@ window.__a11y508.register(function tables(A) {
     return ['unsure', 'nothing marks it as data or layout'];
   };
 
-  for (const table of document.querySelectorAll('table')) {
+  for (const table of A.all('table')) {
     if (!A.isVisible(table)) continue;
     const role = (table.getAttribute('role') || '').toLowerCase();
     const ths = table.querySelectorAll('th');
@@ -217,7 +217,7 @@ window.__a11y508.register(function tables(A) {
     });
   }
 
-  for (const grid of document.querySelectorAll('[role="table"], [role="grid"], [role="treegrid"]')) {
+  for (const grid of A.all('[role="table"], [role="grid"], [role="treegrid"]')) {
     if (grid.localName === 'table' || !A.isVisible(grid)) continue;
     const rows = grid.querySelectorAll('[role="row"]');
     if (!rows.length) {

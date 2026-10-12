@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Focus in web components - a11y-508 test site</title>
+<!--
+  Round 5 AC 6. The Tab pass follows focus into open shadow roots (shadowRoot.activeElement).
+  #sd-focus-bad's button removes its outline and shows no other change on focus (4.D);
+  #sd-focus-good's button has a :focus-visible outline (nothing reported).
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>Focus in web components</h1>
+  <focus-box id="sd-focus-bad"></focus-box>
+  <focus-box id="sd-focus-good" data-good></focus-box>
+</main>
+<script>
+  customElements.define('focus-box', class extends HTMLElement {
+    connectedCallback() {
+      const good = this.hasAttribute('data-good');
+      this.attachShadow({ mode: 'open' }).innerHTML =
+        `<style>:host { display: block; margin: 8px 0; }
+          button { font: inherit; padding: 6px 12px; border: 1px solid #333; background: #fff; color: #222; outline: none; }
+          ${good ? 'button:focus-visible { outline: 3px solid #000; outline-offset: 2px; }' : ''}</style>` +
+        `<button type="button">${good ? 'Save draft' : 'Discard draft'}</button>`;
+    }
+  });
+</script>
+</body>
+</html>

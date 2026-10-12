@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frame behind a modal - a11y-508 test site</title>
+<!--
+  Round 5 AC 9. A modal dialog is open on load and ignores Escape; the same-origin frame
+  #fm-frame behind it (an image with no alt in its document) is skipped, as the page behind the
+  dialog is.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  main { padding: 20px; max-width: 800px; }
+  iframe { border: 1px solid #888; display: block; margin: 8px 0; }
+  .dialog { position: fixed; top: 40px; left: 40px; width: 300px; background: #fff; border: 2px solid #222; padding: 16px; }
+  button:focus { outline: 3px solid #f90; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Frame behind a modal</h1>
+  <iframe src="/frames/modal-behind.html" title="Account summary" id="fm-frame" width="420" height="160"></iframe>
+</main>
+<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="fm-title" id="fm-dialog">
+  <h2 id="fm-title">Session notice</h2>
+  <p>Your session is about to be renewed.</p>
+  <button type="button">Renew session</button>
+</div>
+</body>
+</html>

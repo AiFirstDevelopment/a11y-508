@@ -59,6 +59,20 @@ export function coverage(pages, crawl, opts) {
   if (crawl.overflow) warnings.push(`Stopped at --max-pages ${opts.maxPages}: ${crawl.overflow} more link(s) were found but not audited.`);
   if (opts.wcag && opts.wcag !== '2.0') notes.push(`The WCAG ${opts.wcag} profile was on (--wcag ${opts.wcag}): rules beyond Section 508 ran too. Their findings are listed under "${beyondHeading(opts.wcag)}" and count toward --fail-on like any other; Section 508 itself requires WCAG 2.0 AA.`);
   if (!opts.followClicks) notes.push('Click discovery was off (--no-follow-clicks); pages reachable only through click handlers were not looked for.');
+  // What pages hold that the checks cannot read (each page lists its own in coverageNotes).
+  const unread = pages.filter((p) => p.unaudited);
+  const closed = unread.filter((p) => p.unaudited.closedShadow.length);
+  if (closed.length) {
+    const tags = [...new Set(closed.flatMap((p) => p.unaudited.closedShadow))];
+    notes.push(`${closed.reduce((a, p) => a + p.unaudited.closedShadow.length, 0)} component(s) with a closed shadow root on ${closed.length} page(s) were not audited: ${tags.slice(0, 8).join(', ')}${tags.length > 8 ? ', ...' : ''}. Their contents cannot be read from the page.`);
+  }
+  const cross = unread.filter((p) => p.unaudited.crossOriginFrames.length);
+  if (cross.length) {
+    const hosts = [...new Set(cross.flatMap((p) => p.unaudited.crossOriginFrames))];
+    notes.push(`${cross.reduce((a, p) => a + p.unaudited.crossOriginFrames.length, 0)} frame(s) from other origins on ${cross.length} page(s) were not audited: ${hosts.slice(0, 8).join(', ')}${hosts.length > 8 ? ', ...' : ''}. Audit those origins separately.`);
+  }
+  const deep = unread.filter((p) => p.unaudited.deepFrames);
+  if (deep.length) notes.push(`${deep.reduce((a, p) => a + p.unaudited.deepFrames, 0)} frame(s) on ${deep.length} page(s) were nested more than 3 levels deep and were not audited.`);
   if (crawl.clickOnly) notes.push(`${crawl.clickOnly} page(s) were reachable only by clicking a control with no link (href); they were found by clicking and audited. Screen reader users cannot discover these destinations as links (check WCAG 2.1.1, 4.1.2).`);
   return { complete: warnings.length === 0, warnings, notes };
 }
