@@ -22,7 +22,7 @@ on:
       model:
         description: Gemini model for the assistant (a free-tier one)
         required: false
-        default: gemini-3.8-flash
+        default: gemini-flash-lite-latest
 
 permissions:
   contents: read
@@ -38,9 +38,10 @@ jobs:
     env:
       # A free-tier flash model rather than the CLI's default. Gemini CLI reads GEMINI_MODEL
       # (argv.model || GEMINI_MODEL || settings), so no -m flag is needed. gemini-2.5-flash, the
-      # first choice, now answers "no longer available to new users" (404) for this key; the API's
-      # message names gemini-3.8-flash instead. workflow_dispatch can pick another.
-      GEMINI_MODEL: ${{ inputs.model || 'gemini-3.8-flash' }}
+      # first choice, now answers "no longer available to new users" (404) for this key, and the
+      # free daily quota of gemini-3.8-flash, the model that message names, ran out after a few
+      # calls; gemini-flash-lite-latest completes a run. workflow_dispatch can pick another.
+      GEMINI_MODEL: ${{ inputs.model || 'gemini-flash-lite-latest' }}
     defaults:
       run:
         shell: bash
