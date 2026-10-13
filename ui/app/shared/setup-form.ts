@@ -36,9 +36,9 @@ import { Router } from '@angular/router';
       <div class="notice error" role="alert" data-notice="setup-error">{{ error() }}</div>
     }
     <div class="actions">
-      <button type="button" class="big" (click)="start()" [disabled]="!canStart()" data-testid="setup-start">{{ continuing() ? 'Continue' : 'Start' }}</button>
+      <button type="button" class="big" (click)="start()" [disabled]="!canStart()" data-testid="setup-start">@if (continuing()) {Continue<span class="visually-hidden"> to the results for this URL</span>} @else {Start}</button>
       @if (continuing()) {
-        <button type="button" class="link" (click)="start(true)" [disabled]="!canStart()" data-testid="crawl-again">Crawl again</button>
+        <button type="button" class="link" (click)="start(true)" [disabled]="!canStart()" data-testid="crawl-again">Crawl again<span class="visually-hidden"> (a new crawl of this URL)</span></button>
       }
       @if (run.active()) {
         <p class="hint">A run is active.</p>

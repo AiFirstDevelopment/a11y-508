@@ -24,7 +24,8 @@ test('carry: a new folder with the same URL keeps the report and goes back to Re
     // Set up: the folder changes, the URL does not.
     await nav(page, 'Set up');
     const start = page.getByTestId('setup-start').first();
-    await expect(start).toHaveText('Continue');
+    await expect(start).toHaveText(/^Continue/);
+    await expect(start).toHaveAccessibleName('Continue to the results for this URL');
     await expect(page.getByTestId('crawl-again').first()).toBeVisible();
     await page.getByTestId('setup-folder').first().fill(b);
     await start.click();

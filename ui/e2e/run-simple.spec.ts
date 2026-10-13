@@ -89,9 +89,11 @@ test('run-simple (b): Start opens a window to sign in in and crawls there (--log
     expect(report.pages[0].title).toBe('Application - a11y-508 test site');
     expect(existsSync(sessionFile), 'the session file, saved for the fix loop').toBe(true);
     expect(existsSync(join(dash.cwd, 'a11y-508-state.json')), 'nothing in the working directory').toBe(false);
-    // Back on Run: still one Start, which signs in afresh next time too.
+    // Back on Set up: the analysis for this URL is done, so it reads Continue; Crawl again signs in afresh.
     await nav(page, 'Run');
-    await expect(start(page)).toBeEnabled();
+    await expect(page.getByTestId('setup-start').first()).toHaveText(/^Continue/);
+    await expect(page.getByTestId('setup-start').first()).toBeEnabled();
+    await expect(page.getByTestId('crawl-again').first()).toBeEnabled();
     await expect(page.getByTestId('session-line')).toHaveCount(0);
   } finally {
     await dash.stop();
