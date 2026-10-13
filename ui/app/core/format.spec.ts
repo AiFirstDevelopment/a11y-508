@@ -1,4 +1,4 @@
-import { cumulative, progressLabel, resultLine, ageText, savedAgo, foundText, discoveryOf, CANNOT_GET_IN } from './format';
+import { cumulative, progressLabel, resultLine, ageText, savedAgo, localTime, foundText, discoveryOf, CANNOT_GET_IN } from './format';
 
 const s = (o: any) => ({ audited: 3, byImpact: { critical: 0, serious: 0, moderate: 1, minor: 0 }, ...o });
 
@@ -31,6 +31,13 @@ describe('format', () => {
     expect(foundText({ links: 1, clicked: null, clickedNew: null, skippedActions: [], skippedActionsCount: 0 })).toBe('1 link');
     expect(discoveryOf({ info: { links: ['a', 'b'] }, discovery: { clicked: 4, urls: ['x'], skipped: [{ name: 'Delete' }], skippedCount: 1 } })).toEqual({ links: 2, clicked: 4, clickedNew: 1, skippedActions: ['Delete'], skippedActionsCount: 1 });
     expect(discoveryOf({}).clicked).toBeNull();
+  });
+  it('shows timestamps in local time, never as ISO', () => {
+    const iso = '2026-10-13T11:10:00.000Z';
+    expect(localTime(iso)).toBe(new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso)));
+    expect(localTime(iso)).not.toMatch(/T\d\d:\d\d.*Z/);
+    expect(localTime('')).toBe('');
+    expect(localTime('not a date')).toBe('not a date');
   });
   it('says when a session was saved', () => {
     expect(savedAgo(30_000)).toBe('just now');

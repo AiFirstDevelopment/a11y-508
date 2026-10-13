@@ -61,6 +61,10 @@ export class Api {
     return this.request<T>('PUT', path, body);
   }
 
+  delete<T>(path: string): Promise<T> {
+    return this.request<T>('DELETE', path);
+  }
+
   stream(path: string, signal: AbortSignal): Promise<Response> {
     return fetch(path, { headers: this.headers(), signal, credentials: 'same-origin' });
   }

@@ -3,7 +3,7 @@
 // (a11y-508-work/round-N/). Every file is served from inside its own report
 // directory and nowhere else.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
 export const REPORT_DIR = 'a11y-508-report';
@@ -98,4 +98,32 @@ export function moveLatestToHistory(cwd) {
   for (let i = 2; existsSync(join(cwd, HISTORY_DIR, name)); i++) name = `${stamp}-${i}`;
   renameSync(latest, join(cwd, HISTORY_DIR, name));
   return name;
+}
+
+// Deleting from History: only a11y-508-history/<name>/ entries, by their h- id.
+// The latest report and the loop's rounds are never deleted this way.
+// Returns { status, body } for the route.
+export function deleteHistoryEntry(cwd, id) {
+  const m = /^h-([0-9A-Za-z.\-_]{1,80})$/.exec(String(id));
+  if (!m || m[1].startsWith('.')) return { status: 400, body: { error: 'only a report from a11y-508-history can be deleted' } };
+  const root = resolve(cwd, HISTORY_DIR);
+  const dir = resolve(root, m[1]);
+  if (!dir.startsWith(root + sep) || dir.slice(root.length + 1).includes(sep)) return { status: 400, body: { error: 'only a report from a11y-508-history can be deleted' } };
+  if (!existsSync(dir)) return { status: 404, body: { error: 'no such report' } };
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+  return { status: 200, body: { removed: 1 } };
+}
+
+// Clear history: every entry directly under a11y-508-history/, and nothing else.
+export function clearHistory(cwd) {
+  const root = resolve(cwd, HISTORY_DIR);
+  if (!existsSync(root)) return { removed: 0 };
+  let removed = 0;
+  for (const d of readdirSync(root)) {
+    const target = resolve(root, d);
+    if (!target.startsWith(root + sep)) continue;
+    rmSync(target, { recursive: true, force: true, maxRetries: 5 });
+    removed++;
+  }
+  return { removed };
 }

@@ -22,11 +22,8 @@ test('run-simple (a): the Run screen shows the URL, the sign-in state and Start;
     await expect(signInState(page)).toHaveAttribute('role', 'status');
     await expect(signInState(page)).toHaveText('Not signed in');
     await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
-    await expect(start(page)).toBeVisible();
-    // One assumed way in: with no session, Start waits for a sign-in and says so in text.
-    await expect(start(page)).toBeDisabled();
-    await expect(page.getByTestId('start-hint')).toHaveText('Sign in first');
-    await expect(start(page)).toHaveAccessibleDescription('Sign in first');
+    // One assumed way in: with no session there is no Start button, only Sign in.
+    await expect(start(page)).toHaveCount(0);
     // The nav no longer offers a Sign in screen.
     await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Sign in' })).toHaveCount(0);
 
@@ -60,8 +57,7 @@ test('run-simple (b): with no session, Sign in runs one crawl that signs in and 
     await open(page, dash, '/run');
     await expect(signInState(page)).toHaveText('Not signed in');
     await page.getByLabel('Start URL').fill(site.base + 'app.html');
-    await expect(start(page)).toBeDisabled();
-    await expect(page.getByTestId('start-hint')).toHaveText('Sign in first');
+    await expect(start(page)).toHaveCount(0);
     // The run's options come from the form, as for Start.
     await moreOptions(page);
     await page.getByLabel('Maximum pages').fill('1');
@@ -71,14 +67,18 @@ test('run-simple (b): with no session, Sign in runs one crawl that signs in and 
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     // No Start: the sign-in is the run, and Live follows it.
     await expect(page).toHaveURL(/\/live$/);
-    await expect(page.getByTestId('login-waiting')).toHaveText('A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.', { timeout: 60_000 });
+    // The wait is the Live status line, not a warning.
+    await expect(page.getByTestId('run-status')).toHaveText('A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.', { timeout: 60_000 });
+    await expect(page.locator('[data-notice="warn"]', { hasText: 'A browser window is open' })).toHaveCount(0);
     await expect(page.getByTestId('run-command')).toContainText('--login --stay --state a11y-508-state.json');
     const cur = (await api(dash, '/api/runs/current')).json;
     expect(cur.kind).toBe('crawl');
     expect(cur.meta.command).toContain('--login --stay --state a11y-508-state.json');
     await expect(page.getByTestId('page-list').locator('tbody tr[data-url]')).toHaveCount(1, { timeout: 180_000 });
-    await expect(page.getByTestId('login-waiting')).toHaveCount(0);
     await waitFinished(page);
+    // The CLI's own sign-in lines are not dashboard warnings.
+    await expect(page.locator('[data-notice="warn"]', { hasText: 'holds live credentials' })).toHaveCount(0);
+    await expect(page.locator('[data-notice="warn"]', { hasText: 'A browser window is open' })).toHaveCount(0);
     const report = readReport(dash.cwd);
     expect(report.options.stay).toBe(true);
     expect(report.pages[0].finalUrl).toBe(site.base + 'app.html');
@@ -86,10 +86,13 @@ test('run-simple (b): with no session, Sign in runs one crawl that signs in and 
     expect(report.pages[0].title).toBe('Application - a11y-508 test site');
     // Back on Run: the session is saved, and Start uses it from now on.
     await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
-    await expect(signInState(page)).toHaveText('Signed in · session saved just now');
+    await expect(signInState(page)).toHaveText(/^Signed in · session saved just now \(.+\)$/);
+    // The time saved, in local time, with the ISO string for precision.
+    const t = signInState(page).locator('time');
+    const iso = await t.getAttribute('datetime');
+    await expect(t).toHaveText(await page.evaluate((a) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(a!)), iso));
     await expect(page.getByRole('button', { name: 'Sign in again' })).toBeVisible();
     await expect(start(page)).toBeEnabled();
-    await expect(page.getByTestId('start-hint')).toHaveCount(0);
   } finally {
     await dash.stop();
     site.close();
@@ -114,10 +117,10 @@ test('run-simple (c): a session saved before launch is shown with its age, and S
   const dash = await dashboard({ cwd });
   try {
     await open(page, dash, '/run');
-    await expect(signInState(page)).toHaveText('Signed in · session saved 5 min ago');
+    await expect(signInState(page)).toHaveText(/^Signed in · session saved 5 min ago \(.+\)$/);
     await expect(page.getByRole('button', { name: 'Sign in again' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0);
-    await expect(page.getByTestId('start-hint')).toHaveCount(0);
+    await expect(start(page)).toBeVisible();
     await page.getByLabel('Start URL').fill(site.base + 'app.html');
     await expect(start(page)).toBeEnabled();
     // On first load the saved session is the mode in effect, not "A token".
@@ -180,7 +183,7 @@ test('run-simple (d): a run bounced to a sign-in page on another origin offers S
     await notice.getByRole('button', { name: 'Sign in', exact: true }).click();
     // A new crawl that signs in and stays in the window; Live follows it.
     await expect(page).toHaveURL(/\/live$/);
-    await expect(page.getByTestId('login-waiting')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('run-status')).toHaveText(/^A Chrome window is open/, { timeout: 60_000 });
     const cur = (await api(dash, '/api/runs/current')).json;
     expect(cur.kind).toBe('crawl');
     expect(cur.meta.command).toContain('--login --stay');

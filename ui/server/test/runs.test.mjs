@@ -76,3 +76,39 @@ test('the shown command is written for the shell: POSIX (Git Bash too), PowerShe
   assert.equal(commandLine({ cwd, args, token: 'form', shell: 'powershell' }), `$env:TOKEN='...'; node ${rel} http://x/ --max-pages 5 --include 'a b'`);
   assert.equal(commandLine({ cwd, args, token: 'none', shell: 'cmd' }), `node ${rel} http://x/ --max-pages 5 --include "a b"`);
 });
+
+test('deleting reports: history entries only, confined to a11y-508-history, behind the secret', async () => {
+  const s = await startServer();
+  try {
+    const rep = (dir) => {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'report.json'), JSON.stringify({ finishedAt: '2026-01-02T03:04:05.000Z', summary: {}, pages: [] }));
+    };
+    rep(join(s.cwd, 'a11y-508-report'));
+    rep(join(s.cwd, 'a11y-508-work', 'round-1'));
+    rep(join(s.cwd, 'a11y-508-history', 'one'));
+    rep(join(s.cwd, 'a11y-508-history', 'two'));
+    // Outside the history directory, or not a history id: refused, nothing removed.
+    for (const id of ['latest', 'round-1', 'h-..', encodeURIComponent('h-../a11y-508-report'), encodeURIComponent('../a11y-508-report'), 'h-.hidden']) {
+      const r = await s.call('DELETE', `/api/reports/${id}`);
+      assert.ok([400, 404].includes(r.status), `${id}: ${r.status}`);
+    }
+    assert.equal((await s.call('DELETE', '/api/reports/h-missing')).status, 404);
+    assert.equal((await s.call('DELETE', '/api/reports/history', { secret: 'wrong' })).status, 401);
+    assert.ok(existsSync(join(s.cwd, 'a11y-508-report', 'report.json')));
+    assert.ok(existsSync(join(s.cwd, 'a11y-508-work', 'round-1', 'report.json')));
+    assert.deepEqual(readdirSync(join(s.cwd, 'a11y-508-history')).sort(), ['one', 'two']);
+    // One entry, then the rest.
+    const one = await s.call('DELETE', '/api/reports/h-one');
+    assert.equal(one.status, 200);
+    assert.deepEqual(readdirSync(join(s.cwd, 'a11y-508-history')), ['two']);
+    const all = await s.call('DELETE', '/api/reports/history');
+    assert.equal(all.status, 200);
+    assert.equal(all.json.removed, 1);
+    assert.deepEqual(readdirSync(join(s.cwd, 'a11y-508-history')), []);
+    assert.ok(existsSync(join(s.cwd, 'a11y-508-report', 'report.json')), 'the latest report stays');
+    assert.ok(existsSync(join(s.cwd, 'a11y-508-work', 'round-1', 'report.json')), 'the loop rounds stay');
+  } finally {
+    await s.stop();
+  }
+});

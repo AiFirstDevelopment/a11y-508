@@ -27,6 +27,9 @@ export interface Notice {
   message: string;
 }
 
+// CLI warnings that are not news on the dashboard (see apply()).
+export const SIGN_IN_LINES = /^A browser window is open on |holds live credentials; keep it out of version control/;
+
 // Every event type the app understands. Anything else gets an "unknown
 // event" notice rather than being dropped in silence.
 export const KNOWN_EVENTS = new Set([
@@ -111,6 +114,11 @@ export class RunStore {
       case 'info':
         break;
       case 'warn':
+        // The sign-in's own lines: the wait is the status line (login-waiting), and the
+        // session file is the dashboard's to look after. The raw output keeps both.
+        if (SIGN_IN_LINES.test(ev['message'])) break;
+        this.notices.update((n) => [...n, { level: 'warn', message: ev['message'] }]);
+        break;
       case 'error':
         this.notices.update((n) => [...n, { level: ev.type as 'warn' | 'error', message: ev['message'] }]);
         break;

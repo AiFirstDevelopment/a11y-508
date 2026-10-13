@@ -5,7 +5,7 @@ import { BarChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
-import { skippedText, discoveryOf, foundText, resultLine, shortUrl } from '../core/format';
+import { localTime, skippedText, discoveryOf, foundText, resultLine, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { Finding, IMPACTS, Report } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
@@ -19,6 +19,9 @@ interface Row extends Finding {
   selector: 'app-report-screen',
   imports: [BarChartModule, ChartPanel, RouterLink],
   template: `
+    @if (reportId() !== 'latest') {
+      <p class="back"><a routerLink="/history" data-testid="back-to-history">Back to History</a></p>
+    }
     <h1>{{ heading() }}</h1>
     @if (loading()) {
       <p role="status">Loading the report…</p>
@@ -26,7 +29,7 @@ interface Row extends Finding {
       <p>No report yet. <a routerLink="/run">Run a crawl</a>, or open one from <a routerLink="/history">History</a>.</p>
     } @else {
       @let r = report()!;
-      <p class="hint">{{ r.baseUrl }} · finished {{ r.finishedAt }}</p>
+      <p class="hint">{{ r.baseUrl }} · finished <time [attr.datetime]="r.finishedAt" [attr.title]="r.finishedAt">{{ local(r.finishedAt) }}</time></p>
       <p class="result" [class.pass]="r.passed && complete()" [class.fail]="!r.passed" [class.incomplete]="r.passed && !complete()" data-testid="result-line">{{ line() }}</p>
       @if (r.summary.coverage?.warnings?.length) {
         <div class="notice warn" role="status" data-testid="coverage-warnings">
@@ -176,6 +179,7 @@ interface Row extends Finding {
 })
 export class ReportScreen {
   readonly found = foundText;
+  readonly local = localTime;
   readonly discovery = discoveryOf;
   readonly quoted = skippedText;
 
@@ -201,7 +205,7 @@ export class ReportScreen {
     const id = this.reportId();
     if (id === 'latest') return 'Latest report';
     if (id.startsWith('round-')) return `Report: loop round ${id.slice(6)}`;
-    return `Report from ${this.report()?.finishedAt || 'history'}`;
+    return `Report from ${localTime(this.report()?.finishedAt) || 'history'}`;
   });
   readonly complete = computed(() => !this.report()?.summary.coverage || this.report()!.summary.coverage!.complete);
   readonly line = computed(() => (this.report() ? resultLine(this.report()!) : ''));

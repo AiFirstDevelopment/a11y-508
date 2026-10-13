@@ -162,9 +162,12 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     const panel = page.locator('app-chart-panel#rounds');
     await panel.getByRole('button', { name: /Show data table/ }).click();
     await expect(panel.locator('table tbody tr')).toHaveCount(ledger.rounds.length);
-    const rows = await panel.locator('table tbody tr').evaluateAll((trs) => trs.map((tr) => [...tr.children].map((c) => Number(c.textContent))));
+    const rows = await panel.locator('table tbody tr').evaluateAll((trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent!.trim())));
     let verified = 0;
-    expect(rows).toEqual(ledger.rounds.map((r: any) => [r.round, r.violations, (verified += r.diff.verified)]));
+    expect(rows.map((r) => r.slice(0, 3).map(Number))).toEqual(ledger.rounds.map((r: any) => [r.round, r.violations, (verified += r.diff.verified)]));
+    // Each round's time, in the viewer's local time.
+    const local = await page.evaluate((ats: string[]) => ats.map((a) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(a))), ledger.rounds.map((r: any) => r.at));
+    expect(rows.map((r) => r[3])).toEqual(local);
   } finally {
     await dash.stop();
     server.close();

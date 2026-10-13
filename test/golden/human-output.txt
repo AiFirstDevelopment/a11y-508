@@ -8,8 +8,8 @@ crawling BASE/ (max 8 pages, depth 10, 1 tabs)
 [  4/  8] ✗ /media.html  6 violations · 10 review (T)
 [  5/  8] ✓ /about.html  0 violations · 1 review (T)
 [  6/  8] ✗ /login.html?reason=state  HTTP 404 (T)
-[  7/  9] ✓ /landed.html  0 violations · 1 review (T)
-[  8/  9] ✓ /reports.html  0 violations · 1 review (T)
+[  7/  8] ✓ /landed.html  0 violations · 1 review (T)
+[  8/  8] ✓ /reports.html  0 violations · 1 review (T)
 
 Section 508 audit  BASE/
 pages: 8 crawled, 7 audited, 1 failed, 0 skipped

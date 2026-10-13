@@ -125,3 +125,4 @@ summary { cursor: pointer; font-weight: 600; color: var(--accent); }
 button.link { background: transparent; border-color: transparent; color: var(--accent); text-decoration: underline; padding: 2px 4px; }
 button.link:disabled { background: transparent; border-color: transparent; color: #595959; }
 details.more { margin: 20px 0 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.back { margin: 8px 0 0; }

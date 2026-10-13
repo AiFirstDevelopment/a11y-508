@@ -4,7 +4,7 @@ import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { ADVANCED, AuthMode, FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
-import { ageText, savedAgo } from '../core/format';
+import { ageText, localTime, savedAgo } from '../core/format';
 import { SignInFlow } from '../core/sign-in';
 
 @Component({
@@ -32,7 +32,7 @@ import { SignInFlow } from '../core/sign-in';
           } @else if (flow.failed()) {
             <span class="err-text">Sign-in did not finish: {{ flow.error() }}</span>
           } @else if (signedIn()) {
-            <span class="ok">Signed in · session saved {{ savedText() }}</span>
+            <span class="ok">Signed in · session saved {{ savedText() }} (<time [attr.datetime]="savedAt().iso" [attr.title]="savedAt().iso">{{ savedAt().local }}</time>)</span>
           } @else {
             Not signed in
           }
@@ -53,9 +53,9 @@ import { SignInFlow } from '../core/sign-in';
         <div class="notice error" role="alert" data-notice="form-error">{{ commandError() || error() }}</div>
       }
       <div class="actions">
-        <button type="submit" [disabled]="!canStart()" [attr.aria-describedby]="needsSignIn() ? 'start-hint' : null">Start</button>
-        @if (needsSignIn()) {
-          <p class="hint" id="start-hint" data-testid="start-hint">Sign in first</p>
+        <!-- Without a session the way in is Sign in; Start appears once there is one, or a way is chosen under More options. -->
+        @if (!needsSignIn()) {
+          <button type="submit" [disabled]="!canStart()">Start</button>
         }
         @if (run.active()) {
           <p class="hint">A run is active. <a routerLink="/live">Watch it</a>.</p>
@@ -188,6 +188,11 @@ export class RunScreen implements OnInit {
   readonly savedText = computed(() => {
     const s = this.env.env()?.session;
     return s?.exists ? savedAgo(s.ageMs) : 'just now';
+  });
+  readonly savedAt = computed(() => {
+    const s = this.env.env()?.session;
+    const t = s?.exists && s.ageMs !== undefined ? new Date(Date.now() - s.ageMs) : new Date();
+    return { iso: t.toISOString(), local: localTime(t) };
   });
   readonly canSignIn = computed(() => !!this.form.url().trim() && !this.run.active());
   // No saved session and no other way chosen under More options: sign in first.

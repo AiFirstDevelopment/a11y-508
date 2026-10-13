@@ -5,6 +5,7 @@ import { EnvStore } from '../core/env.store';
 import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { prefersReducedMotion } from '../core/motion';
+import { localTime } from '../core/format';
 import { AgentTest, LedgerInfo, Preset } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
 import { RunView } from '../shared/run-view';
@@ -251,12 +252,12 @@ export class FixLoopScreen implements OnInit {
     return `Round ${r}: ${step || 'crawl'}`;
   });
 
-  readonly roundCols = [{ key: 'round', label: 'Round' }, { key: 'open', label: 'Open violations' }, { key: 'verified', label: 'Verified fixed (total)' }];
+  readonly roundCols = [{ key: 'round', label: 'Round' }, { key: 'open', label: 'Open violations' }, { key: 'verified', label: 'Verified fixed (total)' }, { key: 'at', label: 'Finished' }];
   readonly roundRows = computed(() => {
     let verified = 0;
     return (this.ledger()?.rounds || []).map((r) => {
       verified += r.diff['verified'] || 0;
-      return { round: r.round, open: r.violations, verified };
+      return { round: r.round, open: r.violations, verified, at: localTime(r.at) };
     });
   });
   readonly roundSeries = computed(() => [

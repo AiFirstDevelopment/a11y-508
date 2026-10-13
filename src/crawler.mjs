@@ -28,6 +28,8 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
   const first = normalizeUrl(startUrl, origin) || startUrl;
   const queue = [{ url: first, depth: 0 }];
   const seen = new Set([first]);
+  // URLs a page landed on after a redirect: already audited, never queued again.
+  const landed = new Set();
   const audited = new Set(); // final URLs of pages audited so far, so a redirect target is audited once
   const pages = [];
   let active = 0;
@@ -93,7 +95,9 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
             } else {
               audited.add(landedOn);
               if (landedOn !== item.url) {
-                seen.add(landedOn);
+                // Not added to seen: that set is the "pages found" count, and the
+                // landing page is the same page as the URL that led to it.
+                landed.add(landedOn);
                 for (let i = queue.length - 1; i >= 0; i--) if (queue[i].url === landedOn) queue.splice(i, 1);
               }
             }
@@ -104,7 +108,7 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
             const viaClick = (res.discovery && res.discovery.urls) || [];
             for (const link of [...res.info.links, ...viaClick]) {
               const n = normalizeUrl(link, origin);
-              if (!n || seen.has(n) || !allowed(n)) continue;
+              if (!n || seen.has(n) || landed.has(n) || !allowed(n)) continue;
               if (seen.size >= opts.maxPages) {
                 overflow++;
                 continue;

@@ -66,6 +66,15 @@ export function ageText(ms: number | undefined): string {
   return `${Math.round(h / 24)} days old`;
 }
 
+// A timestamp in the viewer's own locale and time zone: "Oct 13, 2026, 7:10 AM".
+// The data stays ISO (UTC); the screens show this, with the ISO string in <time datetime>.
+export const LOCAL_TIME: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' };
+export function localTime(iso: string | number | Date | null | undefined): string {
+  if (iso === null || iso === undefined || iso === '') return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : new Intl.DateTimeFormat(undefined, LOCAL_TIME).format(d);
+}
+
 // "session saved 5 min ago": the Run screen's sign-in state.
 export function savedAgo(ms: number | undefined): string {
   if (ms === undefined) return '';

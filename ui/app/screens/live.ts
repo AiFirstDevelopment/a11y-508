@@ -18,9 +18,6 @@ import { SignInFlow } from '../core/sign-in';
       @if (store.run()?.['command']; as cmd) {
         <p class="hint">Running <code data-testid="run-command">{{ cmd }}</code></p>
       }
-      @if (store.loginWaiting() && store.active()) {
-        <p class="notice" role="status" data-testid="login-waiting">A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.</p>
-      }
       @if (signInError()) {
         <div class="notice error" role="alert">{{ signInError() }}</div>
       }
@@ -59,6 +56,7 @@ export class LiveScreen {
     const d = this.store.done();
     const s = this.store.summary();
     if (this.store.stopping() && !d) return 'Stopping…';
+    if (!d && this.store.loginWaiting()) return 'A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.';
     if (!d) return `Running: ${this.store.kind()}`;
     if (d['outcome'] === 'stopped') return 'Stopped';
     if (s) return `Finished: ${resultWord(s['result'])}`;

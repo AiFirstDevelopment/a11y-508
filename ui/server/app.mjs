@@ -14,7 +14,7 @@ import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine } from './args.mjs';
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
-import { listReports, readReport, confinedFile, moveLatestToHistory, REPORT_DIR } from './reports.mjs';
+import { listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
 
@@ -355,6 +355,18 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       return send(res, 200, { ok: true });
     }
     if (m === 'GET' && path === '/api/reports') return send(res, 200, listReports(state.cwd));
+    if (m === 'DELETE' && (path === '/api/reports/history' || /^\/api\/reports\/[^/]+$/.test(path))) {
+      if (runs.active) return send(res, 409, { error: `a ${runs.current.kind} run is active; delete reports when it has finished` });
+      if (path === '/api/reports/history') return send(res, 200, clearHistory(state.cwd));
+      let id;
+      try {
+        id = decodeURIComponent(path.slice('/api/reports/'.length));
+      } catch {
+        return send(res, 400, { error: 'bad report id' });
+      }
+      const r = deleteHistoryEntry(state.cwd, id);
+      return send(res, r.status, r.body);
+    }
     const rm = /^\/api\/reports\/([^/]+)$/.exec(path);
     if (m === 'GET' && rm) {
       const r = readReport(state.cwd, decodeURIComponent(rm[1]));
