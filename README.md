@@ -6,7 +6,12 @@ A Section 508 crawler with **no dependencies**. It drives the Chrome, Chromium, 
 - **Review items**: escalations for a human. The tool found something it cannot judge (an alt text, a link name, a form's error handling) and says exactly what to check, with the element, its HTML, and a screenshot.
 - **Manual checklist**: the test conditions that can only be performed by a person.
 
-It exists for environments where nothing can be published to a package registry and nothing can be downloaded at install time. It is two directories of plain JavaScript. Nothing is fetched from the network except the site being audited.
+It exists for environments where nothing can be published to a package registry and nothing can be downloaded at install time. It is plain JavaScript; nothing is fetched from the network except the site being audited. There are two ways to use it:
+
+- **The dashboard**, for developers: clone this repository once, run `npm run ui`, point it at any repository on your machine, and sign in, crawl, read the report and run the fix loop from screens instead of a terminal.
+- **The command line**, for CI and for AI coding assistants: one command, exit code 1 when violations exist, a report as a build artifact.
+
+Both do the same work; the dashboard drives the command line underneath.
 
 **AI coding assistants:** if you were told to read this file and get the crawl working, follow the [runbook](#runbook-for-ai-coding-assistants) below. It tells you which command to run next for every outcome.
 
@@ -14,202 +19,64 @@ It exists for environments where nothing can be published to a package registry 
 TOKEN=eyJhbGciOi... npm run e2e:a11y-508 https://app.example.gov
 ```
 
-## Requirements
+## Contents
+
+- [How to use it](#how-to-use-it): [requirements](#requirements), [the dashboard](#the-dashboard), [the command line](#the-command-line), [the fix loop](#the-fix-loop), [in CI and other repositories](#in-ci-and-other-repositories)
+- [How it works](#how-it-works): [the crawl](#the-crawl), [the fix loop's cycle](#the-fix-loops-cycle), [the dashboard's parts](#the-dashboards-parts), [authentication](#authentication), [coverage](#coverage-pages-without-links), [the event stream](#the-event-stream---events)
+- [What it checks](#what-it-checks), [Beyond Section 508](#beyond-section-508), [Reading the report](#reading-the-report), [What this cannot do](#what-this-cannot-do)
+- [Runbook for AI coding assistants](#runbook-for-ai-coding-assistants)
+- [Development](#development)
+
+## How to use it
+
+### Requirements
 
 - Node.js 18 or newer.
 - Chrome, Chromium, or Microsoft Edge installed. Auto-detected on macOS, Linux, and Windows, or set `CHROME_PATH`.
 
-That is all. There is no `npm install` step.
+That is all. There is no `npm install` step, for the command line or the dashboard.
 
-## Using it from another repository
-
-Copy the tool into the consuming repository and add one script. `git subtree` keeps a record of where it came from so it can be updated later; a plain copy of the folder works too.
-
-```bash
-git subtree add --prefix tools/a11y-508 https://github.com/AiFirstDevelopment/a11y-508.git main --squash
-```
-
-In the consuming repository's `package.json`:
-
-```json
-{
-  "scripts": {
-    "e2e:a11y-508": "node tools/a11y-508/bin/a11y-508.mjs"
-  }
-}
-```
-
-Add `a11y-508-report/` to `.gitignore`. Then:
-
-```bash
-TOKEN=<token> npm run e2e:a11y-508 https://staging.example.gov
-```
-
-npm passes the URL through to the script. Options that start with `--` need the usual npm separator: `npm run e2e:a11y-508 https://site -- --max-pages 50`.
-
-To update later:
-
-```bash
-git subtree pull --prefix tools/a11y-508 https://github.com/AiFirstDevelopment/a11y-508.git main --squash
-```
-
-If GitHub is not reachable from the environment, mirror this repository to the internal git host and use that URL instead.
-
-### Prompt for an AI coding assistant
-
-Paste this into Claude Code, Copilot, Cursor, or similar when working in the repository that should get the check:
-
-> Add the a11y-508 Section 508 crawler to this repository so that `npm run e2e:a11y-508 <url>` works.
->
-> 1. Vendor the tool with `git subtree add --prefix tools/a11y-508 https://github.com/AiFirstDevelopment/a11y-508.git main --squash`. If subtree or network access is unavailable, copy the `bin/` and `src/` directories plus `README.md` and `LICENSE` from that repository into `tools/a11y-508/`. Do not add it as an npm dependency and do not run `npm install` for it; it has no dependencies.
-> 2. Add the script `"e2e:a11y-508": "node tools/a11y-508/bin/a11y-508.mjs"` to `package.json`. If this repository already has an `e2e:` script naming convention, keep this name anyway; it is what the team's CI expects.
-> 3. Add `a11y-508-report/` to `.gitignore`.
-> 4. The tool reads the environment variable `TOKEN` and sends it as `Authorization: Bearer <TOKEN>` on same-origin requests only. Do not hard-code a token anywhere. If this project's local dev server needs a different header name, use `--token-header <name>`.
-> 5. Verify by running `npm run e2e:a11y-508 http://localhost:<port>` against the running dev server (set `TOKEN` if the server requires it) and confirm `a11y-508-report/report.html` is produced. The command exits 1 when critical or serious violations exist, which is expected on a first run; do not change `--fail-on` to make it pass.
-> 6. Optionally add a CI job that runs the same command against the deployed preview/staging URL with `TOKEN` supplied from the CI secret store, and publishes `a11y-508-report/` as a build artifact.
->
-> The tool needs Node 18+ and a Chrome, Chromium, or Edge binary on the machine (`CHROME_PATH` if it is not in a standard location). It does not download a browser.
-
-## The fix loop
-
-`a11y-508 loop` turns the crawl into an unattended fix cycle driven by an AI coding assistant of your choice. Each round it crawls, diffs the findings against the last round, has the assistant judge the review items and fix the open violations one at a time, gates every fix with your own build or test command, commits and pushes what survives, waits for the deployment, and crawls again. It keeps going until nothing is open or you press Ctrl+C, and a stopped loop resumes where it was because all state is in `a11y-508-work/ledger.json`.
-
-Nobody reviews the assistant's changes before they are committed; the gate command stands in for the reviewer, and each fix is its own commit so a bad one can be reverted by hand later.
-
-Put `a11y-508.config.json` in the repository that vendors the tool:
-
-```json
-{
-  "url": "https://app-dev.example.gov/layout",
-  "args": ["--max-pages", "50"],
-  "agent": "claude",
-  "source": ["src"],
-  "check": "npm run build && npm test",
-  "branch": "a11y-508/fixes",
-  "deployed": "bundle-change"
-}
-```
-
-| Key | Meaning |
-|---|---|
-| `url` | Start URL. The command line overrides it. |
-| `args` | Crawl options used in every round, same as the basic run. Options on the `loop` command line are added. |
-| `agent` | `claude`, `gemini`, `codex`, or any command. The presets run the assistant in non-interactive mode with file edits allowed. A custom command gets the prompt's path as `{promptFile}` and may also use `{resultFile}`. |
-| `source` | Folders the assistant may edit (default `["src"]`). Changes anywhere else are reverted. |
-| `check` | Build and test command run after each fix. A non-zero exit reverts the fix. `"checkEvery": "round"` runs it once per round instead and rolls back the whole round on failure. No `check` means no gate, with a warning. |
-| `branch` | Branch to commit on (created if missing). Default: the current branch. `"push": false` keeps commits local. |
-| `deployed` | How the loop knows the new build is live: `"command"` runs `deploy` and continues when it exits; `"bundle-change"` polls the start page every 15 seconds until its script and stylesheet URLs change (the default `deployTimeout` is 30 minutes); `"enter"` prints a prompt and waits for Enter; `"none"` continues at once (only for sites served straight from the working tree). Default: `"command"` if `deploy` is set, else `"enter"`. |
-| `maxAttempts` | Fix attempts per finding before it is marked needs-human (default 3). |
-
-Then:
-
-```sh
-TOKEN=... a11y-508 loop                 # or: npm run e2e:a11y-508 loop
-a11y-508 loop --dry-run                  # crawl and update the ledger, nothing else
-a11y-508 loop --max-rounds 1 --agent gemini
-a11y-508 status                          # what is open, pending, verified, needs a person
-```
-
-What the assistant gets: one prompt per task, written to a file under `a11y-508-work/`, with the finding's test condition, message, pages, selector and rendered HTML, the folders it may edit, the folders it must not touch, and the path of the JSON result file it has to write. It never sees the token, the session file, or the report as a whole, and the token is stripped from its environment. A finding that is still present after `maxAttempts` fixes, or whose fix fails the gate that many times, is marked needs-human and dropped from the loop so one stubborn issue cannot keep it running. Review items the assistant calls "unsure" go to needs-human as well.
-
-The loop refuses to start on a repository with uncommitted changes under `source`, so its commits only ever contain its own work. Each round's crawl output is kept in `a11y-508-work/round-N/`; add `a11y-508-work/` to `.gitignore`.
-
-Each assistant call leaves `a11y-508-work/agent-r<round>-<task>.log` beside its prompt and result: a header line (exit code, time-out, quota) and the tail of its output. A call that writes no result and whose output names a quota or rate limit (HTTP 429, `RESOURCE_EXHAUSTED`, "quota", "rate limit") is run again after 30 seconds and then 90 seconds before it counts as a failed attempt; free tiers limit requests per minute. With `"agent": "gemini"` the loop sets `GEMINI_CLI_TRUST_WORKSPACE=true` for the assistant (Gemini CLI will not run headless in a folder it has not been told to trust) and hands it the prompt on stdin, because Gemini CLI's file reader refuses files that `.gitignore` lists, `a11y-508-work/` among them.
-
-### The loop, end to end in CI
-
-`.github/workflows/loop-gemini.yml` proves the whole product on Windows: it crawls a small app with planted Section 508 violations, lets the loop repair them with Gemini CLI's free tier (`gemini-flash-lite-latest` by default, through `GEMINI_MODEL`; `gemini-2.5-flash` is no longer offered to new keys, `gemini-3.8-flash`'s free daily quota runs out after a few calls, and a manual run can choose another model), and confirms the repairs with the next crawl. The app is `test/loop-app/`: four pages (a home page with images, a contact form, an opening-hours table, a gallery with a modal viewer) and a stylesheet, with about ten violations marked by HTML comments (missing alt, an unlabelled field, low-contrast CSS, a page without `lang`, the same link text for two destinations, a page with no skip link, main or heading, a fieldset without a legend, an icon-only button, `scope="column"`, `aria-labeledby`). Before the loop, one direct `gemini -p` call with a 90-second limit shows whether Gemini answers at all: a quota refusal there makes the run SKIPPED, anything else fails it at once. The loop's config gives each assistant call three minutes and triages in batches of eight; `a11y-508-work/agent-calls.log` has a line when each call starts and ends. The job makes a throwaway git repository holding the app, runs `a11y-508 loop --max-rounds 2` against it with the gate `node check.mjs` (every page still parses and is still served), then `a11y-508 status`, and `test/loop-app/verify.mjs` asserts that round 1 recorded at least ten findings, that round 2 verified at least one fix, that the loop committed, that no commit touched anything outside `site/`, and that the gate ran for every fix. It does not assert how many fixes the model makes. A run in which every assistant call was refused for quota is reported as SKIPPED, not failed. The work directory (ledger, prompts, results, agent logs, round reports, the git log) is uploaded as the `loop-gemini-work` artifact.
-
-It needs the repository secret `GEMINI_API_KEY`, a Google AI Studio key (the free tier is enough); without it the job says so and stops green. It runs on pull requests that change `src/loop.mjs`, `src/agent.mjs`, `src/ledger.mjs`, `test/loop-app/` or the workflow, and by hand (`gh workflow run loop-gemini.yml --ref <branch>`); it is not a required check.
-
-To run the same thing by hand, with Gemini CLI or Claude Code installed and signed in:
-
-```sh
-node test/loop-app/setup.mjs ../loop-test --agent gemini     # or --agent claude
-cd ../loop-test
-node server.mjs > ../server.log &                             # http://127.0.0.1:4321/; logs outside the repository,
-                                                              # or the loop reverts them as stray changes
-GEMINI_MODEL=gemini-flash-lite-latest node ../a11y-508/bin/a11y-508.mjs loop --max-rounds 2
-node ../a11y-508/bin/a11y-508.mjs status
-node ../a11y-508/test/loop-app/verify.mjs .
-```
-
-## The dashboard
+### The dashboard
 
 A local web dashboard does everything the command line does, as screens instead of a scrolling log: sign in, start a crawl and watch it page by page, troubleshoot, read the report with charts and filters, and run the fix loop with an assistant picker and a ledger board. It is built on the CLI, which still does the work, and it runs only on your machine, for you.
 
 ```sh
-npm run ui                 # in this repository
-node ui/server/main.mjs    # the same thing
-node ui/server/main.mjs --dir ../my-app   # for another repository
+git clone https://github.com/AiFirstDevelopment/a11y-508.git
+cd a11y-508
+npm run ui                                # opens http://127.0.0.1:5508/#secret=...
+node ui/server/main.mjs --dir ../my-app   # the same, started in another repository
 ```
 
-In a repository that vendors the tool, add a script next to the existing one:
+Then, in the browser:
+
+1. **Choose the repository.** The header shows the working directory on every screen. **Change…** opens a folder picker: browse the machine's folders (each marked *git*, *config*, *report*, *ledger* or *session* when it holds one), paste a path (`~` is your home folder), or pick one of the last eight you chose, and **Choose this folder**. Every screen then reads that directory, and the next run starts there. The dashboard reads and writes `a11y-508-report/`, `a11y-508-work/`, `a11y-508-history/`, `a11y-508-state.json` and `a11y-508.config.json` there, exactly as the CLI does.
+2. **Authenticate.** On the Run screen, paste a token, choose *use TOKEN from my shell* if you started the dashboard with `TOKEN` set, add cookies, or press **Sign in** for a site behind a single sign-on portal: a Chrome window opens, you sign in, and the session is saved for later runs. **Troubleshoot** explains what happened when a crawl cannot get in and offers the next step as a button.
+3. **Crawl.** **Start** runs the crawl; the Live screen shows a progress bar, each page as it finishes, and warnings as notices. The Run screen also shows the equivalent command line, so a run you set up here can go into CI unchanged.
+4. **Read the report.** The result line, totals by impact, charts (each with a data table), the findings with filters, each finding's selector, HTML and screenshot, the manual checklist. Earlier reports are kept under History.
+5. **Fix.** The Fix loop screen lists Claude Code, Gemini CLI and Codex, shows which are installed with their versions, installs a missing one in your own shell after you confirm, and tests the one you pick with a tiny task. Fill in the config (what the assistant may edit, the build or test command that gates each fix, the branch, how deployments happen), run a **Dry run** to see the ledger, then **Start**.
+
+Nothing has to be installed: the server uses only Node's own modules, and the built app is committed under `ui/dist/`. It listens on `127.0.0.1` only (port 5508, or the next free one; `--port <n>` to choose) and opens your browser; `--no-open` prints the address instead.
+
+- **The address carries a secret.** Each launch makes a random secret and puts it in the address it opens. The app keeps it for the tab and sends it on every request; anything without it gets 401, and a request for any host other than `127.0.0.1:<port>` or `localhost:<port>` gets 403. The folder picker is behind the same secret and lists folder names only, never files; the recent folders are kept in your browser.
+- **The token stays in memory.** It is passed to the CLI in its environment only, never written to disk, never sent back to the browser, and blanked out of the CLI's output if it ever appears there.
+- **Reports are kept.** Before each crawl the previous `a11y-508-report/` moves to `a11y-508-history/<finished-at>/`, so the latest report stays where the runbook says and History lists the earlier ones. Add `a11y-508-history/` to `.gitignore`.
+- **The fix loop's assistant** is found on `PATH`, through your login shell, or in `npm prefix -g`'s bin folder. *Test assistant* calls it once, to show it is installed and signed in before a loop spends a round finding out. On Windows, "your shell" is Git Bash, which comes with Git for Windows (the loop needs git anyway); without it the dashboard falls back to PowerShell or cmd.
+- **Beyond Section 508.** *Also check WCAG 2.2 (beyond Section 508)* under **Advanced** adds `--wcag 2.2` to the run (see [Beyond Section 508](#beyond-section-508)); the Report screen then lists those rules under their own heading and in their own group of the test filter.
+- **Every chart has a data table** with the same numbers, and chart animations are off when you have asked your system for reduced motion.
+
+In a repository that vendors the tool (see [In CI and other repositories](#in-ci-and-other-repositories)), add a script next to the existing one:
 
 ```json
 "e2e:a11y-508:ui": "node tools/a11y-508/ui/server/main.mjs"
 ```
 
-Nothing has to be installed: the server uses only Node's own modules (Node 18 or newer), and the built app is committed under `ui/dist/`. It listens on `127.0.0.1` only (port 5508, or the next free one; `--port <n>` to choose) and opens your browser; `--no-open` prints the address instead. Run it in the repository you want to audit or fix, or point it there with `--dir <path>` (relative to where you start it): it reads and writes `a11y-508-report/`, `a11y-508-work/`, `a11y-508-history/`, `a11y-508-state.json` and `a11y-508.config.json` there, exactly as the CLI does.
-
-- **Changing the working directory.** The header shows the working directory on every screen. **Change…** opens a folder picker: browse the machine's folders (each marked *git*, *config*, *report*, *ledger* or *session* when it holds one), paste a path (`~` is your home folder), or pick one of the last eight you chose, and **Choose this folder**. Every screen then reads the new directory, and the next run starts there. It is disabled while a run is active. A browser cannot hand a page a path from the system's own folder dialog, so the local server lists the folders, behind the same secret as everything else; it lists folder names only, never files. The recent folders are kept in your browser.
-
-- **The address carries a secret.** Each launch makes a random secret and puts it in the address it opens. The app keeps it for the tab and sends it on every request; anything without it gets 401, and a request for any host other than `127.0.0.1:<port>` or `localhost:<port>` gets 403.
-- **The token stays in memory.** Type it into the Run screen, or start the dashboard with `TOKEN` set and choose *use TOKEN from my shell*. It is passed to the CLI in its environment only, never written to disk, never sent back to the browser, and blanked out of the CLI's output if it ever appears there.
-- **Reports are kept.** Before each crawl the previous `a11y-508-report/` moves to `a11y-508-history/<finished-at>/`, so the latest report stays where the runbook says and History lists the earlier ones. Add `a11y-508-history/` to `.gitignore`.
-- **The fix loop's assistant.** The Fix loop screen lists Claude Code, Gemini CLI and Codex, shows which are installed (on `PATH`, through your login shell, or in `npm prefix -g`'s bin folder) with their versions, and can install a missing one with `npm install -g` in your own shell after you confirm. *Test assistant* calls it once with a tiny task, to show it is installed and signed in before a loop spends a round finding out. On Windows, "your shell" is Git Bash, which comes with Git for Windows (the loop needs git anyway); without it the dashboard falls back to PowerShell or cmd.
-- **Beyond Section 508.** *Also check WCAG 2.2 (beyond Section 508)* under **Advanced** adds `--wcag 2.2` to the run (see [Beyond Section 508](#beyond-section-508)); the Report screen then lists those rules under their own heading and in their own group of the test filter.
-- **Every chart has a data table** with the same numbers, and chart animations are off when you have asked your system for reduced motion.
-
-The Run screen shows the equivalent command line, so a run you set up in the dashboard can go into CI unchanged.
-
-## Runbook for AI coding assistants
-
-Follow this when a person asks you to run, fix, or update this tool in a repository that vendors it. Do each step in order and do not improvise around a step that fails; report it instead.
-
-**Where the tool is.** Open `package.json` and find the script `e2e:a11y-508`. It points at `<TOOL>/bin/a11y-508.mjs`; `<TOOL>` (normally `tools/a11y-508`) is the tool folder. Never edit anything inside it.
-
-**Update it** (when asked, or when a flag mentioned here is "Unknown option"):
+### The command line
 
 ```sh
-git subtree pull --prefix <TOOL> https://github.com/AiFirstDevelopment/a11y-508.git main --squash -m "Update a11y-508"
+TOKEN=... node bin/a11y-508.mjs https://app.example.gov --max-pages 50
 ```
 
-`-m` matters: without it git opens an editor and your shell hangs. If git complains about local modifications, run `git stash`, pull again, then `git stash pop`. If subtree fails because the folder was copied rather than added as a subtree, clone the repository to a temporary folder and copy its `bin/`, `src/`, `README.md` and `LICENSE` over `<TOOL>/`. The update worked when `<TOOL>/src/troubleshoot.mjs` exists.
-
-**Run the crawl.** Options after the URL need npm's `--` separator. On Windows PowerShell set the token with `$env:TOKEN='...'` on its own line first; never put a token in a file or a commit.
-
-```sh
-npm run e2e:a11y-508 <url> -- --max-pages 25
-```
-
-Start with `--max-pages 25` so a first run finishes in a few minutes; drop it once the run works. If your shell tool has a time limit, run long commands in a separate window with output redirected to a file (PowerShell: `Start-Process powershell -ArgumentList '-NoExit','-Command','npm run e2e:a11y-508 <url> -- --max-pages 25 *> a11y-508.log'`) and read the file when it stops growing.
-
-**Read the result and pick the next step.** Look at the `pages:` line and the last line.
-
-| The output says | What it means | Do this |
-|---|---|---|
-| `pages: N crawled, M audited` with M > 0 and a `report:` path | The crawl worked. Exit code 1 means violations were found; that is a finding, not a failure of the tool. | Report the `pages:` line, the violations line and the report path. Do not change `--fail-on` to make it pass. |
-| `redirected off-origin to ...`, `FAIL (no page could be audited)`, `the start page could not be audited`, `HTTP 401`, `HTTP 403`, or `net::ERR_...` | The crawler could not get into the app. | Run the same command with `--troubleshoot` added (same `TOKEN`, same options). Paste its whole output in your reply, then follow its `next` line exactly, as below. |
-| `Unknown option --troubleshoot` (or any flag from this file) | The vendored copy is old. | Update the tool as above, then retry. |
-| `No Chrome, Chromium, or Edge found` | No browser on the machine. | Ask the person for the browser path and pass `--chrome <path>` or set `CHROME_PATH`. |
-| `coverage warning ...` or `COVERAGE IS INCOMPLETE` | Some pages were not reached. | Report the coverage warnings verbatim with the result. If it says only the start page was audited, run `--troubleshoot` and report its link count. If it says `--max-pages`, rerun without the limit. Never describe such a run as a full pass. |
-| `could not remove the temporary browser profile` | Windows kept files open for a moment. Harmless. | Ignore it. |
-
-**Following the troubleshoot `next` line.**
-
-- It names `--token-storage <key>`: rerun the crawl with that flag added (keep `TOKEN` set). Repeat troubleshoot if it still fails.
-- It says `--login-only`: the app needs a real signed-in session, which only a person can create. Run `npm run e2e:a11y-508 <url> -- --login-only`, tell the person "A Chrome window is open, please sign in there and stay on the app page", and wait; do not press keys, close the window, or kill the command. It finishes by itself once the app has loaded and stayed put for six seconds, printing `session: saved ...`. Then run the crawl with `-- --state a11y-508-state.json` (plus the other options). If a later run says `redirected off-origin` again, the session expired: repeat `--login-only` once.
-- It talks about a network error (VPN, proxy, DNS): stop and report; this is not something to fix in code.
-- It says `Authentication is working` but the crawl still failed: paste both outputs and ask the person.
-
-**Never**: edit files under `<TOOL>`; commit `a11y-508-state.json` or `a11y-508-report/` (add both to `.gitignore` if missing); write a token into any file; change `--fail-on`; retry blindly with guessed flags.
-
-**When you report back**, include the exact commands you ran, the `pages:` line, any `coverage warning` lines, the exit code, the report path, and the troubleshoot output if you ran it.
-
-**If asked to set up or run the fix loop:** create `a11y-508.config.json` as shown under "The fix loop" with the project's real build/test command in `check`, the folder that holds the app's source in `source`, and `agent` set to the assistant the person names. Ask which branch to commit on and how deployments happen (a command, a push that triggers a pipeline, or by hand) and set `branch` and `deployed` accordingly; do not guess. Run `a11y-508 loop --dry-run` first and report the ledger summary, then `a11y-508 loop` only when the person says to. Never edit `a11y-508-work/ledger.json` by hand.
-
-## Command line
+The crawl prints each page as it finishes, then a summary, the report paths, the coverage warnings, and `PASS` or `FAIL`. Exit codes: `0` no violations at the `--fail-on` impacts, `1` violations found, `2` usage or crawl error, `3` the browser could not start.
 
 ```
 a11y-508 <url> [options]
@@ -263,7 +130,179 @@ a11y-508 <url> [options]
                            2.1/2.2, also the rules beyond Section 508)
 ```
 
-Exit codes: `0` no violations at the `--fail-on` impacts, `1` violations found, `2` usage or crawl error, `3` the browser could not start.
+The loop has its own commands:
+
+```sh
+TOKEN=... a11y-508 loop                 # or: npm run e2e:a11y-508 loop
+a11y-508 loop --dry-run                  # crawl and update the ledger, nothing else
+a11y-508 loop --max-rounds 1 --agent gemini
+a11y-508 status                          # what is open, pending, verified, needs a person
+```
+
+### The fix loop
+
+`a11y-508 loop` turns the crawl into an unattended fix cycle driven by an AI coding assistant of your choice. Each round it crawls, diffs the findings against the last round, has the assistant judge the review items and fix the open violations one at a time, gates every fix with your own build or test command, commits and pushes what survives, waits for the deployment, and crawls again. It keeps going until nothing is open or you press Ctrl+C, and a stopped loop resumes where it was because all state is in `a11y-508-work/ledger.json`. [How the cycle works](#the-fix-loops-cycle) is drawn below.
+
+Nobody reviews the assistant's changes before they are committed; the gate command stands in for the reviewer, and each fix is its own commit so a bad one can be reverted by hand later.
+
+Put `a11y-508.config.json` in the repository to fix (the dashboard's Fix loop screen writes the same file):
+
+```json
+{
+  "url": "https://app-dev.example.gov/layout",
+  "args": ["--max-pages", "50"],
+  "agent": "claude",
+  "source": ["src"],
+  "check": "npm run build && npm test",
+  "branch": "a11y-508/fixes",
+  "deployed": "bundle-change"
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `url` | Start URL. The command line overrides it. |
+| `args` | Crawl options used in every round, same as the basic run. Options on the `loop` command line are added. |
+| `agent` | `claude`, `gemini`, `codex`, or any command. The presets run the assistant in non-interactive mode with file edits allowed. A custom command gets the prompt's path as `{promptFile}` and may also use `{resultFile}`. |
+| `source` | Folders the assistant may edit (default `["src"]`). Changes anywhere else are reverted. |
+| `check` | Build and test command run after each fix. A non-zero exit reverts the fix. `"checkEvery": "round"` runs it once per round instead and rolls back the whole round on failure. No `check` means no gate, with a warning. |
+| `branch` | Branch to commit on (created if missing). Default: the current branch. `"push": false` keeps commits local. |
+| `deployed` | How the loop knows the new build is live: `"command"` runs `deploy` and continues when it exits; `"bundle-change"` polls the start page every 15 seconds until its script and stylesheet URLs change (the default `deployTimeout` is 30 minutes); `"enter"` prints a prompt and waits for Enter; `"none"` continues at once (only for sites served straight from the working tree). Default: `"command"` if `deploy` is set, else `"enter"`. |
+| `maxAttempts` | Fix attempts per finding before it is marked needs-human (default 3). |
+
+What the assistant gets: one prompt per task, written to a file under `a11y-508-work/`, with the finding's test condition, message, pages, selector and rendered HTML, the folders it may edit, the folders it must not touch, and the path of the JSON result file it has to write. It never sees the token, the session file, or the report as a whole, and the token is stripped from its environment. A finding that is still present after `maxAttempts` fixes, or whose fix fails the gate that many times, is marked needs-human and dropped from the loop so one stubborn issue cannot keep it running. Review items the assistant calls "unsure" go to needs-human as well.
+
+The loop refuses to start on a repository with uncommitted changes under `source`, so its commits only ever contain its own work. Each round's crawl output is kept in `a11y-508-work/round-N/`; add `a11y-508-work/` to `.gitignore`.
+
+Each assistant call leaves `a11y-508-work/agent-r<round>-<task>.log` beside its prompt and result: a header line (exit code, time-out, quota) and the tail of its output. A call that writes no result and whose output names a quota or rate limit (HTTP 429, `RESOURCE_EXHAUSTED`, "quota", "rate limit") is run again after 30 seconds and then 90 seconds before it counts as a failed attempt; free tiers limit requests per minute. With `"agent": "gemini"` the loop sets `GEMINI_CLI_TRUST_WORKSPACE=true` for the assistant (Gemini CLI will not run headless in a folder it has not been told to trust) and hands it the prompt on stdin, because Gemini CLI's file reader refuses files that `.gitignore` lists, `a11y-508-work/` among them.
+
+### In CI and other repositories
+
+The command line is what CI runs. Copy the tool into the consuming repository and add one script. `git subtree` keeps a record of where it came from so it can be updated later; a plain copy of the folder works too.
+
+```bash
+git subtree add --prefix tools/a11y-508 https://github.com/AiFirstDevelopment/a11y-508.git main --squash
+```
+
+In the consuming repository's `package.json`:
+
+```json
+{
+  "scripts": {
+    "e2e:a11y-508": "node tools/a11y-508/bin/a11y-508.mjs"
+  }
+}
+```
+
+Add `a11y-508-report/` to `.gitignore`. Then:
+
+```bash
+TOKEN=<token> npm run e2e:a11y-508 https://staging.example.gov
+```
+
+npm passes the URL through to the script. Options that start with `--` need the usual npm separator: `npm run e2e:a11y-508 https://site -- --max-pages 50`.
+
+To update later:
+
+```bash
+git subtree pull --prefix tools/a11y-508 https://github.com/AiFirstDevelopment/a11y-508.git main --squash
+```
+
+If GitHub is not reachable from the environment, mirror this repository to the internal git host and use that URL instead.
+
+#### Prompt for an AI coding assistant
+
+Paste this into Claude Code, Copilot, Cursor, or similar when working in the repository that should get the check:
+
+> Add the a11y-508 Section 508 crawler to this repository so that `npm run e2e:a11y-508 <url>` works.
+>
+> 1. Vendor the tool with `git subtree add --prefix tools/a11y-508 https://github.com/AiFirstDevelopment/a11y-508.git main --squash`. If subtree or network access is unavailable, copy the `bin/` and `src/` directories plus `README.md` and `LICENSE` from that repository into `tools/a11y-508/`. Do not add it as an npm dependency and do not run `npm install` for it; it has no dependencies.
+> 2. Add the script `"e2e:a11y-508": "node tools/a11y-508/bin/a11y-508.mjs"` to `package.json`. If this repository already has an `e2e:` script naming convention, keep this name anyway; it is what the team's CI expects.
+> 3. Add `a11y-508-report/` to `.gitignore`.
+> 4. The tool reads the environment variable `TOKEN` and sends it as `Authorization: Bearer <TOKEN>` on same-origin requests only. Do not hard-code a token anywhere. If this project's local dev server needs a different header name, use `--token-header <name>`.
+> 5. Verify by running `npm run e2e:a11y-508 http://localhost:<port>` against the running dev server (set `TOKEN` if the server requires it) and confirm `a11y-508-report/report.html` is produced. The command exits 1 when critical or serious violations exist, which is expected on a first run; do not change `--fail-on` to make it pass.
+> 6. Optionally add a CI job that runs the same command against the deployed preview/staging URL with `TOKEN` supplied from the CI secret store, and publishes `a11y-508-report/` as a build artifact.
+>
+> The tool needs Node 18+ and a Chrome, Chromium, or Edge binary on the machine (`CHROME_PATH` if it is not in a standard location). It does not download a browser.
+
+#### The loop, end to end in CI
+
+`.github/workflows/loop-gemini.yml` proves the whole product on Windows: it crawls a small app with planted Section 508 violations, lets the loop repair them with Gemini CLI's free tier (`gemini-flash-lite-latest` by default, through `GEMINI_MODEL`; `gemini-2.5-flash` is no longer offered to new keys, `gemini-3.8-flash`'s free daily quota runs out after a few calls, and a manual run can choose another model), and confirms the repairs with the next crawl. The app is `test/loop-app/`: four pages (a home page with images, a contact form, an opening-hours table, a gallery with a modal viewer) and a stylesheet, with about ten violations marked by HTML comments (missing alt, an unlabelled field, low-contrast CSS, a page without `lang`, the same link text for two destinations, a page with no skip link, main or heading, a fieldset without a legend, an icon-only button, `scope="column"`, `aria-labeledby`). Before the loop, one direct `gemini -p` call with a 90-second limit shows whether Gemini answers at all: a quota refusal there makes the run SKIPPED, anything else fails it at once. The loop's config gives each assistant call three minutes and triages in batches of eight; `a11y-508-work/agent-calls.log` has a line when each call starts and ends. The job makes a throwaway git repository holding the app, runs `a11y-508 loop --max-rounds 2` against it with the gate `node check.mjs` (every page still parses and is still served), then `a11y-508 status`, and `test/loop-app/verify.mjs` asserts that round 1 recorded at least ten findings, that round 2 verified at least one fix, that the loop committed, that no commit touched anything outside `site/`, and that the gate ran for every fix. It does not assert how many fixes the model makes. A run in which every assistant call was refused for quota is reported as SKIPPED, not failed. The work directory (ledger, prompts, results, agent logs, round reports, the git log) is uploaded as the `loop-gemini-work` artifact.
+
+It needs the repository secret `GEMINI_API_KEY`, a Google AI Studio key (the free tier is enough); without it the job says so and stops green. It runs on pull requests that change `src/loop.mjs`, `src/agent.mjs`, `src/ledger.mjs`, `test/loop-app/` or the workflow, and by hand (`gh workflow run loop-gemini.yml --ref <branch>`); it is not a required check.
+
+To run the same thing by hand, with Gemini CLI or Claude Code installed and signed in:
+
+```sh
+node test/loop-app/setup.mjs ../loop-test --agent gemini     # or --agent claude
+cd ../loop-test
+node server.mjs > ../server.log &                             # http://127.0.0.1:4321/; logs outside the repository,
+                                                              # or the loop reverts them as stray changes
+GEMINI_MODEL=gemini-flash-lite-latest node ../a11y-508/bin/a11y-508.mjs loop --max-rounds 2
+node ../a11y-508/bin/a11y-508.mjs status
+node ../a11y-508/test/loop-app/verify.mjs .
+```
+
+## How it works
+
+### The crawl
+
+One Chrome, started headless with a temporary profile, with up to `--concurrency` tabs, each in its own window. Each tab takes the next URL from the queue, audits it, and feeds the links it found back into the queue, until the queue is empty or `--max-pages` is reached.
+
+```mermaid
+flowchart TD
+  Q[Queue: start URL] --> L[Load the page with auth<br/>token header, storage seeding, cookies, saved session]
+  L --> R[Follow redirects and client-side bounces<br/>until the document stops changing]
+  R --> M{Modal dialog<br/>open on load?}
+  M -- yes --> E[Audit the dialog, press Escape,<br/>continue behind it or warn]
+  M -- no --> S
+  E --> S[Static checks in the page<br/>composed tree: open shadow roots, slots;<br/>same-origin frames audited as part of the page]
+  S --> P[Listener probe<br/>real click handlers via DevTools]
+  P --> K[Keyboard pass<br/>real Tab and Shift+Tab, focus visible, traps, order]
+  K --> D[Disclosure pass<br/>open every button, menu, accordion; dialogs' focus;<br/>re-check what appeared]
+  D --> Z[Zoom pass at 200%<br/>clipped and overlapping text]
+  Z --> B[With --wcag 2.2: text spacing and 320 px reflow passes]
+  B --> N[Names with no source<br/>confirmed against Chrome's accessibility tree]
+  N --> C[Screenshots of each finding]
+  C --> F[Find more pages<br/>href links, plus clicks on link-less navigation]
+  F --> Q
+  Q -- queue empty --> X[Site checks across pages<br/>consistent navigation and names, duplicate titles, multiple ways]
+  X --> O[report.html, report.json, summary.md<br/>exit 0 or 1]
+```
+
+The in-page checks are one JavaScript bundle (`src/checks/browser/*.js`) evaluated in each page; the interactive passes (`src/passes.mjs`) drive the page over the DevTools Protocol and re-run the bundle on what they reveal. Every finding carries the Trusted Tester test, the WCAG criterion, the element's selector and HTML, a message that says what to fix, and, where it matters, the data behind the decision (a contrast ratio and the colours, a heading outline, the name that was computed).
+
+### The fix loop's cycle
+
+```mermaid
+flowchart LR
+  A[Crawl the site<br/>a11y-508-work/round-N/] --> B[Ledger diff<br/>new, still open, verified, gone, came back]
+  B --> C[Triage review items<br/>assistant answers adequate / open / unsure]
+  C --> D[Fix one open finding<br/>prompt file: condition, element, HTML,<br/>folders it may edit, result file to write]
+  D --> G{Gate: your build<br/>or test command}
+  G -- pass --> H[Commit that fix alone, push]
+  G -- fail --> V[Revert the fix<br/>count an attempt]
+  H --> D
+  V --> D
+  D -- no more open --> W[Wait for the deployment<br/>command, bundle change, Enter, or none]
+  W --> A
+```
+
+Statuses in `a11y-508-work/ledger.json`: `review` (awaiting triage), `adequate` (triage closed it), `open` (to be fixed), `pending` (fixed, waiting for the next crawl to confirm), `verified` (confirmed gone after a fix), `gone` (disappeared without a fix), `needs-human` (the loop gave up: `maxAttempts` reached, the gate kept failing, or triage said unsure), `wont-fix` (set by a person). `a11y-508 status` prints them.
+
+### The dashboard's parts
+
+```mermaid
+flowchart LR
+  B[Browser<br/>Angular app, ngx-charts] -- "REST + server-sent events<br/>127.0.0.1 only, per-launch secret" --> S[Local server<br/>ui/server, Node's own modules only]
+  S -- "spawns node bin/a11y-508.mjs … --events<br/>TOKEN in the child's environment only" --> C[The CLI]
+  C -- "one JSON event per line" --> S
+  C --> R[(a11y-508-report/<br/>a11y-508-history/<br/>a11y-508-work/<br/>a11y-508-state.json)]
+  S -- "reads reports, screenshots, ledger, config" --> R
+  S -- "detects, installs, tests" --> G[claude / gemini / codex CLIs]
+```
+
+The server holds one run at a time and relays the CLI's [event stream](#the-event-stream---events) to the browser, which draws the progress bar, the page list and the ledger board from it. Stopping a run signals the CLI, which closes its browser; on Windows the whole process tree is ended.
 
 ### Authentication
 
@@ -273,7 +312,7 @@ Most single-page apps never look at the request header: their auth guard reads t
 
 If the app relies on a session cookie instead, set it with `--cookie "name=value"` (repeatable), for example `--cookie "session=$SESSION"`. Cookies are set on the start origin and any `--auth-origin` before the first navigation. Note that browsers scope cookies by host, not port, so on `localhost` a cookie is visible to every port.
 
-### Sign-in portals and single sign-on
+#### Sign-in portals and single sign-on
 
 When the app sends the browser to a login page on another domain (an SSO portal, an OpenID Connect provider, a company identity service), no token or cookie you can guess will get past it, and the crawl stops with `redirected off-origin to ...` on the start page. Sign in once interactively instead:
 
@@ -293,7 +332,7 @@ The file holds live credentials, including the portal's session cookie. It is wr
 
 During the crawl, a page that bounces through the portal and back (or any script-driven redirect) is followed until the document stops changing, and the page that finally lands is the one audited. A run in which no page could be audited is reported as FAIL, never PASS.
 
-### When the crawl cannot get in
+#### When the crawl cannot get in
 
 `--troubleshoot` loads only the start URL, with whatever auth is configured (`TOKEN`, `--cookie`, `--state`), and explains what happened instead of auditing:
 
@@ -303,7 +342,7 @@ TOKEN=... a11y-508 https://app.example.gov/layout --troubleshoot
 
 It prints the navigation chain hop by hop (HTTP redirects and script-driven navigations, with status codes), whether the auth header actually went out on the page request, which web storage keys and cookies the app's own scripts read or wrote before it left (keys only, never values), what is in storage and the cookie jar afterwards, and a verdict with the next step: add `--token-storage <key>` when the app reads a key the tool did not seed, or `--login-only` when the server or the app insists on a real session. Exit code 0 means the page landed on the app and the crawl should work. `--json` prints the same as JSON.
 
-### Flaky networks and Windows
+#### Flaky networks and Windows
 
 Navigation errors that are usually momentary (`net::ERR_SOCKET_NOT_CONNECTED`, `ERR_CONNECTION_RESET`, `ERR_EMPTY_RESPONSE`, `ERR_NETWORK_CHANGED`, and similar) are retried up to three times with backoff before a page is recorded as failed; pages that needed a retry carry `navRetries` in the report. On Windows, Chrome can keep its temporary profile open for a moment after it closes; the crawler waits for the browser to exit, retries the cleanup, and prints the directory to delete by hand if it still cannot remove it, without failing the run. A browser that does not answer within 30 seconds of starting is killed and started once more with a fresh profile before the run gives up (exit 3); when that happened, the output says so and `report.json`'s `browser` field is `{ name, launchRetries: 1 }` instead of the plain name.
 
@@ -315,7 +354,7 @@ The crawler finds pages by following `href` links. Many single-page apps navigat
 
 Every report has a coverage section. It warns when only the start page could be audited, when controls were skipped because they look like actions, when `--max-clicks` or `--max-pages` cut the crawl short, when a modal dialog open on load could not be dismissed (see below), and notes pages that were reachable only by clicking (keyboard and screen reader users cannot discover those as links), components with a closed shadow root, frames from other origins and frames nested too deep to audit (see [Shadow DOM and frames](#shadow-dom-and-frames)). A run that passes on violations but has coverage warnings prints `PASS on the N page(s) audited, but COVERAGE IS INCOMPLETE` rather than a plain PASS.
 
-### Modal dialogs open on load
+#### Modal dialogs open on load
 
 A page that opens a modal dialog as it loads (a cookie or consent banner shown with `showModal()`, or a visible `role="dialog"` with `aria-modal="true"`) hides everything else from assistive technology, and so from the checks. The crawler audits the dialog, runs the keyboard pass inside it (its own controls get the focus-visible checks; a modal that keeps focus is not called a keyboard trap, since Escape is its way out; `passes.keyboardModal`), presses Escape once, and if the dialog closed, audits the page behind it; those findings are labelled `after closing the modal shown on load`. The page result records `modalOnLoad: { selector, name, dismissed }`. A pass that reloads the page (the disclosure pass after a control navigates, and route discovery) brings the dialog back, so it presses Escape again and counts it in `modalOnLoad.redismissed`. When Escape does not close it, the page behind it was not audited: the coverage section warns, naming the dialog, and `summary.modalsNotDismissed` counts such pages. Dismiss it with `--cookie` or a saved session (`--login`, `--state`), or audit its close control by hand. The keyboard and disclosure passes run on whatever state the page is in afterwards.
 
@@ -450,6 +489,52 @@ Impact is `critical`, `serious`, `moderate`, or `minor`. By default the run fail
 
 No automated tool reaches full Section 508 conformance, and this one does not claim to. Several Trusted Tester conditions are judgment calls by definition: whether alt text actually describes the image, whether reading order makes sense, whether an error message tells the user how to fix the problem. The tool reports those as review items with the exact element, and the manual checklist lists what a human tester still has to do. Use the run as the gate in CI and the report as the worklist for the Trusted Tester review.
 
+## Runbook for AI coding assistants
+
+Follow this when a person asks you to run, fix, or update this tool in a repository that vendors it. Do each step in order and do not improvise around a step that fails; report it instead.
+
+**Where the tool is.** Open `package.json` and find the script `e2e:a11y-508`. It points at `<TOOL>/bin/a11y-508.mjs`; `<TOOL>` (normally `tools/a11y-508`) is the tool folder. Never edit anything inside it.
+
+**Update it** (when asked, or when a flag mentioned here is "Unknown option"):
+
+```sh
+git subtree pull --prefix <TOOL> https://github.com/AiFirstDevelopment/a11y-508.git main --squash -m "Update a11y-508"
+```
+
+`-m` matters: without it git opens an editor and your shell hangs. If git complains about local modifications, run `git stash`, pull again, then `git stash pop`. If subtree fails because the folder was copied rather than added as a subtree, clone the repository to a temporary folder and copy its `bin/`, `src/`, `README.md` and `LICENSE` over `<TOOL>/`. The update worked when `<TOOL>/src/troubleshoot.mjs` exists.
+
+**Run the crawl.** Options after the URL need npm's `--` separator. On Windows PowerShell set the token with `$env:TOKEN='...'` on its own line first; never put a token in a file or a commit.
+
+```sh
+npm run e2e:a11y-508 <url> -- --max-pages 25
+```
+
+Start with `--max-pages 25` so a first run finishes in a few minutes; drop it once the run works. If your shell tool has a time limit, run long commands in a separate window with output redirected to a file (PowerShell: `Start-Process powershell -ArgumentList '-NoExit','-Command','npm run e2e:a11y-508 <url> -- --max-pages 25 *> a11y-508.log'`) and read the file when it stops growing.
+
+**Read the result and pick the next step.** Look at the `pages:` line and the last line.
+
+| The output says | What it means | Do this |
+|---|---|---|
+| `pages: N crawled, M audited` with M > 0 and a `report:` path | The crawl worked. Exit code 1 means violations were found; that is a finding, not a failure of the tool. | Report the `pages:` line, the violations line and the report path. Do not change `--fail-on` to make it pass. |
+| `redirected off-origin to ...`, `FAIL (no page could be audited)`, `the start page could not be audited`, `HTTP 401`, `HTTP 403`, or `net::ERR_...` | The crawler could not get into the app. | Run the same command with `--troubleshoot` added (same `TOKEN`, same options). Paste its whole output in your reply, then follow its `next` line exactly, as below. |
+| `Unknown option --troubleshoot` (or any flag from this file) | The vendored copy is old. | Update the tool as above, then retry. |
+| `No Chrome, Chromium, or Edge found` | No browser on the machine. | Ask the person for the browser path and pass `--chrome <path>` or set `CHROME_PATH`. |
+| `coverage warning ...` or `COVERAGE IS INCOMPLETE` | Some pages were not reached. | Report the coverage warnings verbatim with the result. If it says only the start page was audited, run `--troubleshoot` and report its link count. If it says `--max-pages`, rerun without the limit. Never describe such a run as a full pass. |
+| `could not remove the temporary browser profile` | Windows kept files open for a moment. Harmless. | Ignore it. |
+
+**Following the troubleshoot `next` line.**
+
+- It names `--token-storage <key>`: rerun the crawl with that flag added (keep `TOKEN` set). Repeat troubleshoot if it still fails.
+- It says `--login-only`: the app needs a real signed-in session, which only a person can create. Run `npm run e2e:a11y-508 <url> -- --login-only`, tell the person "A Chrome window is open, please sign in there and stay on the app page", and wait; do not press keys, close the window, or kill the command. It finishes by itself once the app has loaded and stayed put for six seconds, printing `session: saved ...`. Then run the crawl with `-- --state a11y-508-state.json` (plus the other options). If a later run says `redirected off-origin` again, the session expired: repeat `--login-only` once.
+- It talks about a network error (VPN, proxy, DNS): stop and report; this is not something to fix in code.
+- It says `Authentication is working` but the crawl still failed: paste both outputs and ask the person.
+
+**Never**: edit files under `<TOOL>`; commit `a11y-508-state.json` or `a11y-508-report/` (add both to `.gitignore` if missing); write a token into any file; change `--fail-on`; retry blindly with guessed flags.
+
+**When you report back**, include the exact commands you ran, the `pages:` line, any `coverage warning` lines, the exit code, the report path, and the troubleshoot output if you ran it.
+
+**If asked to set up or run the fix loop:** create `a11y-508.config.json` as shown under "The fix loop" with the project's real build/test command in `check`, the folder that holds the app's source in `source`, and `agent` set to the assistant the person names. Ask which branch to commit on and how deployments happen (a command, a push that triggers a pipeline, or by hand) and set `branch` and `deployed` accordingly; do not guess. Run `a11y-508 loop --dry-run` first and report the ledger summary, then `a11y-508 loop` only when the person says to. Never edit `a11y-508-work/ledger.json` by hand.
+
 ## Development
 
 ```bash
@@ -461,6 +546,8 @@ The test serves a fixture site that requires a bearer token on every request, ru
 `npm test` also runs the browser launch retry against a stand-in browser (`test/chrome-launch.mjs`; a `.js`/`.mjs` path given as the browser is run with Node), the remedies table (`test/remedies.mjs`), the ARIA model's facts (`test/aria-data.mjs`), and the dashboard server's own tests (`ui/server/test/`), all with no install. The fixture site is `test/fixture-site.mjs`; `node test/fixture-site.mjs --port 4100` serves it on its own (token `fixture-token-123`), and `--auto-login` adds a stand-in sign-in portal.
 
 Checks live in `src/checks/browser/`. Each file registers a function that runs inside the audited page and calls `A.add({ test, level, impact, el, message, details })`. The test catalog is `src/checks/catalog.mjs`. Interactive passes (keyboard, disclosure, zoom; text spacing and reflow with `--wcag 2.1`/`2.2`) are in `src/passes.mjs`; the beyond-508 rules are in `src/checks/browser/95-beyond-508.js` and their catalog in `BEYOND`. Fixture pages named `checks-beyond-*` are asserted from a second crawl with `--wcag 2.2`, and `--only` passes the flag through for them; cross-page checks are in `src/site-checks.mjs`.
+
+The plans each change was built from are under `docs/plans/`, and the comparison with axe-core and IBM Equal Access that drove the checks is `docs/research/axe-and-ibm-comparison.md`.
 
 ### Changing the dashboard
 
