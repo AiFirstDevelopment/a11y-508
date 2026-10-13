@@ -193,6 +193,20 @@ export class Runs {
     const sig = run.stopRequests === 1 ? 'SIGINT' : 'SIGTERM';
     this.push(run, { type: 'stopping', signal: sig });
     this.signal(sig);
+    // If the CLI has not ended 3 seconds after Stop, end it and everything under it (its browser
+    // included): Stop must not wait on a slow shutdown.
+    if (run.stopRequests === 1) {
+      const t = setTimeout(() => {
+        if (run.status !== 'running' || !run.child) return;
+        if (process.platform === 'win32') killTreeWindows(run.child.pid).catch(() => {});
+        else {
+          try {
+            process.kill(-run.child.pid, 'SIGKILL');
+          } catch {}
+        }
+      }, 3000);
+      if (t.unref) t.unref();
+    }
     return sig;
   }
 

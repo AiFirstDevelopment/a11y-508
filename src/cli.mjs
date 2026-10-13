@@ -383,8 +383,9 @@ async function run(argv) {
   if (opts.cookies.length) log.info(`cookies: setting ${opts.cookies.map((c) => c.name).join(', ')} on ${[...origins].join(', ')}`);
 
   const launch = (headless) => launchChrome({ chromePath: opts.chrome, viewport: opts.viewport, noSandbox: opts.noSandbox, headless });
-  const closeBrowser = async (b) => {
-    const { removed, userDataDir } = await b.close();
+  // fast: the Stop path (an interrupt): a short grace, then the browser's process tree is killed.
+  const closeBrowser = async (b, { fast = false } = {}) => {
+    const { removed, userDataDir } = await b.close({ fast });
     if (!removed) log.warn(`could not remove the temporary browser profile ${userDataDir}; delete it by hand`);
   };
 
@@ -402,7 +403,7 @@ async function run(argv) {
     // Stopped while the sign-in window is open (Ctrl+C, the dashboard's Stop): close that browser too.
     const onLoginSignal = async () => {
       log.warn('interrupted; closing the sign-in browser');
-      await closeBrowser(headed).catch(() => {});
+      await closeBrowser(headed, { fast: true }).catch(() => {});
       process.exit(130);
     };
     process.once('SIGINT', onLoginSignal);
@@ -477,7 +478,7 @@ async function run(argv) {
   let exitCode = 0;
   const onSignal = async () => {
     log.warn('interrupted; closing browser');
-    await closeBrowser(browser);
+    await closeBrowser(browser, { fast: true });
     process.exit(130);
   };
   process.once('SIGINT', onSignal);

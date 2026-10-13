@@ -22,6 +22,15 @@ const before = existsSync(log) ? readFileSync(log, 'utf8').split('\\n').filter(B
 appendFileSync(log, JSON.stringify({ pid: process.pid, profile }) + '\\n');
 const mode = process.env.STUB_MODE;
 const silent = mode === 'never' || (mode === 'first-silent' && before === 0);
+// stubborn: answers, but ignores Browser.close and signals, and has a helper process of its own,
+// as a browser that hangs on shutdown does.
+if (mode === 'stubborn') {
+  process.on('SIGINT', () => {});
+  process.on('SIGTERM', () => {});
+  const { spawn } = await import('node:child_process');
+  const helper = spawn(process.execPath, ['-e', 'process.on("SIGINT",()=>{});process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'], { stdio: 'ignore' });
+  appendFileSync(log, JSON.stringify({ helper: helper.pid }) + '\\n');
+}
 const input = new net.Socket({ fd: 3, readable: true, writable: false });
 const output = new net.Socket({ fd: 4, readable: false, writable: true });
 if (silent) {
@@ -36,6 +45,7 @@ if (silent) {
       const msg = JSON.parse(buf.slice(0, i));
       buf = buf.slice(i + 1);
       if (msg.method === 'Browser.getVersion') output.write(JSON.stringify({ id: msg.id, result: { product: 'StubChrome/1.0', protocolVersion: '1.3', revision: '0', userAgent: 'stub', jsVersion: '0' } }) + '\\0');
+      else if (msg.method === 'Browser.close' && mode === 'stubborn') output.write(JSON.stringify({ id: msg.id, result: {} }) + '\\0');
       else if (msg.method === 'Browser.close') {
         output.write(JSON.stringify({ id: msg.id, result: {} }) + '\\0');
         setTimeout(() => process.exit(0), 50);
@@ -116,6 +126,21 @@ await check('AC10: a browser that never answers fails after two launches, saying
     assert.equal(alive(l.pid), false, `pid ${l.pid} was killed`);
     assert.equal(existsSync(l.profile), false, `${l.profile} was removed`);
   }
+}));
+
+await check('Stop: a browser that ignores the close request and signals is gone, with its helper processes and profile, within 5 seconds', () => withMode('stubborn', async (log) => {
+  const b = await launchChrome({ chromePath: stub, launchTimeout: 3000 });
+  const t0 = Date.now();
+  await b.close({ fast: true });
+  const ms = Date.now() - t0;
+  const helper = launches(log).find((l) => l.helper).helper;
+  const deadline = Date.now() + 1000;
+  while ((alive(b.proc.pid) || alive(helper)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(ms < 5000, `closed in ${ms} ms`);
+  assert.equal(alive(b.proc.pid), false, 'the browser process is gone');
+  assert.equal(alive(helper), false, 'its helper process is gone');
+  assert.equal(existsSync(b.userDataDir), false, 'the profile directory was removed');
+  console.log(`       (fast close took ${ms} ms)`);
 }));
 
 rmSync(dir, { recursive: true, force: true });

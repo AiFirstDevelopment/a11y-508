@@ -2,7 +2,7 @@
 // Nothing is downloaded. Communication uses --remote-debugging-pipe, so no
 // debugging port is opened.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -58,6 +58,37 @@ export function browserField(browser) {
 }
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms).unref());
+
+// Kills a process and everything under it: taskkill /T on Windows; elsewhere the descendants
+// from ps, deepest first, then the process itself.
+export function killTree(pid) {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    return;
+  }
+  const kids = new Map();
+  try {
+    const out = spawnSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' }).stdout || '';
+    for (const line of out.split('\n')) {
+      const [p, pp] = line.trim().split(/\s+/).map(Number);
+      if (!p) continue;
+      if (!kids.has(pp)) kids.set(pp, []);
+      kids.get(pp).push(p);
+    }
+  } catch {}
+  const all = [];
+  const walk = (p) => {
+    for (const c of kids.get(p) || []) walk(c);
+    all.push(p);
+  };
+  walk(pid);
+  for (const p of all) {
+    try {
+      process.kill(p, 'SIGKILL');
+    } catch {}
+  }
+}
 
 // Chrome's child processes can keep files in the profile directory open for a
 // moment after the browser exits (EBUSY / EPERM on Windows), so removal is
@@ -201,16 +232,25 @@ async function startBrowser({ exe, viewport, noSandbox, headless, launchTimeout 
   // Resolves to { userDataDir, removed }. Lets Chrome exit on its own before
   // killing it, because a killed browser leaves renderer processes that still
   // hold profile files open.
-  async function close() {
-    try {
-      await Promise.race([cdp.send('Browser.close'), delay(3000)]);
-    } catch {}
-    const exitedCleanly = await Promise.race([exited.then(() => true), delay(5000).then(() => false)]);
-    if (!exitedCleanly) {
+  // fast: the Stop path (Ctrl+C, the dashboard's Stop). Ask the browser to close, give it 2
+  // seconds, then kill it and every process under it. The end of a crawl closes gracefully.
+  async function close({ fast = false } = {}) {
+    if (fast) {
+      cdp.send('Browser.close').catch(() => {});
+      const exitedInTime = await Promise.race([exited.then(() => true), delay(2000).then(() => false)]);
+      if (!exitedInTime) killTree(proc.pid);
+      await Promise.race([exited, delay(1000)]);
+    } else {
       try {
-        proc.kill('SIGKILL');
+        await Promise.race([cdp.send('Browser.close'), delay(3000)]);
       } catch {}
-      await Promise.race([exited, delay(2000)]);
+      const exitedCleanly = await Promise.race([exited.then(() => true), delay(5000).then(() => false)]);
+      if (!exitedCleanly) {
+        try {
+          proc.kill('SIGKILL');
+        } catch {}
+        await Promise.race([exited, delay(2000)]);
+      }
     }
     // Chrome's crash handler can outlive the browser holding inherited copies
     // of the DevTools pipe, which would keep this process alive after the run.

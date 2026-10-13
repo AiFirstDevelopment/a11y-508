@@ -48,7 +48,9 @@ test('AC 7: Stop ends a crawl within 10 seconds, its Chrome is gone, and the scr
   const t0 = Date.now();
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   await expect(status(page)).toHaveText('Stopped', { timeout: 10_000 });
-  expect(Date.now() - t0).toBeLessThan(10_000);
+  const took = Date.now() - t0;
+  console.log(`AC 7: Stopped ${took} ms after Stop`);
+  expect(took).toBeLessThan(10_000);
   const alive = ours.filter((pid) => {
     try {
       process.kill(pid, 0);
