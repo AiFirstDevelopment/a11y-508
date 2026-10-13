@@ -30,7 +30,8 @@ const CHANGES = /^(write_file|replace|edit|Write|Edit|MultiEdit|NotebookEdit)$/;
 
 // A decoder for one call: push(text) as stdout arrives, end() when it has ended. onLine(line) gets
 // each readable line. recognized: whether any event was understood (the output is a stream).
-export function streamDecoder(onLine, { cwd = process.cwd() } = {}) {
+// doneLine(changed, failed, message), when given, words the closing line (the loop says what comes next).
+export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null } = {}) {
   let partial = '';
   let said = ''; // the assistant's words not yet ended by a newline
   const changed = new Set();
@@ -56,6 +57,7 @@ export function streamDecoder(onLine, { cwd = process.cwd() } = {}) {
   };
   const done = (failed, message) => {
     endWords();
+    if (doneLine) return onLine(doneLine(changed.size, failed, message ? oneLine(message) : null));
     if (failed) return onLine(`Ended with an error${message ? `: ${oneLine(message)}` : ''}`);
     onLine(`Done: ${changed.size ? `${changed.size} file${changed.size === 1 ? '' : 's'} changed` : 'no files changed'}`);
   };

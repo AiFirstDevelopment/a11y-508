@@ -4,7 +4,7 @@ import { BarChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
-import { resultWord, localTime, shortUrl } from '../core/format';
+import { fixedLine, resultWord, localTime, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { ReportListEntry } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
@@ -12,7 +12,7 @@ import { Starter } from '../core/starter';
 import { detailsOpen, setDetailsOpen } from '../core/details';
 
 interface LoopRound { round: number; at: string | null; found: number; fixed: number; commits: number; remaining: number; needsHuman: number }
-interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: number; of: number; remaining: number; needsHuman: number } }
+interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: number; pending?: number; of: number; remaining: number; needsHuman: number } }
 
 // One timeline: the crawls and the fix loop's rounds, newest first.
 @Component({
@@ -26,7 +26,7 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
     }
     <p role="status" class="hint" data-testid="history-status">{{ status() }}</p>
     @if (timeline(); as t) {
-      <p data-testid="loop-summary">Fix loop: {{ t.total.rounds }} round{{ t.total.rounds === 1 ? '' : 's' }} · {{ t.total.fixed }} of {{ t.total.of }} violations fixed · {{ t.total.remaining }} remaining · {{ t.total.needsHuman }} need a person</p>
+      <p data-testid="loop-summary">Fix loop: {{ t.total.rounds }} round{{ t.total.rounds === 1 ? '' : 's' }} · {{ t.total.of }} violations · {{ counts(t.total) }}</p>
     }
     @if (earlier().length || timeline()) {
       <div class="actions">
@@ -123,6 +123,10 @@ export class HistoryScreen {
   private configUrl = signal('');
   readonly againUrl = computed(() => this.list().find((r) => r.source === 'latest')?.baseUrl || this.configUrl());
   readonly loopRunning = computed(() => this.run.active() && ['loop', 'dry-run'].includes(this.run.kind() || ''));
+  // The loop's totals in the Fix step's words.
+  counts(t: LoopTimeline['total']): string {
+    return fixedLine({ verified: t.fixed, pending: t.pending || 0, open: t.remaining, 'needs-human': t.needsHuman });
+  }
   readonly remainingCols = [{ key: 'round', label: 'Round' }, { key: 'remaining', label: 'Remaining' }];
   readonly remainingRows = computed(() => (this.timeline()?.rounds || []).map((r) => ({ round: r.round, remaining: r.remaining })));
   readonly remainingData = computed(() => this.remainingRows().map((r) => ({ name: String(r.round), value: r.remaining })));

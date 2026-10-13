@@ -412,6 +412,9 @@ With `--events` the CLI prints one JSON object per line on stdout instead of its
 | `agent-output` | `round`, `task`, `kind` (`fix`, `triage`), `stream` (`stdout`, `stderr`), `text` | loop: the assistant's output as it arrives, a few events a second at most per call |
 | `agent-wait` | `round`, `task`, `kind`, `reason` (`quota`), `delayMs`, `attempt`, `attempts` | loop: the assistant was refused for quota or rate limit and the call is retried after `delayMs` |
 | `agent-result` | `round`, `task`, `kind`, `ok`, `timedOut`, `quota`, `code`, `message` (when `ok` is false: in plain words, what happens to the work it was given) | loop: an assistant call ended |
+| `gate` | `round`, `n`/`m` (per fix; absent for the round's gate), `state` (`start`, `done`), `check`, and when done `ok`, `durationMs`, `tail` (its last lines) | loop: the check command runs on a fix |
+| `gate-output` | `round`, `text` | loop: the check's output as it arrives |
+| `commit` | `round`, `n`, `m`, `commit`, `files` | loop: a fix was committed |
 | `precondition` | `code` (`not-a-repo`, `dirty-tree`, `branch`), `message`, `remedy` (what a person can do about it: the files to commit or stash, or the git command) | loop: a set-up error ended it before its first round (exit code 2); without `--events` both lines are printed |
 | `done` | `code` (the exit code) | last |
 

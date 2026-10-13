@@ -5,7 +5,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { api, dashboard, fixtureSite, gitRepo, moreOptions, nav, open, removeTemp, run, tempDir, BIN, ROOT, TOKEN, type Dash, type Site } from './harness';
+import { api, countsLine, dashboard, fixtureSite, gitRepo, moreOptions, nav, open, removeTemp, run, tempDir, BIN, ROOT, TOKEN, type Dash, type Site } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const QUICK = ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage'];
@@ -106,8 +106,7 @@ test('loop-resilience: with a11y-508/fixes in the repository the Fix step and th
     const ledger = JSON.parse(readFileSync(join(cwd, 'a11y-508-work', 'ledger.json'), 'utf8'));
     const n = (s: string) => Object.values<any>(ledger.findings).filter((e) => e.status === s).length;
     expect(n('pending')).toBeGreaterThan(0);
-    const nh = n('needs-human');
-    await expect(page.getByTestId('fix-counts')).toHaveText(`${n('verified') + n('pending')} fixed · ${n('open')} remaining${nh ? ` · ${nh} need${nh === 1 ? 's' : ''} a person` : ''}`);
+    await expect(page.getByTestId('fix-counts')).toHaveText(countsLine({ verified: n('verified'), pending: n('pending'), open: n('open'), 'needs-human': n('needs-human') }));
     await expect(page.getByRole('button', { name: 'Try again' })).toBeEnabled();
     await expect(page.getByRole('button', { name: 'Run again' })).toBeEnabled();
     await expect(page.locator('body')).not.toContainText('Loop finished');
@@ -186,4 +185,69 @@ test('loop-resilience AC12: the assistant\'s streamed actions reach the pane as 
     await expect(page.getByTestId('agent-output')).not.toContainText('{"type"');
     await expect(page.getByTestId('agent-output')).toContainText('Started (fake-model)\nReading site/index.html\nLooking at the finding.\nRunning npm run build');
   });
+});
+
+test('loop-resilience AC13-16: one pane log for the run, the gate and the commit on screen with time, counts that move after each commit, one status for pane and page', async ({ page }) => {
+  const site = await fixtureSite();
+  const check = `${JSON.stringify(process.execPath)} check.mjs`;
+  const { cwd, g } = await appWithReport(site, 'a11y-508-pane-', { check });
+  writeFileSync(join(cwd, 'check.mjs'), "import { readFileSync } from 'node:fs';\nconsole.log('building the site');\nawait new Promise((r) => setTimeout(r, 2500));\nif (readFileSync('site/index.html', 'utf8').includes('BREAK-THE-BUILD')) { console.error('error: the build is broken'); process.exit(1); }\nconsole.log('tests passed');\n");
+  g('add', 'check.mjs');
+  g('commit', '-qm', 'the gate');
+  const dash: Dash = await dashboard({ cwd, env: { FAKE_AGENT_DELAY_MS: '800' } });
+  try {
+    await api(dash, '/api/settings', { method: 'PUT', body: { rounds: 1 } });
+    await open(page, dash, '/fix-loop');
+    await withToken(page);
+    // Every rendered state of the pane and the counts, to see what the counts said when the next fix began.
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__pane = [];
+      new MutationObserver(() => {
+        const pane = document.querySelector('[data-testid="agent-output"]')?.textContent || '';
+        const counts = document.querySelector('[data-testid="fix-counts"]')?.textContent?.trim() || '';
+        const last = w.__pane[w.__pane.length - 1];
+        if (!last || last.pane !== pane || last.counts !== counts) w.__pane.push({ pane, counts });
+      }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    });
+    await page.getByRole('button', { name: 'Fix the violations' }).click();
+    const status = page.getByTestId('fix-status');
+    const pane = page.getByTestId('agent-output');
+    // AC 14: the gate is the status, with a counting time; its output streams into the pane.
+    await expect(status).toHaveText(/^Round 1: checking the fix with .+check\.mjs · \d+ s$/, { timeout: 120_000 });
+    const gateSecs = async () => Number(/ · (\d+) s$/.exec((await status.textContent()) || '')?.[1] ?? -1);
+    const first = await gateSecs();
+    await expect.poll(gateSecs, { timeout: 5_000 }).toBeGreaterThan(first);
+    await expect(pane).toContainText(/Checking the fix with .+check\.mjs\nbuilding the site/);
+    // AC 16: the pane's heading says what the status line says.
+    const [h, s] = await page.evaluate(() => [document.querySelector('[data-testid="agent-heading"]')?.textContent?.trim(), document.querySelector('[data-testid="fix-status"]')?.textContent?.trim()]);
+    expect(h).toBe(s);
+    // AC 15: right after the first commit the counts move, while the loop goes on.
+    await expect(pane).toContainText(/Build and tests passed in \d+ s\nCommitted 1 file as [0-9a-f]{7,}/, { timeout: 60_000 });
+    await expect(page.getByTestId('fix-counts')).toHaveText(/^1 fixed, awaiting verification · \d+ remaining/, { timeout: 5_000 });
+    await expect(page.getByTestId('loop-stop')).toBeEnabled();
+    // AC 13: the next fix starts under its own heading line, and the first fix's lines are still there.
+    await expect(pane).toContainText(/— Fix 2 of \d+: /, { timeout: 60_000 });
+    const text = (await pane.textContent()) || '';
+    expect(text.indexOf('— Fix 1 of ')).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf('— Fix 1 of ')).toBeLessThan(text.indexOf('— Fix 2 of '));
+    expect(text.slice(text.indexOf('— Fix 1 of '), text.indexOf('— Fix 2 of '))).toContain('fake agent: looking at the finding');
+    expect(text).toContain('— Review items: asking about ');
+    await expect(page.getByTestId('loop-step')).toHaveText(/Loop finished/, { timeout: 200_000 });
+    // AC 15: by the time the fix after the first commit began, the counts had already moved.
+    const states: { pane: string; counts: string }[] = await page.evaluate(() => (window as any).__pane);
+    const headings = (p: string) => (p.match(/— Fix \d+ of \d+: /g) || []).length;
+    const firstCommit = states.findIndex((x) => /Committed 1 file as/.test(x.pane));
+    const nextFix = states.findIndex((x, i) => i > firstCommit && headings(x.pane) > headings(states[firstCommit].pane));
+    expect(firstCommit).toBeGreaterThanOrEqual(0);
+    expect(nextFix).toBeGreaterThan(firstCommit);
+    expect(states[nextFix].counts).toMatch(/^1 fixed, awaiting verification · \d+ remaining/);
+    // The fix that broke the build: said, with the gate's own error.
+    await expect(pane).toContainText(/Build or tests failed — the change is reverted and the finding stays open: .*error: the build is broken/);
+    await expect(pane).not.toContainText('(no output yet)');
+  } finally {
+    await dash.stop();
+    removeTemp(cwd);
+    site.close();
+  }
 });

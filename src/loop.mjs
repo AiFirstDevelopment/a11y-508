@@ -76,11 +76,14 @@ const gitChanged = (cwd, paths = []) => {
   return (r.stdout || '').split('\n').filter((l) => l.length > 3).map((l) => l.slice(3).replace(/^"(.*)"$/, '$1'));
 };
 
-const sh = (cwd, command, env) =>
+const sh = (cwd, command, env, onData = null) =>
   new Promise((r) => {
     const child = spawn(command, { cwd, shell: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
-    const keep = (d) => (out = (out + d).slice(-8000));
+    const keep = (d) => {
+      out = (out + d).slice(-8000);
+      if (onData) onData(String(d));
+    };
     child.stdout.on('data', keep);
     child.stderr.on('data', keep);
     child.on('exit', (code) => r({ code, out }));
@@ -385,7 +388,12 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     };
     let res;
     try {
-      res = await callAgent(work, label, { ...args, quotaDelays: cfg.quotaDelays }, on, onWait);
+      // A streaming assistant's closing line says what the loop does next, so it is not read as the loop finishing.
+      const next = kind === 'triage' ? 'recording its answers next' : cfg.check && cfg.checkEvery === 'finding' ? 'checking the fix next' : 'committing it next';
+      const doneLine = (changed, failed, msg) => failed ? `${agentName} ended with an error${msg ? `: ${msg}` : ''}`
+        : kind === 'triage' ? `${agentName} is done — ${next}`
+        : changed ? `${agentName} is done: ${changed} file${changed === 1 ? '' : 's'} changed — ${next}` : `${agentName} is done: no files changed`;
+      res = await callAgent(work, label, { ...args, quotaDelays: cfg.quotaDelays, doneLine }, on, onWait);
     } finally {
       if (on) on.flush();
     }
@@ -397,6 +405,28 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       : `${agentName} ended without an answer (exit code ${res.code}); ${what} and the loop goes on`;
     ev('agent-result', { round, task, kind, ok, timedOut: !!res.timedOut, quota: !!res.quota, code: typeof res.code === 'number' ? res.code : null, message });
     return res;
+  };
+
+  // The gate, with its output as it arrives (a few events a second at most) and how it ended.
+  const runGate = async (round, n, m) => {
+    const t0 = Date.now();
+    ev('gate', { round, ...(n ? { n, m } : {}), state: 'start', check: cfg.check });
+    let buf = '';
+    let timer = null;
+    const flush = () => {
+      timer = null;
+      if (buf) ev('gate-output', { round, text: buf.slice(-16384) });
+      buf = '';
+    };
+    const gate = await sh(cwd, cfg.check, process.env, events ? (d) => {
+      buf += d;
+      if (!timer) timer = setTimeout(flush, 300);
+    } : null);
+    if (timer) clearTimeout(timer);
+    flush();
+    const tail = gate.out.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim()).slice(-5).join('\n');
+    ev('gate', { round, ...(n ? { n, m } : {}), state: 'done', check: cfg.check, ok: gate.code === 0, durationMs: Date.now() - t0, tail });
+    return gate;
   };
 
   const startRound = ledger.rounds.length + 1;
@@ -547,7 +577,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       if (cfg.check && cfg.checkEvery === 'finding') {
         log.info(`  checking: ${cfg.check}`);
         ev('step', { round, step: 'gate', n: n + 1, m: open.length, check: cfg.check });
-        const gate = await sh(cwd, cfg.check, process.env);
+        const gate = await runGate(round, n + 1, open.length);
         if (gate.code !== 0) {
           attempt.outcome = 'failed-gate';
           attempt.gateOutput = gate.out.slice(-2000);
@@ -575,6 +605,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         continue;
       }
       attempt.commit = git(cwd, ['rev-parse', '--short', 'HEAD']).out;
+      ev('commit', { round, n: n + 1, m: open.length, commit: attempt.commit, files: changed });
       entry.status = 'pending';
       committed++;
       roundFixed.push(entry);
@@ -586,7 +617,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     if (committed && cfg.check && cfg.checkEvery === 'round') {
       log.info(`checking the round's ${committed} fix(es): ${cfg.check}`);
       ev('step', { round, step: 'gate', check: cfg.check });
-      const gate = await sh(cwd, cfg.check, process.env);
+      const gate = await runGate(round);
       if (gate.code !== 0) {
         log.warn(`check failed (exit ${gate.code}); rolling back this round's ${committed} commit(s)`);
         git(cwd, ['reset', '--hard', `HEAD~${committed}`]);
@@ -599,6 +630,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         }
         committed = 0;
         save();
+        ledgerEvent();
       }
     }
 
@@ -694,7 +726,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
 export function summaryLine(ledger) {
   const c = statusCounts(ledger);
   const part = (k, label) => (c[k] ? `${c[k]} ${label}` : null);
-  return [part('open', 'open'), part('review', 'awaiting triage'), part('pending', 'pending verification'), part('verified', 'verified fixed'), part('needs-human', 'need a person'), part('wont-fix', "won't fix"), part('adequate', 'adequate'), part('gone', 'gone')].filter(Boolean).join(', ') + '.';
+  return [part('open', 'open'), part('review', 'awaiting triage'), part('pending', 'fixed, awaiting verification'), part('verified', 'verified fixed'), part('needs-human', 'need a person'), part('wont-fix', "won't fix"), part('adequate', 'adequate'), part('gone', 'gone')].filter(Boolean).join(', ') + '.';
 }
 
 export function printStatus(cwd, out) {
@@ -706,7 +738,7 @@ export function printStatus(cwd, out) {
   const ledger = loadLedger(file);
   out(`a11y-508 loop status: ${ledger.rounds.length} round(s). ${summaryLine(ledger)}`);
   for (const r of ledger.rounds.slice(-5)) out(`  round ${r.round} ${r.at || ''}: ${r.audited}/${r.pages} pages audited, ${r.violations} violations, ${r.reviews} review; +${r.diff.new} new, ${r.diff.verified} verified, ${r.diff.failed} did not hold${r.coverage && !r.coverage.complete ? ', coverage incomplete' : ''}`);
-  const groups = [['open', 'OPEN'], ['pending', 'PENDING VERIFICATION'], ['review', 'AWAITING TRIAGE'], ['needs-human', 'NEEDS A PERSON']];
+  const groups = [['open', 'OPEN'], ['pending', 'FIXED, AWAITING VERIFICATION'], ['review', 'AWAITING TRIAGE'], ['needs-human', 'NEEDS A PERSON']];
   for (const [status, title] of groups) {
     const list = byStatus(ledger, status);
     if (!list.length) continue;

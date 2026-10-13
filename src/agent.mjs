@@ -238,11 +238,12 @@ export function agentEnvFor(command, env = agentEnv()) {
 // that way, quotaRetries how many retries it took.
 // onOutput(stream, text), when given, sees the assistant's output as it arrives.
 // onWait({ delayMs, attempt, attempts }), when given, is told before each wait for a quota retry.
-export async function runAgent({ command, promptFile, resultFile, cwd, timeout = 15 * 60 * 1000, env = agentEnvFor(command), quotaDelays = QUOTA_DELAYS, onOutput = null, onWait = null }) {
+// doneLine words a streaming assistant's closing line (see streamDecoder).
+export async function runAgent({ command, promptFile, resultFile, cwd, timeout = 15 * 60 * 1000, env = agentEnvFor(command), quotaDelays = QUOTA_DELAYS, onOutput = null, onWait = null, doneLine = null }) {
   const t0 = Date.now();
   let quotaRetries = 0;
   for (;;) {
-    const r = await runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env, onOutput });
+    const r = await runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env, onOutput, doneLine });
     // A call that ran out its time while the assistant backed off on its own counts as refused for
     // quota too, but is not run again: it has already spent its time.
     // The refusal may arrive inside a stream's JSON events: their decoded words are searched too.
@@ -258,7 +259,7 @@ export async function runAgent({ command, promptFile, resultFile, cwd, timeout =
   }
 }
 
-async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env, onOutput }) {
+async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env, onOutput, doneLine }) {
   const cmd = command.split('{promptFile}').join(promptFile).split('{resultFile}').join(resultFile);
   if (existsSync(resultFile)) rmSync(resultFile, { force: true });
   const child = spawn(cmd, { cwd, shell: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -266,7 +267,7 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env
   let stderr = '';
   const keep = (s, d) => (s + d).slice(-20000);
   // A streaming assistant's JSON events reach onOutput as readable lines, as they arrive.
-  const decoder = streamDecoder((line) => onOutput && onOutput('stdout', `${line}\n`), { cwd });
+  const decoder = streamDecoder((line) => onOutput && onOutput('stdout', `${line}\n`), { cwd, doneLine });
   child.stdout.on('data', (d) => {
     stdout = keep(stdout, String(d));
     decoder.push(String(d));

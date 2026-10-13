@@ -768,6 +768,48 @@ rmSync(repo2, { recursive: true, force: true });
     removeOwn(dir);
   }
 
+  // AC 14, 15 (and guard 14/15): between assistant calls the gate and the commit are events, the gate's
+  // output streams, and the counts move after every commit.
+  {
+    const { dir, g } = appRepo('a11y-508-gate-', {});
+    writeFileSync(join(dir, 'check.mjs'), "import { readFileSync } from 'node:fs';\nconsole.log('building the site');\nawait new Promise((r) => setTimeout(r, 400));\nif (readFileSync('site/index.html', 'utf8').includes('BREAK-THE-BUILD')) { console.error('error: the build is broken'); process.exit(1); }\nconsole.log('tests passed');\n");
+    const site = await serve(dir);
+    const url = `http://127.0.0.1:${site.address().port}/`;
+    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', maxAttempts: 3, url, check: `${JSON.stringify(process.execPath)} check.mjs` }, null, 2));
+    g('add', '-A');
+    g('commit', '-qm', 'the gate');
+    const r = await loopIn(dir, ['--max-rounds', '1', '--events']);
+    site.close();
+    const { events, problems } = parseEvents(r.stdout);
+    const at = (pred) => events.findIndex(pred);
+    check('loop-resilience AC14: each fix is gated with gate start/done events, the gate output streams, and a commit event names the commit and files', () => {
+      assert.deepEqual(problems, []);
+      const starts = events.filter((e) => e.type === 'gate' && e.state === 'start');
+      const dones = events.filter((e) => e.type === 'gate' && e.state === 'done');
+      assert.ok(starts.length >= 3 && starts.length === dones.length, r.out);
+      assert.ok(dones.some((d) => d.ok === true && d.durationMs >= 400 && /tests passed/.test(d.tail)));
+      const failed = dones.find((d) => d.ok === false);
+      assert.ok(failed && /error: the build is broken/.test(failed.tail), JSON.stringify(dones));
+      assert.match(events.filter((e) => e.type === 'gate-output').map((e) => e.text).join(''), /building the site/);
+      const commits = events.filter((e) => e.type === 'commit');
+      assert.ok(commits.length >= 2);
+      for (const c of commits) {
+        assert.match(c.commit, /^[0-9a-f]{7,}$/);
+        assert.deepEqual(c.files, ['site/index.html']);
+        assert.ok(at((e) => e === c) > at((e) => e.type === 'gate' && e.state === 'done' && e.n === c.n && e.ok));
+      }
+    });
+    check('loop-resilience AC15: the counts move after the first commit, before the next fix starts', () => {
+      const firstCommit = at((e) => e.type === 'commit');
+      const nextTask = at((e, i) => i > firstCommit && e.type === 'task' && e.state === 'start');
+      assert.ok(firstCommit >= 0 && nextTask > firstCommit, r.out);
+      const between = events.slice(firstCommit, nextTask).filter((e) => e.type === 'ledger');
+      assert.ok(between.some((e) => (e.counts.pending || 0) >= 1), JSON.stringify(between));
+      assert.match(between.at(-1).line, /\d+ fixed, awaiting verification/);
+    });
+    removeOwn(dir);
+  }
+
   // AC 6 and 11: an assistant that never runs is an error, not a quiet finish; a quota refusal is a
   // wait the dashboard can count down; a call given up is said in plain words.
   {

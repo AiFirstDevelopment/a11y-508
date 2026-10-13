@@ -66,6 +66,18 @@ Added in the build after verification: AC 1 also holds when the earlier run's br
 clone): the loop checks it out tracking origin. AC 6's "assistant failed to start" ends with an error event
 ("… did not run: all N calls this round ended without an answer …"), so the Fix step says "The fix loop stopped".
 
+13. The output pane is one log for the whole run, never cleared between calls (capped at the last 2000 lines). Each
+    assistant call starts under a heading line ("— Fix 2 of 20: 4.A Element has a click listener … —", "— Review
+    items: asking about 10 review items —"); "(no output yet)" appears only before the run's first line.
+14. Everything the loop does between assistant calls is in the pane and in the status line with elapsed time: the
+    gate ("Checking the fix with npm run build && npm test", its output as it arrives, then "Build and tests passed
+    in 1 m 12 s" or "Build or tests failed — the change is reverted and the finding stays open: <last lines>"), the
+    commit ("Committed 2 files as a1b2c3d"), the push, the deploy wait. A streaming assistant's closing line reads
+    "Gemini CLI is done: 2 files changed — checking the fix next", so it is not read as the loop finishing.
+15. The counts move after every commit (a ledger event after each attempt's outcome), worded "1 fixed, awaiting
+    verification · 19 remaining · 4 need a person" on the Fix step, in History, and in `a11y-508 status`.
+16. The pane's heading and the main status line say the same thing, from one source.
+
 ## How this fails silently
 
 1. The nested-branch fallback picks a branch but does not switch to it; commits land on the previous branch.
@@ -96,6 +108,13 @@ clone): the loop checks it out tracking origin. AC 6's "assistant failed to star
 12. (a) Remove `--output-format stream-json` from the Gemini preset — the preset test fails; (b) relay raw JSON —
     the decoder unit test on recorded Gemini and Claude JSONL fails; (c) buffer stdout until exit — the Playwright
     test asserting the first action line while the call runs fails.
+
+13. Clear the pane on each new task — the Playwright test asserting the fix-1 lines are still there while fix 2 runs
+    fails.
+14. Stop emitting the gate events — the loop test asserting gate start/done/output events, and the Playwright test
+    asserting "Checking the fix with …" with a counting time and the "Committed … as" line, fail.
+15. Drop the ledger event after a commit — the loop test asserting a ledger event with pending ≥ 1 before the next
+    fix starts, and the Playwright test asserting the counts had moved when the next fix began, fail.
 
 ## Non-goals
 

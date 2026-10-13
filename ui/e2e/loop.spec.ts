@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { moreOptions, loopOptions, dryRun, dashboard, fillRun, gitRepo, open, startFromRun, tempDir, waitFinished, BIN, ROOT, TOKEN, type Dash, nav, api } from './harness';
+import { moreOptions, loopOptions, dryRun, dashboard, fillRun, gitRepo, open, startFromRun, tempDir, waitFinished, BIN, ROOT, TOKEN, type Dash, nav, api, countsLine } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -143,8 +143,8 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     await expect(page.getByTestId('loop-explainer')).toBeHidden({ timeout: 60_000 });
     // The assistant's output, live: its lines in the pane while it runs, and a counter that moves.
     const heading = page.getByTestId('agent-heading');
-    await expect(heading).toHaveText(/running \d+ s$/, { timeout: 200_000 });
-    const secs = async () => Number(/running (\d+) s$/.exec((await heading.textContent()) || '')?.[1] ?? -1);
+    await expect(heading).toHaveText(/ · \d+ s$/, { timeout: 200_000 });
+    const secs = async () => Number(/ · (\d+) s$/.exec((await heading.textContent()) || '')?.[1] ?? -1);
     const first = await secs();
     await expect.poll(secs, { timeout: 10_000 }).toBeGreaterThan(first);
     await expect(page.getByTestId('agent-output')).toContainText('fake agent: reading the prompt');
@@ -176,11 +176,11 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     said(/^Round 2: re-checking the site first \(\d+ of \d+ pages\) so fixes can be verified against it$/);
     said(/^Round 2: asking the assistant about \d+ review items · \d+ s$/);
     said(/^Round 2: fixing \d+ of \d+ · \d+\.[A-Z] .+ · \d+ s$/);
-    said(/^Round 2: checking the fixes \(.+ -e "setTimeout\(Boolean,1500\)"\)$/);
+    said(/^Round 2: checking the fix with .+ -e "setTimeout\(Boolean,1500\)" · \d+ s$/);
     said(/^Committed \d+ fix(es)? · waiting for the new build on 127\.0\.0\.1:\d+…$/);
     said(/^Round 3: re-checking the site \(\d+ of \d+ pages\)$/);
-    // The triage call prints nothing until it ends: the pane and its timer are there from its start.
-    expect(samples.some((s) => /^Round 2: asking the assistant about/.test(s.status) && /running \d+ s$/.test(s.heading) && s.output === '(no output yet)'), 'the pane runs before the first output').toBe(true);
+    // The triage call prints nothing until it ends: the pane, its heading line and its timer are there from its start.
+    expect(samples.some((s) => /^Round 2: asking the assistant about/.test(s.status) && s.heading === s.status && /— Review items: asking about \d+ review items? —$/.test(s.output)), 'the pane runs before the first output').toBe(true);
 
     // The board equals `a11y-508 status`, and the round chart equals the ledger's rounds.
     const st = spawnSync(process.execPath, [BIN, 'status'], { cwd, encoding: 'utf8' }).stdout;
@@ -192,7 +192,7 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     for (const s of ['open', 'review', 'pending', 'verified', 'needs-human', 'adequate', 'gone']) {
       await expect(page.getByTestId('ledger-counts').locator(`[data-status="${s}"] dd`)).toHaveText(String(counts[s] || 0));
     }
-    for (const [title, status] of [['OPEN', 'open'], ['PENDING VERIFICATION', 'pending'], ['NEEDS A PERSON', 'needs-human']]) {
+    for (const [title, status] of [['OPEN', 'open'], ['FIXED, AWAITING VERIFICATION', 'pending'], ['NEEDS A PERSON', 'needs-human']]) {
       const m = new RegExp(`^${title} \\((\\d+)\\)`, 'm').exec(st);
       await expect(page.locator(`[data-list="${status}"] li`)).toHaveCount(m ? Number(m[1]) : 0);
     }
@@ -221,7 +221,7 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     await expect(lastRow.getByTestId('fixed')).toHaveText(statusRound[2]);
     await expect(lastRow.getByTestId('remaining').locator('span').first()).toHaveText(String(counts.open || 0));
     await expect(page.getByTestId('history').locator('tr[data-source="round"]')).toHaveCount(ledger.rounds.length);
-    await expect(page.getByTestId('loop-summary')).toHaveText(`Fix loop: ${ledger.rounds.length} rounds · ${counts.verified || 0} of ${(counts.verified || 0) + (counts.open || 0) + (counts.pending || 0) + (counts['needs-human'] || 0)} violations fixed · ${counts.open || 0} remaining · ${counts['needs-human'] || 0} need a person`);
+    await expect(page.getByTestId('loop-summary')).toHaveText(`Fix loop: ${ledger.rounds.length} rounds · ${(counts.verified || 0) + (counts.open || 0) + (counts.pending || 0) + (counts['needs-human'] || 0)} violations · ${countsLine(counts)}`);
     // Clear fix-loop history removes the rounds and the ledger, after a confirmation.
     page.once('dialog', (d) => void d.accept());
     await page.getByRole('button', { name: 'Clear fix-loop history' }).click();

@@ -105,6 +105,12 @@ check('loop-resilience AC12: a quota refusal inside a stream event is still seen
   const { text } = readable(jsonl({ type: 'error', timestamp: 't', severity: 'error', message: 'You exceeded your current quota (RESOURCE_EXHAUSTED)' }, { type: 'result', timestamp: 't', status: 'error', error: { type: 'API', message: 'status 429' } }));
   assert.match(text, QUOTA);
 });
+check('loop-resilience AC14: the loop words the closing line, so it is not read as the loop finishing', () => {
+  const doneLine = (changed) => `Gemini CLI is done: ${changed} files changed — checking the fix next`;
+  const { lines } = readable(GEMINI, { cwd, doneLine });
+  assert.equal(lines.at(-1), 'Gemini CLI is done: 2 files changed — checking the fix next');
+  assert.ok(!lines.includes('Done: 2 files changed'));
+});
 check('loop-resilience AC12: the Gemini and Claude presets ask for the stream', () => {
   assert.match(PRESETS.gemini, / --output-format stream-json /);
   assert.match(PRESETS.claude, / --output-format stream-json --verbose /);

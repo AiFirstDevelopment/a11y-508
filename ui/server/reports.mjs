@@ -131,7 +131,7 @@ export function loopTimeline(ledger, counts) {
   const fixed = counts.verified || 0;
   const remaining = counts.open || 0;
   const needsHuman = counts['needs-human'] || 0;
-  return { rounds, total: { rounds: rounds.length, fixed, of: fixed + remaining + (counts.pending || 0) + needsHuman, remaining, needsHuman } };
+  return { rounds, total: { rounds: rounds.length, fixed, pending: counts.pending || 0, of: fixed + remaining + (counts.pending || 0) + needsHuman, remaining, needsHuman } };
 }
 
 // Clear the fix loop's history: its rounds (a11y-508-work/round-N/) and the ledger. The prompts

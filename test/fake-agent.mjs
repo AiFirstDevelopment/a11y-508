@@ -47,6 +47,8 @@ if (streamOnce && !existsSync(streamOnce)) {
   emit({ type: 'result', status: 'success', stats: {} });
 }
 console.log('fake agent: looking at the finding');
+// FAKE_AGENT_DELAY_MS: every call takes this long, as a real assistant's does.
+if (Number(process.env.FAKE_AGENT_DELAY_MS) > 0) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_AGENT_DELAY_MS)));
 
 const prompt = readFileSync(promptFile, 'utf8');
 const blocks = [...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => m[1]);

@@ -8,29 +8,19 @@ import { EnvStore } from '../core/env.store';
 import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { prefersReducedMotion } from '../core/motion';
-import { localTime } from '../core/format';
+import { fixedLine, localTime, spoken } from '../core/format';
 import { AgentTest, LedgerInfo, LoopDefaults, LoopMatch, Preset } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
 import { RunView } from '../shared/run-view';
 
 const STATUSES: [string, string][] = [
-  ['open', 'Open'], ['review', 'Awaiting triage'], ['pending', 'Pending verification'], ['verified', 'Verified fixed'],
+  ['open', 'Open'], ['review', 'Awaiting triage'], ['pending', 'Fixed, awaiting verification'], ['verified', 'Verified fixed'],
   ['needs-human', 'Needs a person'], ['adequate', 'Adequate'], ['gone', 'Gone'], ['wont-fix', "Won't fix"],
 ];
-const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Pending verification'], ['review', 'Awaiting triage'], ['needs-human', 'Needs a person']];
+const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Fixed, awaiting verification'], ['review', 'Awaiting triage'], ['needs-human', 'Needs a person']];
 // The installed assistant chosen when the config names none.
 const PREFERENCE = ['claude', 'gemini', 'codex'];
-const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 'no change', 'failed-gate': 'failed the gate', 'commit-failed': 'commit failed', 'timed-out': 'timed out', stopped: 'stopped', done: 'done', ended: 'ended' };
 
-// A duration as a person says it: "45 s", "1 m 10 s"; whole minutes as "15 min" when asked.
-function spoken(ms: number, minutes = false): string {
-  const total = Math.max(0, Math.round(ms / 1000));
-  if (total < 60) return `${total} s`;
-  if (minutes && total % 60 === 0) return `${total / 60} min`;
-  const m = Math.floor(total / 60);
-  const sec = total % 60;
-  return sec ? `${m} m ${sec} s` : `${m} min`;
-}
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // The Fix loop: it works out what it can (the assistant, the folders, the gate, the branch)
@@ -445,14 +435,15 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     if (this.waitingForBuild()) return waiting;
     // The gate and the commit are this finding's while its task has not ended (or the round's, with no n).
     const current = s?.['n'] === undefined || (t?.n === s?.['n'] && t?.state === 'start');
-    if (step === 'gate' && current) return `Round ${r}: checking the fixes${s?.['check'] ? ` (${s['check']})` : ''}`;
+    const g = this.store.gate();
+    if (g && !g.endedAt && g.round === r) return `Round ${r}: checking ${g.n ? 'the fix' : "the round's fixes"} with ${g.check} · ${secs(g.startedAt)}`;
     if (step === 'commit' && current) return `Round ${r}: committing fix ${s?.['n']} of ${s?.['m']}`;
     const seen = r === this.store.reportRound() ? ' from the report you just saw' : '';
     if (c && !c.endedAt && c.wait && c.wait.until > this.now()) return `${capital(this.assistantName())} is rate-limited; trying again in ${Math.max(1, Math.ceil((c.wait.until - this.now()) / 1000))} s (retry ${c.wait.attempt} of ${c.wait.attempts})`;
     if (c && !c.endedAt && c.kind === 'fix') return `Round ${r}: fixing ${c.n ?? c.task} of ${c.m ?? t?.m ?? '?'}${seen} · ${c.label} · ${secs(c.startedAt)}`;
     if (c && !c.endedAt && c.kind === 'triage') return `Round ${r}: asking ${this.assistantName()} about ${c.label}${seen}${c.m && c.m > 1 ? ` · batch ${c.n ?? c.task} of ${c.m}` : ''} · ${secs(c.startedAt)}`;
     if (step === 'gate' || step === 'commit') return `Round ${r}: fixing ${t?.n ?? ''} of ${t?.m ?? ''}`;
-    if (step === 'push') return `Round ${r}: pushing ${n} fix${n === 1 ? '' : 'es'}`;
+    if (step === 'push') return `Round ${r}: pushing ${n} fix${n === 1 ? '' : 'es'} · ${secs(Date.parse(String(s?.['at'])) || this.now())}`;
     if (step === 'deploy' || step === 'await-deploy') return waiting;
     if (step === 'report') return `Round ${r}: starting from the report you just saw`;
     if (step === 'fix') return `Round ${r}: fixing ${t?.m ?? s?.['count'] ?? ''} open finding${(t?.m ?? s?.['count']) === 1 ? '' : 's'}`;
@@ -477,10 +468,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     return '';
   });
   readonly fixCounts = computed(() => {
-    const c = this.store.ledger()?.['counts'] || this.ledger()?.counts || {};
-    const fixed = (c['verified'] || 0) + (c['pending'] || 0);
-    const nh = c['needs-human'] || 0;
-    return `${fixed} fixed · ${c['open'] || 0} remaining${nh ? ` · ${nh} need${nh === 1 ? 's' : ''} a person` : ''}`;
+    return fixedLine(this.store.ledger()?.['counts'] || this.ledger()?.counts || {});
   });
   readonly lastLine = computed(() => {
     const t = this.paneText().split('\n').map((l) => l.trim()).filter(Boolean);
@@ -551,17 +539,19 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     if (!r) return 'Starting…';
     if (this.store.awaitingDeploy()) return `Round ${r}: waiting for deploy`;
     const step = s?.['step'];
-    if (step === 'fix' || step === 'gate' || step === 'commit') return `Round ${r}: ${step === 'fix' ? '' : step + ', '}fix ${t?.n || 0} of ${t?.m || 0}`;
+    if (step === 'fix' || step === 'gate' || step === 'commit') return `Round ${r}: ${step === 'gate' ? 'checking' : step === 'commit' ? 'committing' : ''}${step === 'fix' ? '' : ' '}fix ${t?.n || 0} of ${t?.m || 0}`;
     if (step === 'deploy' || step === 'await-deploy') return `Round ${r}: waiting for deploy`;
     return `Round ${r}: ${step || 'crawl'}`;
   });
 
   // The assistant's live output: the loop's current call, or Test assistant.
-  readonly paneShown = computed(() => this.testing() || !!this.testResult() || !!this.store.agentCall());
+  // The pane: the loop run's one log (never cleared between calls), or Test assistant's output when
+  // that is newer.
+  readonly loopPane = computed(() => this.isLoop() && (!!this.store.paneLog() || this.store.active()) && (!this.testResult() || this.store.paneAt() > this.testStartedAt()));
+  readonly paneShown = computed(() => this.testing() || !!this.testResult() || this.loopPane());
   readonly paneText = computed(() => {
     if (this.testing()) return '(waiting for the assistant…)';
-    const c = this.store.agentCall();
-    if (c && (!this.testResult() || c.startedAt > this.testStartedAt())) return c.text || '(no output yet)';
+    if (this.loopPane()) return this.store.paneLog().replace(/\n$/, '') || '(no output yet)';
     const t = this.testResult();
     return t ? t.output.join('\n') || '(no output)' : '';
   });
@@ -569,12 +559,8 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     const who = this.assistantLabel() || 'The assistant';
     const secs = (from: number, to: number | null) => `${Math.max(0, Math.round(((to ?? this.now()) - from) / 1000))} s`;
     if (this.testing()) return `${who}, testing · running ${secs(this.testStartedAt(), null)}`;
-    const c = this.store.agentCall();
-    if (c && (!this.testResult() || c.startedAt > this.testStartedAt())) {
-      const what = c.kind === 'triage' ? `asked about ${c.label}${c.m && c.m > 1 ? ` · batch ${c.n ?? c.task} of ${c.m}` : ''}` : `fixing ${c.n ?? c.task} of ${c.m ?? '?'}: ${c.label}`;
-      if (!c.endedAt) return `${who}, ${what} · running ${secs(c.startedAt, null)}`;
-      return `${who}, ${what} · ${OUTCOMES[c.outcome || 'done'] || c.outcome} (${secs(c.startedAt, c.endedAt)})`;
-    }
+    // The loop's pane says what the status line says: one source for both.
+    if (this.loopPane()) return this.fixStatus();
     const t = this.testResult();
     return t ? `${who}, test · ${this.testText()}` : who;
   });

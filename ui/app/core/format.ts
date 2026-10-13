@@ -181,3 +181,29 @@ export const OFF_ORIGIN = /redirected off-origin to/;
 
 // The runbook's "could not get in" outputs.
 export const CANNOT_GET_IN = /redirected off-origin to|FAIL \(no page could be audited\)|the start page could not be audited|HTTP 401|HTTP 403|net::ERR_/;
+
+// A duration as a person says it: "45 s", "1 m 10 s"; whole minutes as "15 min" when asked.
+export function spoken(ms: number, minutes = false): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  if (total < 60) return `${total} s`;
+  if (minutes && total % 60 === 0) return `${total / 60} min`;
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return sec ? `${m} m ${sec} s` : `${m} min`;
+}
+
+// The fix loop's counts in the words the Fix step and History share: "3 verified fixed · 1 fixed,
+// awaiting verification · 19 remaining · 4 need a person" (a part that is 0 is left out; "0 fixed"
+// when nothing is fixed yet).
+export function fixedLine(c: Record<string, number | undefined>): string {
+  const v = c['verified'] || 0;
+  const p = c['pending'] || 0;
+  const nh = c['needs-human'] || 0;
+  const parts: string[] = [];
+  if (v) parts.push(`${v} verified fixed`);
+  if (p) parts.push(`${p} fixed, awaiting verification`);
+  if (!v && !p) parts.push('0 fixed');
+  parts.push(`${c['open'] || 0} remaining`);
+  if (nh) parts.push(`${nh} need${nh === 1 ? 's' : ''} a person`);
+  return parts.join(' · ');
+}

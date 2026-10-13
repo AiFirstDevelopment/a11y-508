@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Api } from './api';
 import { readSse } from './sse';
-import { CANNOT_GET_IN, Discovery, OFF_ORIGIN, PhaseEvent, Progress, cumulative } from './format';
+import { CANNOT_GET_IN, Discovery, OFF_ORIGIN, PhaseEvent, Progress, cumulative, spoken } from './format';
 import { ByImpact, Remedy, RunEvent } from './types';
 
 export interface PageRow {
@@ -49,6 +49,8 @@ export interface AgentCall {
 
 // The last 64 KB of a call's output are kept.
 export const AGENT_OUTPUT_MAX = 64 * 1024;
+// The output pane keeps the run's last 2000 lines.
+export const PANE_MAX_LINES = 2000;
 
 export interface Notice {
   level: 'warn' | 'error';
@@ -62,7 +64,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 // event" notice rather than being dropped in silence.
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
-  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result',
+  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit',
 ]);
 
 // The current run, built from its event stream.
@@ -92,6 +94,12 @@ export class RunStore {
   readonly crawlRound = signal<number | null>(null);
   // An assistant call given up (timed out, refused for quota, no answer), in the loop's plain words.
   readonly gaveUp = signal<string | null>(null);
+  // The output pane: one log for the whole run (each call under a heading line, the loop's own steps
+  // between them), and when it last grew.
+  readonly paneLog = signal('');
+  readonly paneAt = signal(0);
+  // The gate in hand (the build and tests run on a fix), for the status line.
+  readonly gate = signal<{ round: number; n: number | null; m: number | null; check: string; startedAt: number; endedAt: number | null; ok: boolean | null } | null>(null);
   // The loop: the run's first round (it re-checks the site first), and how many fixes the round committed.
   readonly firstRound = signal<number | null>(null);
   readonly committed = signal(0);
@@ -143,6 +151,9 @@ export class RunStore {
     this.precondition.set(null);
     this.crawlRound.set(null);
     this.gaveUp.set(null);
+    this.paneLog.set('');
+    this.paneAt.set(0);
+    this.gate.set(null);
     this.firstRound.set(null);
     this.committed.set(0);
     this.reportRound.set(null);
@@ -151,6 +162,18 @@ export class RunStore {
     this.loginWaitingSince.set(null);
     this.done.set(null);
     this.stopping.set(false);
+  }
+
+  // Appends to the pane: text as it is, or a line of its own (started on a new line).
+  private pane(text: string, line = false): void {
+    if (!text) return;
+    this.paneLog.update((log) => {
+      let next = line ? `${log && !log.endsWith('\n') ? log + '\n' : log}${text}\n` : log + text;
+      const lines = next.split('\n');
+      if (lines.length > PANE_MAX_LINES + 1) next = lines.slice(-(PANE_MAX_LINES + 1)).join('\n');
+      return next;
+    });
+    this.paneAt.set(Date.now());
   }
 
   apply(ev: RunEvent): void {
@@ -235,7 +258,16 @@ export class RunStore {
         if (ev['step'] === 'triage' && typeof ev['batch'] === 'number' && !(cur && cur.kind === 'triage' && cur.round === ev['round'] && cur.task === ev['batch'])) {
           this.agentCall.set({ round: ev['round'], task: ev['batch'], kind: 'triage', n: ev['batch'], m: ev['batches'] ?? null, count: ev['count'] ?? null, label: `${ev['count']} review item${ev['count'] === 1 ? '' : 's'}`, startedAt: at, endedAt: null, outcome: null, text: '', lastOutputAt: Date.now(), timeoutMs: ev['timeoutMs'] ?? null, quietMs: ev['quietMs'] ?? null, wait: null });
         }
-        if (ev['step'] === 'crawl') this.crawlRound.set(ev['round']);
+        if (ev['step'] === 'crawl') {
+          this.crawlRound.set(ev['round']);
+          this.pane(`— Round ${ev['round']}: re-checking the site —`, true);
+        }
+        if (ev['step'] === 'report') this.pane(`— Round ${ev['round']}: starting from the report you just saw —`, true);
+        if (ev['step'] === 'triage' && typeof ev['batch'] === 'number' && this.agentCall()?.startedAt === at && this.agentCall()?.kind === 'triage') {
+          this.pane(`— Review items${(ev['batches'] ?? 1) > 1 ? `, batch ${ev['batch']} of ${ev['batches']}` : ''}: asking about ${ev['count']} review item${ev['count'] === 1 ? '' : 's'} —`, true);
+        }
+        if (ev['step'] === 'push') this.pane(`Pushing ${ev['committed']} fix${ev['committed'] === 1 ? '' : 'es'}`, true);
+        if (ev['step'] === 'deploy' || ev['step'] === 'await-deploy') this.pane('Waiting for the new build to go live', true);
         if (typeof ev['committed'] === 'number') this.committed.set(ev['committed']);
         if (ev['step'] === 'report') this.reportRound.set(ev['round']);
         if (ev['step'] === 'fix') this.task.set({ n: 0, m: ev['count'], state: 'start' });
@@ -245,19 +277,43 @@ export class RunStore {
         this.task.set({ n: ev['n'], m: ev['m'], state: ev['state'] });
         const at = Date.parse(String(ev['at'])) || Date.now();
         if (ev['state'] === 'start') {
+          this.pane(`— Fix ${ev['n']} of ${ev['m']}: ${ev['test']} ${String(ev['message'] || '')} —`, true);
           this.agentCall.set({ round: ev['round'], task: ev['n'], kind: 'fix', n: ev['n'], m: ev['m'], label: `${ev['test']} ${String(ev['message'] || '').slice(0, 80)}`, startedAt: at, endedAt: null, outcome: null, text: '', lastOutputAt: Date.now(), timeoutMs: ev['timeoutMs'] ?? null, quietMs: ev['quietMs'] ?? null, wait: null });
         } else {
+          if (ev['outcome'] === 'no-change') this.pane('No change was made; the finding stays open', true);
           this.agentCall.update((c) => (c && c.kind === 'fix' && c.task === ev['n'] ? { ...c, endedAt: at, outcome: ev['outcome'] || null } : c));
         }
         break;
       }
       case 'agent-output': {
+        this.pane(String(ev['text'] || ''));
         const at = Date.parse(String(ev['at'])) || Date.now();
         this.agentCall.update((c) => {
           const same = c && c.round === ev['round'] && c.task === ev['task'] && c.kind === ev['kind'];
           const call: AgentCall = same ? c! : { round: ev['round'], task: ev['task'], kind: ev['kind'], n: null, m: null, label: ev['kind'] === 'triage' ? `review batch ${ev['task']}` : `finding ${ev['task']}`, startedAt: at, endedAt: null, outcome: null, text: '' };
           return { ...call, text: (call.text + ev['text']).slice(-AGENT_OUTPUT_MAX), lastOutputAt: Date.now(), wait: null };
         });
+        break;
+      }
+      case 'gate': {
+        const each = typeof ev['n'] === 'number';
+        if (ev['state'] === 'start') {
+          this.gate.set({ round: ev['round'], n: ev['n'] ?? null, m: ev['m'] ?? null, check: String(ev['check'] || ''), startedAt: Date.now(), endedAt: null, ok: null });
+          this.pane(`Checking ${each ? 'the fix' : "the round's fixes"} with ${ev['check']}`, true);
+        } else {
+          this.gate.update((g) => (g ? { ...g, endedAt: Date.now(), ok: !!ev['ok'] } : g));
+          const tail = String(ev['tail'] || '').split('\n').map((l) => l.trim()).filter(Boolean).join(' / ');
+          if (ev['ok']) this.pane(`Build and tests passed in ${spoken(Number(ev['durationMs']) || 0)}`, true);
+          else this.pane(`Build or tests failed — ${each ? 'the change is reverted and the finding stays open' : "the round's fixes are rolled back"}${tail ? `: ${tail}` : ''}`, true);
+        }
+        break;
+      }
+      case 'gate-output':
+        this.pane(String(ev['text'] || ''));
+        break;
+      case 'commit': {
+        const files = Array.isArray(ev['files']) ? ev['files'].length : 0;
+        this.pane(`Committed ${files} file${files === 1 ? '' : 's'} as ${ev['commit']}`, true);
         break;
       }
       case 'agent-wait':
