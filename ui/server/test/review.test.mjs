@@ -82,10 +82,21 @@ test('needs a person: the list, where to look, the screenshot from the report fo
     const l2 = JSON.parse(readFileSync(join(s.cwd, 'a11y-508-work', 'ledger.json'), 'utf8')).findings[fp(TITLES)];
     assert.deepEqual([l2.status, l2.attempts.length, l2.earlierAttempts.length, l2.decision.note], ['open', 0, 1, 'Give each page its own title.']);
 
-    // A screenshot whose file is gone: none, and said so.
+    // A screenshot whose file is gone: none, and said so -- not an older report's image of it.
+    const older = join(s.cwd, 'a11y-508-history', '2026-10-12');
+    mkdirSync(join(older, 'screenshots'), { recursive: true });
+    writeFileSync(join(older, 'screenshots', 'f1.png'), PNG);
+    writeFileSync(join(older, 'report.json'), readFileSync(join(s.cwd, 'a11y-508-report', 'report.json'), 'utf8').replace('2026-10-13T10:00:00.000Z', '2026-10-12T10:00:00.000Z'));
     rmSync(join(s.cwd, 'a11y-508-report', 'screenshots', 'f1.png'));
     const gone = (await s.call('GET', '/api/review')).json.decided.find((i) => i.test === '7.A');
     assert.deepEqual([gone.screenshot, gone.screenshotMissing], [null, true]);
+
+    // Not on a fix waiting for verification; a prototype name is no finding.
+    const l3 = JSON.parse(readFileSync(join(s.cwd, 'a11y-508-work', 'ledger.json'), 'utf8'));
+    l3.findings[fp(TITLES)].status = 'pending';
+    writeFileSync(join(s.cwd, 'a11y-508-work', 'ledger.json'), JSON.stringify(l3));
+    assert.equal((await s.call('POST', '/api/ledger/decision', { body: { fingerprint: fp(TITLES), status: 'adequate' } })).status, 409);
+    assert.equal((await s.call('POST', '/api/ledger/decision', { body: { fingerprint: '__proto__', status: 'adequate' } })).status, 404);
   } finally {
     await s.stop();
   }

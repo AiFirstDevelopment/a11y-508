@@ -54,16 +54,15 @@ export function reviewList(cwd, { sourceDirs = [], url = null } = {}) {
   const files = new Map();
   const card = (e) => {
     const inReports = seen.get(e.fingerprint) || [];
-    // The newest report whose copy of the finding has a screenshot file that is still there.
+    // The newest report whose copy of the finding has a screenshot; its file missing means none
+    // (an older report's image could show the element before a fix).
     let screenshot = null;
     let screenshotMissing = false;
     for (const { id, finding } of inReports) {
       if (!finding.screenshot) continue;
-      if (confinedFile(cwd, id, finding.screenshot)) {
-        screenshot = reportFileUrl(id, finding.screenshot);
-        break;
-      }
-      screenshotMissing = true;
+      if (confinedFile(cwd, id, finding.screenshot)) screenshot = reportFileUrl(id, finding.screenshot);
+      else screenshotMissing = true;
+      break;
     }
     // A site-wide finding (pages: ['site']): the pages it names, else every page its report audited.
     const site = (e.pages || []).includes('site');
