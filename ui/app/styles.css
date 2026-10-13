@@ -167,3 +167,15 @@ dialog.setup { max-width: min(640px, calc(100vw - 32px)); border: 1px solid var(
 dialog.setup::backdrop { background: rgba(0, 0, 0, 0.35); }
 .inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .inline input { flex: 1 1 260px; }
+/* The Needs a person screen (/review). */
+.review-card { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; padding: 8px 14px; margin: 14px 0; }
+.review-card h3 { margin: 4px 0; font-size: 1.05rem; overflow-wrap: anywhere; }
+.review-card h4 { margin: 12px 0 2px; font-size: 0.95rem; }
+.review-card dt { font-weight: 600; }
+.review-card dd { margin: 0 0 6px; }
+.review-card code { overflow-wrap: anywhere; }
+.review-card img { max-width: 100%; border: 1px solid var(--line); display: block; margin: 6px 0; }
+.review-card textarea { width: 100%; max-width: 640px; }
+.review-card .label { margin: 4px 0 0; font-weight: 600; }
+ul.review-pages, ul.review-sources { margin: 2px 0 6px; padding-left: 20px; }
+.needs-person { font-weight: 600; }

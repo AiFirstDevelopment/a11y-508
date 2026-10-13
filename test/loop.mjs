@@ -9,7 +9,7 @@ import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { applyReport, loadLedger } from '../src/ledger.mjs';
+import { applyReport, decide, loadLedger, saveLedger } from '../src/ledger.mjs';
 import { agentEnv, fixPrompt, triagePrompt } from '../src/agent.mjs';
 import { normalizeConfig, sessionArgs } from '../src/loop.mjs';
 import { splitLoopArgs } from '../src/cli.mjs';
@@ -856,6 +856,70 @@ rmSync(repo2, { recursive: true, force: true });
     removeOwn(dirname(slow));
     removeOwn(dir);
     void g;
+  }
+
+  // Needs a person (docs/plans/needs-a-person.md) AC 5, guards 5 and 6: a person's decision in the
+  // ledger is what the loop follows. Looks fine and Won't fix are never fixed, re-asked or reopened
+  // by the next crawl; Ask the assistant to fix it sends the finding back with the note in its prompt.
+  {
+    const { dir, g } = appRepo('a11y-508-decided-', { maxAttempts: 3 });
+    const site = await serve(dir);
+    const url = `http://127.0.0.1:${site.address().port}/`;
+    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(dir, 'a11y-508.config.json'), 'utf8')), url }, null, 2));
+    g('commit', '-qam', 'the config names the site');
+    const crawl = await cli(dir, [url, ...quick, '--out', 'a11y-508-report', '--quiet', '--fail-on', 'none']);
+    const report = JSON.parse(readFileSync(join(dir, 'a11y-508-report', 'report.json'), 'utf8'));
+    // Round 1 from that report, then three violations the loop gave up on, each decided by a person.
+    const ledgerFile = join(dir, 'a11y-508-work', 'ledger.json');
+    const ledger = loadLedger(ledgerFile);
+    applyReport(ledger, report, 1);
+    const violations = Object.values(ledger.findings).filter((e) => e.level === 'violation');
+    const [fine, wont, back] = violations;
+    for (const e of [fine, wont, back]) {
+      e.status = 'needs-human';
+      e.reason = 'still present after 3 fix attempts';
+      e.attempts = [1, 2, 3].map((round) => ({ round, files: [], note: 'tried', outcome: 'no-change' }));
+    }
+    const NOTE = 'The image shows the harbour at dawn; use that as its alt text.';
+    decide(ledger, fine.fingerprint, { status: 'adequate' });
+    decide(ledger, wont.fingerprint, { status: 'wont-fix', note: 'Decorative; the vendor owns this widget.' });
+    decide(ledger, back.fingerprint, { status: 'open', note: NOTE });
+    saveLedger(ledgerFile, ledger);
+    const loop = await loopIn(dir, ['--max-rounds', '1', '--events']);
+    site.close();
+    const work = join(dir, 'a11y-508-work');
+    // Every fix prompt the round wrote, by the fingerprint of the finding in its machine-readable block.
+    const prompts = readdirSync(work).filter((f) => /^prompt-r2-fix-\d+\.md$/.test(f)).map((f) => readFileSync(join(work, f), 'utf8'));
+    const fpOf = (p) => {
+      const b = [...p.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1])).find((o) => o.kind === 'fix');
+      return `${b.finding.test}|${b.finding.selector || ''}|${b.finding.message}`;
+    };
+    const after = loadLedger(ledgerFile);
+    check('needs-a-person AC5/guard 5: Looks fine and Won\'t fix are never fixed, and the next crawl does not reopen them', () => {
+      assert.equal(crawl.status, 0, crawl.out);
+      assert.ok(violations.length >= 3, `the fixture has ${violations.length} violations`);
+      assert.ok(prompts.length >= 1, loop.out);
+      const fixed = prompts.map(fpOf);
+      assert.ok(!fixed.includes(fine.fingerprint), `the assistant was asked to fix ${fine.fingerprint}, which a person said looks fine`);
+      assert.ok(!fixed.includes(wont.fingerprint), `the assistant was asked to fix ${wont.fingerprint}, which a person said won't be fixed`);
+      // Round 2's crawl saw them again; they stay as the person decided.
+      assert.equal(after.rounds.length, 2, loop.out);
+      assert.equal(after.findings[fine.fingerprint].lastSeenRound, 2);
+      assert.equal(after.findings[fine.fingerprint].status, 'adequate');
+      assert.equal(after.findings[wont.fingerprint].status, 'wont-fix');
+      assert.equal(after.findings[wont.fingerprint].decision.note, 'Decorative; the vendor owns this widget.');
+    });
+    check('needs-a-person AC5/guard 6: a finding sent back has the person\'s note in its next fix prompt, with its attempts reset', () => {
+      const mine = prompts.filter((p) => fpOf(p) === back.fingerprint);
+      assert.equal(mine.length, 1, `prompts for ${back.fingerprint}: ${mine.length}\n${loop.out}`);
+      assert.ok(mine[0].includes(`A person reviewed this and says: ${NOTE}`), mine[0]);
+      // The attempts before the decision are not "earlier attempts that did not work" for this one.
+      assert.ok(!/Earlier attempts that did not work/.test(mine[0]), mine[0]);
+      const e = after.findings[back.fingerprint];
+      assert.equal(e.attempts.length, 1);
+      assert.equal(e.earlierAttempts.length, 3);
+    });
+    removeOwn(dir);
   }
 }
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');

@@ -18,7 +18,7 @@ const decode = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&g
 const squash = (s) => s.replace(/\s+/g, ' ').trim();
 
 // The tokens of one finding, most distinctive kinds first.
-function tokensOf(f) {
+export function tokensOf(f) {
   const html = typeof f.html === 'string' ? f.html : '';
   const selector = typeof f.selector === 'string' ? f.selector : '';
   const out = [];
@@ -113,4 +113,48 @@ export function matchSource(cwd, report, sourceDirs) {
     }
   }
   return { checked: tokens.length, found: hits.length, examples: hits.slice(0, 5) };
+}
+
+// Where one finding's markup is in the source: every line under the source folders that holds one of
+// its distinctive literals (ids, aria-labels, text, class names, as matchSource looks for them, and
+// data-testid values and image file names). files: a { path -> text } cache shared across findings.
+// [{ file: 'site/index.html', line: 21, token, kind }], at most `max`.
+export function locate(cwd, finding, sourceDirs, { files = null, max = 8 } = {}) {
+  const html = typeof finding.html === 'string' ? finding.html : '';
+  const tokens = tokensOf(finding);
+  for (const m of html.matchAll(/\bdata-testid\s*=\s*["']([^"']{3,})["']/gi)) tokens.push({ kind: 'data-testid', value: m[1] });
+  // An image's file name (harbour.svg), never a data: URL.
+  for (const m of html.matchAll(/\b(?:src|srcset)\s*=\s*["']([^"'\s]+)/gi)) {
+    if (/^data:/i.test(m[1])) continue;
+    const name = m[1].split(/[?#]/)[0].split('/').pop();
+    if (name && name.length >= 5 && /\.\w{2,5}$/.test(name)) tokens.push({ kind: 'src', value: name });
+  }
+  if (!tokens.length) return [];
+  const cache = files || new Map();
+  if (!cache.size) {
+    for (const file of sourceFiles(cwd, sourceDirs)) {
+      try {
+        if (statSync(file).size > MAX_BYTES) continue;
+        cache.set(relative(cwd, file).split('\\').join('/'), readFileSync(file, 'utf8'));
+      } catch {}
+    }
+  }
+  const out = [];
+  const seen = new Set();
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const t of tokens) {
+    // Text may wrap across lines in the source: any run of white space matches any other.
+    const re = new RegExp(t.value.split(/\s+/).map(esc).join('\\s+'), 'g');
+    for (const [file, text] of cache) {
+      for (const m of text.matchAll(re)) {
+        const line = text.slice(0, m.index).split('\n').length;
+        const key = `${file}:${line}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ file, line, token: t.value, kind: t.kind });
+        if (out.length >= max) return out;
+      }
+    }
+  }
+  return out;
 }

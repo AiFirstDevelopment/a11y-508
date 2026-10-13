@@ -6,7 +6,8 @@
 // Statuses: review (awaiting triage), adequate (triage closed it), open (to be
 // fixed), pending (fixed, waiting for a crawl after deployment to confirm),
 // verified (confirmed gone after a fix), gone (disappeared without a fix),
-// needs-human (the loop gave up on it), wont-fix (set by a person).
+// needs-human (the loop gave up on it), wont-fix (set by a person). A person's decision on a
+// finding (the dashboard's Needs a person screen) is kept as entry.decision; see decide().
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -128,6 +129,34 @@ export function openFindings(ledger) {
 }
 
 export const isDone = (ledger) => !Object.values(ledger.findings).some((e) => ACTIVE.has(e.status));
+
+// A person's decision on a finding that needs one: "adequate" (looks fine) and "wont-fix" close it
+// for good -- no later crawl reopens it and the loop never fixes or re-asks it; "open" sends it back
+// to the assistant with the note as guidance, its attempts reset so the loop tries again (the
+// earlier ones are kept as earlierAttempts). Returns the entry; throws with { status } otherwise.
+export const DECISIONS = ['adequate', 'wont-fix', 'open'];
+export function decide(ledger, fp, { status, note = '', at = new Date().toISOString() } = {}) {
+  const fail = (message, code = 400) => Object.assign(new Error(message), { status: code });
+  const entry = ledger.findings[fp];
+  if (!entry) throw fail('no such finding in the ledger', 404);
+  if (!DECISIONS.includes(status)) throw fail(`decision must be one of ${DECISIONS.join(', ')}`);
+  const text = typeof note === 'string' ? note.trim().slice(0, 2000) : '';
+  if (status === 'wont-fix' && !text) throw fail("say why it won't be fixed");
+  // Only a finding that needs a person, or one a person already decided (changing their mind).
+  if (entry.status !== 'needs-human' && !(entry.decision && entry.decision.by === 'person')) throw fail(`this finding is ${entry.status}, not waiting for a person`, 409);
+  const round = ledger.rounds.length ? ledger.rounds[ledger.rounds.length - 1].round : 0;
+  entry.decision = { by: 'person', status, note: text, at, round };
+  entry.status = status;
+  if (status === 'open') {
+    entry.earlierAttempts = [...(entry.earlierAttempts || []), ...(entry.attempts || [])];
+    entry.attempts = [];
+    delete entry.reason;
+  }
+  return entry;
+}
+
+// The decision a person sent back with a finding ("Ask the assistant to fix it"), for its fix prompt.
+export const personNote = (entry) => (entry && entry.decision && entry.decision.by === 'person' && entry.decision.status === 'open' && entry.decision.note) || '';
 
 export function statusCounts(ledger) {
   const c = {};

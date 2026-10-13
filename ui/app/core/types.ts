@@ -217,3 +217,47 @@ export interface LedgerInfo {
   line?: string;
   lists?: Record<string, LedgerItem[]>;
 }
+
+// The Needs a person screen (GET /api/review).
+export type DecisionStatus = 'adequate' | 'wont-fix' | 'open';
+export interface PersonDecision {
+  by: 'person';
+  status: DecisionStatus;
+  note: string;
+  at: string;
+  round: number;
+}
+export interface SourcePlace {
+  file: string;
+  line: number;
+  token: string;
+  kind: string;
+}
+export interface ReviewItem {
+  fingerprint: string;
+  test: string;
+  name: string;
+  wcag: string;
+  impact: string;
+  level: string | null;
+  condition: string;
+  message: string;
+  reason: string | null;
+  status: string;
+  round: number;
+  attempts: number;
+  wholePage: boolean;
+  selector: string;
+  frame: string | null;
+  html: string;
+  pages: string[];
+  screenshot: string | null;
+  screenshotMissing: boolean;
+  sources: SourcePlace[];
+  decision: PersonDecision | null;
+}
+export interface ReviewList {
+  exists: boolean;
+  items: ReviewItem[];
+  decided: ReviewItem[];
+}

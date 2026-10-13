@@ -19,6 +19,7 @@ import { Runs } from './runs.mjs';
 import { loopDefaults } from './loop-defaults.mjs';
 import { readGlobal, writeGlobal, paths as statePaths, excludeOutputs, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { matchSource } from './loop-match.mjs';
+import { recordDecision, reviewList } from './review.mjs';
 import { carryAnalysis, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
@@ -528,6 +529,19 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       const latest = readReport(state.cwd, 'latest');
       if (!latest) return send(res, 200, { report: false, source, checked: 0, found: 0, examples: [] });
       return send(res, 200, { report: true, source, ...matchSource(state.cwd, latest, source) });
+    }
+    // The Needs a person screen: the findings waiting for a person, and their decisions (review.mjs).
+    if (m === 'GET' && path === '/api/review') {
+      const c = readConfig();
+      const d = loopDefaults(state.cwd, c.exists ? c.config : null).effective;
+      const source = (Array.isArray(d.source) ? d.source : [d.source]).filter((x) => typeof x === 'string' && x);
+      return send(res, 200, reviewList(state.cwd, { sourceDirs: source, url: (c.exists && c.config.url) || null }));
+    }
+    if (m === 'POST' && path === '/api/ledger/decision') {
+      const body = await readBody(req);
+      // The running loop holds the ledger and would write over the decision.
+      if (runs.active && ['loop', 'dry-run'].includes(runs.current.kind)) throw new BadRequest('the fix loop is running; record the decision when it has finished', 409);
+      return send(res, 200, recordDecision(state.cwd, body));
     }
     if (m === 'PUT' && path === '/api/config') return send(res, 200, writeConfig(await readBody(req)));
     if (m === 'GET' && path === '/api/command') {

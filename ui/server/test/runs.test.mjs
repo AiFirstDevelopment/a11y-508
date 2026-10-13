@@ -136,7 +136,7 @@ test('the fix loop timeline from the ledger, and clearing the loop history (roun
     }));
     const t = await s.call('GET', '/api/loop/timeline');
     assert.deepEqual(t.json.rounds.map((r) => [r.round, r.found, r.fixed, r.commits, r.remaining, r.needsHuman]), [[1, 5, 0, 2, 3, 0], [2, 3, 2, 0, 2, 1]]);
-    assert.deepEqual(t.json.total, { rounds: 2, fixed: 2, pending: 0, of: 5, remaining: 2, needsHuman: 1 });
+    assert.deepEqual(t.json.total, { rounds: 2, fixed: 2, pending: 0, of: 5, remaining: 2, needsHuman: 1, decided: 0 });
     const c = await s.call('DELETE', '/api/loop/history');
     assert.equal(c.status, 200);
     assert.equal(c.json.removed, 2);

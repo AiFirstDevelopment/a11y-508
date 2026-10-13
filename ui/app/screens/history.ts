@@ -8,16 +8,17 @@ import { fixedLine, resultWord, localTime, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { ReportListEntry } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
+import { NeedsPersonLink } from '../shared/needs-person-link';
 import { Starter } from '../core/starter';
 import { detailsOpen, setDetailsOpen } from '../core/details';
 
 interface LoopRound { round: number; at: string | null; found: number; fixed: number; commits: number; remaining: number; needsHuman: number }
-interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: number; pending?: number; of: number; remaining: number; needsHuman: number } }
+interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: number; pending?: number; of: number; remaining: number; needsHuman: number; decided?: number } }
 
 // One timeline: the crawls and the fix loop's rounds, newest first.
 @Component({
   selector: 'app-history-screen',
-  imports: [RouterLink, ChartPanel, BarChartModule],
+  imports: [RouterLink, ChartPanel, BarChartModule, NeedsPersonLink],
   template: `
     <h1>History</h1>
     <p>Every crawl and every round of the fix loop, newest first. The latest crawl stays in a11y-508-report/; earlier ones move to a11y-508-history/; the loop's rounds are in a11y-508-work/.</p>
@@ -26,7 +27,8 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
     }
     <p role="status" class="hint" data-testid="history-status">{{ status() }}</p>
     @if (timeline(); as t) {
-      <p data-testid="loop-summary">Fix loop: {{ t.total.rounds }} round{{ t.total.rounds === 1 ? '' : 's' }} · {{ t.total.of }} violations · {{ counts(t.total) }}</p>
+      <p data-testid="loop-summary">Fix loop: {{ t.total.rounds }} round{{ t.total.rounds === 1 ? '' : 's' }} · {{ t.total.of }} violations · {{ counts(t.total) }}@if (t.total.decided) { · {{ t.total.decided }} decided by a person}</p>
+      <app-needs-person-link [count]="t.total.needsHuman" />
     }
     @if (earlier().length || timeline()) {
       <div class="actions">

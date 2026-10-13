@@ -131,7 +131,9 @@ export function loopTimeline(ledger, counts) {
   const fixed = counts.verified || 0;
   const remaining = counts.open || 0;
   const needsHuman = counts['needs-human'] || 0;
-  return { rounds, total: { rounds: rounds.length, fixed, pending: counts.pending || 0, of: fixed + remaining + (counts.pending || 0) + needsHuman, remaining, needsHuman } };
+  // Findings a person closed (looks fine, won't fix) on the Needs a person screen: resolved, not remaining.
+  const decided = Object.values(ledger.findings || {}).filter((e) => e.decision && e.decision.by === 'person' && ['adequate', 'wont-fix'].includes(e.status)).length;
+  return { rounds, total: { rounds: rounds.length, fixed, pending: counts.pending || 0, of: fixed + remaining + (counts.pending || 0) + needsHuman + decided, remaining, needsHuman, decided } };
 }
 
 // Clear the fix loop's history: its rounds (a11y-508-work/round-N/) and the ledger. The prompts

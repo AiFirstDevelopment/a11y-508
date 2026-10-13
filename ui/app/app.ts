@@ -39,7 +39,7 @@ export function stepOf(url: string): number {
   const p = url.split(/[?#]/)[0];
   if (p.startsWith('/live') || p.startsWith('/troubleshoot')) return 2;
   if (p.startsWith('/report')) return 3;
-  if (p.startsWith('/fix-loop')) return 4;
+  if (p.startsWith('/fix-loop') || p.startsWith('/review')) return 4;
   if (p.startsWith('/history')) return 5;
   return 1;
 }

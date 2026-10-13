@@ -12,12 +12,14 @@ import { fixedLine, localTime, spoken } from '../core/format';
 import { AgentTest, LedgerInfo, LoopDefaults, LoopMatch, Preset } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
 import { RunView } from '../shared/run-view';
+import { NeedsPersonLink } from '../shared/needs-person-link';
 
 const STATUSES: [string, string][] = [
   ['open', 'Open'], ['review', 'Awaiting triage'], ['pending', 'Fixed, awaiting verification'], ['verified', 'Verified fixed'],
   ['needs-human', 'Needs a person'], ['adequate', 'Adequate'], ['gone', 'Gone'], ['wont-fix', "Won't fix"],
 ];
-const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Fixed, awaiting verification'], ['review', 'Awaiting triage'], ['needs-human', 'Needs a person']];
+// Findings that need a person are not listed here: the Needs a person screen (/review) shows them.
+const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Fixed, awaiting verification'], ['review', 'Awaiting triage']];
 // The installed assistant chosen when the config names none.
 const PREFERENCE = ['claude', 'gemini', 'codex'];
 
@@ -27,7 +29,7 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 // and shows it, with one button; everything it inferred is editable at /fix-loop/settings.
 @Component({
   selector: 'app-fix-loop-screen',
-  imports: [ChartPanel, LineChartModule, RunView, RouterLink],
+  imports: [ChartPanel, LineChartModule, RunView, RouterLink, NeedsPersonLink],
   template: `
     <h1>Fix loop</h1>
     @if (!(store.kind() === 'loop' && store.round())) {
@@ -227,6 +229,7 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
         <button type="button" (click)="store.continueAfterDeploy()">Deployed — continue</button>
       </div>
     }
+    <app-needs-person-link [count]="(store.ledger()?.['counts'] || ledger()?.counts)?.['needs-human'] || 0" />
     <details class="details" data-testid="details" [open]="showDetails()" (toggle)="toggled($event)">
       <summary>Details<span class="visually-hidden"> of the fix loop</span></summary>
     @if (isLoop() && problem()?.kind !== 'start') {

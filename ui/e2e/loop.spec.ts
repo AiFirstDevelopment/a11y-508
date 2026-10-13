@@ -192,10 +192,15 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     for (const s of ['open', 'review', 'pending', 'verified', 'needs-human', 'adequate', 'gone']) {
       await expect(page.getByTestId('ledger-counts').locator(`[data-status="${s}"] dd`)).toHaveText(String(counts[s] || 0));
     }
-    for (const [title, status] of [['OPEN', 'open'], ['FIXED, AWAITING VERIFICATION', 'pending'], ['NEEDS A PERSON', 'needs-human']]) {
+    for (const [title, status] of [['OPEN', 'open'], ['FIXED, AWAITING VERIFICATION', 'pending']]) {
       const m = new RegExp(`^${title} \\((\\d+)\\)`, 'm').exec(st);
       await expect(page.locator(`[data-list="${status}"] li`)).toHaveCount(m ? Number(m[1]) : 0);
     }
+    // Findings that need a person: one line and a link to the Needs a person screen, no list.
+    const nh = Number((/^NEEDS A PERSON \((\d+)\)/m.exec(st) || [])[1] || 0);
+    await expect(page.locator('[data-list="needs-human"]')).toHaveCount(0);
+    if (nh) await expect(page.getByTestId('needs-person-link')).toHaveText(`${nh} need${nh === 1 ? 's' : ''} a person — review them`);
+    else await expect(page.getByTestId('needs-person-link')).toHaveCount(0);
     const panel = page.locator('app-chart-panel#rounds');
     await panel.getByRole('button', { name: /Show data table/ }).click();
     await expect(panel.locator('table tbody tr')).toHaveCount(ledger.rounds.length);
