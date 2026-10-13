@@ -67,7 +67,7 @@ test('stepper: while a crawl runs only Set up and Crawl are reachable; when it f
     for (const s of ['Results', 'Fix', 'History']) await expect(stepOff(page, s)).toHaveCount(1);
     // The Crawl step: one status line, the bar, the counts, Stop; no table until Details is opened.
     await expect(page.getByTestId('crawl-status')).toBeVisible();
-    await expect(page.getByTestId('crawl-counts')).toHaveText(/^\d+ violations? · \d+ to review$/);
+    await expect(page.getByTestId('crawl-counts')).toHaveText(/^\d+ violations?(, \d+ site-wide)? · \d+ to review(, \d+ site-wide)?$/);
     await expect(page.locator('main table:visible')).toHaveCount(0);
     await expect(page.getByTestId('run-command')).toBeHidden();
     // Finished: the wizard is on Results by itself, with Fix available.

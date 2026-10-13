@@ -83,9 +83,19 @@ export class LiveScreen implements OnDestroy {
     setDetailsOpen('crawl', open);
   }
 
-  readonly counts = computed(() => {
+  // Violations and review items: the pages' so far, and once the crawl is done the site-wide
+  // ones too (the summary's totals), named as such, so this line and the Done line agree.
+  readonly totals = computed(() => {
     const t = this.store.pages().reduce((a, p) => ({ v: a.v + p.violations, r: a.r + p.reviews }), { v: 0, r: 0 });
-    return `${t.v} violation${t.v === 1 ? '' : 's'} · ${t.r} to review`;
+    const sum = this.store.summary()?.['summary'];
+    if (!sum) return { v: t.v, r: t.r, sv: 0, sr: 0 };
+    const v = sum.violations ?? t.v;
+    const r = sum.reviews ?? t.r;
+    return { v, r, sv: Math.max(0, v - t.v), sr: Math.max(0, r - t.r) };
+  });
+  readonly counts = computed(() => {
+    const t = this.totals();
+    return `${t.v} violation${t.v === 1 ? '' : 's'}${t.sv ? `, ${t.sv} site-wide` : ''} · ${t.r} to review${t.sr ? `, ${t.sr} site-wide` : ''}`;
   });
   readonly elapsed = computed(() => {
     const t0 = this.store.startedAt();
@@ -103,7 +113,7 @@ export class LiveScreen implements OnDestroy {
       const s = st.summary();
       if (s) {
         const sum = s['summary'] || {};
-        return `Done: ${sum.audited ?? st.pages().length} pages · ${sum.violations ?? 0} violations · ${sum.reviews ?? 0} to review`;
+        return `Done: ${sum.audited ?? st.pages().length} pages · ${this.counts()}`;
       }
       return d['outcome'] === 'error' ? `Failed (exit code ${d['code']})` : 'Done';
     }
@@ -114,7 +124,13 @@ export class LiveScreen implements OnDestroy {
       return this.env.env()?.signIn === 'tab' ? `Sign in in the tab that just opened · ${s} s` : `Waiting for you to sign in in the browser window · ${s} s`;
     }
     const f = Object.values(st.inFlight()).sort((a, b) => b.receivedAt - a.receivedAt)[0];
-    if (!f) return 'Starting the browser';
+    if (!f) {
+      // Between pages, and between the sign-in and the first page: not "Starting the browser" again.
+      const p = st.progress();
+      if (st.pages().length) return `Next page · ${p.done} of ${p.discovered} done`;
+      if (st.loginWaitingSince() || st.sessionSaved()) return 'Signed in · loading the first page';
+      return 'Starting the browser';
+    }
     const path = routeParts(f.url).path;
     const dd = f.detail || {};
     const n = (x: number | undefined) => (x ?? 0).toLocaleString('en-US');

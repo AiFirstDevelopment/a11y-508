@@ -34,9 +34,10 @@ async function recordProgress(p: Page): Promise<void> {
       if (!bar) return;
       const label = document.getElementById('crawl-progress-label')?.textContent?.trim() || '';
       const rows = document.querySelectorAll('[data-testid="page-list"] tbody tr[data-url]').length;
-      const s = { value: bar.hasAttribute('value') ? bar.value : null, max: bar.max, label, rows };
+      const status = document.querySelector('[data-testid="crawl-status"]')?.textContent?.trim() || '';
+      const s = { value: bar.hasAttribute('value') ? bar.value : null, max: bar.max, label, rows, status };
       const last = w.__samples[w.__samples.length - 1];
-      if (!last || last.value !== s.value || last.label !== s.label || last.rows !== s.rows) w.__samples.push(s);
+      if (!last || last.value !== s.value || last.label !== s.label || last.rows !== s.rows || last.status !== s.status) w.__samples.push(s);
     };
     new MutationObserver(sample).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
     sample();
@@ -60,7 +61,17 @@ test('AC 2: the live view moves page by page and matches report.json', async () 
   await waitFinished(page);
   crawled = true;
   const report = readReport(dash.cwd);
-  const samples: { value: number | null; max: number; label: string; rows: number }[] = await page.evaluate(() => (window as any).__samples);
+  const samples: { value: number | null; max: number; label: string; rows: number; status: string }[] = await page.evaluate(() => (window as any).__samples);
+  // "Starting the browser" only before the first page, never between pages.
+  const starting = samples.filter((s) => s.status === 'Starting the browser');
+  expect(starting.every((s) => s.rows === 0), JSON.stringify(samples.map((s) => [s.rows, s.status]))).toBe(true);
+  // The counts line and the Done line agree, site-wide items included and named.
+  const siteV = report.site.findings.filter((f: any) => f.level === 'violation').length;
+  const siteR = report.site.findings.length - siteV;
+  expect(siteV + siteR).toBeGreaterThan(0);
+  const counts = `${report.summary.violations} violation${report.summary.violations === 1 ? '' : 's'}${siteV ? `, ${siteV} site-wide` : ''} · ${report.summary.reviews} to review${siteR ? `, ${siteR} site-wide` : ''}`;
+  await expect(page.getByTestId('crawl-counts')).toHaveText(counts);
+  await expect(page.getByTestId('crawl-status')).toHaveText(`Done: ${report.summary.audited} pages · ${counts}`);
 
   // The page list equals report.json, page by page.
   const rows = await page.getByTestId('page-list').locator('tbody tr[data-url]').evaluateAll((trs) =>
