@@ -5,13 +5,14 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { streamDecoder } from './agent-stream.mjs';
 
 // Gemini CLI gets the prompt on stdin rather than by path: its read_file tool refuses files that
 // .gitignore lists, and a11y-508-work/ (where the prompts are) belongs in .gitignore. It joins
 // stdin and -p into one prompt.
 export const PRESETS = {
-  claude: 'claude -p --permission-mode acceptEdits "Read the file {promptFile} and do exactly what it says."',
-  gemini: 'gemini --approval-mode auto_edit -p "Do exactly what the instructions above say." < "{promptFile}"',
+  claude: 'claude -p --permission-mode acceptEdits --output-format stream-json --verbose "Read the file {promptFile} and do exactly what it says."',
+  gemini: 'gemini --approval-mode auto_edit -p "Do exactly what the instructions above say." --output-format stream-json < "{promptFile}"',
   codex: 'codex exec --full-auto "Read the file {promptFile} and do exactly what it says."',
 };
 
@@ -236,15 +237,19 @@ export function agentEnvFor(command, env = agentEnv()) {
 // quota or rate limit is run again after each of quotaDelays; quota says the last try was refused
 // that way, quotaRetries how many retries it took.
 // onOutput(stream, text), when given, sees the assistant's output as it arrives.
-export async function runAgent({ command, promptFile, resultFile, cwd, timeout = 15 * 60 * 1000, env = agentEnvFor(command), quotaDelays = QUOTA_DELAYS, onOutput = null }) {
+// onWait({ delayMs, attempt, attempts }), when given, is told before each wait for a quota retry.
+export async function runAgent({ command, promptFile, resultFile, cwd, timeout = 15 * 60 * 1000, env = agentEnvFor(command), quotaDelays = QUOTA_DELAYS, onOutput = null, onWait = null }) {
   const t0 = Date.now();
   let quotaRetries = 0;
   for (;;) {
     const r = await runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env, onOutput });
     // A call that ran out its time while the assistant backed off on its own counts as refused for
     // quota too, but is not run again: it has already spent its time.
-    const quota = !r.result && QUOTA.test(r.stdout + '\n' + r.stderr);
-    if (quota && !r.timedOut && !QUOTA_TERMINAL.test(r.stdout + '\n' + r.stderr) && quotaRetries < quotaDelays.length) {
+    // The refusal may arrive inside a stream's JSON events: their decoded words are searched too.
+    const said = `${r.stdout}\n${r.stderr}\n${r.text || ''}`;
+    const quota = !r.result && QUOTA.test(said);
+    if (quota && !r.timedOut && !QUOTA_TERMINAL.test(said) && quotaRetries < quotaDelays.length) {
+      if (onWait) onWait({ delayMs: quotaDelays[quotaRetries], attempt: quotaRetries + 1, attempts: quotaDelays.length });
       await new Promise((res) => setTimeout(res, quotaDelays[quotaRetries]));
       quotaRetries++;
       continue;
@@ -260,9 +265,11 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env
   let stdout = '';
   let stderr = '';
   const keep = (s, d) => (s + d).slice(-20000);
+  // A streaming assistant's JSON events reach onOutput as readable lines, as they arrive.
+  const decoder = streamDecoder((line) => onOutput && onOutput('stdout', `${line}\n`), { cwd });
   child.stdout.on('data', (d) => {
     stdout = keep(stdout, String(d));
-    if (onOutput) onOutput('stdout', String(d));
+    decoder.push(String(d));
   });
   child.stderr.on('data', (d) => {
     stderr = keep(stderr, String(d));
@@ -282,6 +289,7 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env
   // The last of its output can arrive after it exits; wait for the pipes, but not for a grandchild
   // that keeps them open.
   await Promise.race([closed, new Promise((r) => setTimeout(r, 2000).unref())]);
+  decoder.end();
   // A grandchild still holding the pipes (an assistant that outlived its shell) must not keep the
   // loop's own process alive after it is done: let go of them.
   for (const stream of [child.stdout, child.stderr]) {
@@ -295,8 +303,9 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env
       result = JSON.parse(readFileSync(resultFile, 'utf8'));
     } catch {}
   }
-  if (!result) result = lastJson(stdout);
-  return { code, timedOut, result, stdout, stderr };
+  // Without a result file, the answer at the end of what it said: its words, when it streamed events.
+  if (!result) result = lastJson(decoder.recognized ? decoder.text : stdout);
+  return { code, timedOut, result, stdout, stderr, text: decoder.text };
 }
 
 // What one agent call left behind, for a11y-508-work/: a JSON header line, then the tail of its

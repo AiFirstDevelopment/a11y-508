@@ -9,7 +9,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileS
 import { join, resolve, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyReport, byStatus, isDone, loadLedger, openFindings, saveLedger, statusCounts } from './ledger.mjs';
-import { agentLog, fixPrompt, resolveAgentCommand, runAgent, triagePrompt, writePrompt } from './agent.mjs';
+import { PRESET_INFO, QUOTA_DELAYS, agentLog, fixPrompt, resolveAgentCommand, runAgent, triagePrompt, writePrompt } from './agent.mjs';
 import { testInfo } from './checks/catalog.mjs';
 import { sleep } from './page.mjs';
 
@@ -48,6 +48,10 @@ export function normalizeConfig(c, overrides = {}, { interactive = !!process.std
     maxAttempts: typeof c.maxAttempts === 'number' ? c.maxAttempts : 3,
     agentTimeout: typeof c.agentTimeout === 'number' ? c.agentTimeout : 15 * 60 * 1000,
     triageBatch: typeof c.triageBatch === 'number' ? c.triageBatch : 15,
+    // Waits before each retry of an assistant call refused for quota (default 30 s, then 90 s).
+    quotaDelays: Array.isArray(c.quotaDelays) && c.quotaDelays.every((n) => typeof n === 'number' && n >= 0) ? c.quotaDelays : QUOTA_DELAYS,
+    // After this long with no output from the assistant, the dashboard says it is still waiting.
+    quietAfter: typeof c.quietAfter === 'number' && c.quietAfter >= 0 ? c.quietAfter : 30 * 1000,
     // The session file a crawl behind a sign-in portal uses (see sessionArgs).
     state: typeof c.state === 'string' && c.state ? c.state : 'a11y-508-state.json',
   };
@@ -192,11 +196,11 @@ function waitForEnter(message, prompt) {
 // One line when each assistant call starts and one when it ends (exit code, time, quota, the last
 // lines of its output), in a11y-508-work/agent-calls.log: a call that hangs shows as a start with no
 // end, while the loop is still running and afterwards.
-async function callAgent(work, label, args, onOutput = null) {
+async function callAgent(work, label, args, onOutput = null, onWait = null) {
   const file = join(work, 'agent-calls.log');
   const t0 = new Date();
   appendFileSync(file, `${t0.toISOString()} start ${label}\n`);
-  const res = await runAgent({ ...args, onOutput });
+  const res = await runAgent({ ...args, onOutput, onWait });
   const tail = `${res.stdout || ''}\n${res.stderr || ''}`.split('\n').map((l) => l.trim()).filter(Boolean).slice(-5).map((l) => `    ${l.slice(0, 300)}`).join('\n');
   appendFileSync(file, `${new Date().toISOString()} end   ${label} exit ${res.code}${res.timedOut ? ' timed-out' : ''}${res.quota ? ` quota (retries ${res.quotaRetries})` : ''} result ${res.result ? 'yes' : 'no'} ${Math.round((Date.now() - t0) / 1000)}s\n${tail ? tail + '\n' : ''}`);
   return res;
@@ -208,20 +212,30 @@ async function callAgent(work, label, args, onOutput = null) {
 // { branch, exists, reason } -- reason only when it is not the branch asked for. Reads the refs
 // through git, never the .git directory (packed refs, worktrees, Windows).
 export function resolveBranch(cwd, wanted) {
-  const r = git(cwd, ['for-each-ref', '--sort=-committerdate', '--format=%(refname)', 'refs/heads/']);
-  const heads = r.code === 0 ? r.out.split(/\r?\n/).filter(Boolean).map((l) => l.replace(/^refs\/heads\//, '')) : [];
-  if (!wanted || heads.includes(wanted)) return { branch: wanted, exists: !!wanted && heads.includes(wanted), reason: null };
+  // Local branches and origin's (a fresh clone has the earlier run's branch only on origin), newest first.
+  const r = git(cwd, ['for-each-ref', '--sort=-committerdate', '--format=%(refname)', 'refs/heads/', 'refs/remotes/origin/']);
+  const local = new Set();
+  const heads = [];
+  for (const ref of r.code === 0 ? r.out.split(/\r?\n/).filter(Boolean) : []) {
+    const name = ref.startsWith('refs/heads/') ? ref.slice(11) : ref.slice('refs/remotes/origin/'.length);
+    if (ref.startsWith('refs/heads/')) local.add(name);
+    else if (name === 'HEAD') continue;
+    if (!heads.includes(name)) heads.push(name);
+  }
+  // remote: only origin has it, so the switch creates the local branch tracking origin's.
+  const at = (branch, reason = null) => ({ branch, exists: heads.includes(branch), remote: heads.includes(branch) && !local.has(branch), reason });
+  if (!wanted || heads.includes(wanted)) return at(wanted);
   const nested = heads.filter((h) => h.startsWith(`${wanted}/`));
   if (nested.length) {
     const more = nested.length > 1 ? `, the most recently committed of ${nested.length} ${wanted}/* branches` : '';
-    return { branch: nested[0], exists: true, reason: `a branch ${wanted} cannot be created while ${nested[0]} exists (git keeps branches as paths); continuing on ${nested[0]}${more}` };
+    return at(nested[0], `a branch ${wanted} cannot be created while ${nested[0]} exists (git keeps branches as paths); continuing on ${nested[0]}${more}`);
   }
   const parts = wanted.split('/');
   for (let i = parts.length - 1; i > 0; i--) {
     const parent = parts.slice(0, i).join('/');
-    if (heads.includes(parent)) return { branch: parent, exists: true, reason: `a branch ${wanted} cannot be created while ${parent} exists (git keeps branches as paths); continuing on ${parent}` };
+    if (heads.includes(parent)) return at(parent, `a branch ${wanted} cannot be created while ${parent} exists (git keeps branches as paths); continuing on ${parent}`);
   }
-  return { branch: wanted, exists: false, reason: null };
+  return at(wanted);
 }
 
 // The git command (or setting) that clears a branch the loop could not switch to or create.
@@ -312,7 +326,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       const current = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
       const target = resolveBranch(cwd, cfg.branch);
       if (current !== target.branch) {
-        const sw = git(cwd, target.exists ? ['checkout', target.branch] : ['checkout', '-b', target.branch]);
+        const sw = git(cwd, target.remote ? ['checkout', '-b', target.branch, '--track', `origin/${target.branch}`] : target.exists ? ['checkout', target.branch] : ['checkout', '-b', target.branch]);
         if (sw.code !== 0) return precondition('branch', `cannot switch to branch ${target.branch}: ${sw.err.split(/\r?\n/)[0]}`, branchRemedy(cwd, target, sw.err));
       }
       if (target.reason) log.info(`on branch ${target.branch}: ${target.reason}`);
@@ -359,13 +373,30 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     };
     return on;
   };
-  const withOutput = async (label, args, round, task, kind) => {
+  // A quota retry's wait, so the dashboard can count it down; and every call's end, in plain words
+  // when it gave no answer (what happens to the work it was given, and that the loop goes on).
+  const agentName = (PRESET_INFO[cfg.agent] && PRESET_INFO[cfg.agent].label) || 'The assistant';
+  const duration = (ms) => (ms < 60000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60000)} min`);
+  const withOutput = async (label, args, round, task, kind, count = 1) => {
     const on = outputTo(round, task, kind);
+    const onWait = (w) => {
+      if (on) on.flush();
+      ev('agent-wait', { round, task, kind, reason: 'quota', delayMs: w.delayMs, attempt: w.attempt, attempts: w.attempts });
+    };
+    let res;
     try {
-      return await callAgent(work, label, args, on);
+      res = await callAgent(work, label, { ...args, quotaDelays: cfg.quotaDelays }, on, onWait);
     } finally {
       if (on) on.flush();
     }
+    const ok = !!res.result;
+    const what = kind === 'triage' ? `the ${count} review item${count === 1 ? ' stays' : 's stay'} in review` : 'this finding stays open';
+    const message = ok ? null
+      : res.timedOut ? `${agentName} did not answer within ${duration(cfg.agentTimeout)}; ${what} and the loop goes on`
+      : res.quota ? `${agentName} was still rate-limited after ${res.quotaRetries} ${res.quotaRetries === 1 ? 'retry' : 'retries'}; ${what} and the loop goes on`
+      : `${agentName} ended without an answer (exit code ${res.code}); ${what} and the loop goes on`;
+    ev('agent-result', { round, task, kind, ok, timedOut: !!res.timedOut, quota: !!res.quota, code: typeof res.code === 'number' ? res.code : null, message });
+    return res;
   };
 
   const startRound = ledger.rounds.length + 1;
@@ -432,6 +463,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     }
     if (stopped()) break;
 
+    // Every assistant call this round: when none of them ran at all, the loop says so as an error.
+    const calls = [];
     // Triage review items in batches.
     const review = byStatus(ledger, 'review');
     if (review.length) {
@@ -439,13 +472,14 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       const batches = Math.ceil(review.length / cfg.triageBatch);
       for (let i = 0; i < review.length && !stopped(); i += cfg.triageBatch) {
         // One step per assistant call, so the dashboard's timer and output pane start with the call.
-        ev('step', { round, step: 'triage', count: review.length, batch: i / cfg.triageBatch + 1, batches });
+        ev('step', { round, step: 'triage', count: review.length, batch: i / cfg.triageBatch + 1, batches, timeoutMs: cfg.agentTimeout, quietMs: cfg.quietAfter });
         const batch = review.slice(i, i + cfg.triageBatch).map((e, k) => ({ id: `r${round}-${i + k}`, entry: e }));
         const items = batch.map(({ id, entry }) => ({ id, test: entry.test, name: entry.name, wcag: entry.wcag, condition: testInfo(entry.test).condition, message: entry.message, selector: entry.selector, html: entry.html, pages: entry.pages }));
         const promptFile = join(work, `prompt-r${round}-triage-${i}.md`);
         const resultFile = join(work, `result-r${round}-triage-${i}.json`);
         writePrompt(promptFile, triagePrompt({ items, resultFile }));
-        const res = await withOutput(`r${round}-triage-${i}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout }, round, i / cfg.triageBatch + 1, 'triage');
+        const res = await withOutput(`r${round}-triage-${i}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout }, round, i / cfg.triageBatch + 1, 'triage', batch.length);
+        calls.push(res);
         writeFileSync(join(work, `agent-r${round}-triage-${i}.log`), agentLog(res));
         const decisions = Array.isArray(res.result) ? res.result : Array.isArray(res.result && res.result.items) ? res.result.items : null;
         if (!decisions) {
@@ -481,11 +515,12 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       if (stopped()) break;
       const label = `${entry.test} ${entry.impact} "${entry.message.slice(0, 70)}"`;
       log.info(`[${n + 1}/${open.length}] ${label}`);
-      ev('task', { round, n: n + 1, m: open.length, test: entry.test, name: entry.name, impact: entry.impact, message: entry.message, state: 'start' });
+      ev('task', { round, n: n + 1, m: open.length, test: entry.test, name: entry.name, impact: entry.impact, message: entry.message, state: 'start', timeoutMs: cfg.agentTimeout, quietMs: cfg.quietAfter });
       const promptFile = join(work, `prompt-r${round}-fix-${n}.md`);
       const resultFile = join(work, `result-r${round}-fix-${n}.json`);
       writePrompt(promptFile, fixPrompt({ finding: entry, sourceDirs, protectedDirs, resultFile, condition: testInfo(entry.test).condition }));
       const res = await withOutput(`r${round}-fix-${n}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout }, round, n + 1, 'fix');
+      calls.push(res);
       writeFileSync(join(work, `agent-r${round}-fix-${n}.log`), agentLog(res));
       const changed = gitChanged(cwd, sourceDirs);
       const strayChanges = gitChanged(cwd).filter((f) => !changed.includes(f) && !f.startsWith(WORK_DIR) && !f.startsWith('a11y-508-report'));
@@ -574,6 +609,12 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         return isDone(ledger) ? 0 : 1;
       }
       if (!byStatus(ledger, 'pending').length) {
+        // An assistant that never ran (not installed, not signed in): every call failed without an answer.
+        const failed = calls.filter((r) => !r.result && !r.timedOut && !r.quota && r.code !== 0);
+        if (calls.length && failed.length === calls.length) {
+          log.error(`${agentName} did not run: all ${calls.length} call${calls.length === 1 ? '' : 's'} this round ended without an answer (last exit code ${failed[failed.length - 1].code}). Check that it is installed and signed in (Test assistant on the Fix step), then try again.`);
+          return 1;
+        }
         log.warn('no fix was committed and nothing is pending, so another round would do the same work again; stopping.');
         return 1;
       }

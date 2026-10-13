@@ -11,15 +11,41 @@ const [promptFile, resultFile] = process.argv.slice(2);
 // A few lines of output first, as a real assistant prints while it works.
 // FAKE_AGENT_QUIET: nothing is printed until the slow call has waited, as `claude -p` prints
 // nothing until it ends.
+// FAKE_AGENT_429_ONCE: the first call is refused for rate limit, as a provider's free tier does.
+const refuse = process.env.FAKE_AGENT_429_ONCE;
+if (refuse && !existsSync(refuse)) {
+  writeFileSync(refuse, '429');
+  console.error('Error: 429 Too Many Requests (rate limit)');
+  process.exit(1);
+}
 const quiet = !!process.env.FAKE_AGENT_QUIET;
 if (!quiet) console.log('fake agent: reading the prompt');
 // The dashboard's test of the live output: the first call takes a while, so its counter visibly runs.
 const slow = process.env.FAKE_AGENT_SLOW_ONCE;
 if (slow && !existsSync(slow)) {
   writeFileSync(slow, 'slow');
-  await new Promise((r) => setTimeout(r, 4000));
+  await new Promise((r) => setTimeout(r, Number(process.env.FAKE_AGENT_SLOW_MS) || 4000));
 }
 if (quiet) console.log('fake agent: reading the prompt');
+// FAKE_AGENT_STREAM_ONCE: the first call streams Gemini CLI's stream-json events, a few seconds
+// apart (FAKE_AGENT_STREAM_MS), as a real assistant's actions arrive while it works.
+const streamOnce = process.env.FAKE_AGENT_STREAM_ONCE;
+if (streamOnce && !existsSync(streamOnce)) {
+  writeFileSync(streamOnce, 'streamed');
+  const gap = Number(process.env.FAKE_AGENT_STREAM_MS) || 1500;
+  const emit = (e) => process.stdout.write(JSON.stringify({ timestamp: new Date().toISOString(), ...e }) + '\n');
+  const pause = () => new Promise((r) => setTimeout(r, gap));
+  emit({ type: 'init', session_id: 'fake', model: 'fake-model' });
+  emit({ type: 'tool_use', tool_name: 'read_file', tool_id: '1', parameters: { absolute_path: join(process.cwd(), 'site', 'index.html') } });
+  await pause();
+  emit({ type: 'tool_result', tool_id: '1', status: 'success' });
+  emit({ type: 'message', role: 'assistant', content: 'Looking at the finding.\n', delta: true });
+  await pause();
+  emit({ type: 'tool_use', tool_name: 'run_shell_command', tool_id: '2', parameters: { command: 'npm run build' } });
+  await pause();
+  emit({ type: 'tool_result', tool_id: '2', status: 'success' });
+  emit({ type: 'result', status: 'success', stats: {} });
+}
 console.log('fake agent: looking at the finding');
 
 const prompt = readFileSync(promptFile, 'utf8');

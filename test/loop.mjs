@@ -559,9 +559,9 @@ rmSync(repo2, { recursive: true, force: true });
     }
     return { dir, g };
   };
-  const loopIn = (dir, args) => cli(dir, ['loop', ...args]);
-  const cli = (dir, args) => new Promise((resolve) => {
-    const child = spawn(process.execPath, [bin, ...args], { cwd: dir, env: { ...process.env, TOKEN, NO_COLOR: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const loopIn = (dir, args, env = {}) => cli(dir, ['loop', ...args], env);
+  const cli = (dir, args, env = {}) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [bin, ...args], { cwd: dir, env: { ...process.env, TOKEN, NO_COLOR: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let out = '';
     child.stdout.on('data', (d) => ((stdout += d), (out += d)));
@@ -662,6 +662,29 @@ rmSync(repo2, { recursive: true, force: true });
     removeOwn(dir);
   }
 
+  // AC 1 on a fresh clone: the earlier run's branch is only on origin. The loop takes origin's, tracking it.
+  for (const [onOrigin, wanted] of [['a11y-508/fixes', 'a11y-508'], ['a11y-508', 'a11y-508']]) {
+    const { dir: upstream, g: gu } = appRepo('a11y-508-origin-', { branch: wanted, url: DEAD });
+    gu('checkout', '-q', '-b', onOrigin);
+    writeFileSync(join(upstream, 'earlier.txt'), 'an earlier fix\n');
+    gu('add', 'earlier.txt');
+    gu('commit', '-q', '-m', 'a11y-508: earlier fix');
+    gu('checkout', '-q', 'main');
+    const clone = mkTemp('a11y-508-clone-');
+    const c = spawnSync('git', ['clone', '-q', upstream, clone], { encoding: 'utf8' });
+    const gc = (...a) => spawnSync('git', a, { cwd: clone, encoding: 'utf8' }).stdout.trim();
+    const r = await loopIn(clone, ['--max-rounds', '1', '--events']);
+    check(`loop-resilience AC1: in a fresh clone whose origin has ${onOrigin}, the loop for ${wanted} continues on ${onOrigin}, tracking origin`, () => {
+      assert.equal(c.status, 0, c.stderr);
+      assert.equal(gc('rev-parse', '--abbrev-ref', 'HEAD'), onOrigin, r.out);
+      assert.equal(gc('rev-parse', '--abbrev-ref', '@{upstream}'), `origin/${onOrigin}`);
+      assert.match(gc('log', '--format=%s', '-1'), /^a11y-508: earlier fix$/);
+      assert.ok(!parseEvents(r.stdout).events.some((e) => e.type === 'precondition'), r.out);
+    });
+    removeOwn(clone);
+    removeOwn(upstream);
+  }
+
   // AC 4, guard 4: every set-up error before the first round is one precondition event with a remedy.
   {
     const cases = [];
@@ -743,6 +766,54 @@ rmSync(repo2, { recursive: true, force: true });
       assert.equal(retry.status, 0, retry.out);
     });
     removeOwn(dir);
+  }
+
+  // AC 6 and 11: an assistant that never runs is an error, not a quiet finish; a quota refusal is a
+  // wait the dashboard can count down; a call given up is said in plain words.
+  {
+    const { dir, g } = appRepo('a11y-508-assistant-', {});
+    const site = await serve(dir);
+    const url = `http://127.0.0.1:${site.address().port}/`;
+    const setConfig = (more) => writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', maxAttempts: 3, url, ...more }, null, 2));
+    setConfig({ agent: 'a11y-508-no-such-assistant {promptFile}' });
+    const missing = await loopIn(dir, ['--max-rounds', '1', '--events']);
+    const m = parseEvents(missing.stdout);
+    check('loop-resilience AC6: an assistant that never runs ends the loop with an error that says so', () => {
+      assert.deepEqual(m.problems, []);
+      const errors = m.events.filter((e) => e.type === 'error').map((e) => e.message);
+      assert.equal(errors.length, 1, missing.out);
+      assert.match(errors[0], /^The assistant did not run: all \d+ calls this round ended without an answer \(last exit code \d+\)\. Check that it is installed and signed in/);
+      assert.equal(missing.status, 1);
+    });
+    const refusedOnce = join(mkTemp('a11y-508-429-'), 'refused');
+    setConfig({ quotaDelays: [300] });
+    const quota = await loopIn(dir, ['--max-rounds', '1', '--events'], { FAKE_AGENT_429_ONCE: refusedOnce });
+    const q = parseEvents(quota.stdout);
+    check('loop-resilience AC11b: a call refused for rate limit emits agent-wait before its retry, and the retry answers', () => {
+      assert.deepEqual(q.problems, []);
+      const waits = q.events.filter((e) => e.type === 'agent-wait');
+      assert.equal(waits.length, 1, quota.out);
+      assert.deepEqual([waits[0].reason, waits[0].delayMs, waits[0].attempt, waits[0].attempts, waits[0].round], ['quota', 300, 1, 1, 2]);
+      const first = q.events.find((e) => e.type === 'agent-result');
+      assert.deepEqual([first.ok, first.quota, first.task, first.kind], [true, false, waits[0].task, waits[0].kind]);
+      assert.ok(q.events.indexOf(waits[0]) < q.events.indexOf(first));
+    });
+    const slow = join(mkTemp('a11y-508-slow-'), 'slow');
+    setConfig({ agentTimeout: 2000 });
+    const timedOut = await loopIn(dir, ['--max-rounds', '1', '--events'], { FAKE_AGENT_SLOW_ONCE: slow });
+    site.close();
+    const t = parseEvents(timedOut.stdout);
+    check('loop-resilience AC11c: a call given up for time is an agent-result whose message says so in plain words', () => {
+      assert.deepEqual(t.problems, []);
+      const given = t.events.filter((e) => e.type === 'agent-result' && !e.ok);
+      assert.equal(given.length, 1, timedOut.out);
+      assert.equal(given[0].timedOut, true);
+      assert.match(given[0].message, /^The assistant did not answer within 2 s; (this finding stays open|the \d+ review items? stays? in review) and the loop goes on$/);
+    });
+    removeOwn(dirname(refusedOnce));
+    removeOwn(dirname(slow));
+    removeOwn(dir);
+    void g;
   }
 }
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');

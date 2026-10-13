@@ -38,6 +38,13 @@ export interface AgentCall {
   endedAt: number | null;
   outcome: string | null;
   text: string;
+  // When the assistant last printed anything (its start until then), how long the loop gives it,
+  // and after how long a silence the screen says it is still being waited on.
+  lastOutputAt?: number;
+  timeoutMs?: number | null;
+  quietMs?: number | null;
+  // Refused for quota or rate limit: the retry starts at `until`.
+  wait?: { until: number; attempt: number; attempts: number } | null;
 }
 
 // The last 64 KB of a call's output are kept.
@@ -55,7 +62,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 // event" notice rather than being dropped in silence.
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
-  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition',
+  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result',
 ]);
 
 // The current run, built from its event stream.
@@ -81,6 +88,10 @@ export class RunStore {
   readonly awaitingDeploy = signal(false);
   // The loop could not start: a set-up error before its first round, with its remedy.
   readonly precondition = signal<RunEvent | null>(null);
+  // The round whose crawl has begun in this run (a round started from the report has none).
+  readonly crawlRound = signal<number | null>(null);
+  // An assistant call given up (timed out, refused for quota, no answer), in the loop's plain words.
+  readonly gaveUp = signal<string | null>(null);
   // The loop: the run's first round (it re-checks the site first), and how many fixes the round committed.
   readonly firstRound = signal<number | null>(null);
   readonly committed = signal(0);
@@ -130,6 +141,8 @@ export class RunStore {
     this.ledger.set(null);
     this.awaitingDeploy.set(false);
     this.precondition.set(null);
+    this.crawlRound.set(null);
+    this.gaveUp.set(null);
     this.firstRound.set(null);
     this.committed.set(0);
     this.reportRound.set(null);
@@ -204,6 +217,7 @@ export class RunStore {
         this.round.set(ev['round']);
         if (this.firstRound() === null) this.firstRound.set(ev['round']);
         this.committed.set(0);
+        this.gaveUp.set(null);
         this.pages.set([]);
         this.summary.set(null);
         this.task.set(null);
@@ -219,8 +233,9 @@ export class RunStore {
         // its timer start with the call, not with its first output.
         const cur = this.agentCall();
         if (ev['step'] === 'triage' && typeof ev['batch'] === 'number' && !(cur && cur.kind === 'triage' && cur.round === ev['round'] && cur.task === ev['batch'])) {
-          this.agentCall.set({ round: ev['round'], task: ev['batch'], kind: 'triage', n: ev['batch'], m: ev['batches'] ?? null, count: ev['count'] ?? null, label: `${ev['count']} review item${ev['count'] === 1 ? '' : 's'}`, startedAt: at, endedAt: null, outcome: null, text: '' });
+          this.agentCall.set({ round: ev['round'], task: ev['batch'], kind: 'triage', n: ev['batch'], m: ev['batches'] ?? null, count: ev['count'] ?? null, label: `${ev['count']} review item${ev['count'] === 1 ? '' : 's'}`, startedAt: at, endedAt: null, outcome: null, text: '', lastOutputAt: Date.now(), timeoutMs: ev['timeoutMs'] ?? null, quietMs: ev['quietMs'] ?? null, wait: null });
         }
+        if (ev['step'] === 'crawl') this.crawlRound.set(ev['round']);
         if (typeof ev['committed'] === 'number') this.committed.set(ev['committed']);
         if (ev['step'] === 'report') this.reportRound.set(ev['round']);
         if (ev['step'] === 'fix') this.task.set({ n: 0, m: ev['count'], state: 'start' });
@@ -230,7 +245,7 @@ export class RunStore {
         this.task.set({ n: ev['n'], m: ev['m'], state: ev['state'] });
         const at = Date.parse(String(ev['at'])) || Date.now();
         if (ev['state'] === 'start') {
-          this.agentCall.set({ round: ev['round'], task: ev['n'], kind: 'fix', n: ev['n'], m: ev['m'], label: `${ev['test']} ${String(ev['message'] || '').slice(0, 80)}`, startedAt: at, endedAt: null, outcome: null, text: '' });
+          this.agentCall.set({ round: ev['round'], task: ev['n'], kind: 'fix', n: ev['n'], m: ev['m'], label: `${ev['test']} ${String(ev['message'] || '').slice(0, 80)}`, startedAt: at, endedAt: null, outcome: null, text: '', lastOutputAt: Date.now(), timeoutMs: ev['timeoutMs'] ?? null, quietMs: ev['quietMs'] ?? null, wait: null });
         } else {
           this.agentCall.update((c) => (c && c.kind === 'fix' && c.task === ev['n'] ? { ...c, endedAt: at, outcome: ev['outcome'] || null } : c));
         }
@@ -241,10 +256,17 @@ export class RunStore {
         this.agentCall.update((c) => {
           const same = c && c.round === ev['round'] && c.task === ev['task'] && c.kind === ev['kind'];
           const call: AgentCall = same ? c! : { round: ev['round'], task: ev['task'], kind: ev['kind'], n: null, m: null, label: ev['kind'] === 'triage' ? `review batch ${ev['task']}` : `finding ${ev['task']}`, startedAt: at, endedAt: null, outcome: null, text: '' };
-          return { ...call, text: (call.text + ev['text']).slice(-AGENT_OUTPUT_MAX) };
+          return { ...call, text: (call.text + ev['text']).slice(-AGENT_OUTPUT_MAX), lastOutputAt: Date.now(), wait: null };
         });
         break;
       }
+      case 'agent-wait':
+        this.agentCall.update((c) => (c && c.round === ev['round'] && c.task === ev['task'] && c.kind === ev['kind'] ? { ...c, wait: { until: Date.now() + Number(ev['delayMs'] || 0), attempt: ev['attempt'], attempts: ev['attempts'] }, lastOutputAt: Date.now() + Number(ev['delayMs'] || 0) } : c));
+        break;
+      case 'agent-result':
+        this.agentCall.update((c) => (c && c.round === ev['round'] && c.task === ev['task'] && c.kind === ev['kind'] ? { ...c, wait: null } : c));
+        if (!ev['ok'] && ev['message']) this.gaveUp.set(ev['message']);
+        break;
       case 'ledger':
         this.ledger.set(ev);
         break;

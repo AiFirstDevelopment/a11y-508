@@ -44,6 +44,28 @@ one-line remedy may end the loop.
 8. Everything above holds on Windows (Git Bash in CI, `path.win32`-safe) — the branch logic uses `git
    for-each-ref`/`show-ref`, never the `.git/refs` directory.
 
+9. A round that starts from the report (no crawl) shows nothing about a crawl: no "Starting the browser", no crawl
+   progress, no Pages table under Details. The crawl view appears only once a round re-checks the site, with its
+   round label.
+10. The triage status line reads "Round 1: asking Gemini CLI about 10 review items from the report you just saw ·
+    59 s" (the assistant's display name; "the assistant" for a custom command), never "call N of M"; with more
+    than one batch it adds "· batch 2 of 3". Under it while triaging: "Review items are findings the checker could
+    not decide by itself; the assistant says which are real violations."
+11. While an assistant call runs the screen shows it is being waited on: (a) after `quietAfter` (default 30 s) with
+    no output, "Waiting on Gemini CLI — no output for 1 m 10 s; it may take a few minutes. The call is given up
+    after 15 min."; (b) a quota retry is an `agent-wait` event and the status reads "Gemini CLI is rate-limited;
+    trying again in 28 s (retry 1 of 2)", counting down (`quotaDelays` in the config); (c) a call given up is said
+    in plain words ("Gemini CLI did not answer within 15 min; the 10 review items stay in review and the loop goes
+    on"), from an `agent-result` event.
+12. The Gemini and Claude presets stream (`--output-format stream-json`, Claude also `--verbose`); the loop turns
+    each streamed event into one readable line for the pane ("Reading src/app.html", "Searching for \"x\" in src",
+    "Editing …", "Running npm run build", the assistant's words, "Done: 2 files changed"), never raw JSON; other
+    lines pass as they are. The result file stays the source of truth; quota detection also reads the decoded words.
+
+Added in the build after verification: AC 1 also holds when the earlier run's branch exists only on origin (a fresh
+clone): the loop checks it out tracking origin. AC 6's "assistant failed to start" ends with an error event
+("… did not run: all N calls this round ended without an answer …"), so the Fix step says "The fix loop stopped".
+
 ## How this fails silently
 
 1. The nested-branch fallback picks a branch but does not switch to it; commits land on the previous branch.
@@ -63,6 +85,17 @@ one-line remedy may end the loop.
    no `crawl` run was created must fail.
 7. Try again starts a loop with an empty ledger, so already-fixed findings are fixed again. Mutation: delete the
    ledger before the retried run — the loop test asserting the retried round's fix count must fail.
+
+8. Render the crawl view unconditionally again — the Playwright test asserting that, during triage of a
+   from-report round, "Starting the browser" and the Pages table are absent must fail.
+9. Put "call" back or drop the batch condition — the Playwright test asserting the exact single-batch triage status
+   and the hint must fail.
+10. Remove the silence hint — the Playwright test with a silent fake assistant and a 1 s `quietAfter` must fail.
+11. Drop the `agent-wait` event — the Playwright test with a fake assistant that answers 429 once must not see the
+    countdown.
+12. (a) Remove `--output-format stream-json` from the Gemini preset — the preset test fails; (b) relay raw JSON —
+    the decoder unit test on recorded Gemini and Claude JSONL fails; (c) buffer stdout until exit — the Playwright
+    test asserting the first action line while the call runs fails.
 
 ## Non-goals
 

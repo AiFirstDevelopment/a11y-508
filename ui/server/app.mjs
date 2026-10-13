@@ -11,6 +11,7 @@ import { extname, join, resolve, sep } from 'node:path';
 import { findChrome } from '../../src/chrome.mjs';
 import { PRESETS, installRemedies, runAgent, agentEnv, agentEnvFor, runnableCommand } from '../../src/agent.mjs';
 import { loadConfig, normalizeConfig, summaryLine, WORK_DIR } from '../../src/loop.mjs';
+import { readable } from '../../src/agent-stream.mjs';
 import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine } from './args.mjs';
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
@@ -283,7 +284,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     try {
       const r = await runAgent({ command, promptFile, resultFile, cwd: dir, timeout: agentTestTimeout, env: agentEnvFor(command, agentEnv(env)), quotaDelays: [] });
       const ok = !!(r.result && r.result.ok === true);
-      const out = redactorFor()(`${r.stdout}\n${r.stderr}`).split('\n').filter((l) => l.trim()).slice(-30);
+      // A streaming assistant's events as the readable lines the Fix step's pane shows.
+      const out = redactorFor()(`${readable(r.stdout, { cwd: dir }).lines.join('\n')}\n${r.stderr}`).split('\n').filter((l) => l.trim()).slice(-30);
       const result = { agent: spec, command, status: r.timedOut ? 'timed-out' : ok ? 'ready' : 'failed', code: r.code, durationMs: r.durationMs, output: out, at: new Date().toISOString() };
       state.lastTest[spec] = result;
       return result;

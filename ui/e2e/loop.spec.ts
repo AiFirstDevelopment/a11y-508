@@ -174,13 +174,13 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     // The status line explains itself at each stage. (The dry run was round 1; this run starts at 2.)
     const said = (re: RegExp) => expect(samples.some((s) => re.test(s.status)), `${re}: ${[...new Set(samples.map((s) => s.status))].join(' | ')}`).toBe(true);
     said(/^Round 2: re-checking the site first \(\d+ of \d+ pages\) so fixes can be verified against it$/);
-    said(/^Round 2: triaging \d+ review items · call 1 of 1 · \d+ s$/);
+    said(/^Round 2: asking the assistant about \d+ review items · \d+ s$/);
     said(/^Round 2: fixing \d+ of \d+ · \d+\.[A-Z] .+ · \d+ s$/);
     said(/^Round 2: checking the fixes \(.+ -e "setTimeout\(Boolean,1500\)"\)$/);
     said(/^Committed \d+ fix(es)? · waiting for the new build on 127\.0\.0\.1:\d+…$/);
     said(/^Round 3: re-checking the site \(\d+ of \d+ pages\)$/);
     // The triage call prints nothing until it ends: the pane and its timer are there from its start.
-    expect(samples.some((s) => /^Round 2: triaging/.test(s.status) && /running \d+ s$/.test(s.heading) && s.output === '(no output yet)'), 'the pane runs before the first output').toBe(true);
+    expect(samples.some((s) => /^Round 2: asking the assistant about/.test(s.status) && /running \d+ s$/.test(s.heading) && s.output === '(no output yet)'), 'the pane runs before the first output').toBe(true);
 
     // The board equals `a11y-508 status`, and the round chart equals the ledger's rounds.
     const st = spawnSync(process.execPath, [BIN, 'status'], { cwd, encoding: 'utf8' }).stdout;
@@ -278,7 +278,7 @@ test('from the report: after a wizard crawl, Fix the violations starts with tria
     await expect(page.getByTestId('loop-step')).toHaveText(/Loop finished/, { timeout: 200_000 });
     const said: string[] = await page.evaluate(() => (window as any).__status);
     expect(said.filter((s) => /^Round 1: re-checking/.test(s)), said.join(' | ')).toEqual([]);
-    expect(said.some((s) => /^Round 1: (triaging .+|fixing \d+ of \d+) from the report you just saw · /.test(s)), said.join(' | ')).toBe(true);
+    expect(said.some((s) => /^Round 1: (asking the assistant about .+|fixing \d+ of \d+) from the report you just saw · /.test(s)), said.join(' | ')).toBe(true);
     expect((await api(dash, '/api/runs/current')).json.meta.command).toContain('--from-report');
     const ledger = JSON.parse(readFileSync(join(cwd, 'a11y-508-work', 'ledger.json'), 'utf8'));
     expect(ledger.rounds[0].source).toBe('report');

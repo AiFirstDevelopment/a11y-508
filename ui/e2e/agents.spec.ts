@@ -7,8 +7,8 @@ import { delimiter, dirname, join } from 'node:path';
 import { moreOptions, openPicker, dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath, nav, removeTemp } from './harness';
 
 const PRESETS = {
-  claude: 'claude -p --permission-mode acceptEdits "Read the file {promptFile} and do exactly what it says."',
-  gemini: 'gemini --approval-mode auto_edit -p "Do exactly what the instructions above say." < "{promptFile}"',
+  claude: 'claude -p --permission-mode acceptEdits --output-format stream-json --verbose "Read the file {promptFile} and do exactly what it says."',
+  gemini: 'gemini --approval-mode auto_edit -p "Do exactly what the instructions above say." --output-format stream-json < "{promptFile}"',
 };
 
 interface Rig {

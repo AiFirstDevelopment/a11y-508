@@ -22,6 +22,17 @@ const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Pending verifi
 const PREFERENCE = ['claude', 'gemini', 'codex'];
 const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 'no change', 'failed-gate': 'failed the gate', 'commit-failed': 'commit failed', 'timed-out': 'timed out', stopped: 'stopped', done: 'done', ended: 'ended' };
 
+// A duration as a person says it: "45 s", "1 m 10 s"; whole minutes as "15 min" when asked.
+function spoken(ms: number, minutes = false): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  if (total < 60) return `${total} s`;
+  if (minutes && total % 60 === 0) return `${total / 60} min`;
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return sec ? `${m} m ${sec} s` : `${m} min`;
+}
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 // The Fix loop: it works out what it can (the assistant, the folders, the gate, the branch)
 // and shows it, with one button; everything it inferred is editable at /fix-loop/settings.
 @Component({
@@ -176,6 +187,8 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
       } @else {
       <!-- While it runs: one line, a bar, counts, and the assistant's last line. -->
       <p class="big-status" role="status" data-testid="fix-status">{{ fixStatus() }}</p>
+      @if (fixHint(); as h) { <p class="hint" data-testid="fix-hint">{{ h }}</p> }
+      @if (store.gaveUp(); as gu) { <p class="notice warn" role="status" data-testid="agent-gave-up">{{ gu }}.</p> }
       @if (store.task(); as t) {
         @if (t.m) {
           <div class="thin-progress">
@@ -231,7 +244,11 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
       @if (store.loginWaiting() && store.active()) {
         <p class="notice" role="status" data-testid="loop-login-waiting">A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.</p>
       }
-      <app-run-view [showChart]="false" [links]="false" />
+      <!-- The crawl's view only once a round has begun re-checking the site (a round from the report has no crawl). -->
+      @if (store.kind() === 'dry-run' || store.crawlRound() !== null) {
+        @if (store.crawlRound(); as cr) { <p data-testid="crawl-round">Round {{ cr }}: re-checking the site</p> }
+        <app-run-view [showChart]="false" [links]="false" />
+      }
     }
 
     @if (ledger()?.exists) {
@@ -431,19 +448,33 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     if (step === 'gate' && current) return `Round ${r}: checking the fixes${s?.['check'] ? ` (${s['check']})` : ''}`;
     if (step === 'commit' && current) return `Round ${r}: committing fix ${s?.['n']} of ${s?.['m']}`;
     const seen = r === this.store.reportRound() ? ' from the report you just saw' : '';
+    if (c && !c.endedAt && c.wait && c.wait.until > this.now()) return `${capital(this.assistantName())} is rate-limited; trying again in ${Math.max(1, Math.ceil((c.wait.until - this.now()) / 1000))} s (retry ${c.wait.attempt} of ${c.wait.attempts})`;
     if (c && !c.endedAt && c.kind === 'fix') return `Round ${r}: fixing ${c.n ?? c.task} of ${c.m ?? t?.m ?? '?'}${seen} · ${c.label} · ${secs(c.startedAt)}`;
-    if (c && !c.endedAt && c.kind === 'triage') return `Round ${r}: triaging ${c.label}${seen}${c.m ? ` · call ${c.n ?? c.task} of ${c.m}` : ''} · ${secs(c.startedAt)}`;
+    if (c && !c.endedAt && c.kind === 'triage') return `Round ${r}: asking ${this.assistantName()} about ${c.label}${seen}${c.m && c.m > 1 ? ` · batch ${c.n ?? c.task} of ${c.m}` : ''} · ${secs(c.startedAt)}`;
     if (step === 'gate' || step === 'commit') return `Round ${r}: fixing ${t?.n ?? ''} of ${t?.m ?? ''}`;
     if (step === 'push') return `Round ${r}: pushing ${n} fix${n === 1 ? '' : 'es'}`;
     if (step === 'deploy' || step === 'await-deploy') return waiting;
     if (step === 'report') return `Round ${r}: starting from the report you just saw`;
     if (step === 'fix') return `Round ${r}: fixing ${t?.m ?? s?.['count'] ?? ''} open finding${(t?.m ?? s?.['count']) === 1 ? '' : 's'}`;
-    if (step === 'triage') return `Round ${r}: triaging ${s?.['count']} review items`;
+    if (step === 'triage') return `Round ${r}: asking ${this.assistantName()} about ${s?.['count']} review items`;
     // The crawl: the run's first round re-checks the site before anything is changed.
     const p = this.store.progress();
     const pages = p.discovered ? ` (${p.done} of ${p.discovered} pages)` : '';
     if (r === this.store.firstRound()) return `Round ${r}: re-checking the site first${pages} so fixes can be verified against it`;
     return `Round ${r}: re-checking the site${pages}`;
+  });
+  // The assistant by the name a person knows it by ("Gemini CLI"); a custom command is "the assistant".
+  readonly assistantName = computed(() => (this.choice() !== 'custom' && this.chosenPreset()?.found ? this.chosenPreset()!.label : 'the assistant'));
+  // One line under the status while the assistant works: it is still being waited on (after a
+  // silence), or what triage is.
+  readonly fixHint = computed(() => {
+    const c = this.store.agentCall();
+    if (!c || c.endedAt || this.store.done() || (c.wait && c.wait.until > this.now())) return '';
+    const quiet = this.now() - (c.lastOutputAt ?? c.startedAt);
+    const quietMs = c.quietMs ?? 30_000;
+    if (quiet >= quietMs) return `Waiting on ${this.assistantName()} — no output for ${spoken(quiet)}; it may take a few minutes. The call is given up after ${spoken(c.timeoutMs ?? 15 * 60_000, true)}.`;
+    if (c.kind === 'triage') return 'Review items are findings the checker could not decide by itself; the assistant says which are real violations.';
+    return '';
   });
   readonly fixCounts = computed(() => {
     const c = this.store.ledger()?.['counts'] || this.ledger()?.counts || {};
@@ -540,7 +571,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     if (this.testing()) return `${who}, testing · running ${secs(this.testStartedAt(), null)}`;
     const c = this.store.agentCall();
     if (c && (!this.testResult() || c.startedAt > this.testStartedAt())) {
-      const what = c.kind === 'triage' ? `triaging ${c.label}${c.m ? ` · call ${c.n ?? c.task} of ${c.m}` : ''}` : `fixing ${c.n ?? c.task} of ${c.m ?? '?'}: ${c.label}`;
+      const what = c.kind === 'triage' ? `asked about ${c.label}${c.m && c.m > 1 ? ` · batch ${c.n ?? c.task} of ${c.m}` : ''}` : `fixing ${c.n ?? c.task} of ${c.m ?? '?'}: ${c.label}`;
       if (!c.endedAt) return `${who}, ${what} · running ${secs(c.startedAt, null)}`;
       return `${who}, ${what} · ${OUTCOMES[c.outcome || 'done'] || c.outcome} (${secs(c.startedAt, c.endedAt)})`;
     }
