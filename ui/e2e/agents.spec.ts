@@ -2,9 +2,9 @@
 // controlling PATH, the shell, and npm through stub executables.
 
 import { test, expect, type Page } from '@playwright/test';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { moreOptions, openPicker, dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath, nav } from './harness';
+import { moreOptions, openPicker, dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath, nav, removeTemp } from './harness';
 
 const PRESETS = {
   claude: 'claude -p --permission-mode acceptEdits "Read the file {promptFile} and do exactly what it says."',
@@ -143,7 +143,7 @@ test('AC 12: the picker lists every preset, live or greyed as installed, saves t
     await expect(page.getByTestId('test-output')).toContainText('please sign in first');
   } finally {
     await dash.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 10 });
+    removeTemp(cwd);
   }
 
   // Gemini on PATH is found there, and runs as plain "gemini".

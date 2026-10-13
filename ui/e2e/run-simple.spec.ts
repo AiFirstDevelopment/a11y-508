@@ -4,9 +4,9 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { existsSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { api, dashboard, fixtureSite, moreOptions, open, readReport, startFromRun, status, tempDir, waitFinished, nav } from './harness';
+import { api, dashboard, fixtureSite, moreOptions, open, readReport, startFromRun, status, tempDir, waitFinished, nav, removeTemp } from './harness';
 // @ts-ignore -- plain JS fixture shared with the core's tests
 import { SESSION_COOKIE, SESSION_VALUE } from '../../test/fixture-site.mjs';
 
@@ -152,7 +152,7 @@ test('run-simple (c): with a saved session, Start still signs in afresh; the sav
   } finally {
     await dash.stop();
     site.close();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 10 });
+    removeTemp(cwd);
   }
 });
 

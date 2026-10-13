@@ -4,9 +4,9 @@
 
 import { test, expect, chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { MAIN, fixtureSite, stopTree, tempDir } from './harness';
+import { MAIN, fixtureSite, stopTree, tempDir, removeTemp } from './harness';
 
 test('own browser: the dashboard opens in Chrome of its own, and a crawl runs as a tab in that window', async () => {
   const site = await fixtureSite({ autoLogin: true });
@@ -55,6 +55,6 @@ test('own browser: the dashboard opens in Chrome of its own, and a crawl runs as
     await browser?.close().catch(() => {});
     await stopTree(proc, 'SIGINT');
     site.close();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 5 });
+    removeTemp(cwd);
   }
 });

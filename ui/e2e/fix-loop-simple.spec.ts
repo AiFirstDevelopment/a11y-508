@@ -3,9 +3,9 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { api, dashboard, gitRepo, moreOptions, open, stub, systemPath, tempDir, TOKEN, nav } from './harness';
+import { api, dashboard, gitRepo, moreOptions, open, stub, systemPath, tempDir, TOKEN, nav, removeTemp } from './harness';
 
 // A stand-in Claude Code on PATH, so the installed assistant is known and harmless.
 function stubClaude(): { bin: string; env: NodeJS.ProcessEnv } {
@@ -61,8 +61,8 @@ test('fix loop: the line says what it will do from the repository; the sign-in s
     await expect(page.getByTestId('loop-step')).toHaveText(/finished/, { timeout: 60_000 });
   } finally {
     await dash.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 10 });
-    rmSync(dirname(bin), { recursive: true, force: true });
+    removeTemp(cwd);
+    removeTemp(dirname(bin));
   }
 });
 
@@ -78,7 +78,7 @@ test('fix loop: in a folder that is not the app\'s repository the line says to c
     await expect(page.getByRole('button', { name: 'Fix the violations' })).toBeDisabled();
   } finally {
     await dash.stop();
-    rmSync(dirname(bin), { recursive: true, force: true });
+    removeTemp(dirname(bin));
   }
 });
 
@@ -99,7 +99,7 @@ test('fix loop: with no way in chosen, Fix the violations starts the loop with a
     await expect(page.getByTestId('loop-step')).toHaveText(/finished/, { timeout: 60_000 });
   } finally {
     await dash.stop();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 10 });
-    rmSync(dirname(bin), { recursive: true, force: true });
+    removeTemp(cwd);
+    removeTemp(dirname(bin));
   }
 });

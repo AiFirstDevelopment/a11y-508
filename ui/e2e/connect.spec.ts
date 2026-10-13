@@ -2,9 +2,9 @@
 // opens its tabs there, crawls in the sign-in tab, and closes its tabs but never the browser.
 
 import { test, expect, chromium } from '@playwright/test';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fixtureSite, run, tempDir, BIN } from './harness';
+import { fixtureSite, run, tempDir, BIN, removeTemp } from './harness';
 
 test('--connect: the sign-in tab opens in the running browser, the crawl continues in it, and its tabs close while the browser stays', async () => {
   const site = await fixtureSite({ autoLogin: true });
@@ -33,7 +33,7 @@ test('--connect: the sign-in tab opens in the running browser, the crawl continu
   } finally {
     await context.close();
     site.close();
-    rmSync(profile, { recursive: true, force: true, maxRetries: 5 });
-    rmSync(out, { recursive: true, force: true, maxRetries: 5 });
+    removeTemp(profile);
+    removeTemp(out);
   }
 });

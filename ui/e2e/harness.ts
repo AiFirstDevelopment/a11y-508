@@ -3,13 +3,16 @@
 // the app the way a person does.
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page } from '@playwright/test';
 // @ts-ignore -- plain JS shared with the server's node:test suite
 import { mergeEnv, processList, stopTree } from '../server/test/platform.mjs';
+// @ts-ignore -- the one removal path: refuses anything these helpers did not create under the temp directory
+import { assertRemovable, removeTemp, tmp } from '../server/test/helpers.mjs';
+// @ts-ignore
+export { assertRemovable, removeTemp, REPO_ROOT } from '../server/test/helpers.mjs';
 // @ts-ignore
 export { WIN, exePath, gitBash, loginShell, msysPath, npmBin, processList, quote, recordOpen, shellLine, shPath, stopTree, stub, stubScript, systemPath } from '../server/test/platform.mjs';
 
@@ -32,7 +35,8 @@ export async function fixtureSite(opts: { autoLogin?: boolean; dropForms?: numbe
   return m.startFixtureSite({ dropForms: 0, ...opts });
 }
 
-export const tempDir = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+// A temporary directory these helpers created, the only kind removeTemp removes.
+export const tempDir = (prefix: string): string => tmp(prefix);
 
 export interface Dash {
   origin: string;
@@ -46,6 +50,8 @@ export interface Dash {
 
 export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; args?: string[]; main?: string; keepCwd?: boolean } = {}): Promise<Dash> {
   const cwd = opts.cwd || tempDir('a11y-508-dash-');
+  // A dashboard's working directory is always a disposable one of the tests', never the checkout.
+  assertRemovable(cwd);
   const proc = spawn(process.execPath, [opts.main || MAIN, '--no-open', '--port', '0', ...(opts.args || [])], {
     cwd,
     // The dashboard's own files (config, session, settings) go to a home of the test's, never ~/.a11y-508.
@@ -77,7 +83,7 @@ export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; a
       // Windows releases a killed process's hold on its working directory a little later.
       if (opts.keepCwd || opts.cwd) return;
       try {
-        rmSync(cwd, { recursive: true, force: true, maxRetries: 15, retryDelay: 200 });
+        removeTemp(cwd, { maxRetries: 15, retryDelay: 200 });
       } catch (e: any) {
         // Name what still runs, so a process that outlived the server is visible.
         const procs = (processList() as string).split(/\r?\n/).filter((l) => l.trim() && !/--type=|svchost|\\Windows\\System32\\(svchost|conhost|RuntimeBroker|dllhost|sihost|taskhostw|ctfmon|WmiPrvSE)/i.test(l));

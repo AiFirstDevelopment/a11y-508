@@ -1,18 +1,68 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mergeEnv, stopTree } from './platform.mjs';
 
 export const MAIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'main.mjs');
-export const tmp = (p) => realpathSync(mkdtempSync(join(tmpdir(), p)));
+// The checkout these tests run from: never removed, whatever a test passes.
+export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+// Every directory the tests create, so removal can refuse anything else.
+const created = new Set();
+const real = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+};
+// Where a test may remove things: the system temp directory, and the session scratchpad if one is named.
+const bases = () => [tmpdir(), process.env.A11Y_508_TEST_SCRATCH].filter(Boolean).map(real);
+const inside = (child, parent) => {
+  const r = relative(parent, child);
+  return r !== '' && !r.startsWith('..') && !isAbsolute(r);
+};
+
+export const tmp = (p) => {
+  const d = realpathSync(mkdtempSync(join(tmpdir(), p)));
+  created.add(d);
+  return d;
+};
+
+// Throws unless `path` is one the tests created (or lies inside one), under the temp directory or
+// the scratchpad, and neither the repository nor an ancestor of it nor anything with a .git segment.
+export function assertRemovable(path) {
+  if (typeof path !== 'string' || !path) throw new Error(`refusing to remove ${JSON.stringify(path)}: not a path`);
+  const p = real(path);
+  const root = real(REPO_ROOT);
+  const refuse = (why) => {
+    throw new Error(`refusing to remove ${p}: ${why}`);
+  };
+  if (p === root || inside(root, p)) refuse(`it is the repository ${root} or contains it`);
+  if (inside(p, root)) refuse(`it is inside the repository ${root}`);
+  if (p.split(/[\\/]/).includes('.git')) refuse('the path contains .git');
+  if (!bases().some((b) => inside(p, b))) refuse(`it is not under the temp directory (${bases().join(', ')})`);
+  if (![...created].some((c) => c === p || inside(p, c))) refuse('the tests did not create it');
+  return p;
+}
+
+// The only way the tests remove a directory or file.
+export function removeTemp(path, opts = {}) {
+  const p = assertRemovable(path);
+  if (!existsSync(p)) return;
+  rmSync(p, { recursive: true, force: true, maxRetries: 10, ...opts });
+}
 
 export { stub } from './platform.mjs';
 
 // The real server, as a person starts it, in its own working directory.
-export async function startServer({ cwd = tmp('a11y-508-srv-'), env = {}, args = [] } = {}) {
+export async function startServer({ cwd: given, env = {}, args = [] } = {}) {
+  // The working directory is removed on stop only if these helpers made it (removeTemp refuses anything else).
+  const cwd = given || tmp('a11y-508-srv-');
+  assertRemovable(cwd);
   const proc = spawn(process.execPath, [MAIN, '--no-open', '--port', '0', ...args], { cwd, env: mergeEnv(process.env, { TOKEN: '', A11Y_508_HOME: tmp('a11y-508-home-'), ...env }), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   proc.stdout.on('data', (d) => (out += d));
@@ -63,7 +113,7 @@ export async function startServer({ cwd = tmp('a11y-508-srv-'), env = {}, args =
   };
   const stop = async () => {
     await stopTree(proc);
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 10 });
+    removeTemp(cwd);
   };
   return { cwd, port, secret, url, call, waitDone, stop, output: () => out };
 }

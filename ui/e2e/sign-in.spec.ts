@@ -4,9 +4,9 @@
 // --login --stay: the CLI crawls in the signed-in window.
 
 import { test, expect } from '@playwright/test';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dashboard, fixtureSite, open, nav, moreOptions, run, startFromRun, waitFinished, readReport, tempDir, BIN, api } from './harness';
+import { dashboard, fixtureSite, open, nav, moreOptions, run, startFromRun, waitFinished, readReport, tempDir, BIN, api, removeTemp } from './harness';
 
 test('AC 9: Sign in waits for the session, saves it, switches Run to the saved session, and the next crawl audits app.html', async ({ page }) => {
   const site = await fixtureSite({ autoLogin: true });
@@ -69,6 +69,6 @@ test('--login --stay: the CLI signs in, saves the session, and crawls in the sam
     for (const p of audited) expect(new URL(p.finalUrl || p.url).pathname).not.toBe('/login.html');
   } finally {
     site.close();
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 10 });
+    removeTemp(cwd);
   }
 });

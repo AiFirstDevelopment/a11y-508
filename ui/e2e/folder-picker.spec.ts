@@ -3,10 +3,10 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { moreOptions, dryRun, loopOptions, api, dashboard, fillRun, fixtureSite, nav, open, startFromRun, waitFinished, MAIN, QUICK, TOKEN, WIN, tempDir, type Dash } from './harness';
+import { moreOptions, dryRun, loopOptions, api, dashboard, fillRun, fixtureSite, nav, open, startFromRun, waitFinished, MAIN, QUICK, TOKEN, WIN, tempDir, type Dash, removeTemp } from './harness';
 // @ts-ignore -- plain JS shared with the server's node:test suite
 import { mergeEnv, unreadableDir } from '../server/test/platform.mjs';
 
@@ -74,7 +74,7 @@ const start = async (opts: Parameters<typeof dashboard>[0] = {}) => {
 };
 test.afterEach(async () => {
   for (const d of dashes) await d.stop();
-  for (const d of dirs) rmSync(d, { recursive: true, force: true, maxRetries: 10 });
+  for (const d of dirs) removeTemp(d);
   dashes = [];
   dirs = [];
 });
@@ -218,7 +218,7 @@ test('AC 4: a typed path browses there, ~ is home; a missing path or a file show
   }
   // The server checks the path it is asked to switch to, not what the page saw.
   await browseTo(page, join(target, 'inside'));
-  rmSync(join(target, 'inside'), { recursive: true });
+  removeTemp(join(target, 'inside'));
   await dialog(page).getByRole('button', { name: 'Choose this folder' }).click();
   await expect(dialog(page).getByTestId('picker-error')).toHaveText(/ENOENT/);
   await expect(dialog(page)).toBeVisible();
@@ -366,7 +366,7 @@ test('AC 9: recent directories survive a reload, most recent first, each one act
   await chooseDir(page, c);
   await chooseDir(page, a);
   await chooseDir(page, b);
-  rmSync(c, { recursive: true });
+  removeTemp(c);
   await page.reload();
   await openPicker(page);
   const recents = dialog(page).getByTestId('recents').locator('li');
