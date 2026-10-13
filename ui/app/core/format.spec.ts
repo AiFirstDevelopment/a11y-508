@@ -1,4 +1,4 @@
-import { cumulative, progressLabel, resultLine, ageText, savedAgo, CANNOT_GET_IN } from './format';
+import { cumulative, progressLabel, resultLine, ageText, savedAgo, foundText, discoveryOf, CANNOT_GET_IN } from './format';
 
 const s = (o: any) => ({ audited: 3, byImpact: { critical: 0, serious: 0, moderate: 1, minor: 0 }, ...o });
 
@@ -25,6 +25,12 @@ describe('format', () => {
   it('describes a session age', () => {
     expect(ageText(30_000)).toBe('just now');
     expect(ageText(5 * 60_000)).toBe('5 minutes old');
+  });
+  it('says what discovery did on a page', () => {
+    expect(foundText({ links: 12, clicked: 8, clickedNew: 3, skippedActions: [], skippedActionsCount: 0 })).toBe('12 links · 8 clicked → 3 new');
+    expect(foundText({ links: 1, clicked: null, clickedNew: null, skippedActions: [], skippedActionsCount: 0 })).toBe('1 link');
+    expect(discoveryOf({ info: { links: ['a', 'b'] }, discovery: { clicked: 4, urls: ['x'], skipped: [{ name: 'Delete' }], skippedCount: 1 } })).toEqual({ links: 2, clicked: 4, clickedNew: 1, skippedActions: ['Delete'], skippedActionsCount: 1 });
+    expect(discoveryOf({}).clicked).toBeNull();
   });
   it('says when a session was saved', () => {
     expect(savedAgo(30_000)).toBe('just now');

@@ -77,6 +77,41 @@ export function savedAgo(ms: number | undefined): string {
   return `${Math.round(h / 24)} days ago`;
 }
 
+// What discovery did on a page, for the Found column: "12 links · 8 clicked → 3 new",
+// or "12 links" when click discovery did not run there.
+export interface Discovery {
+  links: number;
+  clicked: number | null;
+  clickedNew: number | null;
+  skippedActions: string[];
+  skippedActionsCount: number;
+}
+
+export function foundText(d: Discovery): string {
+  const links = `${d.links} link${d.links === 1 ? '' : 's'}`;
+  if (d.clicked === null || d.clicked === undefined) return links;
+  return `${links} · ${d.clicked} clicked → ${d.clickedNew ?? 0} new`;
+}
+
+// The controls discovery left alone: "Delete", "Sign out" and 3 more.
+export function skippedText(d: Discovery): string {
+  const names = d.skippedActions.map((n) => `"${n}"`).join(', ');
+  const more = d.skippedActionsCount - d.skippedActions.length;
+  return more > 0 ? `${names} and ${more} more` : names;
+}
+
+// The same facts from a page in report.json (info.links, discovery).
+export function discoveryOf(p: { info?: { links?: unknown[] } | null; discovery?: { clicked?: number; urls?: unknown[]; skipped?: { name?: string; selector?: string }[]; skippedCount?: number } | null }): Discovery {
+  const d = p.discovery || null;
+  return {
+    links: p.info && Array.isArray(p.info.links) ? p.info.links.length : 0,
+    clicked: d ? d.clicked || 0 : null,
+    clickedNew: d ? (d.urls || []).length : null,
+    skippedActions: d ? (d.skipped || []).map((x) => x.name || x.selector || '').filter(Boolean) : [],
+    skippedActionsCount: d ? d.skippedCount || 0 : 0,
+  };
+}
+
 // An off-origin redirect: the app sent the crawler to a sign-in portal.
 export const OFF_ORIGIN = /redirected off-origin to/;
 

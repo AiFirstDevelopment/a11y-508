@@ -1,20 +1,24 @@
-// AC 9: Sign in runs --login-only against the fixture's autoLogin mode.
-// The nav no longer links to the Sign in screen: the Run screen signs in in place
-// (docs/plans/run-simple.md). The route still answers a direct address.
+// AC 9: Sign in runs --login-only against the fixture's autoLogin mode. The nav
+// no longer links to the Sign in screen (the Run screen's Sign in runs a
+// --login --stay crawl; docs/plans/run-simple.md); the route still works by address.
+// --login --stay: the CLI crawls in the signed-in window.
 
 import { test, expect } from '@playwright/test';
-import { dashboard, fixtureSite, open, moreOptions, startFromRun, waitFinished, readReport } from './harness';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { dashboard, fixtureSite, open, nav, moreOptions, run, startFromRun, waitFinished, readReport, tempDir, BIN } from './harness';
 
 test('AC 9: Sign in waits for the session, saves it, switches Run to the saved session, and the next crawl audits app.html', async ({ page }) => {
   const site = await fixtureSite({ autoLogin: true });
   const dash = await dashboard();
   try {
-    await open(page, dash, '/run');
+    await open(page, dash, '/sign-in');
     await page.getByLabel('Start URL').fill(site.base);
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    const st = page.getByTestId('signin-state');
-    await expect(st).toContainText('A Chrome window is open', { timeout: 60_000 });
-    await expect(st).toContainText('Signed in · session saved', { timeout: 120_000 });
+    await page.getByRole('button', { name: 'Open the sign-in window' }).click();
+    const st = page.getByTestId('signin-status');
+    await expect(st).toContainText('A Chrome window has opened', { timeout: 60_000 });
+    await expect(st).toContainText('Signed in. The session was saved to', { timeout: 120_000 });
+    await nav(page, 'Run');
     await moreOptions(page);
     await expect(page.getByLabel(/^Use saved session/)).toBeChecked();
     await expect(page.getByLabel(/^Use saved session/)).toBeEnabled();
@@ -42,5 +46,29 @@ test('AC 9: the Sign in route still answers a direct address, though the nav no 
     await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Sign in' })).toHaveCount(0);
   } finally {
     await dash.stop();
+  }
+});
+
+test('--login --stay: the CLI signs in, saves the session, and crawls in the same visible window, one tab, with the session', async () => {
+  const site = await fixtureSite({ autoLogin: true });
+  const cwd = tempDir('a11y-508-stay-');
+  try {
+    const out = join(cwd, 'report');
+    // Asynchronously: this process serves the fixture site.
+    const r = await run(process.execPath, [BIN, site.base, '--login', '--stay', '--max-pages', '6', '--no-interact', '--no-zoom', '--no-screenshots', '--out', out, '--json'], { cwd, env: { ...process.env, TOKEN: '' }, timeout: 240_000 });
+    expect(existsSync(join(out, 'report.json')), r.output.slice(-4000)).toBe(true);
+    expect(existsSync(join(cwd, 'a11y-508-state.json')), 'the session file is still saved').toBe(true);
+    const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
+    // The crawl ran in the sign-in window: recorded as such, one tab at a time.
+    expect(report.options.stay).toBe(true);
+    expect(report.options.concurrency).toBe(1);
+    expect(report.options.session).not.toBeNull();
+    const audited = report.pages.filter((p: any) => !p.error && !p.skipped);
+    expect(audited.length, r.output.slice(-4000)).toBeGreaterThanOrEqual(3);
+    // Every audited page is the app's own, not the sign-in page.
+    for (const p of audited) expect(new URL(p.finalUrl || p.url).pathname).not.toBe('/login.html');
+  } finally {
+    site.close();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10 });
   }
 });

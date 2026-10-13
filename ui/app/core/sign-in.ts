@@ -3,18 +3,22 @@ import { EnvStore } from './env.store';
 import { FormStore } from './form.store';
 import { RunStore } from './run.store';
 
-// The sign-in: a login run (--login-only) that saves a11y-508-state.json.
-// Started from the Run screen, the Live screen's notice and the Sign in route.
+// The sign-in. The Run screen's Sign in (and the Live notice's) starts one crawl
+// with auth mode "signin" (--login --stay): a visible Chrome window opens, the
+// person signs in, the session is saved, and the crawl runs in that window.
+// The Sign in route keeps the older login-only run.
 @Injectable({ providedIn: 'root' })
 export class SignInFlow {
   private run = inject(RunStore);
   private form = inject(FormStore);
   private env = inject(EnvStore);
 
-  readonly isLogin = computed(() => this.run.kind() === 'login');
-  readonly active = computed(() => this.isLogin() && this.run.active());
-  readonly saved = computed(() => (this.isLogin() ? this.run.sessionSaved() : null));
-  readonly failed = computed(() => this.isLogin() && !!this.run.done() && !this.run.sessionSaved());
+  // A run that signs in: the login-only kind, or a crawl with --login --stay.
+  readonly isSignIn = computed(() => this.run.kind() === 'login' || (this.run.kind() === 'crawl' && / --login --stay( |$)/.test(String(this.run.run()?.['command'] || ''))));
+  // Signing in: the run is going and no session has been saved yet.
+  readonly active = computed(() => this.isSignIn() && this.run.active() && !this.run.sessionSaved());
+  readonly saved = computed(() => (this.isSignIn() ? this.run.sessionSaved() : null));
+  readonly failed = computed(() => this.isSignIn() && !!this.run.done() && !this.run.sessionSaved());
   readonly error = computed(() => {
     if (!this.failed()) return '';
     const errors = this.run.notices().filter((n) => n.level === 'error' && !/^The run failed \(exit code/.test(n.message));
@@ -24,18 +28,25 @@ export class SignInFlow {
   });
 
   constructor() {
-    // Once a session is saved, the next run uses it, and the screens read its age again.
+    // Once a session is saved, later runs use it, and the screens read its age again.
     effect(() => {
-      const done = this.isLogin() && this.run.done();
       const saved = this.saved();
+      const done = this.isSignIn() && this.run.done();
       untracked(() => {
         if (saved) this.form.useSession();
-        if (done) void this.env.load();
+        if (saved || done) void this.env.load();
       });
     });
   }
 
+  // Sign in and crawl in the same window, with the Run form's options.
   async start(): Promise<void> {
+    this.form.rememberUrl();
+    await this.run.start({ kind: 'crawl', url: this.form.url().trim(), options: this.form.options(), auth: { mode: 'signin' } });
+  }
+
+  // The Sign in route: sign in and save the session, without crawling.
+  async startLoginOnly(): Promise<void> {
     this.form.rememberUrl();
     await this.run.start({ kind: 'login', url: this.form.url().trim(), options: {}, auth: { mode: 'none' } });
   }

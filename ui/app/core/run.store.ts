@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Api } from './api';
 import { readSse } from './sse';
-import { CANNOT_GET_IN, OFF_ORIGIN, Progress, cumulative } from './format';
+import { CANNOT_GET_IN, Discovery, OFF_ORIGIN, Progress, cumulative } from './format';
 import { ByImpact, Remedy, RunEvent } from './types';
 
 export interface PageRow {
@@ -18,6 +18,8 @@ export interface PageRow {
   round: number | null;
   // A modal dialog that was open when the page loaded, and whether Escape closed it.
   modalOnLoad: { selector: string; name: string; dismissed: boolean } | null;
+  // What discovery did (the page event's additive fields; absent from an older CLI).
+  discovery: Discovery;
 }
 
 export interface Notice {
@@ -117,6 +119,7 @@ export class RunStore {
           url: ev['url'], finalUrl: ev['finalUrl'], title: ev['title'], status: ev['status'], error: ev['error'], skipped: ev['skipped'],
           violations: ev['violations'], reviews: ev['reviews'], byImpact: ev['byImpact'], durationMs: ev['durationMs'], round: ev['round'] ?? null,
           modalOnLoad: ev['modalOnLoad'] ?? null,
+          discovery: { links: ev['links'] ?? 0, clicked: ev['clicked'] ?? null, clickedNew: ev['clickedNew'] ?? null, skippedActions: ev['skippedActions'] ?? [], skippedActionsCount: ev['skippedActionsCount'] ?? 0 },
         };
         this.pages.update((p) => [...p, row]);
         this.progress.update((p) => ({ ...p, done: ev['done'], discovered: ev['discovered'], limit: ev['limit'] ?? p.limit }));

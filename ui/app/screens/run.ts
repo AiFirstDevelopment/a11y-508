@@ -229,6 +229,8 @@ export class RunScreen implements OnInit {
     this.error.set('');
     try {
       await this.flow.start();
+      // The crawl runs in the sign-in window; Live shows the wait, then the pages.
+      await this.router.navigateByUrl('/live');
     } catch (e: any) {
       this.error.set(e.message);
     }

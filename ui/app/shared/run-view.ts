@@ -1,7 +1,7 @@
 import { Component, computed, inject, input, signal } from '@angular/core';
 import { AreaChartModule } from '@swimlane/ngx-charts';
 import { RunStore } from '../core/run.store';
-import { progressLabel, shortUrl } from '../core/format';
+import { skippedText, foundText, progressLabel, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { IMPACTS } from '../core/types';
 import { ChartPanel } from './chart-panel';
@@ -61,7 +61,7 @@ import { ChartPanel } from './chart-panel';
     <h3 id="pages-h">Pages</h3>
     <table class="pages" aria-labelledby="pages-h" data-testid="page-list">
       <thead>
-        <tr><th scope="col">Page</th><th scope="col">Status</th><th scope="col">Violations</th><th scope="col">Review</th><th scope="col">Time</th></tr>
+        <tr><th scope="col">Page</th><th scope="col">Status</th><th scope="col">Violations</th><th scope="col">Review</th><th scope="col">Found</th><th scope="col">Time</th></tr>
       </thead>
       <tbody>
         @for (p of s.pages(); track $index) {
@@ -75,10 +75,16 @@ import { ChartPanel } from './chart-panel';
             <td>{{ p.error ? p.error : p.skipped ? 'skipped: ' + p.skipped : p.status }}</td>
             <td class="num">{{ p.violations }}</td>
             <td class="num">{{ p.reviews }}</td>
+            <td data-testid="found">
+              {{ found(p.discovery) }}
+              @if (p.discovery.skippedActionsCount) {
+                <span class="modal-note" data-testid="skipped-actions">Not clicked, look like actions: {{ quoted(p.discovery) }}</span>
+              }
+            </td>
             <td class="num">{{ (p.durationMs / 1000).toFixed(1) }}s</td>
           </tr>
         } @empty {
-          <tr><td colspan="5">No page has finished yet.</td></tr>
+          <tr><td colspan="6">No page has finished yet.</td></tr>
         }
       </tbody>
     </table>
@@ -91,6 +97,9 @@ import { ChartPanel } from './chart-panel';
   `,
 })
 export class RunView {
+  readonly found = foundText;
+  readonly quoted = skippedText;
+
   readonly store = inject(RunStore);
   readonly showChart = input(true);
   readonly rawOpen = signal(false);

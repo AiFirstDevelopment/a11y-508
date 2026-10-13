@@ -104,7 +104,7 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
 async function startBrowser({ exe, viewport, noSandbox, headless, launchTimeout }) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'a11y-508-'));
   const args = [
-    ...(headless ? ['--headless=new', '--disable-gpu'] : []),
+    ...(headless ? ['--headless=new', '--disable-gpu'] : ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding']),
     '--remote-debugging-pipe',
     `--user-data-dir=${userDataDir}`,
     `--window-size=${viewport.width},${viewport.height}`,

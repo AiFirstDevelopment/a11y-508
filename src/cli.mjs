@@ -51,6 +51,8 @@ Options
   --state <file>           Session file to crawl with, or to write when used with --login
                            (default with --login: a11y-508-state.json)
   --login-only             Sign in and save the session file, then exit without crawling
+  --stay                   With --login: keep the signed-in window and crawl in it (one
+                           tab), so whatever the sign-in set up is used as it is
   --troubleshoot           Load only the start URL with the configured auth and explain
                            what happened (redirects, storage keys the app read, cookies,
                            whether the header went out) with the next step to take
@@ -109,7 +111,7 @@ export function parseArgs(argv) {
   const o = {
     url: null, maxPages: 200, maxDepth: 10, concurrency: 4, include: [], exclude: [], failOn: ['critical', 'serious'],
     out: 'a11y-508-report', viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
-    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stateFile: null, troubleshoot: false, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
+    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stay: false, stateFile: null, troubleshoot: false, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
     maxTabs: 400, maxActivations: 12, maxClicks: 30, followClicks: true, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false, events: false,
     listTests: false, help: false, version: false, wcag: '2.0',
   };
@@ -171,6 +173,7 @@ export function parseArgs(argv) {
       case '--no-token-storage': o.tokenStorage = false; break;
       case '--login': o.login = true; break;
       case '--login-only': o.login = true; o.loginOnly = true; break;
+      case '--stay': o.stay = true; break;
       case '--troubleshoot': case '--trouble-shoot': case '--diagnose': o.troubleshoot = true; break;
       case '--state': o.stateFile = next(a); break;
       case '--cookie': {
@@ -211,6 +214,8 @@ export function parseArgs(argv) {
         o.url = a;
     }
   }
+  if (o.stay && !o.login) throw new Error('--stay keeps the sign-in window to crawl in; use it with --login');
+  if (o.stay && o.loginOnly) throw new Error('--stay crawls in the sign-in window; --login-only does not crawl, so use --login --stay');
   return o;
 }
 
@@ -381,6 +386,7 @@ async function run(argv) {
   };
 
   opts.state = null;
+  let stayBrowser = null;
   if (opts.login) {
     const file = resolve(opts.stateFile || 'a11y-508-state.json');
     let headed;
@@ -391,13 +397,18 @@ async function run(argv) {
       return 3;
     }
     try {
-      opts.state = await interactiveLogin({ browser: headed, startUrl: startUrl.href, origins: [...origins], timeout: opts.timeout, log });
+      opts.state = await interactiveLogin({ browser: headed, startUrl: startUrl.href, origins: [...origins], timeout: opts.timeout, log, keepOpen: opts.stay });
     } catch (e) {
       log.error(`login failed: ${e.message}`);
       await closeBrowser(headed);
       return 2;
     }
-    await closeBrowser(headed);
+    // --stay: the signed-in window stays open and the crawl runs in it, one tab at
+    // a time (a visible browser paints only its front tab).
+    if (opts.stay) {
+      stayBrowser = headed;
+      opts.concurrency = 1;
+    } else await closeBrowser(headed);
     saveState(file, opts.state);
     log.info(`session: saved ${stateSummary(opts.state)} to ${file}`);
     log.event('session-saved', { file, summary: stateSummary(opts.state) });
@@ -417,12 +428,14 @@ async function run(argv) {
   }
 
   const outDir = resolve(opts.out);
-  let browser;
-  try {
-    browser = await launch(true);
-  } catch (e) {
-    log.error(e.message);
-    return 3;
+  let browser = stayBrowser;
+  if (!browser) {
+    try {
+      browser = await launch(true);
+    } catch (e) {
+      log.error(e.message);
+      return 3;
+    }
   }
   const browserName = `${browser.version.product} (${browser.exe})`;
   log.info(`browser: ${browserName}`);
@@ -485,6 +498,8 @@ async function run(argv) {
       session: opts.state ? { cookies: opts.state.cookies.length, origins: Object.keys(opts.state.storage || {}) } : null,
       // Recorded only when the profile is on, so a default report.json keeps its shape.
       ...(opts.wcag !== '2.0' ? { wcag: opts.wcag } : {}),
+      // Recorded only for a crawl that ran in the signed-in, visible window (--login --stay).
+      ...(stayBrowser && browser === stayBrowser ? { stay: true } : {}),
     },
     passed,
     summary,

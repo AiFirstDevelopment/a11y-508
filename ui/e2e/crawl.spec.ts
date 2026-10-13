@@ -115,6 +115,29 @@ const tableOf = async (p: Page, chart: string) => {
 const barsOf = (p: Page, chart: string) =>
   p.locator(`app-chart-panel#${chart} svg path.bar`).evaluateAll((ps) => ps.map((b) => b.getAttribute('aria-label') || ''));
 
+// The Found column says what discovery did on each page: links, controls clicked, new URLs.
+test('discovery: the Live and Report page tables show links found, controls clicked and the new URLs, from report.json', async () => {
+  await ensureCrawl();
+  const report = readReport(dash.cwd);
+  const index = report.pages.find((p: any) => (p.finalUrl || p.url) === site.base);
+  const links = index.info.links.length;
+  const clicked = index.discovery.clicked;
+  expect(links).toBeGreaterThan(0);
+  expect(clicked).toBeGreaterThan(0);
+  const text = `${links} links · ${clicked} clicked → ${index.discovery.urls.length} new`;
+  await nav(page, 'Live run');
+  await expect(page.getByTestId('page-list').locator(`tr[data-url="${site.base}"] [data-testid="found"]`)).toHaveText(new RegExp(`^\\s*${text}`));
+  // The controls left alone because they look like actions, named on the page's row.
+  const skipped = index.discovery.skipped.map((x: any) => `"${x.name}"`);
+  expect(skipped.length).toBeGreaterThan(0);
+  await expect(page.getByTestId('page-list').locator(`tr[data-url="${site.base}"] [data-testid="skipped-actions"]`)).toContainText(skipped[0]);
+  await nav(page, 'Report');
+  await expect(page.getByTestId('report-pages').locator(`tr[data-url="${site.base}"] [data-testid="found"]`)).toHaveText(new RegExp(`^\\s*${text}`));
+  await expect(page.getByTestId('report-pages').locator(`tr[data-url="${site.base}"] [data-testid="skipped-actions"]`)).toContainText(skipped[0]);
+  // The serial tests after this one start on the Live screen.
+  await nav(page, 'Live run');
+});
+
 test('AC 4: the Report screen equals report.json: result line, totals, review count, and every chart table', async () => {
   await ensureCrawl();
   const report = readReport(dash.cwd);

@@ -1,4 +1,4 @@
-import { Component, computed, inject } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
@@ -18,6 +18,12 @@ import { SignInFlow } from '../core/sign-in';
       @if (store.run()?.['command']; as cmd) {
         <p class="hint">Running <code data-testid="run-command">{{ cmd }}</code></p>
       }
+      @if (store.loginWaiting() && store.active()) {
+        <p class="notice" role="status" data-testid="login-waiting">A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.</p>
+      }
+      @if (signInError()) {
+        <div class="notice error" role="alert">{{ signInError() }}</div>
+      }
       <div class="actions">
         <button type="button" (click)="stop()" [disabled]="!store.active()">Stop</button>
         @if (store.done() && store.summary()) {
@@ -28,7 +34,7 @@ import { SignInFlow } from '../core/sign-in';
         <div class="notice error" role="alert" data-notice="cannot-get-in">
           <p>The crawler could not get into the app.</p>
           @if (store.bouncedToSignIn()) {
-            <p>The app sent the crawler to a sign-in page. Sign in once and the next run uses the saved session.</p>
+            <p>The app sent the crawler to a sign-in page. Sign in, and the crawl runs again in the signed-in window.</p>
           }
           <div class="actions">
             @if (store.bouncedToSignIn()) {
@@ -47,6 +53,7 @@ export class LiveScreen {
   private form = inject(FormStore);
   private router = inject(Router);
   private flow = inject(SignInFlow);
+  readonly signInError = signal('');
 
   readonly status = computed(() => {
     const d = this.store.done();
@@ -63,12 +70,13 @@ export class LiveScreen {
     await this.store.stop();
   }
 
-  // Back to Run, where the sign-in's progress shows in place.
+  // A new run that signs in and crawls in the same window; this screen follows it.
   async signIn(): Promise<void> {
+    this.signInError.set('');
     try {
       await this.flow.start();
-    } finally {
-      await this.router.navigateByUrl('/run');
+    } catch (e: any) {
+      this.signInError.set(e.message);
     }
   }
 

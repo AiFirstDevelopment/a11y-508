@@ -43,6 +43,6 @@ export class SignInScreen {
   private flow = inject(SignInFlow);
 
   async signIn(): Promise<void> {
-    await this.flow.start();
+    await this.flow.startLoginOnly();
   }
 }

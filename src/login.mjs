@@ -60,7 +60,7 @@ async function settledOnApp(session, origin, maxWait) {
   throw new Error(`gave up after ${Math.round(maxWait / 60000)} minutes waiting for sign-in to finish`);
 }
 
-export async function interactiveLogin({ browser, startUrl, origins, timeout, log, maxWait = 10 * 60 * 1000 }) {
+export async function interactiveLogin({ browser, startUrl, origins, timeout, log, maxWait = 10 * 60 * 1000, keepOpen = false }) {
   const session = await browser.newPage();
   await session.send('Page.enable');
   await session.send('Network.enable').catch(() => {});
@@ -114,7 +114,8 @@ export async function interactiveLogin({ browser, startUrl, origins, timeout, lo
   const storage = await session.evaluate(
     '(() => { const dump = (s) => { const o = {}; for (let i = 0; i < s.length; i++) { const k = s.key(i); o[k] = s.getItem(k); } return o; }; return { local: dump(localStorage), session: dump(sessionStorage) }; })()'
   );
-  await browser.closePage(session).catch(() => {});
+  // --stay keeps the tab, so the window stays on screen while the crawl opens its own tab beside it.
+  if (!keepOpen) await browser.closePage(session).catch(() => {});
   return { version: STATE_VERSION, capturedAt: new Date().toISOString(), origins: [origin], cookies: kept, storage: { [origin]: storage } };
 }
 

@@ -53,41 +53,43 @@ test('run-simple (a): the Run screen shows the URL, the sign-in state and Start;
   }
 });
 
-test('run-simple (b): with no session, Sign in runs the login flow in place; then Start crawls with --state', async ({ page }) => {
+test('run-simple (b): with no session, Sign in runs one crawl that signs in and stays in that window: the wait, then the pages, with --login --stay', async ({ page }) => {
   const site = await fixtureSite({ autoLogin: true });
   const dash = await dashboard();
   try {
     await open(page, dash, '/run');
     await expect(signInState(page)).toHaveText('Not signed in');
-    await page.getByLabel('Start URL').fill(site.base);
+    await page.getByLabel('Start URL').fill(site.base + 'app.html');
     await expect(start(page)).toBeDisabled();
     await expect(page.getByTestId('start-hint')).toHaveText('Sign in first');
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await expect(signInState(page)).toHaveText('A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.', { timeout: 60_000 });
-    await expect(start(page)).toBeDisabled();
-    expect((await api(dash, '/api/runs/current')).json.kind).toBe('login');
-    await expect(signInState(page)).toHaveText('Signed in · session saved just now', { timeout: 120_000 });
-    await expect(signInState(page)).toBeFocused();
-    await expect(page.getByRole('button', { name: 'Sign in again' })).toBeVisible();
-    await expect(start(page)).toBeEnabled();
-    await expect(page.getByTestId('start-hint')).toHaveCount(0);
-
-    await page.getByLabel('Start URL').fill(site.base + 'app.html');
+    // The run's options come from the form, as for Start.
     await moreOptions(page);
     await page.getByLabel('Maximum pages').fill('1');
     await page.locator('details.advanced > summary').click();
     await page.locator('#adv-no-zoom').check();
     await page.locator('#adv-no-screenshots').check();
-    await startFromRun(page);
-    await expect(page.getByTestId('run-command')).toContainText('--state a11y-508-state.json');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    // No Start: the sign-in is the run, and Live follows it.
+    await expect(page).toHaveURL(/\/live$/);
+    await expect(page.getByTestId('login-waiting')).toHaveText('A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.', { timeout: 60_000 });
+    await expect(page.getByTestId('run-command')).toContainText('--login --stay --state a11y-508-state.json');
     const cur = (await api(dash, '/api/runs/current')).json;
     expect(cur.kind).toBe('crawl');
-    expect(cur.meta.command).toContain('--state a11y-508-state.json');
+    expect(cur.meta.command).toContain('--login --stay --state a11y-508-state.json');
+    await expect(page.getByTestId('page-list').locator('tbody tr[data-url]')).toHaveCount(1, { timeout: 180_000 });
+    await expect(page.getByTestId('login-waiting')).toHaveCount(0);
     await waitFinished(page);
     const report = readReport(dash.cwd);
+    expect(report.options.stay).toBe(true);
     expect(report.pages[0].finalUrl).toBe(site.base + 'app.html');
     expect(report.pages[0].error).toBeNull();
     expect(report.pages[0].title).toBe('Application - a11y-508 test site');
+    // Back on Run: the session is saved, and Start uses it from now on.
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
+    await expect(signInState(page)).toHaveText('Signed in · session saved just now');
+    await expect(page.getByRole('button', { name: 'Sign in again' })).toBeVisible();
+    await expect(start(page)).toBeEnabled();
+    await expect(page.getByTestId('start-hint')).toHaveCount(0);
   } finally {
     await dash.stop();
     site.close();
@@ -132,6 +134,8 @@ test('run-simple (c): a session saved before launch is shown with its age, and S
     const cur = (await api(dash, '/api/runs/current')).json;
     expect(cur.kind).toBe('crawl');
     expect(cur.meta.command).toContain('--state a11y-508-state.json');
+    // A session that already exists: the faster headless crawl, no sign-in window.
+    expect(cur.meta.command).not.toContain('--login');
     await waitFinished(page);
     const report = readReport(cwd);
     expect(report.pages[0].finalUrl).toBe(site.base + 'app.html');
@@ -144,7 +148,7 @@ test('run-simple (c): a session saved before launch is shown with its age, and S
   }
 });
 
-test('run-simple (d): a run bounced to a sign-in page on another origin offers Sign in on the Live screen, which signs in from Run', async ({ page }) => {
+test('run-simple (d): a run bounced to a sign-in page on another origin offers Sign in on the Live screen, which signs in and crawls', async ({ page }) => {
   const listen = async (s: Server) => {
     await new Promise<void>((ok) => s.listen(0, '127.0.0.1', ok));
     return `http://127.0.0.1:${(s.address() as any).port}`;
@@ -174,12 +178,16 @@ test('run-simple (d): a run bounced to a sign-in page on another origin offers S
     await expect(notice).toContainText('sent the crawler to a sign-in page');
     await expect(notice.getByRole('button', { name: 'Troubleshoot with these settings' })).toBeVisible();
     await notice.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await expect(page).toHaveURL(/\/run$/);
-    await expect(signInState(page)).toContainText('A Chrome window is open', { timeout: 60_000 });
+    // A new crawl that signs in and stays in the window; Live follows it.
+    await expect(page).toHaveURL(/\/live$/);
+    await expect(page.getByTestId('login-waiting')).toBeVisible({ timeout: 60_000 });
     const cur = (await api(dash, '/api/runs/current')).json;
-    expect(cur.kind).toBe('login');
+    expect(cur.kind).toBe('crawl');
+    expect(cur.meta.command).toContain('--login --stay');
     expect(cur.meta.url).toBe(appBase + '/');
-    // This portal never lets anyone in: stop the sign-in, which says so in place with Try again.
+    // This portal never lets anyone in: on Run, cancel the sign-in, which says so in place with Try again.
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
+    await expect(signInState(page)).toContainText('A Chrome window is open');
     await page.getByRole('button', { name: 'Cancel sign-in' }).click();
     await expect(signInState(page)).toContainText('Sign-in did not finish', { timeout: 30_000 });
     await expect(signInState(page)).toBeFocused();

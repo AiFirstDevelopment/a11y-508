@@ -5,7 +5,7 @@ import { BarChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
-import { resultLine, shortUrl } from '../core/format';
+import { skippedText, discoveryOf, foundText, resultLine, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { Finding, IMPACTS, Report } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
@@ -157,10 +157,17 @@ interface Row extends Finding {
       <h2>Pages</h2>
       <table data-testid="report-pages">
         <caption>Crawled pages</caption>
-        <thead><tr><th scope="col">Page</th><th scope="col">Title</th><th scope="col">Status</th><th scope="col">Violations</th><th scope="col">Review</th></tr></thead>
+        <thead><tr><th scope="col">Page</th><th scope="col">Title</th><th scope="col">Status</th><th scope="col">Violations</th><th scope="col">Review</th><th scope="col">Found</th></tr></thead>
         <tbody>
           @for (p of r.pages; track $index) {
-            <tr><th scope="row">{{ short(p.finalUrl || p.url) }}</th><td>{{ p.title }}</td><td>{{ p.error || p.skipped || p.status }}</td><td>{{ count(p.findings, 'violation') }}</td><td>{{ count(p.findings, 'review') }}</td></tr>
+            <tr [attr.data-url]="p.finalUrl || p.url"><th scope="row">{{ short(p.finalUrl || p.url) }}</th><td>{{ p.title }}</td><td>{{ p.error || p.skipped || p.status }}</td><td>{{ count(p.findings, 'violation') }}</td><td>{{ count(p.findings, 'review') }}</td>
+              <td data-testid="found">
+                @let d = discovery(p);
+                {{ found(d) }}
+                @if (d.skippedActionsCount) {
+                  <span class="modal-note" data-testid="skipped-actions">Not clicked, look like actions: {{ quoted(d) }}</span>
+                }
+              </td></tr>
           }
         </tbody>
       </table>
@@ -168,6 +175,10 @@ interface Row extends Finding {
   `,
 })
 export class ReportScreen {
+  readonly found = foundText;
+  readonly discovery = discoveryOf;
+  readonly quoted = skippedText;
+
   private api = inject(Api);
   private run = inject(RunStore);
   private env = inject(EnvStore);

@@ -103,6 +103,8 @@ const listDefault = await runCli(['--list-tests']);
 const list22 = await runCli(['--list-tests', '--wcag', '2.2']);
 const list21 = await runCli(['--list-tests', '--wcag', '2.1']);
 const listBad = await runCli(['--list-tests', '--wcag', '3']);
+const stayAlone = await runCli([base, '--stay']);
+const stayLoginOnly = await runCli([base, '--login-only', '--stay']);
 site.close();
 external.close();
 rmSync(stateFile, { force: true });
@@ -799,6 +801,12 @@ check('AC1 --list-tests --wcag 2.1 lists the 2.1 rules only (not 2.5.8, 2.4.11);
   assert.equal(listBad.status, 2);
   assert.match(listBad.stderr, /^error: --wcag: unknown version "3" \(use 2\.0, 2\.1, 2\.2/);
 });
+check('--stay without --login, or with --login-only, is a usage error (exit 2) that says why', () => {
+  assert.equal(stayAlone.status, 2, stayAlone.stdout + stayAlone.stderr);
+  assert.match(stayAlone.stderr, /--stay keeps the sign-in window to crawl in; use it with --login/);
+  assert.equal(stayLoginOnly.status, 2, stayLoginOnly.stdout + stayLoginOnly.stderr);
+  assert.match(stayLoginOnly.stderr, /use --login --stay/);
+});
 check('AC2: the default crawl reports no beyond508 finding and keeps the report.json shape', () => {
   for (const k of Object.keys(pagesRaw)) {
     const hits = (pages[k].findings || []).filter((f) => f.beyond508 || !TT_IDS.has(f.test));
@@ -1093,7 +1101,13 @@ check('FU AC7 4.D: the Tab pass reaches a control in a frame nested two deep', (
       assert.equal(e.violations, v, `${e.finalUrl} violations`);
       assert.equal(e.reviews, (p.findings || []).length - v, `${e.finalUrl} reviews`);
       assert.equal(e.error, p.error || null);
+      // What discovery did, for the dashboard's Found column.
+      assert.equal(e.links, p.info && p.info.links ? p.info.links.length : 0, `${e.finalUrl} links`);
+      assert.equal(e.clicked, p.discovery ? p.discovery.clicked : null, `${e.finalUrl} clicked`);
+      assert.equal(e.clickedNew, p.discovery ? p.discovery.urls.length : null, `${e.finalUrl} clickedNew`);
+      assert.equal(e.skippedActionsCount, p.discovery ? p.discovery.skippedCount : 0, `${e.finalUrl} skippedActionsCount`);
     }
+    assert.ok(pageEvents.some((e) => e.links > 0 && e.clicked > 0), 'some page found links and clicked controls');
   });
   check('--events: page events count up, and discovered never trails done', () => {
     pageEvents.forEach((e, i) => {

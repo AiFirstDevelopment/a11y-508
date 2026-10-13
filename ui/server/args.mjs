@@ -20,7 +20,7 @@ export const FLAGS = {
   'user-agent': 'value', chrome: 'value', 'no-sandbox': 'switch', wcag: 'value',
 };
 
-export const AUTH_MODES = ['token', 'env', 'state', 'cookies', 'none'];
+export const AUTH_MODES = ['token', 'env', 'state', 'cookies', 'none', 'signin'];
 
 export class BadRequest extends Error {
   constructor(message, status = 400) {
@@ -55,6 +55,8 @@ export function optionArgs(options = {}) {
 export function authArgs(auth = { mode: 'none' }) {
   const mode = (auth && auth.mode) || 'none';
   if (!AUTH_MODES.includes(mode)) throw new BadRequest(`unknown auth mode "${mode}"`);
+  // The dashboard's Sign in: sign in in a visible window, save the session, and crawl in that window.
+  if (mode === 'signin') return { args: ['--login', '--stay', '--state', auth.file || DEFAULT_STATE_FILE], token: 'none' };
   if (mode === 'state') return { args: ['--state', auth.file || DEFAULT_STATE_FILE], token: 'none' };
   if (mode === 'cookies') {
     const cookies = (Array.isArray(auth.cookies) ? auth.cookies : String(auth.cookies || '').split('\n')).map((c) => String(c).trim()).filter(Boolean);

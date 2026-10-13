@@ -40,6 +40,9 @@ test('bad forms are 400 with the core\'s message', async () => {
     const cmd = await s.call('GET', '/api/command?form=' + encodeURIComponent(JSON.stringify({ kind: 'crawl', url: 'http://x/', options: { 'max-pages': '5' }, auth: { mode: 'token', token: 'never-shown' } })));
     assert.match(cmd.json.command, /^TOKEN=\$TOKEN node \S+ http:\/\/x\/ --max-pages 5$/);
     assert.ok(!cmd.text.includes('never-shown'));
+    // The dashboard's Sign in: one crawl that signs in and stays in the window.
+    const signin = await s.call('GET', '/api/command?form=' + encodeURIComponent(JSON.stringify({ kind: 'crawl', url: 'http://x/', options: {}, auth: { mode: 'signin' } })));
+    assert.match(signin.json.command, /^node \S+ http:\/\/x\/ --login --stay --state a11y-508-state\.json$/);
   } finally {
     await s.stop();
   }

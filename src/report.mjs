@@ -324,6 +324,20 @@ export const resultOf = (report) => {
   return s.coverage && !s.coverage.complete ? 'incomplete' : 'pass';
 };
 
+// What discovery did on a page: links found, controls clicked and the new URLs
+// those clicks led to, and the controls left alone because they look like actions.
+// clicked and clickedNew are null when click discovery did not run on the page.
+export function discoveryFacts(p) {
+  const d = p.discovery || null;
+  return {
+    links: p.info && Array.isArray(p.info.links) ? p.info.links.length : 0,
+    clicked: d ? d.clicked || 0 : null,
+    clickedNew: d ? (d.urls || []).length : null,
+    skippedActions: d ? (d.skipped || []).map((x) => x.name || x.selector || '').filter(Boolean) : [],
+    skippedActionsCount: d ? d.skippedCount || 0 : 0,
+  };
+}
+
 export function pageEvent(p, done, discovered, limit) {
   const findings = p.findings || [];
   const byImpact = { critical: 0, serious: 0, moderate: 0, minor: 0 };
@@ -336,7 +350,7 @@ export function pageEvent(p, done, discovered, limit) {
   return {
     url: p.url, finalUrl: p.finalUrl || p.url, title: p.title || '', status: p.status ?? null, error: p.error || null, skipped: p.skipped || null,
     violations, reviews: findings.length - violations, byImpact, durationMs: p.durationMs || 0, foundBy: p.foundBy || 'link',
-    modalOnLoad: p.modalOnLoad || null, done, discovered, limit: limit ?? null,
+    modalOnLoad: p.modalOnLoad || null, ...discoveryFacts(p), done, discovered, limit: limit ?? null,
   };
 }
 
