@@ -6,6 +6,7 @@ import { Api } from './core/api';
 import { EnvStore, rememberCwd, rememberedCwd } from './core/env.store';
 import { RunStore } from './core/run.store';
 import { FormStore } from './core/form.store';
+import { Starter } from './core/starter';
 import { FolderPicker } from './shared/folder-picker';
 import { SetupForm } from './shared/setup-form';
 
@@ -149,7 +150,16 @@ export class App implements OnInit {
     return s.n < this.current() ? 'done' : 'upcoming';
   }
 
+  private starter = inject(Starter);
   constructor() {
+    // Where Set up's Continue returns to: the later step the person was on.
+    effect(() => {
+      const u = this.url();
+      untracked(() => {
+        if (u.startsWith('/fix-loop')) this.starter.lastStep.set('/fix-loop');
+        else if (u.startsWith('/report')) this.starter.lastStep.set('/report');
+      });
+    });
     // A crawl that finishes while its Crawl step is open moves on to Results by itself (one that
     // could not get in stays, with its notice and Troubleshoot). The environment is read again
     // after any run, so the steps know what exists now.

@@ -76,3 +76,31 @@ test('startup: /api/env answers at once while the assistants are detected, and h
     await s.stop();
   }
 });
+
+test('carry: the analysis for the URL moves to the new folder, or is copied when git tracks it in the old one; another URL stays', async () => {
+  const { carryAnalysis } = await import('../reports.mjs');
+  const { inGitRepo } = await import('../dirs.mjs');
+  const { spawnSync } = await import('node:child_process');
+  const { existsSync } = await import('node:fs');
+  const report = (dir, url, at) => {
+    mkdirSync(join(dir, 'a11y-508-report'), { recursive: true });
+    writeFileSync(join(dir, 'a11y-508-report', 'report.json'), JSON.stringify({ baseUrl: url, finishedAt: at, pages: [], summary: {} }));
+  };
+  const a = tmp('a11y-508-carry-a-');
+  const b = tmp('a11y-508-carry-b-');
+  report(a, 'http://app.example/x/', '2026-01-01T00:00:00.000Z');
+  mkdirSync(join(a, 'a11y-508-history', 'old'), { recursive: true });
+  writeFileSync(join(a, 'a11y-508-history', 'old', 'report.json'), JSON.stringify({ baseUrl: 'http://app.example/x', finishedAt: '2025' }));
+  assert.deepEqual(carryAnalysis(a, b, 'http://other.example/', { inGit: inGitRepo }).report, false, 'another URL');
+  const moved = carryAnalysis(a, b, 'http://app.example/x?q=1', { inGit: inGitRepo });
+  assert.deepEqual([moved.report, moved.history, moved.moved], [true, 1, true]);
+  assert.ok(!existsSync(join(a, 'a11y-508-report')) && existsSync(join(b, 'a11y-508-report', 'report.json')));
+  // Tracked by git in the old folder: copied.
+  const c = tmp('a11y-508-carry-c-');
+  const d = tmp('a11y-508-carry-d-');
+  report(c, 'http://app.example/', '2026-02-01T00:00:00.000Z');
+  for (const args of [['init', '-q'], ['add', '-A'], ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-q', '-m', 'r']]) spawnSync('git', args, { cwd: c });
+  const copied = carryAnalysis(c, d, 'http://app.example/', { inGit: inGitRepo });
+  assert.deepEqual([copied.report, copied.moved], [true, false]);
+  assert.ok(existsSync(join(c, 'a11y-508-report', 'report.json')) && existsSync(join(d, 'a11y-508-report', 'report.json')));
+});

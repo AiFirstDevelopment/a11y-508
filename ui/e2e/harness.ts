@@ -227,7 +227,10 @@ export async function fillRun(page: Page, f: CrawlForm): Promise<void> {
 export const QUICK = { maxPages: 5, advanced: { 'no-zoom': true, 'max-screenshots': '3' } };
 
 export async function startFromRun(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Start', exact: true }).click();
+  // A report for this URL exists: Set up reads Continue, and Crawl again starts a new crawl.
+  const again = page.getByTestId('crawl-again').first();
+  if (await again.isVisible()) await again.click();
+  else await page.getByRole('button', { name: 'Start', exact: true }).click();
   await expect(page).toHaveURL(/\/live$/);
   // The Live screen can still show the previous run's "Finished" until the
   // store sees the new run, and waitFinished would accept that at once. A run

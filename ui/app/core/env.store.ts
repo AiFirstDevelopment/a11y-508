@@ -41,8 +41,9 @@ export class EnvStore {
   }
 
   // Switches the server's working directory; throws the server's error.
-  async switchTo(path: string): Promise<EnvInfo> {
-    const e = await this.api.put<EnvInfo>('/api/cwd', { path }, EnvStore.TIMEOUT_MS);
+  // carry: the start URL; when the latest report is for it, the analysis comes along to the new folder.
+  async switchTo(path: string, carry = ''): Promise<EnvInfo> {
+    const e = await this.api.put<EnvInfo>('/api/cwd', carry ? { path, carry } : { path }, EnvStore.TIMEOUT_MS);
     rememberCwd(e.cwd);
     this.env.set(e);
     this.error.set(null);

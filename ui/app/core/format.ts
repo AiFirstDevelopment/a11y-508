@@ -10,6 +10,17 @@ export interface Progress {
   result: string | null;
 }
 
+// The same analysis: two start URLs with the same origin and path (query and trailing slash aside).
+export function sameStartUrl(a: string | null | undefined, b: string | null | undefined): boolean {
+  try {
+    const x = new URL(String(a));
+    const y = new URL(String(b));
+    return x.origin === y.origin && x.pathname.replace(/\/+$/, '') === y.pathname.replace(/\/+$/, '');
+  } catch {
+    return false;
+  }
+}
+
 export function progressLabel(p: Progress): string {
   if (!p.done && !p.finished) return 'Starting the browser';
   const limit = p.limit ? ` (limit ${p.limit})` : '';

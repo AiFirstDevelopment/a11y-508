@@ -3,6 +3,8 @@ import { EnvStore } from '../core/env.store';
 import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { Starter } from '../core/starter';
+import { sameStartUrl } from '../core/format';
+import { Router } from '@angular/router';
 
 // Set up: the app's repository folder, the app's URL, and Start. On the Set up step (/run) and
 // in the setup dialog on a first visit. A crawl needs neither git nor a package.json, so those
@@ -34,7 +36,10 @@ import { Starter } from '../core/starter';
       <div class="notice error" role="alert" data-notice="setup-error">{{ error() }}</div>
     }
     <div class="actions">
-      <button type="button" class="big" (click)="start()" [disabled]="!canStart()" data-testid="setup-start">Start</button>
+      <button type="button" class="big" (click)="start()" [disabled]="!canStart()" data-testid="setup-start">{{ continuing() ? 'Continue' : 'Start' }}</button>
+      @if (continuing()) {
+        <button type="button" class="link" (click)="start(true)" [disabled]="!canStart()" data-testid="crawl-again">Crawl again</button>
+      }
       @if (run.active()) {
         <p class="hint">A run is active.</p>
       }
@@ -51,6 +56,7 @@ export class SetupForm {
   readonly form = inject(FormStore);
   readonly run = inject(RunStore);
   readonly starter = inject(Starter);
+  private router = inject(Router);
   readonly folder = signal('');
   readonly reason = 'A run is active; the folder can change once it has finished.';
   readonly error = signal('');
@@ -88,16 +94,34 @@ export class SetupForm {
     this.starter.browseRequests.update((n) => n + 1);
   }
 
-  // Saves both (the folder through a switch, the URL), then the crawl.
-  async start(): Promise<void> {
+  // A report for this URL exists: the analysis is done, and Start continues to it (a changed URL is
+  // a new analysis). The report belongs to the URL, so a changed folder keeps it.
+  readonly continuing = computed(() => {
+    const r = this.env.env()?.report;
+    return !!r?.exists && sameStartUrl(r.baseUrl, this.form.url().trim());
+  });
+
+  // Saves both (the folder through a switch that carries the analysis, the URL), then the crawl,
+  // or, when the analysis for this URL is done, the step the person was on (Continue).
+  async start(again = false): Promise<void> {
     if (!this.canStart()) return;
     this.error.set('');
     this.busy.set(true);
     try {
       const want = this.folder().trim();
-      if (want !== this.env.cwd()) await this.env.switchTo(want);
+      const url = this.form.url().trim();
+      if (want !== this.env.cwd()) {
+        await this.env.switchTo(want, url);
+        this.run.forget();
+      }
       this.form.rememberUrl();
       this.started.emit();
+      const r = this.env.env()?.report;
+      if (!again && r?.exists && sameStartUrl(r.baseUrl, url)) {
+        const to = this.starter.lastStep() === '/fix-loop' && this.env.env()?.inGitRepo ? '/fix-loop' : '/report';
+        await this.router.navigateByUrl(to);
+        return;
+      }
       await this.starter.startCrawl();
     } catch (e: any) {
       this.error.set(e.message);

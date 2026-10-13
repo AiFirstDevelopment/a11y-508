@@ -18,7 +18,7 @@ import { Runs } from './runs.mjs';
 import { loopDefaults } from './loop-defaults.mjs';
 import { readGlobal, writeGlobal, paths as statePaths, excludeOutputs, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { matchSource } from './loop-match.mjs';
-import { listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, REPORT_DIR } from './reports.mjs';
+import { carryAnalysis, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
 
@@ -384,9 +384,19 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   // to a readable directory; on any error state.cwd is unchanged.
   async function switchCwd(body) {
     const keys = Object.keys(body || {});
-    if (keys.length !== 1 || keys[0] !== 'path' || typeof body.path !== 'string') throw new BadRequest('body must be exactly { "path": "<absolute path>" }');
+    const okKeys = keys.every((k) => k === 'path' || k === 'carry');
+    if (!okKeys || typeof body.path !== 'string' || (body.carry !== undefined && typeof body.carry !== 'string')) throw new BadRequest('body must be { "path": "<absolute path>", "carry"?: "<start URL>" }');
     if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is active; switch when it has finished`, 409);
     const dir = realDir(body.path);
+    // The analysis belongs to the URL: with the URL unchanged it comes along to the new folder.
+    let carried = null;
+    if (body.carry) {
+      try {
+        carried = carryAnalysis(state.cwd, dir, body.carry, { inGit: inGitRepo });
+      } catch (e) {
+        carried = { error: e.message };
+      }
+    }
     state.cwd = dir;
     settle();
     // A finished run belongs to the directory it ran in.
@@ -396,7 +406,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     setGlobal({ lastCwd: dir });
     // Cached detection (the assistants, the shell, npm's prefix) does not
     // depend on the directory, so nothing else is invalidated today.
-    return envInfo(state.presets);
+    return { ...envInfo(state.presets), carried };
   }
 
   // ---- routing

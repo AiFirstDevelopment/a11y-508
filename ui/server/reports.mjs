@@ -3,8 +3,9 @@
 // (a11y-508-work/round-N/). Every file is served from inside its own report
 // directory and nowhere else.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 
 export const REPORT_DIR = 'a11y-508-report';
 export const HISTORY_DIR = 'a11y-508-history';
@@ -159,4 +160,67 @@ export function clearHistory(cwd) {
     removed++;
   }
   return { removed };
+}
+
+// Whether two start URLs are the same analysis: the same origin and path (the query and a
+// trailing slash do not matter).
+export function sameStartUrl(a, b) {
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    return x.origin === y.origin && x.pathname.replace(/\/+$/, '') === y.pathname.replace(/\/+$/, '');
+  } catch {
+    return false;
+  }
+}
+
+// The analysis belongs to the URL, not the folder: when the folder changes and the URL does not,
+// the latest report for that URL, its history entries and the loop's work folder go along to the
+// new folder. Moved when the old folder is not a git repository or git does not track them there
+// (the dashboard wrote them); copied otherwise. Nothing already in the new folder is overwritten:
+// a latest report there for another URL goes to its history first. Returns what was carried.
+export function carryAnalysis(from, to, url, { inGit }) {
+  const out = { report: false, history: 0, work: false, moved: false };
+  if (!url || resolve(from) === resolve(to)) return out;
+  const latest = readJson(join(from, REPORT_DIR, 'report.json'));
+  if (!latest || !sameStartUrl(latest.baseUrl, url)) return out;
+  const there = readJson(join(to, REPORT_DIR, 'report.json'));
+  if (there && sameStartUrl(there.baseUrl, url) && String(there.finishedAt) >= String(latest.finishedAt)) return out;
+  const tracked = (rel) => inGit(from) && spawnSync('git', ['ls-files', '--', rel], { cwd: from, encoding: 'utf8', windowsHide: true }).stdout.trim() !== '';
+  const move = !inGit(from) || ![REPORT_DIR, HISTORY_DIR, WORK_DIR].some(tracked);
+  out.moved = move;
+  const put = (src, dst) => {
+    mkdirSync(dirname(dst), { recursive: true });
+    if (move) {
+      try {
+        renameSync(src, dst);
+        return;
+      } catch {}
+      cpSync(src, dst, { recursive: true });
+      rmSync(src, { recursive: true, force: true, maxRetries: 5 });
+    } else cpSync(src, dst, { recursive: true });
+  };
+  if (there) moveLatestToHistory(to);
+  else rmSync(join(to, REPORT_DIR), { recursive: true, force: true, maxRetries: 5 });
+  put(join(from, REPORT_DIR), join(to, REPORT_DIR));
+  out.report = true;
+  const hist = join(from, HISTORY_DIR);
+  if (existsSync(hist)) {
+    for (const d of readdirSync(hist)) {
+      const r = readJson(join(hist, d, 'report.json'));
+      if (!r || !sameStartUrl(r.baseUrl, url) || existsSync(join(to, HISTORY_DIR, d))) continue;
+      put(join(hist, d), join(to, HISTORY_DIR, d));
+      out.history++;
+    }
+  }
+  // The loop's work folder: when its rounds are for this URL and the new folder has none.
+  const work = join(from, WORK_DIR);
+  if (existsSync(work) && !existsSync(join(to, WORK_DIR))) {
+    const rounds = readdirSync(work).filter((d) => /^round-\d+$/.test(d)).map((d) => readJson(join(work, d, 'report.json'))).filter(Boolean);
+    if (rounds.length && rounds.every((r) => sameStartUrl(r.baseUrl, url))) {
+      put(work, join(to, WORK_DIR));
+      out.work = true;
+    }
+  }
+  return out;
 }

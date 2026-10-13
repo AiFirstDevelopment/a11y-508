@@ -297,7 +297,7 @@ export class FolderPicker {
     this.busy.set(true);
     const before = this.env.env();
     try {
-      const after = await this.env.switchTo(path);
+      const after = await this.env.switchTo(path, this.form.url().trim());
       // The finished run belonged to the old directory.
       this.run.forget();
       // Auth follows the new directory's saved session.
