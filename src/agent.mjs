@@ -319,9 +319,12 @@ export function agentLog(res) {
 
 const block = (obj) => '```json\n' + JSON.stringify(obj, null, 2) + '\n```';
 
-export function fixPrompt({ finding, sourceDirs, protectedDirs, resultFile, condition }) {
+// group: the findings that are the same problem on different elements (finding among them), fixed as one task.
+export function fixPrompt({ finding, group = null, sourceDirs, protectedDirs, resultFile, condition }) {
   const prior = finding.attempts.filter((a) => a.outcome && a.outcome !== 'pending');
-  return `# Fix one accessibility finding
+  const many = Array.isArray(group) && group.length > 1 ? group : null;
+  const elements = many ? `\n## The same problem on ${many.length} elements\n\nThese ${many.length} findings are the same problem on different elements; fix the cause once if there is one, otherwise fix each.\n\n${many.map((e, i) => `${i + 1}. Selector: ${e.selector || '(page level)'}${e.frame ? ` (inside the frame ${e.frame})` : ''}; seen on ${e.pages.slice(0, 5).join(', ')}${e.pages.length > 5 ? ', ...' : ''}\n\n\`\`\`html\n${(e.html || '').slice(0, 600)}\n\`\`\``).join('\n\n')}\n` : '';
+  return `# Fix one accessibility ${many ? `problem on ${many.length} elements` : 'finding'}
 
 You are working in this repository. Fix the finding below by editing the application's source files. Rules:
 
@@ -344,7 +347,7 @@ ${finding.frame ? `Inside the same-origin frame: ${finding.frame}\n` : ''}${/ >>
 \`\`\`html
 ${(finding.html || '').slice(0, 2000)}
 \`\`\`
-${personNote(finding) ? `\n## A person reviewed this\n\nA person reviewed this and says: ${personNote(finding)}\n\nFollow that guidance.\n` : ''}${prior.length ? `\n## Earlier attempts that did not work\n\n${prior.map((a) => `- Round ${a.round}: ${a.note || 'no note'} (files: ${(a.files || []).join(', ') || 'none'}; outcome: ${a.outcome})`).join('\n')}\n\nThe finding was still present after those changes, so try a different approach.\n` : ''}
+${personNote(finding) ? `\n## A person reviewed this\n\nA person reviewed this and says: ${personNote(finding)}\n\nFollow that guidance.\n` : ''}${elements}${prior.length ? `\n## Earlier attempts that did not work\n\n${prior.map((a) => `- Round ${a.round}: ${a.note || 'no note'} (files: ${(a.files || []).join(', ') || 'none'}; outcome: ${a.outcome})`).join('\n')}\n\nThe finding was still present after those changes, so try a different approach.\n` : ''}
 ## How to find it in the source
 
 Search the source folders for the class names, ids, attribute values, text and tag names in the rendered HTML. Framework templates (Angular, React, Vue) usually contain the same literals. If the HTML is generated from data, fix the component that renders it.
@@ -359,7 +362,7 @@ If you made no change, write it with "fixed": false and a note explaining why.
 
 Machine-readable copy of the finding:
 
-${block({ kind: 'fix', finding: { test: finding.test, name: finding.name, wcag: finding.wcag, impact: finding.impact, message: finding.message, selector: finding.selector, ...(finding.frame ? { frame: finding.frame } : {}), html: finding.html, pages: finding.pages }, sourceDirs, resultFile })}
+${block({ kind: 'fix', finding: { test: finding.test, name: finding.name, wcag: finding.wcag, impact: finding.impact, message: finding.message, selector: finding.selector, ...(finding.frame ? { frame: finding.frame } : {}), html: finding.html, pages: finding.pages }, ...(many ? { elements: many.map((e) => ({ selector: e.selector, html: e.html, pages: e.pages })) } : {}), sourceDirs, resultFile })}
 `;
 }
 

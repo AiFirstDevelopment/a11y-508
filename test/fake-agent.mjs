@@ -73,9 +73,17 @@ if (!task) {
     writeFileSync(file, s.replace(from, to));
     return true;
   };
-  if (f.test === '7.A' && /no alt attribute/.test(f.message) && /photo\.png/.test(f.html)) {
+  // A task can be one problem on several elements (task.elements): the photo among them, or the same image problem everywhere.
+  const els = Array.isArray(task.elements) && task.elements.length ? task.elements : [f];
+  if (f.test === '7.A' && /no alt attribute/.test(f.message) && els.some((e) => /photo\.png/.test(e.html || ''))) {
     const ok = edit('site/index.html', '<img src="/img/photo.png" width="120" height="80">', '<img src="/img/photo.png" alt="Team photo from the 2025 kickoff" width="120" height="80">');
     write({ fixed: ok, files: ok ? ['site/index.html'] : [], note: ok ? 'added alt text to the photo' : 'could not find the image' });
+  } else if (f.test === '7.A' && /no alt attribute/.test(f.message) && els.length > 1) {
+    const file = join(process.cwd(), 'site', 'index.html');
+    const before = existsSync(file) ? readFileSync(file, 'utf8') : '';
+    const after = before.replace(/<img src="(\/img\/[^"]+)">/g, '<img src="$1" alt="">');
+    if (after !== before) writeFileSync(file, after);
+    write({ fixed: after !== before, files: after !== before ? ['site/index.html'] : [], note: `marked the ${els.length} images decorative in one change` });
   } else if (f.test === '13.C') {
     const ok = edit('site/index.html', '.low-contrast { color: #999; background: #fff; }', '.low-contrast { color: #555; background: #fff; }');
     write({ fixed: ok, files: ok ? ['site/index.html'] : [], note: ok ? 'darkened the low-contrast text' : 'could not find the rule' });

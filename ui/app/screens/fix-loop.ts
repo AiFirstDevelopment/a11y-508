@@ -456,7 +456,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     if (step === 'commit' && current) return `Round ${r}: committing fix ${s?.['n']} of ${s?.['m']}`;
     const seen = r === this.store.reportRound() ? ' from the report you just saw' : '';
     if (c && !c.endedAt && c.wait && c.wait.until > this.now()) return `${capital(this.assistantName())} is rate-limited; trying again in ${Math.max(1, Math.ceil((c.wait.until - this.now()) / 1000))} s (retry ${c.wait.attempt} of ${c.wait.attempts})`;
-    if (c && !c.endedAt && c.kind === 'fix') return `Round ${r}: fixing ${c.n ?? c.task} of ${c.m ?? t?.m ?? '?'}${seen} · ${c.label} · ${secs(c.startedAt)}`;
+    if (c && !c.endedAt && c.kind === 'fix') return `Round ${r}: fixing ${c.n ?? c.task} of ${c.m ?? t?.m ?? '?'}${(c.elements ?? 1) > 1 ? ` (${c.elements} elements)` : ''}${seen} · ${c.label} · ${secs(c.startedAt)}`;
     if (c && !c.endedAt && c.kind === 'triage') return `Round ${r}: asking ${this.assistantName()} about ${c.label}${seen}${c.m && c.m > 1 ? ` · batch ${c.n ?? c.task} of ${c.m}` : ''} · ${secs(c.startedAt)}`;
     if (step === 'gate' || step === 'commit') return `Round ${r}: fixing ${t?.n ?? ''} of ${t?.m ?? ''}`;
     if (step === 'push') return `Round ${r}: pushing ${n} fix${n === 1 ? '' : 'es'} · ${secs(Date.parse(String(s?.['at'])) || this.now())}`;

@@ -102,6 +102,17 @@ const sh = (cwd, command, env, onData = null, timeoutMs = 0) =>
     });
   });
 
+// A finding's message with its element-specific parts set aside (quoted names, numbers, colours), so
+// the same problem on different elements reads the same.
+export function messageTemplate(message) {
+  return String(message || '')
+    .replace(/"[^"]*"|'[^']*'|“[^”]*”/g, '"…"')
+    .replace(/#[0-9a-f]{3,8}\b/gi, '#…')
+    .replace(/\d+(?:\.\d+)?/g, 'N')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // The check as a build part, run on every fix, and a test part, run once per round: a check of the
 // form "<build> && <test>" splits at its first &&; any other check runs whole on every fix.
 export function splitCheck(check) {
@@ -570,20 +581,35 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       log.info(`triage done: ${byStatus(ledger, 'adequate').length} adequate, ${c.open || 0} open to fix, ${c['needs-human'] || 0} need a person`);
     }
 
-    // Fix open findings, one bounded prompt each.
+    // Fix open findings, one bounded prompt each; findings that are the same problem on different
+    // elements (same test, same message once its element-specific parts are set aside) are one task.
     const open = openFindings(ledger);
-    log.info(`=== round ${round}: fix ${open.length} open finding(s) ===`);
-    ev('step', { round, step: 'fix', count: open.length });
+    const groupOf = new Map();
+    const tasks = [];
+    const byKey = new Map();
+    for (const e of open) {
+      const key = `${e.test}|${messageTemplate(e.message)}`;
+      if (byKey.has(key)) byKey.get(key).push(e);
+      else {
+        const g = [e];
+        byKey.set(key, g);
+        groupOf.set(e, g);
+        tasks.push(e);
+      }
+    }
+    const members = (e) => groupOf.get(e) || [e];
+    log.info(`=== round ${round}: fix ${tasks.length} open finding(s)${tasks.length < tasks.length ? ` as ${tasks.length} task(s)` : ''} ===`);
+    ev('step', { round, step: 'fix', count: tasks.length });
     // One row of the run's changes: the finding, the files the working tree shows changed, what
     // became of them, and how long the assistant and the check took.
     const attemptEvent = (n, entry, a, outcome) => ev('attempt', {
-      round, n, m: open.length, test: entry.test, message: entry.message, files: a.files || [], outcome,
+      round, n, m: tasks.length, test: entry.test, message: entry.message, elements: members(entry).length, files: a.files || [], outcome,
       commit: a.commit || null, agentMs: a.agentMs ?? null, gateMs: a.gateMs ?? null, gateCode: a.gateCode ?? null,
       gateTail: a.gateOutput ? a.gateOutput.split('\n').filter((l) => l.trim()).slice(-15).join('\n') : null,
       ...(a.gateReason ? { reason: a.gateReason } : {}),
     });
     const taskDone = (n, entry, outcome) => {
-      ev('task', { round, n: n + 1, m: open.length, test: entry.test, impact: entry.impact, message: entry.message, state: 'done', outcome });
+      ev('task', { round, n: n + 1, m: tasks.length, test: entry.test, impact: entry.impact, message: entry.message, state: 'done', outcome });
       const a = entry.attempts[entry.attempts.length - 1];
       attemptEvent(n + 1, entry, a, outcome === 'no-change' && a.note === 'agent timed out' ? 'timed-out' : outcome);
       ledgerEvent();
@@ -592,18 +618,19 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     const roundFixed = [];
     // Where the round's commits start: the tests' bisect and a whole-round rollback return here.
     const roundBase = git(cwd, ['rev-parse', 'HEAD']).out;
-    for (const [n, entry] of open.entries()) {
+    for (const [n, entry] of tasks.entries()) {
       if (stopped()) break;
       const label = `${entry.test} ${entry.impact} "${entry.message.slice(0, 70)}"`;
-      log.info(`[${n + 1}/${open.length}] ${label}`);
-      ev('task', { round, n: n + 1, m: open.length, test: entry.test, name: entry.name, impact: entry.impact, message: entry.message, state: 'start', timeoutMs: cfg.agentTimeout, quietMs: cfg.quietAfter });
+      log.info(`[${n + 1}/${tasks.length}] ${label}`);
+      ev('task', { round, n: n + 1, m: tasks.length, test: entry.test, name: entry.name, impact: entry.impact, message: entry.message, elements: members(entry).length, state: 'start', timeoutMs: cfg.agentTimeout, quietMs: cfg.quietAfter });
       const promptFile = join(work, `prompt-r${round}-fix-${n}.md`);
       const resultFile = join(work, `result-r${round}-fix-${n}.json`);
-      writePrompt(promptFile, fixPrompt({ finding: entry, sourceDirs, protectedDirs, resultFile, condition: testInfo(entry.test).condition }));
+      writePrompt(promptFile, fixPrompt({ finding: entry, group: members(entry), sourceDirs, protectedDirs, resultFile, condition: testInfo(entry.test).condition }));
       // The attempt is on record before the assistant starts: one with no outcome is in progress, so
       // after an interruption its uncommitted changes are known to be the loop's (the dashboard's Continue).
       const attempt = { round, startedAt: new Date().toISOString() };
-      entry.attempts.push(attempt);
+      // Every finding of the task gets the attempt (and so the same outcome and commit).
+      for (const e of members(entry)) e.attempts.push(attempt);
       save();
       const res = await withOutput(`r${round}-fix-${n}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout }, round, n + 1, 'fix');
       calls.push(res);
@@ -617,15 +644,16 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       }
       const note = res.result && res.result.note ? String(res.result.note).slice(0, 300) : res.timedOut ? 'agent timed out' : res.quota ? `the assistant's provider refused the call for quota or rate limit (after ${res.quotaRetries} retries)` : `agent exit ${res.code}, no result file`;
       Object.assign(attempt, { n: n + 1, files: changed, note, outcome: 'pending', agentMs: res.durationMs ?? null });
-      if (changed.length) ev('changes', { round, n: n + 1, m: open.length, files: changed });
+      if (changed.length) ev('changes', { round, n: n + 1, m: tasks.length, files: changed });
       if (!changed.length) {
         attempt.outcome = 'no-change';
         log.info(`  no change (${note})`);
-        if (entry.attempts.length >= cfg.maxAttempts) {
-          entry.status = 'needs-human';
-          entry.reason = note;
-          log.warn(`  marked needs-human after ${entry.attempts.length} attempts`);
+        for (const e of members(entry)) {
+          if (e.attempts.length < cfg.maxAttempts) continue;
+          e.status = 'needs-human';
+          e.reason = note;
         }
+        if (entry.status === 'needs-human') log.warn(`  marked needs-human after ${entry.attempts.length} attempts`);
         save();
         taskDone(n, entry, 'no-change');
         continue;
@@ -633,8 +661,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       if (cfg.check && cfg.checkEvery === 'finding') {
         // The build part on every fix; the tests (when the check has them) once for the round.
         log.info(`  checking: ${parts.build}`);
-        ev('step', { round, step: 'gate', n: n + 1, m: open.length, check: parts.build });
-        const gate = await runGate(round, n + 1, open.length, parts.build, parts.test ? 'build' : 'check');
+        ev('step', { round, step: 'gate', n: n + 1, m: tasks.length, check: parts.build });
+        const gate = await runGate(round, n + 1, tasks.length, parts.build, parts.test ? 'build' : 'check');
         attempt.gateMs = gate.durationMs;
         attempt.gateCode = gate.code;
         if (gate.code !== 0) {
@@ -644,18 +672,19 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           log.warn(`  check failed (${gate.reason || `exit ${gate.code}`}); reverting ${changed.join(', ')}`);
           git(cwd, ['checkout', '--', ...sourceDirs]);
           git(cwd, ['clean', '-fdq', '--', ...sourceDirs]);
-          if (entry.attempts.length >= cfg.maxAttempts) {
-            entry.status = 'needs-human';
-            entry.reason = 'the fix broke the build or tests';
+          for (const e of members(entry)) {
+            if (e.attempts.length < cfg.maxAttempts) continue;
+            e.status = 'needs-human';
+            e.reason = 'the fix broke the build or tests';
           }
           save();
           taskDone(n, entry, 'failed-gate');
           continue;
         }
       }
-      ev('step', { round, step: 'commit', n: n + 1, m: open.length });
+      ev('step', { round, step: 'commit', n: n + 1, m: tasks.length });
       git(cwd, ['add', '--', ...sourceDirs]);
-      const msg = `a11y-508: ${entry.test} ${entry.name}: ${entry.message.slice(0, 72)}\n\nPages: ${entry.pages.slice(0, 5).join(', ')}\nSelector: ${entry.selector}\n${note}`;
+      const msg = `a11y-508: ${entry.test} ${entry.name}: ${entry.message.slice(0, 72)}\n\nPages: ${entry.pages.slice(0, 5).join(', ')}\nSelector: ${entry.selector}${members(entry).length > 1 ? `\nElements: ${members(entry).length} (the same problem; ${members(entry).slice(1, 4).map((e) => e.selector).join(', ')}${members(entry).length > 4 ? ', …' : ''} too)` : ''}\n${note}`;
       const c = git(cwd, ['commit', '-q', '-m', msg]);
       if (c.code !== 0) {
         log.warn(`  commit failed: ${c.err}`);
@@ -666,8 +695,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       }
       attempt.commit = git(cwd, ['rev-parse', '--short', 'HEAD']).out;
       attempt.commitFull = git(cwd, ['rev-parse', 'HEAD']).out;
-      ev('commit', { round, n: n + 1, m: open.length, commit: attempt.commit, files: changed });
-      entry.status = 'pending';
+      ev('commit', { round, n: n + 1, m: tasks.length, commit: attempt.commit, files: changed });
+      for (const e of members(entry)) e.status = 'pending';
       committed++;
       roundFixed.push(entry);
       log.info(`  committed ${attempt.commit}: ${changed.join(', ')}`);
@@ -687,8 +716,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         a.gateCode = gate.code;
         if (gate.reason) a.gateReason = gate.reason;
         delete a.commit;
-        e.status = e.attempts.length >= cfg.maxAttempts ? 'needs-human' : 'open';
-        if (e.status === 'needs-human') e.reason = 'the fix broke the tests';
+        for (const x of members(e)) {
+          x.status = x.attempts.length >= cfg.maxAttempts ? 'needs-human' : 'open';
+          if (x.status === 'needs-human') x.reason = 'the fix broke the tests';
+        }
         attemptEvent(a.n ?? 0, e, a, 'failed-gate');
       };
       const live = () => roundFixed.filter((e) => e.attempts[e.attempts.length - 1].commit);
@@ -779,7 +810,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           a.gateCode = gate.code;
           delete a.commit;
           attemptEvent(a.n ?? 0, e, a, 'failed-gate');
-          e.status = e.attempts.length >= cfg.maxAttempts ? 'needs-human' : 'open';
+          for (const x of members(e)) x.status = x.attempts.length >= cfg.maxAttempts ? 'needs-human' : 'open';
         }
         committed = 0;
         save();

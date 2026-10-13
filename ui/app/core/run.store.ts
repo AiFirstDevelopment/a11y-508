@@ -46,6 +46,8 @@ export interface AgentCall {
   quietMs?: number | null;
   // Refused for quota or rate limit: the retry starts at `until`.
   wait?: { until: number; attempt: number; attempts: number } | null;
+  // A fix task can be one problem on several elements.
+  elements?: number;
 }
 
 // The last 64 KB of a call's output are kept.
@@ -283,8 +285,9 @@ export class RunStore {
         this.task.set({ n: ev['n'], m: ev['m'], state: ev['state'] });
         const at = Date.parse(String(ev['at'])) || Date.now();
         if (ev['state'] === 'start') {
-          this.pane(`— Fix ${ev['n']} of ${ev['m']}: ${ev['test']} ${String(ev['message'] || '')} —`, true);
-          this.agentCall.set({ round: ev['round'], task: ev['n'], kind: 'fix', n: ev['n'], m: ev['m'], label: `${ev['test']} ${String(ev['message'] || '').slice(0, 80)}`, startedAt: at, endedAt: null, outcome: null, text: '', lastOutputAt: Date.now(), timeoutMs: ev['timeoutMs'] ?? null, quietMs: ev['quietMs'] ?? null, wait: null });
+          const els = Number(ev['elements']) > 1 ? ` (${ev['elements']} elements)` : '';
+          this.pane(`— Fix ${ev['n']} of ${ev['m']}${els}: ${ev['test']} ${String(ev['message'] || '')} —`, true);
+          this.agentCall.set({ round: ev['round'], task: ev['n'], kind: 'fix', n: ev['n'], m: ev['m'], label: `${ev['test']} ${String(ev['message'] || '').slice(0, 80)}`, startedAt: at, endedAt: null, outcome: null, text: '', lastOutputAt: Date.now(), timeoutMs: ev['timeoutMs'] ?? null, quietMs: ev['quietMs'] ?? null, wait: null, elements: Number(ev['elements']) || 1 });
         } else {
           if (ev['outcome'] === 'no-change') this.pane('No change was made; the finding stays open', true);
           this.agentCall.update((c) => (c && c.kind === 'fix' && c.task === ev['n'] ? { ...c, endedAt: at, outcome: ev['outcome'] || null } : c));

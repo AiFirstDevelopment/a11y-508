@@ -758,7 +758,9 @@ rmSync(repo2, { recursive: true, force: true });
       // The retry is the ledger's next round, and every fix of the first run is verified by it.
       assert.deepEqual(events.filter((e) => e.type === 'round').map((e) => e.round), [2], retry.out);
       const ledger = loadLedger(ledgerFile);
-      for (const m of fixedFirst) assert.equal(Object.values(ledger.findings).find((e) => e.message === m).status, 'verified', m);
+      // The fixes that held are verified by it (a group's commit may not have fixed every element: those are not verified).
+      const statuses = fixedFirst.map((m) => Object.values(ledger.findings).find((e) => e.message === m).status);
+      assert.ok(statuses.filter((x) => x === 'verified').length >= 2, statuses.join(', '));
       // The retried round's fix count: nothing was open, so no assistant call and no new commit.
       const tasks = events.filter((e) => e.type === 'task' && e.state === 'start');
       assert.equal(tasks.length, 0, tasks.map((t) => t.message).join('\n'));
@@ -901,6 +903,38 @@ rmSync(repo2, { recursive: true, force: true });
         assert.equal(iframe.attempts.at(-1).outcome, 'failed-gate');
       });
     }
+    removeOwn(dir);
+  }
+
+  // AC 21: the same problem on four elements is one fix task: one assistant call, one check, one commit, four attempts.
+  {
+    const { dir, g } = appRepo('a11y-508-group-', {});
+    writeFileSync(join(dir, 'site', 'index.html'), "<!doctype html><html lang=\"en\"><head><title>Four images</title></head><body><main><h1>Four images</h1><img src=\"/img/a.png\"><img src=\"/img/b.png\"><img src=\"/img/c.png\"><img src=\"/img/d.png\"></main></body></html>\n");
+    const site = await serve(dir);
+    const url = `http://127.0.0.1:${site.address().port}/`;
+    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', url, check: `${JSON.stringify(process.execPath)} -e 0` }, null, 2));
+    g('commit', '-qam', 'four images without alt');
+    const r = await loopIn(dir, ['--max-rounds', '1', '--events']);
+    site.close();
+    const { events, problems } = parseEvents(r.stdout);
+    check('loop-resilience AC21: four same-test, same-message findings are one task: one call, one check, one commit, four attempts', () => {
+      assert.deepEqual(problems, []);
+      const starts = events.filter((e) => e.type === 'task' && e.state === 'start' && e.test === '7.A' && /no alt attribute/.test(e.message));
+      assert.equal(starts.length, 1, r.out);
+      assert.equal(starts[0].elements, 4);
+      const prompt = readFileSync(join(dir, 'a11y-508-work', `prompt-r1-fix-${starts[0].n - 1}.md`), 'utf8');
+      assert.match(prompt, /These 4 findings are the same problem on different elements; fix the cause once if there is one, otherwise fix each\./);
+      assert.equal(events.filter((e) => e.type === 'gate' && e.state === 'start' && e.n === starts[0].n).length, 1);
+      const attempts = events.filter((e) => e.type === 'attempt' && e.n === starts[0].n);
+      assert.equal(attempts.length, 1);
+      assert.deepEqual([attempts[0].outcome, attempts[0].elements], ['committed', 4]);
+      const ledger = loadLedger(join(dir, 'a11y-508-work', 'ledger.json'));
+      const imgs = Object.values(ledger.findings).filter((e) => e.test === '7.A' && /no alt attribute/.test(e.message));
+      assert.equal(imgs.length, 4);
+      assert.deepEqual(new Set(imgs.map((e) => e.attempts.at(-1).commit)), new Set([attempts[0].commit]));
+      assert.ok(imgs.every((e) => e.status === 'pending'));
+      assert.equal(g('log', '--format=%s', '--grep=^a11y-508: 7.A').split('\n').filter(Boolean).length, 1);
+    });
     removeOwn(dir);
   }
 

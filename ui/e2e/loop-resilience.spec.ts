@@ -272,3 +272,12 @@ test('loop-resilience AC13-18: one pane log for the run, the gate and the commit
     site.close();
   }
 });
+
+test('loop-resilience AC21: the same problem on four elements is one fix task, "(4 elements)" in the status and the Changes list', async ({ page }) => {
+  // The fixture's start page has four inline links told apart only by colour (13.A): one task.
+  await fromReportLoop(page, 'a11y-508-grouped-', {}, { FAKE_AGENT_DELAY_MS: '1500' }, async () => {
+    await expect(page.getByTestId('fix-status')).toHaveText(/^Round 1: fixing \d+ of \d+ \(4 elements\) from the report you just saw · 13\.A /, { timeout: 120_000 });
+    await expect(page.getByTestId('agent-output')).toContainText(/— Fix \d+ of \d+ \(4 elements\): 13\.A /);
+    await expect(page.getByTestId('changes').locator('tr', { hasText: '13.A' }).first()).toContainText('(4 elements)', { timeout: 30_000 });
+  });
+});

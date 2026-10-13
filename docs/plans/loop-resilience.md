@@ -98,6 +98,12 @@ clone): the loop checks it out tracking origin. AC 6's "assistant failed to star
     rolled back. Any other check runs whole on every fix. The Fix step says "Each fix is built; the tests run once
     per round".
 
+21. Open findings with the same test id and the same message (its element-specific parts — quoted text, numbers,
+    colours — set aside) are one fix task: the prompt lists every element and says "These N findings are the same
+    problem on different elements; fix the cause once if there is one, otherwise fix each." The gate and the commit
+    run once and every finding in the group gets the attempt (same commit). The status reads "fixing 1 of 6 (8
+    elements)", the Changes list shows "(8 elements)". Triage stays per item.
+
 ## How this fails silently
 
 1. The nested-branch fallback picks a branch but does not switch to it; commits land on the previous branch.
@@ -145,6 +151,9 @@ clone): the loop checks it out tracking origin. AC 6's "assistant failed to star
     kill — the loop test whose check sleeps past a 2 s checkTimeout fails (it takes the full sleep).
 20. (a) Run the tests per fix again — the loop test counting test-script runs fails; (b) skip the bisect — the loop
     test where fix 2 of 3 breaks the tests (expects fixes 1 and 3 committed, fix 2 failed-gate) fails.
+
+21. Group only by object identity (no grouping) — the loop test with four same-test/same-message findings
+    (one call, one check, four attempts with one commit) and the Playwright test asserting "(4 elements)" fail.
 
 ## Non-goals
 
