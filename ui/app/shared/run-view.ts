@@ -2,6 +2,7 @@ import { Component, OnDestroy, computed, inject, input, signal } from '@angular/
 import { RouterLink } from '@angular/router';
 import { AreaChartModule } from '@swimlane/ngx-charts';
 import { RunStore } from '../core/run.store';
+import { EnvStore } from '../core/env.store';
 import { skippedText, foundText, phaseText, progressLabel, routeParts, shortUrl, SOFT_404_TITLE } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { IMPACTS } from '../core/types';
@@ -124,6 +125,7 @@ export class RunView implements OnDestroy {
   readonly quoted = skippedText;
 
   readonly store = inject(RunStore);
+  private env = inject(EnvStore);
   readonly showChart = input(true);
   readonly rawOpen = signal(false);
   readonly animations = !prefersReducedMotion();
@@ -152,7 +154,7 @@ export class RunView implements OnDestroy {
     const s = this.store;
     if (s.done()) return '';
     const since = s.loginWaitingSince();
-    if (s.loginWaiting() && since) return `Waiting for you to sign in in the browser window · ${Math.max(0, Math.round((this.now() - since) / 1000))} s`;
+    if (s.loginWaiting() && since) return `${this.env.env()?.signIn === 'tab' ? 'Sign in in the tab that just opened' : 'Waiting for you to sign in in the browser window'} · ${Math.max(0, Math.round((this.now() - since) / 1000))} s`;
     const f = this.flight().sort((a, b) => b.receivedAt - a.receivedAt)[0];
     return f ? `${phaseText(f)} · ${this.secs(f)}` : '';
   });

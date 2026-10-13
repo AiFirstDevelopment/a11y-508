@@ -7,6 +7,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Cdp, Session } from './cdp.mjs';
+import { WebSocketClient, cdpStreams } from './ws.mjs';
 
 const CANDIDATES = {
   darwin: [
@@ -264,4 +265,74 @@ async function startBrowser({ exe, viewport, noSandbox, headless, launchTimeout 
   }
 
   return { exe, proc, cdp, version, userDataDir, newPage, closePage, close };
+}
+
+// Attaches to a browser that is already running (--connect <port | ws://…>): the dashboard's own
+// window. Tabs open in that window (newWindow: false) and come to the front; close() closes the
+// tabs this run opened, never the browser, and brings the tab whose URL starts with
+// A11Y_508_RETURN_URL (the dashboard's) back to the front.
+export async function connectChrome(target, { returnUrl = process.env.A11Y_508_RETURN_URL || null } = {}) {
+  let wsUrl = String(target);
+  if (/^\d+$/.test(wsUrl)) {
+    const res = await fetch(`http://127.0.0.1:${wsUrl}/json/version`).catch((e) => {
+      throw new Error(`no browser is listening on port ${target} (${e.message})`);
+    });
+    const v = await res.json();
+    wsUrl = v.webSocketDebuggerUrl;
+  }
+  const ws = await WebSocketClient.connect(wsUrl);
+  const { reader, writer } = cdpStreams(ws);
+  const cdp = new Cdp(writer, reader);
+  const version = await cdp.send('Browser.getVersion');
+  const opened = new Set();
+  // A tab handed over by the sign-in (it keeps its page; the crawl continues in it).
+  let handoff = null;
+
+  async function newPage() {
+    if (handoff) {
+      const s = handoff;
+      handoff = null;
+      return s;
+    }
+    const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', newWindow: false });
+    opened.add(targetId);
+    const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    await cdp.send('Target.activateTarget', { targetId }).catch(() => {});
+    return new Session(cdp, sessionId, targetId);
+  }
+
+  async function closePage(session) {
+    session.detachAll();
+    opened.delete(session.targetId);
+    try {
+      await cdp.send('Target.closeTarget', { targetId: session.targetId });
+    } catch {}
+  }
+
+  async function close() {
+    for (const targetId of [...opened]) {
+      try {
+        await Promise.race([cdp.send('Target.closeTarget', { targetId }), delay(2000)]);
+      } catch {}
+    }
+    opened.clear();
+    if (returnUrl) {
+      try {
+        const { targetInfos } = await cdp.send('Target.getTargets');
+        const back = targetInfos.find((t) => t.type === 'page' && t.url.startsWith(returnUrl));
+        if (back) await cdp.send('Target.activateTarget', { targetId: back.targetId });
+      } catch {}
+    }
+    ws.close();
+    return { userDataDir: null, removed: true };
+  }
+
+  return {
+    exe: version.product, proc: null, cdp, version, userDataDir: null, connected: true, newPage, closePage, close,
+    // The sign-in's tab, kept for the crawl (see login.mjs keepOpen).
+    handOver(session) {
+      handoff = session;
+      opened.add(session.targetId);
+    },
+  };
 }

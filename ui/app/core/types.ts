@@ -93,6 +93,8 @@ export interface EnvInfo {
   // The dashboard's own directory for this working directory, and files it may have left in it before.
   stateDir?: string;
   pastRuns?: number;
+  // Where a sign-in opens: a tab in the dashboard's own window, or a window of its own.
+  signIn?: 'tab' | 'window' | 'separate-window';
   legacy?: string[];
   session: { exists: boolean; file: string; ageMs?: number; capturedAt?: string | null; origins?: string[] };
   report: { exists: boolean; finishedAt?: string; baseUrl?: string };

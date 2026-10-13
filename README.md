@@ -57,6 +57,10 @@ Then, in the browser, a wizard across the top: **1 Set up → 2 Crawl → 3 Resu
 
 Settings beyond these (a token or cookies instead of signing in, page limits, include and exclude patterns, every crawl flag, the loop's settings) are at `/run/advanced` and `/fix-loop/settings`; nothing links to them.
 
+#### The dashboard runs in its own browser window
+
+`npm run ui` opens the dashboard in a Chrome window of its own, with a persistent profile at `~/.a11y-508/browser-profile` (`%APPDATA%\a11y-508\browser-profile` on Windows) and a DevTools port. Every crawl's sign-in and pages are tabs in that same window (the CLI's `--connect <port>`): Start opens a tab, you sign in there if the portal asks ("Sign in in the tab that just opened · 12 s"), the crawl continues in that tab, one page at a time, and the tab closes when it is done, leaving the dashboard's. Because the profile persists, the portal's sign-in is usually remembered from one launch to the next, and the tab goes straight to the app. Closing that window ends the dashboard; Ctrl+C in the terminal closes the window. The fix loop's first round signs in the same way; its later rounds crawl headless with the saved session. Without Chrome (or with `A11Y_508_OWN_BROWSER=0`, or `--no-open`), your usual browser opens the address and the sign-in opens a separate window.
+
 #### Where the dashboard keeps its files
 
 The dashboard writes nothing of its own into the app's repository. Its loop config (`config.json`), the sign-in session (`state.json`) and your remembered choices (`settings.json`) are kept per working directory in `~/.a11y-508/<12 hex of the directory's path>/` (`%APPDATA%\a11y-508\…` on Windows), and the dashboard passes `--config` and `--state` with those paths. If the repository has its own `a11y-508.config.json` (a team's, for CI), the dashboard uses it as is and never writes to it. The outputs, `a11y-508-report/`, `a11y-508-history/` and `a11y-508-work/`, stay in the working directory, where the CLI and the runbook expect them, and the dashboard adds them to the repository's `.git/info/exclude` (local to your clone, never committed). Files an earlier version left in the repository are moved out after you confirm. The CLI run by hand keeps its defaults (`a11y-508-state.json`, `a11y-508.config.json` in the current directory).
@@ -111,6 +115,10 @@ a11y-508 <url> [options]
   --login-only             Sign in and save the session file, then exit without crawling
   --stay                   With --login: keep the signed-in window and crawl in it (one
                            tab), so whatever the sign-in set up is used as it is
+  --connect <port|ws://…>  Use a browser that is already running (started with
+                           --remote-debugging-port): tabs open in its window, one at a
+                           time, and are closed at the end; the browser stays open.
+                           With --login the sign-in tab is where the crawl continues
   --troubleshoot           Load only the start URL with the configured auth and explain
                            what happened (redirects, storage keys the app read, cookies,
                            whether the header went out) with the next step to take

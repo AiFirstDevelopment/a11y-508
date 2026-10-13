@@ -6,6 +6,7 @@ import { phaseText, resultWord, routeParts } from '../core/format';
 import { detailsOpen, setDetailsOpen } from '../core/details';
 import { RunView } from '../shared/run-view';
 import { SignInFlow } from '../core/sign-in';
+import { EnvStore } from '../core/env.store';
 
 @Component({
   selector: 'app-live-screen',
@@ -23,6 +24,9 @@ import { SignInFlow } from '../core/sign-in';
       </div>
       <p data-testid="crawl-counts">{{ counts() }}</p>
       <p class="hint" data-testid="crawl-elapsed">{{ elapsed() }}</p>
+      @if (env.env()?.signIn === 'separate-window' && store.loginWaiting() && store.active()) {
+        <p class="hint" data-testid="separate-window">The sign-in is in a separate browser window (Chrome was not found for the dashboard's own window).</p>
+      }
       @if (signInError()) {
         <div class="notice error" role="alert">{{ signInError() }}</div>
       }
@@ -62,6 +66,7 @@ export class LiveScreen implements OnDestroy {
   private form = inject(FormStore);
   private router = inject(Router);
   private flow = inject(SignInFlow);
+  readonly env = inject(EnvStore);
   readonly signInError = signal('');
   // Details (the command, the chart, the pages table, notices, raw output): closed by default.
   readonly showDetails = signal(detailsOpen('crawl'));
@@ -104,7 +109,10 @@ export class LiveScreen implements OnDestroy {
     }
     if (st.stopping()) return 'Stopping…';
     const since = st.loginWaitingSince();
-    if (st.loginWaiting() && since) return `Waiting for you to sign in in the browser window · ${Math.max(0, Math.round((this.now() - since) / 1000))} s`;
+    if (st.loginWaiting() && since) {
+      const s = Math.max(0, Math.round((this.now() - since) / 1000));
+      return this.env.env()?.signIn === 'tab' ? `Sign in in the tab that just opened · ${s} s` : `Waiting for you to sign in in the browser window · ${s} s`;
+    }
     const f = Object.values(st.inFlight()).sort((a, b) => b.receivedAt - a.receivedAt)[0];
     if (!f) return 'Starting the browser';
     const path = routeParts(f.url).path;

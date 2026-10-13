@@ -56,6 +56,7 @@ export function authArgs(auth = { mode: 'none' }) {
   const mode = (auth && auth.mode) || 'none';
   if (!AUTH_MODES.includes(mode)) throw new BadRequest(`unknown auth mode "${mode}"`);
   // The dashboard's Sign in: sign in in a visible window, save the session, and crawl in that window.
+  if (mode === 'signin' && auth.connect) return { args: ['--connect', String(auth.connect), '--login', '--state', auth.file || DEFAULT_STATE_FILE], token: 'none' };
   if (mode === 'signin') return { args: ['--login', '--stay', '--state', auth.file || DEFAULT_STATE_FILE], token: 'none' };
   if (mode === 'state') return { args: ['--state', auth.file || DEFAULT_STATE_FILE], token: 'none' };
   if (mode === 'cookies') {
@@ -91,7 +92,7 @@ export function crawlArgs({ kind = 'crawl', url, options, auth }) {
   return { args, token: a.token };
 }
 
-export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = false, config = null, stateFile = null }) {
+export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = false, config = null, stateFile = null, connect = null }) {
   const a = authArgs(auth);
   const args = ['loop'];
   if (url) args.push(validateUrl(url));
@@ -109,6 +110,8 @@ export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = 
   const crawl = [...optionArgs(options), ...a.args];
   // The session file (the dashboard's own): every round's crawl uses it, and --sign-in-first saves it.
   if (stateFile && !crawl.some((x) => /^--(state|login|login-only|cookie)$/.test(x))) crawl.push('--state', stateFile);
+  // The first round's sign-in in the dashboard's own browser (the loop uses it for round 1 only).
+  if (connect) crawl.push('--connect', String(connect));
   args.push(...crawl);
   try {
     parseArgs(crawl);

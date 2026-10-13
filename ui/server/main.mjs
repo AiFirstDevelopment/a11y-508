@@ -5,6 +5,10 @@
 // has to be installed.
 
 import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { findChrome } from '../../src/chrome.mjs';
+import { stateBase } from './state-dir.mjs';
 import { resolve } from 'node:path';
 import { createDashboard } from './app.mjs';
 import { realDir } from './dirs.mjs';
@@ -67,12 +71,68 @@ function openBrowser(url) {
     process.stdout.write('could not open a browser; open the address above by hand\n');
   }
 }
-if (opt.open) openBrowser(dash.url);
+// The dashboard in a browser of its own: Chrome with a persistent profile (so a sign-in to the
+// app's portal is kept from one launch to the next) and a DevTools port, so every crawl's sign-in
+// and pages open as tabs in this same window (the CLI's --connect). Without Chrome, or with
+// A11Y_508_OWN_BROWSER=0, the system's browser opens the address as before, and sign-in opens a
+// separate window.
+async function launchOwnBrowser(url) {
+  let exe;
+  try {
+    exe = findChrome();
+  } catch {
+    return null;
+  }
+  const profile = join(stateBase(), 'browser-profile');
+  mkdirSync(profile, { recursive: true });
+  const portFile = join(profile, 'DevToolsActivePort');
+  rmSync(portFile, { force: true });
+  const proc = spawn(exe, ['--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--window-name=a11y-508', '--new-window', url], { stdio: 'ignore' });
+  let exited = false;
+  proc.on('exit', () => (exited = true));
+  proc.on('error', () => (exited = true));
+  for (let i = 0; i < 150; i++) {
+    if (existsSync(portFile)) {
+      const port = readFileSync(portFile, 'utf8').split('\n')[0].trim();
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/json/version`);
+        if (res.ok) return { proc, port: Number(port), shared: exited };
+      } catch {}
+    }
+    if (exited && i > 20) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  try {
+    proc.kill();
+  } catch {}
+  return null;
+}
+
+let own = null;
+if (opt.open && process.env.A11Y_508_OWN_BROWSER !== '0') {
+  own = await launchOwnBrowser(dash.url);
+  if (own) {
+    dash.useBrowser(own.port);
+    process.stdout.write(`opened in its own browser window (profile ${join(stateBase(), 'browser-profile')}); sign-in opens as a tab there\n`);
+    // Closing that browser ends the dashboard.
+    if (!own.shared) own.proc.on('exit', () => shutdown());
+  } else {
+    dash.useBrowser(null, { separate: true });
+    process.stdout.write('Chrome was not found for a window of its own; opening your browser, and sign-in will open a separate window\n');
+  }
+}
+if (opt.open && !own) openBrowser(dash.url);
 
 let closing = false;
 const shutdown = async () => {
   if (closing) process.exit(130);
   closing = true;
+  // Ctrl+C closes the dashboard's own browser too.
+  if (own && !own.shared) {
+    try {
+      own.proc.kill();
+    } catch {}
+  }
   await dash.close();
   process.exit(0);
 };

@@ -253,7 +253,12 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // The session file: the one the crawl options name (the dashboard passes its own), else the config's.
   const named = passthrough.indexOf('--state');
   const stateFile = named >= 0 && passthrough[named + 1] ? passthrough[named + 1] : cfg.state;
-  const signInArgs = ['--login', '--stay', '--state', stateFile];
+  // --connect (the dashboard's own browser): round 1 signs in and crawls in a tab of that window;
+  // no later round uses it.
+  const ci = passthrough.indexOf('--connect');
+  const connectArgs = ci >= 0 && passthrough[ci + 1] ? ['--connect', passthrough[ci + 1]] : [];
+  if (ci >= 0) passthrough = passthrough.filter((a, i) => i !== ci && i !== ci + 1);
+  const signInArgs = connectArgs.length ? [...connectArgs, '--login', '--state', stateFile] : ['--login', '--stay', '--state', stateFile];
   let session = sessionArgs(cfg, passthrough, cwd);
   if (signInFirst) log.info(`round 1 signs in first in a visible window; the later rounds crawl with the saved session ${stateFile}`);
   else if (session.length) log.info(`crawling with the saved session ${session[1]}`);

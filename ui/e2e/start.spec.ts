@@ -33,7 +33,8 @@ test('AC 1: npm run ui from a clean copy, no install, serves on 127.0.0.1 and op
   // npm is npm.cmd on Windows, which only a shell can run.
   const proc = spawn(WIN ? `"${join(nodeDir, 'npm.cmd')}"` : join(nodeDir, 'npm'), ['run', 'ui', '--', '--port', '0'], {
     cwd: clone,
-    env: { ...process.env, ...openEnv, PATH: systemPath(bin, nodeDir), TOKEN: '' },
+    // The system's browser (the recorded open), not a window of the dashboard's own: that is own-browser.spec.
+    env: { ...process.env, ...openEnv, PATH: systemPath(bin, nodeDir), TOKEN: '', A11Y_508_OWN_BROWSER: '0', A11Y_508_HOME: tempDir('a11y-508-home-') },
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: WIN,
     // Its own process group, so stopping it reaches npm, its sh and the server, as Ctrl+C does.

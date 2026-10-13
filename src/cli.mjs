@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launchChrome, browserField } from './chrome.mjs';
+import { launchChrome, browserField, connectChrome } from './chrome.mjs';
 import { crawl } from './crawler.mjs';
 import { interactiveLogin, loadState, saveState, stateSummary } from './login.mjs';
 import { troubleshoot, formatTroubleshoot } from './troubleshoot.mjs';
@@ -53,6 +53,10 @@ Options
   --login-only             Sign in and save the session file, then exit without crawling
   --stay                   With --login: keep the signed-in window and crawl in it (one
                            tab), so whatever the sign-in set up is used as it is
+  --connect <port|ws://…>  Use a browser that is already running (started with
+                           --remote-debugging-port): tabs open in its window, one at a
+                           time, and are closed at the end; the browser stays open.
+                           With --login the sign-in tab is where the crawl continues
   --troubleshoot           Load only the start URL with the configured auth and explain
                            what happened (redirects, storage keys the app read, cookies,
                            whether the header went out) with the next step to take
@@ -113,7 +117,7 @@ export function parseArgs(argv) {
   const o = {
     url: null, maxPages: 200, maxDepth: 10, concurrency: 4, include: [], exclude: [], failOn: ['critical', 'serious'],
     out: 'a11y-508-report', viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
-    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stay: false, stateFile: null, troubleshoot: false, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
+    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stay: false, connect: null, stateFile: null, troubleshoot: false, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
     maxTabs: 400, maxActivations: 12, maxClicks: 30, followClicks: true, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false, events: false,
     listTests: false, help: false, version: false, wcag: '2.0',
   };
@@ -176,6 +180,7 @@ export function parseArgs(argv) {
       case '--login': o.login = true; break;
       case '--login-only': o.login = true; o.loginOnly = true; break;
       case '--stay': o.stay = true; break;
+      case '--connect': o.connect = next(a); break;
       case '--troubleshoot': case '--trouble-shoot': case '--diagnose': o.troubleshoot = true; break;
       case '--state': o.stateFile = next(a); break;
       case '--cookie': {
@@ -216,6 +221,8 @@ export function parseArgs(argv) {
         o.url = a;
     }
   }
+  if (o.connect && o.login && !o.loginOnly) o.stay = true;
+  if (o.connect && !/^(\d+|wss?:\/\/\S+)$/.test(o.connect)) throw new Error('--connect expects a port number or a ws:// URL');
   if (o.stay && !o.login) throw new Error('--stay keeps the sign-in window to crawl in; use it with --login');
   if (o.stay && o.loginOnly) throw new Error('--stay crawls in the sign-in window; --login-only does not crawl, so use --login --stay');
   return o;
@@ -382,7 +389,9 @@ async function run(argv) {
   opts.cookieOrigins = opts.cookies.length ? [...origins] : [];
   if (opts.cookies.length) log.info(`cookies: setting ${opts.cookies.map((c) => c.name).join(', ')} on ${[...origins].join(', ')}`);
 
-  const launch = (headless) => launchChrome({ chromePath: opts.chrome, viewport: opts.viewport, noSandbox: opts.noSandbox, headless });
+  // --connect: the running browser (its window), one tab at a time.
+  if (opts.connect) opts.concurrency = 1;
+  const launch = (headless) => (opts.connect ? connectChrome(opts.connect) : launchChrome({ chromePath: opts.chrome, viewport: opts.viewport, noSandbox: opts.noSandbox, headless }));
   // fast: the Stop path (an interrupt): a short grace, then the browser's process tree is killed.
   const closeBrowser = async (b, { fast = false } = {}) => {
     const { removed, userDataDir } = await b.close({ fast });
@@ -515,6 +524,8 @@ async function run(argv) {
       ...(opts.wcag !== '2.0' ? { wcag: opts.wcag } : {}),
       // Recorded only for a crawl that ran in the signed-in, visible window (--login --stay).
       ...(stayBrowser && browser === stayBrowser ? { stay: true } : {}),
+      // Recorded only for a crawl in a browser that was already running (--connect).
+      ...(opts.connect ? { connected: true } : {}),
     },
     passed,
     summary,

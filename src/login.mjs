@@ -116,6 +116,11 @@ export async function interactiveLogin({ browser, startUrl, origins, timeout, lo
   );
   // --stay keeps the tab, so the window stays on screen while the crawl opens its own tab beside it.
   if (!keepOpen) await browser.closePage(session).catch(() => {});
+  // Attached to a running browser (--connect), the crawl continues in this very tab.
+  else if (browser.handOver) {
+    session.detachAll();
+    browser.handOver(session);
+  }
   return { version: STATE_VERSION, capturedAt: new Date().toISOString(), origins: [origin], cookies: kept, storage: { [origin]: storage } };
 }
 

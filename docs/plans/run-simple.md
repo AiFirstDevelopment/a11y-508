@@ -134,3 +134,17 @@ working directory is checked to hold neither); the self-audit also crawls /fix-l
 (the Fix step is not offered outside a repository); AC 12 seeds the session and config through
 the dashboard; loop AC 14 also checks See what changed / Run again and that Run again returns
 the wizard to Crawl with Results, Fix and History unavailable.
+
+## The dashboard's own browser, and --connect
+
+`ui/server/main.mjs` launches Chrome (persistent profile `~/.a11y-508/browser-profile`,
+`--remote-debugging-port=0`, read from `DevToolsActivePort`) on the dashboard's address; the
+server ends with that browser, and Ctrl+C closes it. The CLI's `--connect <port|ws://…>` attaches
+over a plain-Node WebSocket client (`src/ws.mjs`, tested by `test/ws.mjs`): tabs in the existing
+window (`newWindow: false`), `--concurrency 1`, the sign-in tab handed over to the crawl
+(`--login` implies `--stay`), its tabs closed at the end and the dashboard's tab
+(`A11Y_508_RETURN_URL`) brought back. The server passes `--connect <port> --login --state …` for
+the wizard's crawls and the loop's first round. e2e: `connect.spec.ts` (a Chrome launched with
+`--remote-debugging-port=0`: a tab appeared, ≥3 pages audited, its tabs closed, the browser still
+open) and `own-browser.spec.ts` (the server without `--no-open`: dashboard and crawl tab in one
+window). `start.spec.ts` sets `A11Y_508_OWN_BROWSER=0` to keep testing the system browser path.

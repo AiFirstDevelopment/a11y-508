@@ -53,7 +53,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
   // cwd is the working directory every handler reads at the time of each
   // request. It is set in exactly two places: here at launch (--dir, else
   // process.cwd()), and by PUT /api/cwd. launchDir is where it started.
-  const state = { cwd: resolve(startDir), launchDir: resolve(startDir), token: null, port: null, presets: null, detecting: null, lastTest: {}, shell: null };
+  const state = { browserPort: null, separateSignIn: false, cwd: resolve(startDir), launchDir: resolve(startDir), token: null, port: null, presets: null, detecting: null, lastTest: {}, shell: null };
   // The shell the shown command line is written for; looked up once.
   const shellKind = () => (state.shell ||= detectShell(env, platform)).kind;
   const runs = new Runs({ onExit: () => {} });
@@ -161,6 +161,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
   // ---- the run environment: TOKEN only when this run is meant to send it
   const childEnv = (tokenMode) => {
     const e = { ...env };
+    // A crawl attached to the dashboard's browser brings the dashboard's tab back when it ends.
+    if (state.browserPort && state.port) e.A11Y_508_RETURN_URL = `http://127.0.0.1:${state.port}/`;
     delete e.TOKEN;
     if (tokenMode === 'form') {
       if (!state.token) throw new BadRequest('enter a token, or choose another way to sign in');
@@ -189,6 +191,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     // The sign-in session lives in the dashboard's own directory, never in the repository.
     let auth = body.auth || { mode: 'none' };
     if (['state', 'signin'].includes(auth.mode) || kind === 'login') auth = { ...auth, file: sp().state };
+    // In the dashboard's own browser, the sign-in and the crawl are tabs in its window (--connect).
+    if (auth.mode === 'signin' && state.browserPort) auth = { ...auth, connect: state.browserPort };
     if (auth.mode === 'token' && typeof auth.token === 'string' && auth.token.trim()) state.token = auth.token.trim();
     let built;
     let meta;
@@ -204,7 +208,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       else if (resolved && body.agent) agentArg = body.agent;
       // The config and the session from the dashboard's directory (or the repository's own config).
       const signIn = body.signIn === true;
-      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null });
+      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null, connect: signIn ? state.browserPort : null });
       meta = { agent: resolved };
     } else {
       built = crawlArgs({ kind, url: body.url, options: body.options, auth });
@@ -296,6 +300,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       // Crawls and fix rounds on record (History has something to show).
       pastRuns: listReports(cwd).length,
       tokenInEnv: !!env.TOKEN, tokenHeld: !!state.token,
+      // Where a sign-in opens: a tab in the dashboard's own window, or a separate window.
+      signIn: state.browserPort ? 'tab' : state.separateSignIn ? 'separate-window' : 'window',
       shell: d.shell, npmPrefix: d.npmPrefix, detectedAt: d.detectedAt,
       // runCommand: what a person can paste into their shell to run the assistant by hand, on the
       // prompt file the loop writes (a11y-508-work/prompt.md stands for the next task's file).
@@ -533,7 +539,14 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     return new Promise((r) => server.close(() => r()));
   }
 
-  return { server, secret, listen, close, runs, build, detect, get port() { return state.port; }, get url() { return `http://127.0.0.1:${state.port}/#secret=${secret}`; } };
+  // The dashboard's own browser (main.mjs): its DevTools port, for --connect; or none, with
+  // { separate: true } when it was looked for and not found.
+  function useBrowser(port, { separate = false } = {}) {
+    state.browserPort = port || null;
+    state.separateSignIn = !port && separate;
+  }
+
+  return { server, secret, listen, close, runs, build, detect, useBrowser, get port() { return state.port; }, get url() { return `http://127.0.0.1:${state.port}/#secret=${secret}`; } };
 }
 
 export { REPORT_DIR };
