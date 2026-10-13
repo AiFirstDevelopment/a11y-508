@@ -83,6 +83,15 @@ export class Runs {
     return !!(this.current && this.current.status === 'running');
   }
 
+  // A run that is not this server's child (run-journal.mjs): started detached, or found again
+  // after a restart. It ends through its own stop/continue/kill.
+  adopt(run) {
+    if (this.active) throw new BadRequest(`a ${this.current.kind} run is already active`, 409);
+    this.current = run;
+    run.onEnd = () => this.onExit && this.onExit(run);
+    return run;
+  }
+
   // spec: { kind, file, args, env, cwd, secrets, meta, finish }
   start(spec) {
     if (this.active) throw new BadRequest(`a ${this.current.kind} run is already active`, 409);
@@ -189,6 +198,7 @@ export class Runs {
   stop() {
     const run = this.current;
     if (!this.active) throw new BadRequest('no run is active', 409);
+    if (run.journal) return run.stop();
     run.stopRequests++;
     const sig = run.stopRequests === 1 ? 'SIGINT' : 'SIGTERM';
     this.push(run, { type: 'stopping', signal: sig });
@@ -212,6 +222,7 @@ export class Runs {
 
   continue() {
     if (!this.active) throw new BadRequest('no run is active', 409);
+    if (this.current.journal) return this.current.continue();
     this.current.child.stdin.write('\n');
   }
 
@@ -235,6 +246,7 @@ export class Runs {
   }
 
   killAll() {
+    if (this.active && this.current.journal) return this.current.kill();
     if (this.active) this.signal('SIGKILL');
   }
 }

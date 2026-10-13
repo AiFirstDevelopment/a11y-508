@@ -8,3 +8,4 @@ import './state-dir.test.mjs';
 import './guard.test.mjs';
 import './review.test.mjs';
 import './startup.test.mjs';
+import './resume.test.mjs';

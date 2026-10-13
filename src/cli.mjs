@@ -112,6 +112,8 @@ Fix loop
     --from-report <file>  Round 1 starts from this report.json instead of crawling (it must be
                        for the config's URL and newer than the loop's last commit); round 2
                        crawls to verify the fixes
+    --resume           Go on with the ledger's last round where it was interrupted: its open
+                       findings are fixed with no new crawl; the next round crawls
   status        Print the ledger: what is open, pending, verified, and needs a person.
 
 Exit codes
@@ -242,7 +244,7 @@ export function parseArgs(argv) {
 export function splitLoopArgs(argv) {
   const [command, ...rest] = argv;
   if (command !== 'loop' && command !== 'status') return null;
-  const loop = { command, config: 'a11y-508.config.json', maxRounds: 20, agent: null, dryRun: false, signInFirst: false, fromReport: null, help: false };
+  const loop = { command, config: 'a11y-508.config.json', maxRounds: 20, agent: null, dryRun: false, signInFirst: false, fromReport: null, resume: false, help: false };
   const remaining = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -259,6 +261,7 @@ export function splitLoopArgs(argv) {
     else if (key === '--dry-run') loop.dryRun = true;
     else if (key === '--sign-in-first') loop.signInFirst = true;
     else if (key === '--from-report') loop.fromReport = val();
+    else if (key === '--resume') loop.resume = true;
     else if (key === '-h' || key === '--help') loop.help = true;
     else remaining.push(a);
   }
@@ -311,7 +314,7 @@ async function loopMain(split) {
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
   try {
-    return await runLoop({ config, cwd: process.cwd(), log, maxRounds: loop.maxRounds, dryRun: loop.dryRun, signInFirst: loop.signInFirst, fromReport: loop.fromReport, passthrough, stopSignal, events });
+    return await runLoop({ config, cwd: process.cwd(), log, maxRounds: loop.maxRounds, dryRun: loop.dryRun, signInFirst: loop.signInFirst, fromReport: loop.fromReport, resume: loop.resume, passthrough, stopSignal, events });
   } finally {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);

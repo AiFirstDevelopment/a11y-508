@@ -8,9 +8,9 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { findChrome } from '../../src/chrome.mjs';
-import { readGlobal, rememberedStart, stateBase, writeGlobal } from './state-dir.mjs';
+import { readGlobal, readSettings, rememberedStart, stateBase, writeGlobal, writeJson } from './state-dir.mjs';
 import { resolve } from 'node:path';
-import { createDashboard } from './app.mjs';
+import { SECRET_HEADER, createDashboard } from './app.mjs';
 import { realDir } from './dirs.mjs';
 
 const argv = process.argv.slice(2);
@@ -63,12 +63,60 @@ if (opt.dir === null && process.env.A11Y_508_NO_RESTORE !== '1') {
 } else if (opt.dir !== null) {
   writeGlobal({ lastCwd: cwd });
 }
-const dash = createDashboard({ cwd, restored });
+
+// One dashboard per port. A launch while one is serving the port opens that one (its window, at its
+// address) instead of failing or starting a second, and says so. ~/.a11y-508/server-<port>.json
+// (owner-only, like the session) holds the running one's address; it answers /api/ping with its pid.
+const serverFile = (port) => join(stateBase(), `server-${port}.json`);
+async function runningOn(port) {
+  if (!port) return null;
+  const rec = readSettings(serverFile(port));
+  if (!rec.secret || !rec.pid) return null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/ping`, { headers: { [SECRET_HEADER]: rec.secret }, signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j && j.pid === rec.pid ? { ...rec, cwd: j.cwd || rec.cwd } : null;
+  } catch {
+    return null;
+  }
+}
+const existing = await runningOn(opt.port);
+if (existing) {
+  const url = `http://127.0.0.1:${opt.port}/#secret=${existing.secret}`;
+  process.stdout.write(`a11y-508 dashboard is already running for ${existing.cwd} (process ${existing.pid}); using it instead of starting another\n`);
+  if (opt.dir !== null && existing.cwd !== cwd) process.stdout.write(`it is working in ${existing.cwd}; choose ${cwd} on its Set up step\n`);
+  process.stdout.write(`open: ${url}\n`);
+  if (opt.open) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${opt.port}/api/open`, { method: 'POST', headers: { [SECRET_HEADER]: existing.secret }, signal: AbortSignal.timeout(30000) });
+      process.stdout.write(res.ok ? 'opened it in the browser\n' : 'could not open a browser; open the address above by hand\n');
+    } catch {
+      process.stdout.write('could not open a browser; open the address above by hand\n');
+    }
+  }
+  process.exit(0);
+}
+
+let own = null;
+let closing = false;
+const dash = createDashboard({ cwd, restored, onQuit: () => quit(), onOpen: () => reopen() });
 await dash.listen(opt.port);
 if (dash.build.fresh === false) process.stdout.write(`warn ${dash.build.reason}\n`);
 process.stdout.write(`a11y-508 dashboard for ${cwd}${restored ? ' (the folder chosen last time)' : ''}\n`);
 process.stdout.write(`open: ${dash.url}\n`);
-process.stdout.write('This address carries a one-time secret for this launch; keep it to yourself. Press Ctrl+C to stop.\n');
+process.stdout.write('This address carries a one-time secret for this launch; keep it to yourself. Press Ctrl+C to stop, or Quit in the dashboard.\n');
+const myServerFile = serverFile(dash.port);
+try {
+  writeJson(myServerFile, { pid: process.pid, port: dash.port, secret: dash.secret, cwd, startedAt: new Date().toISOString() });
+} catch {}
+const forgetServerFile = () => {
+  try {
+    if (readSettings(myServerFile).pid === process.pid) rmSync(myServerFile, { force: true });
+  } catch {}
+};
+if (dash.runs.current && dash.runs.current.status === 'running') process.stdout.write(`a ${dash.runs.current.kind} run started earlier is still running; the dashboard shows it\n`);
+else if (dash.runs.current && dash.runs.current.status === 'interrupted') process.stdout.write(`the fix loop started earlier was interrupted; the Fix step offers to continue it\n`);
 
 function openBrowser(url) {
   // start's first quoted argument is a window title. Node writes an empty
@@ -108,7 +156,7 @@ async function launchOwnBrowser(url) {
       const port = readFileSync(portFile, 'utf8').split('\n')[0].trim();
       try {
         const res = await fetch(`http://127.0.0.1:${port}/json/version`);
-        if (res.ok) return { proc, port: Number(port), shared: exited };
+        if (res.ok) return { proc, port: Number(port), shared: exited, exe, profile };
       } catch {}
     }
     if (exited && i > 20) break;
@@ -119,28 +167,57 @@ async function launchOwnBrowser(url) {
   } catch {}
   return null;
 }
+const ownAlive = () => !!(own && !own.shared && own.proc.exitCode === null && own.proc.signalCode === null);
 
-let own = null;
-if (opt.open && process.env.A11Y_508_OWN_BROWSER !== '0') {
-  own = await launchOwnBrowser(dash.url);
-  if (own) {
-    dash.useBrowser(own.port);
-    process.stdout.write(`opened in its own browser window (profile ${join(stateBase(), 'browser-profile')}); sign-in opens as a tab there\n`);
-    // Closing that browser ends the dashboard.
-    if (!own.shared) own.proc.on('exit', () => shutdown());
-  } else {
+// Closing the dashboard's window does not end the dashboard, nor any run: the server keeps serving,
+// sign-in opens a window of its own from then on, and launching the dashboard again opens it.
+function watchOwn() {
+  if (!own || own.shared) return;
+  const mine = own;
+  mine.proc.on('exit', () => {
+    if (own !== mine || closing) return;
+    own = null;
+    dash.useBrowser(null, { separate: true });
+    process.stdout.write(`the dashboard's window was closed; the dashboard keeps running${dash.runs.active ? ', and so does the run' : ''}. Run the same command again to reopen it; Ctrl+C here, or Quit in the dashboard, ends it.\n`);
+  });
+}
+
+async function openOwnOrSystem() {
+  if (process.env.A11Y_508_OWN_BROWSER !== '0') {
+    own = await launchOwnBrowser(dash.url);
+    if (own) {
+      dash.useBrowser(own.port);
+      process.stdout.write(`opened in its own browser window (profile ${join(stateBase(), 'browser-profile')}); sign-in opens as a tab there\n`);
+      watchOwn();
+      return;
+    }
     dash.useBrowser(null, { separate: true });
     process.stdout.write('Chrome was not found for a window of its own; opening your browser, and sign-in will open a separate window\n');
   }
+  openBrowser(dash.url);
 }
-if (opt.open && !own) openBrowser(dash.url);
 
-let closing = false;
+// A second launch asked for the window: a new one in the dashboard's own browser when it still
+// runs, else the dashboard's browser started again (or the system's).
+async function reopen() {
+  if (ownAlive()) {
+    try {
+      spawn(own.exe, [`--user-data-dir=${own.profile}`, '--new-window', dash.url], { stdio: 'ignore', detached: true }).unref();
+      return;
+    } catch {}
+  }
+  await openOwnOrSystem();
+}
+
+if (opt.open) await openOwnOrSystem();
+
+
 const shutdown = async () => {
   if (closing) process.exit(130);
   closing = true;
+  forgetServerFile();
   // Ctrl+C closes the dashboard's own browser too.
-  if (own && !own.shared) {
+  if (ownAlive()) {
     try {
       own.proc.kill();
     } catch {}
@@ -148,5 +225,22 @@ const shutdown = async () => {
   await dash.close();
   process.exit(0);
 };
+function quit() {
+  process.stdout.write('Quit from the dashboard; ending it\n');
+  void shutdown();
+}
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+// Idle for a day (A11Y_508_IDLE_MS): no run, no page asking anything or holding a run's stream
+// open (an open page asks every minute), and no window of its own: the dashboard ends.
+const IDLE_MS = Number(process.env.A11Y_508_IDLE_MS) || 24 * 60 * 60 * 1000;
+const idle = setInterval(() => {
+  const a = dash.activity();
+  if (a.running || a.streams > 0 || ownAlive()) return;
+  if (Date.now() - a.lastSeen < IDLE_MS) return;
+  const h = IDLE_MS / 3600000;
+  process.stdout.write(`no run and no open dashboard for ${h >= 1 ? `${Math.round(h)} hours` : `${Math.round(IDLE_MS / 1000)} seconds`}; ending\n`);
+  void shutdown();
+}, Math.min(60000, Math.max(250, Math.floor(IDLE_MS / 4))));
+if (idle.unref) idle.unref();

@@ -92,7 +92,7 @@ export function crawlArgs({ kind = 'crawl', url, options, auth }) {
   return { args, token: a.token };
 }
 
-export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = false, config = null, stateFile = null, connect = null, fromReport = null }) {
+export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = false, config = null, stateFile = null, connect = null, fromReport = null, resume = false }) {
   const a = authArgs(auth);
   const args = ['loop'];
   if (url) args.push(validateUrl(url));
@@ -101,6 +101,8 @@ export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = 
   if (signIn && kind === 'loop') args.push('--sign-in-first');
   // The report the person just saw stands in for round 1's crawl (the loop checks it is usable).
   if (fromReport && kind === 'loop') args.push('--from-report', fromReport);
+  // Continue after an interruption: the last round goes on from the ledger, with no crawl.
+  if (resume && kind === 'loop') args.push('--resume');
   if (maxRounds) {
     const n = parseInt(maxRounds, 10);
     if (!(n >= 1)) throw new BadRequest('maxRounds must be a positive number');

@@ -285,7 +285,7 @@ export function reportForFirstRound(file, cfg, cwd, log) {
   return report;
 }
 
-export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false, signInFirst = false, fromReport = null, passthrough = [], stopSignal, events = false }) {
+export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false, signInFirst = false, fromReport = null, resume = false, passthrough = [], stopSignal, events = false }) {
   const { cfg, errors } = normalizeConfig(config, { url: config._url, agent: config._agent }, { interactive: events || !!process.stdin.isTTY });
   const ev = (type, data) => log.event && log.event(type, data);
   const ledgerEvent = () => ev('ledger', { rounds: ledger.rounds.length, counts: statusCounts(ledger), line: summaryLine(ledger) });
@@ -431,21 +431,31 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     return gate;
   };
 
-  const startRound = ledger.rounds.length + 1;
+  // --resume (Continue after an interruption): the ledger's last round goes on from its open
+  // findings, with no crawl; the next round crawls.
+  const resuming = resume && ledger.rounds.length > 0;
+  const startRound = resuming ? ledger.rounds.length : ledger.rounds.length + 1;
   // The report the person just saw stands in for round 1's crawl; the first crawl (and its sign-in) is round 2's.
-  const given = reportForFirstRound(fromReport, cfg, cwd, log);
-  const firstCrawl = given ? startRound + 1 : startRound;
+  const given = resuming ? null : reportForFirstRound(fromReport, cfg, cwd, log);
+  const firstCrawl = given || resuming ? startRound + 1 : startRound;
   log.info(`a11y-508 loop: ${cfg.url}  agent: ${cfg.agent}  ledger: ${relative(cwd, ledgerFile)}${ledger.rounds.length ? `  (resuming after round ${ledger.rounds.length})` : ''}`);
 
   for (let round = startRound; round < startRound + maxRounds; round++) {
     if (stopped()) break;
     log.info('');
+    const resumed = resuming && round === startRound;
+    let signatureBefore = null;
+    if (resumed) {
+      signatureBefore = cfg.deployed === 'bundle-change' ? await bundleSignature(cfg.url) : null;
+      log.info(`=== round ${round}: continuing where it was interrupted (no crawl) ===`);
+      ev('round', { round, resumed: true });
+    } else {
     log.info(`=== round ${round}: crawl ===`);
     ev('round', { round });
     // first: the run's first round, which re-checks the site so this run's fixes are verified against it.
     const fromGiven = given && round === startRound;
     ev('step', fromGiven ? { round, step: 'report', file: fromReport, finishedAt: given.finishedAt } : { round, step: 'crawl', first: round === startRound });
-    const signatureBefore = cfg.deployed === 'bundle-change' ? await bundleSignature(cfg.url) : null;
+    signatureBefore = cfg.deployed === 'bundle-change' ? await bundleSignature(cfg.url) : null;
     let crawl;
     if (fromGiven) {
       log.info(`round ${round}: starting from ${fromReport} (${given.finishedAt}) instead of crawling; round ${round + 1} crawls to verify the fixes`);
@@ -483,6 +493,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     else log.info(`${diff.new.length} finding(s) recorded`);
     for (const e of diff.gaveUp) log.warn(`giving up on ${e.test} "${e.message.slice(0, 80)}" after ${e.attempts.length} attempts; marked needs-human`);
     for (const w of (s.coverage && s.coverage.warnings) || []) log.warn(`coverage: ${w}`);
+    }
 
     if (isDone(ledger)) {
       log.info('');
@@ -560,6 +571,11 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       const promptFile = join(work, `prompt-r${round}-fix-${n}.md`);
       const resultFile = join(work, `result-r${round}-fix-${n}.json`);
       writePrompt(promptFile, fixPrompt({ finding: entry, sourceDirs, protectedDirs, resultFile, condition: testInfo(entry.test).condition }));
+      // The attempt is on record before the assistant starts: one with no outcome is in progress, so
+      // after an interruption its uncommitted changes are known to be the loop's (the dashboard's Continue).
+      const attempt = { round, startedAt: new Date().toISOString() };
+      entry.attempts.push(attempt);
+      save();
       const res = await withOutput(`r${round}-fix-${n}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout }, round, n + 1, 'fix');
       calls.push(res);
       writeFileSync(join(work, `agent-r${round}-fix-${n}.log`), agentLog(res));
@@ -571,9 +587,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         git(cwd, ['clean', '-fdq', '--', ...strayChanges]);
       }
       const note = res.result && res.result.note ? String(res.result.note).slice(0, 300) : res.timedOut ? 'agent timed out' : res.quota ? `the assistant's provider refused the call for quota or rate limit (after ${res.quotaRetries} retries)` : `agent exit ${res.code}, no result file`;
-      const attempt = { round, n: n + 1, files: changed, note, outcome: 'pending', agentMs: res.durationMs ?? null };
+      Object.assign(attempt, { n: n + 1, files: changed, note, outcome: 'pending', agentMs: res.durationMs ?? null });
       if (changed.length) ev('changes', { round, n: n + 1, m: open.length, files: changed });
-      entry.attempts.push(attempt);
       if (!changed.length) {
         attempt.outcome = 'no-change';
         log.info(`  no change (${note})`);

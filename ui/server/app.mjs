@@ -16,14 +16,17 @@ import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine } from './args.mjs';
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
+import { JOURNALED, LOOP_KINDS, discardInterrupted, interruptedDetails, latestRun, resolveRun, runsDir, startJournaled } from './run-journal.mjs';
 import { loopDefaults } from './loop-defaults.mjs';
 import { readGlobal, writeGlobal, paths as statePaths, excludeOutputs, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { matchSource } from './loop-match.mjs';
 import { recordDecision, reviewList } from './review.mjs';
-import { carryAnalysis, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, REPORT_DIR } from './reports.mjs';
+import { carryAnalysis, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, sameStartUrl, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
 
+// The wizard's steps, as lastStep stores them.
+const STEPS = ['/run', '/live', '/report', '/fix-loop', '/review', '/history'];
 const pkg = JSON.parse(readFileSync(join(UI_DIR, '..', 'package.json'), 'utf8'));
 export const SECRET_HEADER = 'x-a11y-508-secret';
 const TYPES = {
@@ -48,7 +51,7 @@ ${JSON.stringify({ kind: 'test', resultFile }, null, 2)}
 \`\`\`
 `;
 
-export function createDashboard({ cwd: startDir = process.cwd(), launchDir = startDir, restored = false, env = process.env, platform = process.platform, distDir = join(UI_DIR, 'dist'), uiDir = UI_DIR, agentTestTimeout = 180000 } = {}) {
+export function createDashboard({ cwd: startDir = process.cwd(), launchDir = startDir, restored = false, env = process.env, platform = process.platform, distDir = join(UI_DIR, 'dist'), uiDir = UI_DIR, agentTestTimeout = 180000, onQuit = null, onOpen = null } = {}) {
   const secret = randomBytes(24).toString('hex');
   // Report files (<img>, a new tab) cannot send the header, so they take a
   // cookie instead: a separate value that opens report files and nothing else.
@@ -56,7 +59,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   // cwd is the working directory every handler reads at the time of each
   // request. It is set in exactly two places: here at launch (--dir, else
   // process.cwd()), and by PUT /api/cwd. launchDir is where it started.
-  const state = { browserPort: null, separateSignIn: false, cwd: resolve(startDir), launchDir: resolve(launchDir), restored, token: null, port: null, presets: null, detecting: null, lastTest: {}, shell: null };
+  const state = { browserPort: null, separateSignIn: false, cwd: resolve(startDir), launchDir: resolve(launchDir), restored, token: null, port: null, presets: null, detecting: null, lastTest: {}, shell: null, lastSeen: Date.now(), streams: 0 };
   // The shell the shown command line is written for; looked up once.
   const shellKind = () => (state.shell ||= detectShell(env, platform)).kind;
   const runs = new Runs({ onExit: () => {} });
@@ -91,6 +94,19 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (ours.length) moveLegacy(state.cwd, sp(), ours);
   };
   settle();
+
+  // The newest run recorded for the folder: a live one is reattached (its whole log, then the rest
+  // as it comes); a fix loop whose process is gone without finishing is offered as interrupted.
+  const reattach = () => {
+    if (runs.active) return;
+    let run = null;
+    try {
+      run = latestRun(state.cwd);
+    } catch {}
+    if (!run) return;
+    if (run.status === 'running' || (run.status === 'interrupted' && LOOP_KINDS.has(run.kind))) runs.adopt(run);
+  };
+  reattach();
 
   // A forced detection never reuses one that started before it was asked for. Tests can slow the
   // lookup down (A11Y_508_DETECT_DELAY_MS) to stand in for a slow machine.
@@ -236,7 +252,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
         }
       };
       const fromReport = latest && loopUrl && sameUrl(latest.baseUrl, loopUrl) ? join(cwd, REPORT_DIR, 'report.json') : null;
-      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null, connect: signIn ? state.browserPort : null, fromReport });
+      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null, connect: signIn ? state.browserPort : null, fromReport, resume: body.resume === true });
       meta = { agent: resolved };
     } else {
       built = crawlArgs({ kind, url: body.url, options: body.options, auth });
@@ -247,10 +263,17 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (cwd !== state.cwd) throw new BadRequest('the working directory changed while the run was starting; start it again', 409);
     let moved = null;
     if (kind === 'crawl') moved = moveLatestToHistory(cwd);
-    return runs.start({
+    // The request as it can be made again (Continue), without a token.
+    const { preface, ...asked } = body;
+    const request = { ...asked, auth: asked.auth && typeof asked.auth === 'object' ? { ...asked.auth, token: undefined } : asked.auth };
+    const spec = {
       kind, file: process.execPath, args: [BIN, ...built.args, '--events'], env: runEnv, cwd, events: true, secrets: tokens(),
       meta: { ...meta, command: commandLine({ cwd, args: built.args, token: built.token, shell: shellKind() }), url: body.url || null, movedToHistory: moved },
-    });
+      request, preface: Array.isArray(preface) ? preface : [],
+    };
+    // Detached and recorded on disk, so it outlives this server (run-journal.mjs).
+    if (JOURNALED.has(kind)) return runs.adopt(startJournaled(spec));
+    return runs.start(spec);
   }
 
   async function startInstall(body) {
@@ -342,6 +365,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       lastTest: state.lastTest,
       build: { fresh: build.fresh, reason: build.reason },
       run: runs.current ? runSummary(runs.current) : null,
+      // The wizard step the person was on, for the next time the dashboard opens.
+      lastStep: readSettings(sp().settings).lastStep || null,
     };
   }
   const runSummary = (r) => ({ id: r.id, kind: r.kind, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt || null, code: r.code, meta: r.meta });
@@ -404,12 +429,77 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     settle();
     // A finished run belongs to the directory it ran in.
     runs.forget();
+    reattach();
     state.restored = false;
     // Remembered for the next launch (the dashboard's own browser profile may forget it).
     setGlobal({ lastCwd: dir });
     // Cached detection (the assistants, the shell, npm's prefix) does not
     // depend on the directory, so nothing else is invalidated today.
     return { ...envInfo(state.presets), carried };
+  }
+
+  // The folders the loop edits (the config's, or what the dashboard inferred).
+  const sourceDirs = () => {
+    const c = readConfig();
+    const d = loopDefaults(state.cwd, c.exists ? c.config : null).effective;
+    return (Array.isArray(d.source) ? d.source : [d.source]).filter((x) => typeof x === 'string' && x);
+  };
+
+  // Continue after an interruption: the attempt that was in progress is marked interrupted and its
+  // uncommitted changes under the source folders reverted (listed in the new run's pane); then the
+  // loop goes on from the ledger, with no crawl.
+  async function resume() {
+    const r = runs.current;
+    if (!r || r.status !== 'interrupted' || r.kind !== 'loop') throw new BadRequest('there is no interrupted fix loop to continue', 409);
+    const request = (r.record && r.record.request) || {};
+    const where = interruptedDetails(state.cwd, r, []);
+    const discarded = discardInterrupted(state.cwd, sourceDirs());
+    resolveRun(r, 'continued');
+    runs.forget();
+    const preface = [{ type: 'resume', discarded, n: where.n, m: where.m, round: where.round, interruptedAt: where.at, at: new Date().toISOString() }];
+    try {
+      return await startRun({ ...request, kind: 'loop', resume: true, signIn: request.signIn === true && !existsSync(sp().state), preface });
+    } catch (e) {
+      // Not started: the interruption is offered again.
+      reattach();
+      throw e;
+    }
+  }
+
+  // Start over: what it discards, named in its confirmation.
+  function startOverInfo() {
+    const file = join(state.cwd, WORK_DIR, 'ledger.json');
+    let attempts = 0;
+    let rounds = 0;
+    if (existsSync(file)) {
+      const l = loadLedger(file);
+      rounds = l.rounds.length;
+      for (const e of Object.values(l.findings || {})) attempts += (e.attempts || []).length;
+    }
+    const latest = readReport(state.cwd, 'latest');
+    const url = (latest && latest.baseUrl) || readSettings(sp().settings).url || global().lastUrl || null;
+    const history = listReports(state.cwd).filter((x) => x.source === 'history' && (!url || !x.baseUrl || sameStartUrl(x.baseUrl, url))).length;
+    return { report: !!latest, ledger: existsSync(file), rounds, attempts, history, url };
+  }
+  // Clears the report, the ledger and its rounds, the history for the URL, the run records and the
+  // stored step: the wizard starts at Set up. Only with { confirm: true }, and never during a run.
+  function startOver(body) {
+    if (!body || body.confirm !== true) throw new BadRequest('body must be { "confirm": true }');
+    if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is active; start over when it has finished`, 409);
+    const info = startOverInfo();
+    if (runs.current) {
+      if (runs.current.journal) resolveRun(runs.current, 'start-over');
+      runs.forget();
+    }
+    clearLoopHistory(state.cwd);
+    for (const x of listReports(state.cwd)) {
+      if (x.source === 'history' && (!info.url || !x.baseUrl || sameStartUrl(x.baseUrl, info.url))) deleteHistoryEntry(state.cwd, x.id);
+    }
+    rmSync(join(state.cwd, REPORT_DIR), { recursive: true, force: true, maxRetries: 5 });
+    rmSync(runsDir(state.cwd), { recursive: true, force: true, maxRetries: 5 });
+    const { lastStep, ...rest } = readSettings(sp().settings);
+    writeJson(sp().settings, rest);
+    return { ...info, cleared: true };
   }
 
   // ---- routing
@@ -448,11 +538,15 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       if (!runs.current) return send(res, 404, { error: 'no run yet' });
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
       res.write(': stream\n\n');
+      state.streams++;
       const unsubscribe = runs.subscribe((e) => {
         if (e === null) return res.end();
         res.write(`id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`);
       });
-      req.on('close', () => unsubscribe && unsubscribe());
+      req.on('close', () => {
+        state.streams--;
+        if (unsubscribe) unsubscribe();
+      });
       return;
     }
     if (m === 'POST' && path === '/api/runs/current/stop') return send(res, 200, { signal: runs.stop() });
@@ -460,6 +554,30 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       runs.continue();
       return send(res, 200, { ok: true });
     }
+    if (m === 'GET' && path === '/api/runs/interrupted') {
+      const r = runs.current;
+      if (!r || r.status !== 'interrupted') return send(res, 200, null);
+      return send(res, 200, interruptedDetails(state.cwd, r, sourceDirs()));
+    }
+    if (m === 'POST' && path === '/api/runs/resume') return send(res, 202, runSummary(await resume()));
+    if (m === 'GET' && path === '/api/ping') return send(res, 200, { ok: true, pid: process.pid, cwd: state.cwd });
+    // The dashboard's Quit: with a run active, only once the person confirmed stopping it.
+    if (m === 'POST' && path === '/api/quit') {
+      const body = await readBody(req);
+      if (!onQuit) return send(res, 501, { error: 'this dashboard cannot be quit from the page' });
+      if (runs.active && body.stopRun !== true) return send(res, 409, { error: `a ${runs.current.kind} run is active`, kind: runs.current.kind });
+      send(res, 200, { ok: true });
+      setTimeout(() => onQuit(), 50);
+      return;
+    }
+    // A second launch of the dashboard asks this one to open its window again.
+    if (m === 'POST' && path === '/api/open') {
+      if (!onOpen) return send(res, 501, { error: 'no browser to open' });
+      await onOpen();
+      return send(res, 200, { ok: true, cwd: state.cwd });
+    }
+    if (m === 'GET' && path === '/api/start-over') return send(res, 200, startOverInfo());
+    if (m === 'POST' && path === '/api/start-over') return send(res, 200, startOver(await readBody(req)));
     if (m === 'GET' && path === '/api/reports') return send(res, 200, listReports(state.cwd));
     if (m === 'GET' && path === '/api/loop/timeline') {
       const file = join(state.cwd, WORK_DIR, 'ledger.json');
@@ -500,8 +618,9 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (m === 'GET' && path === '/api/settings') return send(res, 200, readSettings(sp().settings));
     if (m === 'PUT' && path === '/api/settings') {
       const body = await readBody(req);
-      const allowed = ['url', 'agent', 'migrationDeclined', 'rounds'];
+      const allowed = ['url', 'agent', 'migrationDeclined', 'rounds', 'lastStep'];
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((k) => !allowed.includes(k))) throw new BadRequest(`body may hold only ${allowed.join(', ')}`);
+      if ('lastStep' in body && body.lastStep !== null && !STEPS.includes(body.lastStep)) throw new BadRequest(`lastStep must be one of ${STEPS.join(', ')}`);
       const next = { ...readSettings(sp().settings), ...body };
       writeJson(sp().settings, next);
       return send(res, 200, next);
@@ -580,6 +699,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
 
   const server = createServer(async (req, res) => {
     if (!hostOk(req)) return send(res, 403, { error: 'forbidden host' });
+    state.lastSeen = Date.now();
     const url = new URL(req.url, `http://127.0.0.1:${state.port}`);
     try {
       if (url.pathname.startsWith('/api/')) await api(req, res, url);
@@ -611,11 +731,15 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     throw new Error(`no free port from ${port} to ${port + tries}`);
   }
 
-  function close() {
-    runs.killAll();
+  async function close() {
+    await runs.killAll();
     server.closeAllConnections?.();
     return new Promise((r) => server.close(() => r()));
   }
+
+  // For the idle shutdown (main.mjs): when anything last asked, whether a page holds a run's stream
+  // open, and whether a run is active.
+  const activity = () => ({ lastSeen: state.lastSeen, streams: state.streams, running: runs.active });
 
   // The dashboard's own browser (main.mjs): its DevTools port, for --connect; or none, with
   // { separate: true } when it was looked for and not found.
@@ -624,7 +748,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     state.separateSignIn = !port && separate;
   }
 
-  return { server, secret, listen, close, runs, build, detect, useBrowser, get port() { return state.port; }, get url() { return `http://127.0.0.1:${state.port}/#secret=${secret}`; } };
+  return { server, secret, listen, close, runs, build, detect, useBrowser, activity, get cwd() { return state.cwd; }, get port() { return state.port; }, get url() { return `http://127.0.0.1:${state.port}/#secret=${secret}`; } };
 }
 
 export { REPORT_DIR };
