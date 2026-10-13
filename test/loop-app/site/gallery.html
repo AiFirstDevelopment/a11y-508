@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gallery - Harbour Town council</title>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<!-- Planted: no skip link, no main landmark and no headings, so nothing bypasses the
+     navigation (9.A). -->
+<header>
+  <nav aria-label="Site">
+    <a href="./">Home</a>
+    <a href="form.html">Contact us</a>
+    <a href="table.html">Opening hours</a>
+    <a href="gallery.html">Gallery</a>
+  </nav>
+</header>
+<div class="content">
+  <p>Photos from around the harbour.</p>
+  <img src="img/market.svg" alt="Stalls of the summer market on the quay" width="160" height="100">
+  <!-- Planted: a button whose only content is an icon, with no name (6.A). -->
+  <p><button type="button" class="icon-btn" id="share"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="8" r="2"/><circle cx="12" cy="4" r="2"/><circle cx="12" cy="12" r="2"/></svg></button></p>
+  <p><button type="button" id="open-viewer" aria-expanded="false" aria-controls="viewer">View the market photo larger</button></p>
+</div>
+<dialog id="viewer">
+  <img src="img/market.svg" alt="Stalls of the summer market on the quay, enlarged" width="320" height="200">
+  <p><button type="button" id="close-viewer">Close</button></p>
+</dialog>
+<script>
+  var viewer = document.getElementById('viewer');
+  var opener = document.getElementById('open-viewer');
+  opener.addEventListener('click', function () {
+    opener.setAttribute('aria-expanded', 'true');
+    viewer.showModal();
+  });
+  function closeViewer() {
+    viewer.close();
+    opener.setAttribute('aria-expanded', 'false');
+    opener.focus();
+  }
+  document.getElementById('close-viewer').addEventListener('click', closeViewer);
+  viewer.addEventListener('close', function () { opener.setAttribute('aria-expanded', 'false'); });
+</script>
+</body>
+</html>

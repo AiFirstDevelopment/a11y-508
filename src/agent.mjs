@@ -6,9 +6,12 @@
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
+// Gemini CLI gets the prompt on stdin rather than by path: its read_file tool refuses files that
+// .gitignore lists, and a11y-508-work/ (where the prompts are) belongs in .gitignore. It joins
+// stdin and -p into one prompt.
 export const PRESETS = {
   claude: 'claude -p --permission-mode acceptEdits "Read the file {promptFile} and do exactly what it says."',
-  gemini: 'gemini --approval-mode auto_edit -p "Read the file {promptFile} and do exactly what it says."',
+  gemini: 'gemini --approval-mode auto_edit -p "Do exactly what the instructions above say." < "{promptFile}"',
   codex: 'codex exec --full-auto "Read the file {promptFile} and do exactly what it says."',
 };
 
@@ -179,10 +182,46 @@ function lastJson(text) {
   return null;
 }
 
-export async function runAgent({ command, promptFile, resultFile, cwd, timeout = 15 * 60 * 1000, env = agentEnv() }) {
+// Output that says the assistant's provider refused the call for quota or rate (free tiers limit
+// requests per minute and per day): HTTP 429, Google's RESOURCE_EXHAUSTED, and the usual wording.
+export const QUOTA = /\b429\b|RESOURCE_EXHAUSTED|\bquota\b|rate[ -]?limit|too many requests/i;
+// Waits before each retry of a call refused for quota: two retries, then the call is given up.
+export const QUOTA_DELAYS = [30000, 90000];
+// A quota that resets in hours (a free tier's daily limit) is not worth waiting for in seconds.
+export const QUOTA_TERMINAL = /daily quota|TerminalQuotaError|per day|retry in \d+h/i;
+
+// Gemini CLI refuses to run headless in a folder it has not been told to trust; the loop runs it
+// in the repository it was configured for, so it says so. Any other command's environment is
+// left as it is.
+export function agentEnvFor(command, env = agentEnv()) {
+  const exe = String(command || '').trim().replace(/^"([^"]*)".*$/, '$1').split(/\s+/)[0] || '';
+  if (/(^|[\\/])gemini(\.cmd|\.exe|\.ps1)?$/i.test(exe) && env.GEMINI_CLI_TRUST_WORKSPACE === undefined) return { ...env, GEMINI_CLI_TRUST_WORKSPACE: 'true' };
+  return env;
+}
+
+// Runs the assistant once on a prompt file. A call that writes no result and whose output names a
+// quota or rate limit is run again after each of quotaDelays; quota says the last try was refused
+// that way, quotaRetries how many retries it took.
+export async function runAgent({ command, promptFile, resultFile, cwd, timeout = 15 * 60 * 1000, env = agentEnvFor(command), quotaDelays = QUOTA_DELAYS }) {
+  const t0 = Date.now();
+  let quotaRetries = 0;
+  for (;;) {
+    const r = await runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env });
+    // A call that ran out its time while the assistant backed off on its own counts as refused for
+    // quota too, but is not run again: it has already spent its time.
+    const quota = !r.result && QUOTA.test(r.stdout + '\n' + r.stderr);
+    if (quota && !r.timedOut && !QUOTA_TERMINAL.test(r.stdout + '\n' + r.stderr) && quotaRetries < quotaDelays.length) {
+      await new Promise((res) => setTimeout(res, quotaDelays[quotaRetries]));
+      quotaRetries++;
+      continue;
+    }
+    return { ...r, quota, quotaRetries, durationMs: Date.now() - t0 };
+  }
+}
+
+async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env }) {
   const cmd = command.split('{promptFile}').join(promptFile).split('{resultFile}').join(resultFile);
   if (existsSync(resultFile)) rmSync(resultFile, { force: true });
-  const t0 = Date.now();
   const child = spawn(cmd, { cwd, shell: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
   let stderr = '';
@@ -192,10 +231,24 @@ export async function runAgent({ command, promptFile, resultFile, cwd, timeout =
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
+    // On Windows the command runs under cmd.exe, and killing cmd.exe leaves the assistant running
+    // (it would keep retrying, and keep a CI step alive); taskkill /T ends the whole tree.
+    if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }).on('error', () => {});
     child.kill('SIGKILL');
   }, timeout);
+  const closed = new Promise((r) => child.on('close', r));
   const code = await new Promise((r) => child.on('exit', r));
   clearTimeout(timer);
+  // The last of its output can arrive after it exits; wait for the pipes, but not for a grandchild
+  // that keeps them open.
+  await Promise.race([closed, new Promise((r) => setTimeout(r, 2000).unref())]);
+  // A grandchild still holding the pipes (an assistant that outlived its shell) must not keep the
+  // loop's own process alive after it is done: let go of them.
+  for (const stream of [child.stdout, child.stderr]) {
+    try {
+      stream.destroy();
+    } catch {}
+  }
   let result = null;
   if (existsSync(resultFile)) {
     try {
@@ -203,7 +256,14 @@ export async function runAgent({ command, promptFile, resultFile, cwd, timeout =
     } catch {}
   }
   if (!result) result = lastJson(stdout);
-  return { code, timedOut, result, stdout, stderr, durationMs: Date.now() - t0 };
+  return { code, timedOut, result, stdout, stderr };
+}
+
+// What one agent call left behind, for a11y-508-work/: a JSON header line, then the tail of its
+// output. Never the environment or the token (the prompt and the agent never had it).
+export function agentLog(res) {
+  const head = { code: res.code, timedOut: !!res.timedOut, quota: !!res.quota, quotaRetries: res.quotaRetries || 0, result: !!res.result, durationMs: res.durationMs };
+  return `${JSON.stringify(head)}\n--- stdout (tail)\n${String(res.stdout || '').slice(-8000)}\n--- stderr (tail)\n${String(res.stderr || '').slice(-8000)}\n`;
 }
 
 const block = (obj) => '```json\n' + JSON.stringify(obj, null, 2) + '\n```';

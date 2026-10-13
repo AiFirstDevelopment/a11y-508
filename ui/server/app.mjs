@@ -8,7 +8,7 @@ import { createReadStream, existsSync, mkdtempSync, readFileSync, realpathSync, 
 import { tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import { findChrome } from '../../src/chrome.mjs';
-import { PRESETS, installRemedies, runAgent, agentEnv } from '../../src/agent.mjs';
+import { PRESETS, installRemedies, runAgent, agentEnv, agentEnvFor } from '../../src/agent.mjs';
 import { loadConfig, normalizeConfig, summaryLine, WORK_DIR } from '../../src/loop.mjs';
 import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine } from './args.mjs';
@@ -213,7 +213,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     const resultFile = join(dir, 'result.json');
     writeFileSync(promptFile, AGENT_TEST_PROMPT(resultFile));
     try {
-      const r = await runAgent({ command, promptFile, resultFile, cwd: dir, timeout: agentTestTimeout, env: agentEnv(env) });
+      const r = await runAgent({ command, promptFile, resultFile, cwd: dir, timeout: agentTestTimeout, env: agentEnvFor(command, agentEnv(env)), quotaDelays: [] });
       const ok = !!(r.result && r.result.ok === true);
       const out = redactorFor()(`${r.stdout}\n${r.stderr}`).split('\n').filter((l) => l.trim()).slice(-30);
       const result = { agent: spec, command, status: r.timedOut ? 'timed-out' : ok ? 'ready' : 'failed', code: r.code, durationMs: r.durationMs, output: out, at: new Date().toISOString() };

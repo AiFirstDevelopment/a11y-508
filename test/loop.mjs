@@ -4,7 +4,7 @@
 // on one so the gate has to revert it.
 
 import { createServer } from 'node:http';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
@@ -226,6 +226,20 @@ check('the token never reached the agent', () => {
   assert.ok(results.length > 0);
   const resultFiles = readFileSync(join(repo, 'a11y-508-work', 'result-r1-fix-0.json'), 'utf8');
   assert.ok(!/"leaked": true/.test(resultFiles), resultFiles);
+});
+check('loop-gemini-ci AC5: each agent call leaves a log under a11y-508-work, with its header line', () => {
+  const work = join(repo, 'a11y-508-work');
+  const logs = readdirSync(work).filter((f) => /^agent-r\d+-(fix|triage)-\d+\.log$/.test(f));
+  const prompts = readdirSync(work).filter((f) => /^prompt-r\d+-(fix|triage)-\d+\.md$/.test(f));
+  assert.equal(logs.length, prompts.length, `${logs.join(', ')} for ${prompts.join(', ')}`);
+  assert.ok(logs.includes('agent-r1-fix-0.log') && logs.includes('agent-r1-triage-0.log'), logs.join(', '));
+  const head = JSON.parse(readFileSync(join(work, 'agent-r1-fix-0.log'), 'utf8').split('\n')[0]);
+  assert.deepEqual([head.code, head.timedOut, head.quota, head.quotaRetries, head.result], [0, false, false, 0, true]);
+  // And one start line and one end line per call, in order, in agent-calls.log.
+  const calls = readFileSync(join(work, 'agent-calls.log'), 'utf8').split('\n').filter((l) => /^\S+ (start|end  ) /.test(l));
+  assert.equal(calls.length, logs.length * 2, calls.join('\n'));
+  assert.match(calls[0], /^\S+ start r1-triage-0$/);
+  assert.match(calls[1], /^\S+ end   r1-triage-0 exit 0 result yes \d+s$/);
 });
 check('status prints the ledger', () => {
   const r = spawnSync(process.execPath, [join(root, 'bin/a11y-508.mjs'), 'status'], { cwd: repo, encoding: 'utf8' });

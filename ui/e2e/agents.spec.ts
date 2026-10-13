@@ -8,7 +8,7 @@ import { dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN,
 
 const PRESETS = {
   claude: 'claude -p --permission-mode acceptEdits "Read the file {promptFile} and do exactly what it says."',
-  gemini: 'gemini --approval-mode auto_edit -p "Read the file {promptFile} and do exactly what it says."',
+  gemini: 'gemini --approval-mode auto_edit -p "Do exactly what the instructions above say." < "{promptFile}"',
 };
 
 interface Rig {

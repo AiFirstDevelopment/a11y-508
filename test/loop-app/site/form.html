@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contact us - Harbour Town council</title>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header>
+  <a href="#main">Skip to main content</a>
+  <nav aria-label="Site">
+    <a href="./">Home</a>
+    <a href="form.html">Contact us</a>
+    <a href="table.html">Opening hours</a>
+    <a href="gallery.html">Gallery</a>
+  </nav>
+</header>
+<main id="main">
+  <h1>Contact us</h1>
+  <form action="form.html" method="get">
+    <p><label for="name">Your name</label> <input type="text" id="name" name="name"></p>
+    <!-- Planted: a field with no label (5.A). -->
+    <p>Email <input type="email" id="email" name="email"></p>
+    <!-- Planted: a misspelled ARIA attribute, aria-labeledby (5.C). -->
+    <p><span id="phone-label">Phone</span> <input type="tel" id="phone" name="phone" aria-labeledby="phone-label"></p>
+    <!-- Planted: a fieldset with no legend (5.C). -->
+    <fieldset>
+      <p><input type="radio" id="reply-email" name="reply" value="email"> <label for="reply-email">Reply by email</label></p>
+      <p><input type="radio" id="reply-phone" name="reply" value="phone"> <label for="reply-phone">Reply by phone</label></p>
+    </fieldset>
+    <p><button type="submit">Send</button></p>
+  </form>
+</main>
+</body>
+</html>

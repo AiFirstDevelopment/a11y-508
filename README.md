@@ -114,6 +114,26 @@ What the assistant gets: one prompt per task, written to a file under `a11y-508-
 
 The loop refuses to start on a repository with uncommitted changes under `source`, so its commits only ever contain its own work. Each round's crawl output is kept in `a11y-508-work/round-N/`; add `a11y-508-work/` to `.gitignore`.
 
+Each assistant call leaves `a11y-508-work/agent-r<round>-<task>.log` beside its prompt and result: a header line (exit code, time-out, quota) and the tail of its output. A call that writes no result and whose output names a quota or rate limit (HTTP 429, `RESOURCE_EXHAUSTED`, "quota", "rate limit") is run again after 30 seconds and then 90 seconds before it counts as a failed attempt; free tiers limit requests per minute. With `"agent": "gemini"` the loop sets `GEMINI_CLI_TRUST_WORKSPACE=true` for the assistant (Gemini CLI will not run headless in a folder it has not been told to trust) and hands it the prompt on stdin, because Gemini CLI's file reader refuses files that `.gitignore` lists, `a11y-508-work/` among them.
+
+### The loop, end to end in CI
+
+`.github/workflows/loop-gemini.yml` proves the whole product on Windows: it crawls a small app with planted Section 508 violations, lets the loop repair them with Gemini CLI's free tier (`gemini-flash-lite-latest` by default, through `GEMINI_MODEL`; `gemini-2.5-flash` is no longer offered to new keys, `gemini-3.8-flash`'s free daily quota runs out after a few calls, and a manual run can choose another model), and confirms the repairs with the next crawl. The app is `test/loop-app/`: four pages (a home page with images, a contact form, an opening-hours table, a gallery with a modal viewer) and a stylesheet, with about ten violations marked by HTML comments (missing alt, an unlabelled field, low-contrast CSS, a page without `lang`, the same link text for two destinations, a page with no skip link, main or heading, a fieldset without a legend, an icon-only button, `scope="column"`, `aria-labeledby`). Before the loop, one direct `gemini -p` call with a 90-second limit shows whether Gemini answers at all: a quota refusal there makes the run SKIPPED, anything else fails it at once. The loop's config gives each assistant call three minutes and triages in batches of eight; `a11y-508-work/agent-calls.log` has a line when each call starts and ends. The job makes a throwaway git repository holding the app, runs `a11y-508 loop --max-rounds 2` against it with the gate `node check.mjs` (every page still parses and is still served), then `a11y-508 status`, and `test/loop-app/verify.mjs` asserts that round 1 recorded at least ten findings, that round 2 verified at least one fix, that the loop committed, that no commit touched anything outside `site/`, and that the gate ran for every fix. It does not assert how many fixes the model makes. A run in which every assistant call was refused for quota is reported as SKIPPED, not failed. The work directory (ledger, prompts, results, agent logs, round reports, the git log) is uploaded as the `loop-gemini-work` artifact.
+
+It needs the repository secret `GEMINI_API_KEY`, a Google AI Studio key (the free tier is enough); without it the job says so and stops green. It runs on pull requests that change `src/loop.mjs`, `src/agent.mjs`, `src/ledger.mjs`, `test/loop-app/` or the workflow, and by hand (`gh workflow run loop-gemini.yml --ref <branch>`); it is not a required check.
+
+To run the same thing by hand, with Gemini CLI or Claude Code installed and signed in:
+
+```sh
+node test/loop-app/setup.mjs ../loop-test --agent gemini     # or --agent claude
+cd ../loop-test
+node server.mjs > ../server.log &                             # http://127.0.0.1:4321/; logs outside the repository,
+                                                              # or the loop reverts them as stray changes
+GEMINI_MODEL=gemini-flash-lite-latest node ../a11y-508/bin/a11y-508.mjs loop --max-rounds 2
+node ../a11y-508/bin/a11y-508.mjs status
+node ../a11y-508/test/loop-app/verify.mjs .
+```
+
 ## The dashboard
 
 A local web dashboard does everything the command line does, as screens instead of a scrolling log: sign in, start a crawl and watch it page by page, troubleshoot, read the report with charts and filters, and run the fix loop with an assistant picker and a ledger board. It is built on the CLI, which still does the work, and it runs only on your machine, for you.

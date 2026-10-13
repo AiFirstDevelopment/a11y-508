@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Planted: no lang attribute on html (11.A). -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Opening hours - Harbour Town council</title>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header>
+  <a href="#main">Skip to main content</a>
+  <nav aria-label="Site">
+    <a href="./">Home</a>
+    <a href="form.html">Contact us</a>
+    <a href="table.html">Opening hours</a>
+    <a href="gallery.html">Gallery</a>
+  </nav>
+</header>
+<main id="main">
+  <h1>Opening hours</h1>
+  <table>
+    <caption>Office opening hours</caption>
+    <thead>
+      <!-- Planted: scope="column" is not a valid scope value (14.B). -->
+      <tr><th scope="column">Day</th><th scope="col">Opens</th><th scope="col">Closes</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">Monday</th><td>9:00</td><td>17:00</td></tr>
+      <tr><th scope="row">Wednesday</th><td>9:00</td><td>17:00</td></tr>
+      <tr><th scope="row">Saturday</th><td>10:00</td><td>14:00</td></tr>
+    </tbody>
+  </table>
+</main>
+</body>
+</html>
