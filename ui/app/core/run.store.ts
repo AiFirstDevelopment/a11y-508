@@ -65,7 +65,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 // event" notice rather than being dropped in silence.
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
-  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit', 'changes', 'attempt',
+  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit', 'changes', 'attempt', 'bisect',
 ]);
 
 // The current run, built from its event stream.
@@ -103,7 +103,7 @@ export class RunStore {
   // The run's fix attempts, as they end (one row each), and how long the last finished check took.
   readonly changes = signal<ChangeRow[]>([]);
   readonly lastGateMs = signal<number | null>(null);
-  readonly gate = signal<{ round: number; n: number | null; m: number | null; check: string; startedAt: number; endedAt: number | null; ok: boolean | null } | null>(null);
+  readonly gate = signal<{ round: number; n: number | null; m: number | null; check: string; part: string; startedAt: number; endedAt: number | null; ok: boolean | null } | null>(null);
   // The loop: the run's first round (it re-checks the site first), and how many fixes the round committed.
   readonly firstRound = signal<number | null>(null);
   readonly committed = signal(0);
@@ -303,17 +303,24 @@ export class RunStore {
       }
       case 'gate': {
         const each = typeof ev['n'] === 'number';
+        const part = String(ev['part'] || 'check');
+        const took = spoken(Number(ev['durationMs']) || 0);
         if (ev['state'] === 'start') {
-          this.gate.set({ round: ev['round'], n: ev['n'] ?? null, m: ev['m'] ?? null, check: String(ev['check'] || ''), startedAt: Date.now(), endedAt: null, ok: null });
-          this.pane(`Checking ${each ? 'the fix' : "the round's fixes"} with ${ev['check']}`, true);
+          this.gate.set({ round: ev['round'], n: ev['n'] ?? null, m: ev['m'] ?? null, check: String(ev['check'] || ''), part, startedAt: Date.now(), endedAt: null, ok: null });
+          this.pane(part === 'test' ? `Running the tests once for the round's fixes: ${ev['check']}` : `Checking ${each ? 'the fix' : "the round's fixes"} with ${ev['check']}`, true);
         } else {
           this.gate.update((g) => (g ? { ...g, endedAt: Date.now(), ok: !!ev['ok'] } : g));
-          if (ev['ok']) this.pane(`Build and tests passed in ${spoken(Number(ev['durationMs']) || 0)}`, true);
-          else if (each) this.pane(`Build or tests failed after ${spoken(Number(ev['durationMs']) || 0)}`, true);
-          else this.pane(`Build or tests failed — the round's fixes are rolled back (exit ${ev['code'] ?? '?'}):\n${String(ev['tail'] || '')}`, true);
+          const what = part === 'build' ? 'Build' : part === 'test' ? 'Tests' : 'Build and tests';
+          if (ev['ok']) this.pane(`${what} passed in ${took}`, true);
+          else if (each || part === 'test') this.pane(`${part === 'build' ? 'Build' : part === 'test' ? 'Tests' : 'Build or tests'} failed after ${took}${ev['reason'] ? ` — ${ev['reason']}` : ''}`, true);
+          else this.pane(`Build or tests failed — the round's fixes are rolled back (${ev['reason'] || `exit ${ev['code'] ?? '?'}`}):\n${String(ev['tail'] || '')}`, true);
         }
         break;
       }
+      case 'bisect':
+        if (ev['state'] === 'start') this.pane(`The tests failed; finding which of the round's ${ev['count']} fixes broke them`, true);
+        else this.pane(`Fix ${ev['n']} (${ev['test']} ${ev['message']}) broke the tests — it is reverted`, true);
+        break;
       case 'gate-output':
         this.pane(String(ev['text'] || ''));
         break;
@@ -336,7 +343,7 @@ export class RunStore {
           const i = list.findIndex((x) => x.round === row.round && x.n === row.n && x.n !== null);
           return i >= 0 ? list.map((x, k) => (k === i ? row : x)) : [...list, row];
         });
-        if (row.outcome === 'failed-gate' && typeof ev['n'] === 'number' && this.gate()?.n !== null) this.pane(`Reverted — the check failed (exit ${row.gateCode ?? '?'}):\n${row.gateTail || '(no output)'}`, true);
+        if (row.outcome === 'failed-gate' && typeof ev['n'] === 'number' && this.gate()?.n !== null) this.pane(`Reverted — ${ev['reason'] || `the check failed (exit ${row.gateCode ?? '?'})`}:\n${row.gateTail || '(no output)'}`, true);
         break;
       }
       case 'agent-wait':

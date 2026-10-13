@@ -12,6 +12,7 @@ import { applyReport, byStatus, isDone, loadLedger, openFindings, saveLedger, st
 import { PRESET_INFO, QUOTA_DELAYS, agentLog, fixPrompt, resolveAgentCommand, runAgent, triagePrompt, writePrompt } from './agent.mjs';
 import { testInfo } from './checks/catalog.mjs';
 import { sleep } from './page.mjs';
+import { killTree } from './chrome.mjs';
 
 export const WORK_DIR = 'a11y-508-work';
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -52,6 +53,8 @@ export function normalizeConfig(c, overrides = {}, { interactive = !!process.std
     quotaDelays: Array.isArray(c.quotaDelays) && c.quotaDelays.every((n) => typeof n === 'number' && n >= 0) ? c.quotaDelays : QUOTA_DELAYS,
     // After this long with no output from the assistant, the dashboard says it is still waiting.
     quietAfter: typeof c.quietAfter === 'number' && c.quietAfter >= 0 ? c.quietAfter : 30 * 1000,
+    // How long one run of the check may take before it is ended (its whole process tree) and the fix reverted.
+    checkTimeout: typeof c.checkTimeout === 'number' && c.checkTimeout > 0 ? c.checkTimeout : 20 * 60 * 1000,
     // The session file a crawl behind a sign-in portal uses (see sessionArgs).
     state: typeof c.state === 'string' && c.state ? c.state : 'a11y-508-state.json',
   };
@@ -76,18 +79,39 @@ const gitChanged = (cwd, paths = []) => {
   return (r.stdout || '').split('\n').filter((l) => l.length > 3).map((l) => l.slice(3).replace(/^"(.*)"$/, '$1'));
 };
 
-const sh = (cwd, command, env, onData = null) =>
+// timeoutMs: past it the command and everything it started are ended (taskkill /T on Windows) and
+// the result says timedOut.
+const sh = (cwd, command, env, onData = null, timeoutMs = 0) =>
   new Promise((r) => {
-    const child = spawn(command, { cwd, shell: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, { cwd, shell: true, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let out = '';
+    let timedOut = false;
     const keep = (d) => {
       out = (out + d).slice(-8000);
       if (onData) onData(String(d));
     };
     child.stdout.on('data', keep);
     child.stderr.on('data', keep);
-    child.on('exit', (code) => r({ code, out }));
+    const timer = timeoutMs > 0 ? setTimeout(() => {
+      timedOut = true;
+      killTree(child.pid);
+    }, timeoutMs) : null;
+    child.on('exit', (code) => {
+      if (timer) clearTimeout(timer);
+      r({ code: timedOut ? null : code, out, timedOut });
+    });
   });
+
+// The check as a build part, run on every fix, and a test part, run once per round: a check of the
+// form "<build> && <test>" splits at its first &&; any other check runs whole on every fix.
+export function splitCheck(check) {
+  const t = typeof check === 'string' ? check.trim() : '';
+  if (!t) return { build: null, test: null };
+  const i = t.indexOf('&&');
+  const build = i > 0 ? t.slice(0, i).trim() : '';
+  const test = i > 0 ? t.slice(i + 2).trim() : '';
+  return build && test ? { build, test } : { build: t, test: null };
+}
 
 // For an app behind a sign-in portal: when the working directory holds the session file and
 // nothing in the crawl options names a way in (--state, --login, --cookie), every round's crawl
@@ -408,9 +432,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   };
 
   // The gate, with its output as it arrives (a few events a second at most) and how it ended.
-  const runGate = async (round, n, m) => {
+  const parts = cfg.checkEvery === 'finding' ? splitCheck(cfg.check) : { build: cfg.check, test: null };
+  const runGate = async (round, n, m, command = cfg.check, part = 'check') => {
     const t0 = Date.now();
-    ev('gate', { round, ...(n ? { n, m } : {}), state: 'start', check: cfg.check });
+    ev('gate', { round, ...(n ? { n, m } : {}), state: 'start', check: command, part });
     let buf = '';
     let timer = null;
     const flush = () => {
@@ -418,16 +443,17 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       if (buf) ev('gate-output', { round, text: buf.slice(-16384) });
       buf = '';
     };
-    const gate = await sh(cwd, cfg.check, process.env, events ? (d) => {
+    const gate = await sh(cwd, command, process.env, events ? (d) => {
       buf += d;
       if (!timer) timer = setTimeout(flush, 300);
-    } : null);
+    } : null, cfg.checkTimeout);
     if (timer) clearTimeout(timer);
     flush();
     const tail = gate.out.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim()).slice(-15).join('\n');
     gate.durationMs = Date.now() - t0;
-    gate.tail = tail;
-    ev('gate', { round, ...(n ? { n, m } : {}), state: 'done', check: cfg.check, ok: gate.code === 0, code: gate.code, durationMs: gate.durationMs, tail });
+    gate.reason = gate.timedOut ? `the check did not finish within ${duration(cfg.checkTimeout)}` : null;
+    gate.tail = gate.reason ? `${gate.reason}\n${tail}`.trim() : tail;
+    ev('gate', { round, ...(n ? { n, m } : {}), state: 'done', check: command, part, ok: gate.code === 0, code: gate.code, durationMs: gate.durationMs, tail: gate.tail, ...(gate.reason ? { reason: gate.reason } : {}) });
     return gate;
   };
 
@@ -554,6 +580,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       round, n, m: open.length, test: entry.test, message: entry.message, files: a.files || [], outcome,
       commit: a.commit || null, agentMs: a.agentMs ?? null, gateMs: a.gateMs ?? null, gateCode: a.gateCode ?? null,
       gateTail: a.gateOutput ? a.gateOutput.split('\n').filter((l) => l.trim()).slice(-15).join('\n') : null,
+      ...(a.gateReason ? { reason: a.gateReason } : {}),
     });
     const taskDone = (n, entry, outcome) => {
       ev('task', { round, n: n + 1, m: open.length, test: entry.test, impact: entry.impact, message: entry.message, state: 'done', outcome });
@@ -563,6 +590,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     };
     let committed = 0;
     const roundFixed = [];
+    // Where the round's commits start: the tests' bisect and a whole-round rollback return here.
+    const roundBase = git(cwd, ['rev-parse', 'HEAD']).out;
     for (const [n, entry] of open.entries()) {
       if (stopped()) break;
       const label = `${entry.test} ${entry.impact} "${entry.message.slice(0, 70)}"`;
@@ -602,15 +631,17 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         continue;
       }
       if (cfg.check && cfg.checkEvery === 'finding') {
-        log.info(`  checking: ${cfg.check}`);
-        ev('step', { round, step: 'gate', n: n + 1, m: open.length, check: cfg.check });
-        const gate = await runGate(round, n + 1, open.length);
+        // The build part on every fix; the tests (when the check has them) once for the round.
+        log.info(`  checking: ${parts.build}`);
+        ev('step', { round, step: 'gate', n: n + 1, m: open.length, check: parts.build });
+        const gate = await runGate(round, n + 1, open.length, parts.build, parts.test ? 'build' : 'check');
         attempt.gateMs = gate.durationMs;
         attempt.gateCode = gate.code;
         if (gate.code !== 0) {
           attempt.outcome = 'failed-gate';
-          attempt.gateOutput = gate.out.slice(-2000);
-          log.warn(`  check failed (exit ${gate.code}); reverting ${changed.join(', ')}`);
+          attempt.gateOutput = `${gate.reason ? `${gate.reason}\n` : ''}${gate.out.slice(-2000)}`;
+          if (gate.reason) attempt.gateReason = gate.reason;
+          log.warn(`  check failed (${gate.reason || `exit ${gate.code}`}); reverting ${changed.join(', ')}`);
           git(cwd, ['checkout', '--', ...sourceDirs]);
           git(cwd, ['clean', '-fdq', '--', ...sourceDirs]);
           if (entry.attempts.length >= cfg.maxAttempts) {
@@ -634,6 +665,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         continue;
       }
       attempt.commit = git(cwd, ['rev-parse', '--short', 'HEAD']).out;
+      attempt.commitFull = git(cwd, ['rev-parse', 'HEAD']).out;
       ev('commit', { round, n: n + 1, m: open.length, commit: attempt.commit, files: changed });
       entry.status = 'pending';
       committed++;
@@ -641,6 +673,95 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       log.info(`  committed ${attempt.commit}: ${changed.join(', ')}`);
       save();
       taskDone(n, entry, 'committed');
+    }
+
+    // The tests once for the round's fixes. When they fail: the first fix that breaks them is found
+    // (the round's commits, bisected; each run within checkTimeout), reverted, and the tests run
+    // again; after 3 reverts the whole round is rolled back.
+    if (committed && parts.test) {
+      const failAttempt = (e, gate, why) => {
+        const a = e.attempts[e.attempts.length - 1];
+        a.outcome = 'failed-gate';
+        a.gateOutput = `${why ? `${why}\n` : ''}${gate.reason ? `${gate.reason}\n` : ''}${gate.out.slice(-2000)}`;
+        a.gateMs = gate.durationMs;
+        a.gateCode = gate.code;
+        if (gate.reason) a.gateReason = gate.reason;
+        delete a.commit;
+        e.status = e.attempts.length >= cfg.maxAttempts ? 'needs-human' : 'open';
+        if (e.status === 'needs-human') e.reason = 'the fix broke the tests';
+        attemptEvent(a.n ?? 0, e, a, 'failed-gate');
+      };
+      const live = () => roundFixed.filter((e) => e.attempts[e.attempts.length - 1].commit);
+      const testsAt = async (label) => {
+        log.info(`  tests${label ? ` (${label})` : ''}: ${parts.test}`);
+        ev('step', { round, step: 'gate', check: parts.test });
+        return runGate(round, null, null, parts.test, 'test');
+      };
+      log.info(`running the tests once for the round's ${committed} fix(es)`);
+      let tests = await testsAt('');
+      let reverts = 0;
+      if (tests.code !== 0) {
+        // Tests that fail without any of this round's fixes are not theirs to answer for.
+        const tip = git(cwd, ['rev-parse', 'HEAD']).out;
+        git(cwd, ['reset', '-q', '--hard', roundBase]);
+        const before = await testsAt('without this round\'s fixes');
+        git(cwd, ['reset', '-q', '--hard', tip]);
+        if (before.code !== 0) {
+          log.warn('the tests also fail without this round\'s fixes; keeping the fixes, which each passed the build');
+          tests = { code: 0 };
+        }
+      }
+      while (tests.code !== 0 && reverts < 3 && live().length) {
+        const list = live();
+        const tip = git(cwd, ['rev-parse', 'HEAD']).out;
+        ev('bisect', { round, state: 'start', count: list.length });
+        // The first commit whose state fails the tests: a binary search over the round's commits.
+        let lo = 0;
+        let hi = list.length - 1;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          git(cwd, ['reset', '-q', '--hard', list[mid].attempts[list[mid].attempts.length - 1].commitFull]);
+          const t = await testsAt(`with fixes up to ${list[mid].attempts[list[mid].attempts.length - 1].n}`);
+          if (t.code !== 0) hi = mid;
+          else lo = mid + 1;
+        }
+        const culprit = list[lo];
+        const ca = culprit.attempts[culprit.attempts.length - 1];
+        ev('bisect', { round, state: 'found', n: ca.n ?? 0, test: culprit.test, message: culprit.message, commit: ca.commit });
+        log.warn(`  fix ${ca.n} (${culprit.test} "${culprit.message.slice(0, 60)}") breaks the tests; reverting it`);
+        // Back to the commit before it, and the later fixes applied again on top.
+        const base = lo > 0 ? list[lo - 1].attempts[list[lo - 1].attempts.length - 1].commitFull : roundBase;
+        git(cwd, ['reset', '-q', '--hard', base]);
+        failAttempt(culprit, tests, `fix ${ca.n} broke the tests`);
+        committed--;
+        for (const e of list.slice(lo + 1)) {
+          const a = e.attempts[e.attempts.length - 1];
+          const cp = git(cwd, ['cherry-pick', a.commitFull]);
+          if (cp.code !== 0) {
+            git(cwd, ['cherry-pick', '--abort']);
+            failAttempt(e, tests, `fix ${a.n} could not be applied again after fix ${ca.n} was reverted`);
+            committed--;
+            continue;
+          }
+          a.commitFull = git(cwd, ['rev-parse', 'HEAD']).out;
+          a.commit = git(cwd, ['rev-parse', '--short', 'HEAD']).out;
+          attemptEvent(a.n ?? 0, e, a, 'committed');
+        }
+        void tip;
+        reverts++;
+        save();
+        ledgerEvent();
+        tests = live().length ? await testsAt('after the revert') : { code: 0 };
+      }
+      if (tests.code !== 0) {
+        log.warn(`the tests still fail after ${reverts} revert(s); rolling back this round's fixes`);
+        git(cwd, ['reset', '-q', '--hard', roundBase]);
+        for (const e of live()) failAttempt(e, tests, 'the round\'s tests failed');
+        committed = 0;
+      }
+      roundFixed.splice(0, roundFixed.length, ...live());
+      save();
+      ledgerEvent();
     }
 
     if (committed && cfg.check && cfg.checkEvery === 'round') {

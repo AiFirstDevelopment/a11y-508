@@ -21,7 +21,7 @@ export interface Preset {
 // GET /api/loop/defaults: what the Fix loop infers from the working directory.
 export interface LoopDefaults {
   repo: { git: boolean; remote: string | null; branch: string | null };
-  package: { exists: boolean; build: string | null; test: string | null };
+  package: { exists: boolean; build: string | null; test: string | null; testHint?: string };
   source: string[];
   suggested: Record<string, any>;
   effective: { source: string[]; check: string | null; branch: string; push: boolean; deployed: string; deployTimeout: number; maxAttempts: number };

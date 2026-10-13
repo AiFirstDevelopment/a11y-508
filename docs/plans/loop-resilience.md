@@ -86,6 +86,18 @@ clone): the loop checks it out tracking origin. AC 6's "assistant failed to star
 18. The ledger records per attempt `agentMs`, `gateMs`, `gateCode`. During the gate the status reads "Checking fix 8
     with npm run build && npm test · 4 m 10 s (the last check took 6 m 02 s)".
 
+19. The check has a time limit: config `checkTimeout` (default 20 min); past it the check's process tree is ended
+    (taskkill /T on Windows) and the fix reverted with "the check did not finish within 20 min". When package.json's
+    test script runs `ng test` or `karma` in watch mode, the suggested check is `npm run build && npm test --
+    --watch=false --browsers=ChromeHeadless`, and the Fix step says why ("ng test watches for changes and never
+    exits; the check runs it once").
+20. A check of the form `<build> && <test>` is split: the build part runs on every fix, the test part once after the
+    round's fixes, before the push. When the round's tests fail (and pass without the round's fixes), the round's
+    commits are bisected to find the first fix that breaks them; it is reverted (the later fixes re-applied), its
+    attempt marked failed-gate with the test output, and the tests run again — at most 3 reverts, then the round is
+    rolled back. Any other check runs whole on every fix. The Fix step says "Each fix is built; the tests run once
+    per round".
+
 ## How this fails silently
 
 1. The nested-branch fallback picks a branch but does not switch to it; commits land on the previous branch.
@@ -128,6 +140,11 @@ clone): the loop checks it out tracking origin. AC 6's "assistant failed to star
     pane and in the Changes list fails.
 18. Stop recording `gateMs` — the loop test asserting the field and the Playwright test asserting "(the last check
     took" fail.
+
+19. (a) Remove the watch-mode detection — the loop-defaults test with `"test": "ng test"` fails; (b) remove the
+    kill — the loop test whose check sleeps past a 2 s checkTimeout fails (it takes the full sleep).
+20. (a) Run the tests per fix again — the loop test counting test-script runs fails; (b) skip the bisect — the loop
+    test where fix 2 of 3 breaks the tests (expects fixes 1 and 3 committed, fix 2 failed-gate) fails.
 
 ## Non-goals
 

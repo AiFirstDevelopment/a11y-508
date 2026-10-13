@@ -44,7 +44,10 @@ test('fix loop: the line says what it will do from the repository; the sign-in s
     // No sign-in concept on the screen: Fix the violations signs in by itself when it needs to.
     await expect(page.getByRole('button', { name: /sign in/i })).toHaveCount(0);
     // What will happen, from the repository's own facts.
-    await expect(page.getByTestId('loop-plan')).toHaveText(/^\s*Edits src · gate npm run build && npm test · commits to branch a11y-508 · pushes to origin\s*$/);
+    await expect(page.getByTestId('loop-plan')).toHaveText(/^\s*Edits src · gate npm run build && npm test -- --watch=false --browsers=ChromeHeadless · commits to branch a11y-508 · pushes to origin\s*$/);
+    // docs/plans/loop-resilience.md AC 19-20: why the tests run with those flags, and when they run.
+    await expect(page.getByTestId('test-hint')).toHaveText('ng test watches for changes and never exits; the check runs it once.');
+    await expect(page.getByTestId('check-hint')).toHaveText('Each fix is built; the tests run once per round.');
     expect(existsSync(join(cwd, 'a11y-508.config.json'))).toBe(false);
     const fix = page.getByRole('button', { name: 'Fix the violations' });
     await expect(fix).toBeEnabled();
@@ -54,7 +57,7 @@ test('fix loop: the line says what it will do from the repository; the sign-in s
     expect(cfgFile.startsWith(cwd)).toBe(false);
     await expect.poll(() => existsSync(cfgFile)).toBe(true);
     expect(JSON.parse(readFileSync(cfgFile, 'utf8'))).toEqual({
-      url: 'http://127.0.0.1:9/', agent: 'claude', source: ['src'], check: 'npm run build && npm test', branch: 'a11y-508', push: true, maxAttempts: 3, deployed: 'bundle-change', deployTimeout: 1800000, writtenBy: 'a11y-508-dashboard',
+      url: 'http://127.0.0.1:9/', agent: 'claude', source: ['src'], check: 'npm run build && npm test -- --watch=false --browsers=ChromeHeadless', branch: 'a11y-508', push: true, maxAttempts: 3, deployed: 'bundle-change', deployTimeout: 1800000, writtenBy: 'a11y-508-dashboard',
     });
     expect(existsSync(join(cwd, 'a11y-508.config.json'))).toBe(false);
     // A token was chosen on Run, so the loop does not sign in first.

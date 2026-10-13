@@ -79,6 +79,10 @@ if (!task) {
   } else if (f.test === '13.C') {
     const ok = edit('site/index.html', '.low-contrast { color: #999; background: #fff; }', '.low-contrast { color: #555; background: #fff; }');
     write({ fixed: ok, files: ok ? ['site/index.html'] : [], note: ok ? 'darkened the low-contrast text' : 'could not find the rule' });
+  } else if (f.test === '12.D' && process.env.FAKE_AGENT_FIX_IFRAME) {
+    // FAKE_AGENT_FIX_IFRAME: a third fix (the loop's tests-once-per-round bisect needs one to blame).
+    const ok = edit('site/index.html', '<iframe src="/about.html" width="300" height="100"></iframe>', '<iframe src="/about.html" title="About us" width="300" height="100"></iframe>');
+    write({ fixed: ok, files: ok ? ['site/index.html'] : [], note: ok ? 'titled the iframe' : 'could not find the iframe' });
   } else if (f.test === '10.D' && /direct child/.test(f.message)) {
     // Deliberately breaks the gate: the check command fails when this marker is present.
     edit('site/index.html', '<ul><div>Not a list item</div></ul>', '<ul><li>Not a list item</li></ul><!-- BREAK-THE-BUILD -->');

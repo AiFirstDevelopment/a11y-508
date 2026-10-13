@@ -828,6 +828,82 @@ rmSync(repo2, { recursive: true, force: true });
     removeOwn(dir);
   }
 
+  // AC 19: the check has a time limit; past it the check's process tree is ended and the fix reverted.
+  {
+    const { dir, g } = appRepo('a11y-508-slowcheck-', {});
+    const site = await serve(dir);
+    const url = `http://127.0.0.1:${site.address().port}/`;
+    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', url, checkTimeout: 2000, check: `${JSON.stringify(process.execPath)} -e "setTimeout(() => {}, 120000)"` }, null, 2));
+    g('commit', '-qam', 'a check that never ends');
+    const t0 = Date.now();
+    const r = await loopIn(dir, ['--max-rounds', '1', '--events']);
+    site.close();
+    const { events } = parseEvents(r.stdout);
+    check('loop-resilience AC19: a check past checkTimeout is ended and the fix reverted, with the reason', () => {
+      assert.ok(Date.now() - t0 < 90000, `took ${Date.now() - t0} ms`);
+      const failed = events.filter((e) => e.type === 'attempt' && e.outcome === 'failed-gate');
+      assert.ok(failed.length >= 2, r.out);
+      for (const a of failed) assert.equal(a.reason, 'the check did not finish within 2 s');
+      assert.equal(events.filter((e) => e.type === 'commit').length, 0);
+      assert.equal(g('status', '--porcelain', '--', 'site'), '');
+    });
+    removeOwn(dir);
+  }
+
+  // AC 20: each fix is built; the tests run once for the round; a fix that breaks them is found and reverted.
+  for (const breaking of [false, true]) {
+    const { dir, g } = appRepo(breaking ? 'a11y-508-bisect-' : 'a11y-508-testsonce-', {});
+    writeFileSync(join(dir, 'build.mjs'), "import { appendFileSync, readFileSync } from 'node:fs';\nappendFileSync('a11y-508-work/build-runs.log', 'build\\n');\nif (readFileSync('site/index.html', 'utf8').includes('BREAK-THE-BUILD')) { console.error('error: the build is broken'); process.exit(1); }\n");
+    // The tests fail on the iframe fix only where tests-break exists (the bisect case).
+    writeFileSync(join(dir, 'test.mjs'), "import { appendFileSync, existsSync, readFileSync } from 'node:fs';\nappendFileSync('a11y-508-work/test-runs.log', 'test\\n');\nif (existsSync('tests-break') && readFileSync('site/index.html', 'utf8').includes('title=\"About us\"')) { console.error('FAIL the iframe test'); process.exit(1); }\nconsole.log('tests passed');\n");
+    if (breaking) writeFileSync(join(dir, 'tests-break'), 'yes\n');
+    const site = await serve(dir);
+    const url = `http://127.0.0.1:${site.address().port}/`;
+    const node = JSON.stringify(process.execPath);
+    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', url, check: `${node} build.mjs && ${node} test.mjs` }, null, 2));
+    g('add', '-A');
+    g('commit', '-qm', 'build and tests');
+    const r = await loopIn(dir, ['--max-rounds', '1', '--events'], { FAKE_AGENT_FIX_IFRAME: '1' });
+    site.close();
+    const { events, problems } = parseEvents(r.stdout);
+    const runs = (f) => (existsSync(join(dir, 'a11y-508-work', f)) ? readFileSync(join(dir, 'a11y-508-work', f), 'utf8').split('\n').filter(Boolean).length : 0);
+    // Each fix's last word (a later event for the same fix replaces an earlier one), for the fixes that changed files.
+    const byN = new Map();
+    for (const e of events) if (e.type === 'attempt' && e.files.length) byN.set(e.n, e);
+    const final = (test) => [...byN.values()].find((e) => e.test === test);
+    const subjects = g('log', '--format=%s', '--grep=^a11y-508: ').split('\n').filter(Boolean);
+    if (!breaking) {
+      check('loop-resilience AC20: the build runs on every changed fix and the tests once for the round', () => {
+        assert.deepEqual(problems, []);
+        const built = events.filter((e) => e.type === 'gate' && e.state === 'start' && e.part === 'build').length;
+        assert.ok(built >= 4, r.out);
+        assert.equal(runs('build-runs.log'), built);
+        assert.equal(runs('test-runs.log'), 1);
+        assert.equal(events.filter((e) => e.type === 'gate' && e.state === 'start' && e.part === 'test').length, 1);
+        assert.equal(subjects.length, 3, subjects.join('\n'));
+      });
+    } else {
+      check('loop-resilience AC20: when the round\'s tests fail, the fix that breaks them is found and reverted; the others stay committed', () => {
+        assert.deepEqual(problems, []);
+        assert.equal(final('7.A').outcome, 'committed', r.out);
+        assert.equal(final('13.C').outcome, 'committed');
+        assert.equal(final('12.D').outcome, 'failed-gate');
+        assert.match(final('12.D').gateTail, /FAIL the iframe test/);
+        const found = events.find((e) => e.type === 'bisect' && e.state === 'found');
+        assert.ok(found && found.test === '12.D', JSON.stringify(found));
+        assert.ok(subjects.some((x) => /^a11y-508: 7\.A /.test(x)) && subjects.some((x) => /^a11y-508: 13\.C /.test(x)), subjects.join('\n'));
+        assert.ok(!subjects.some((x) => /^a11y-508: 12\.D /.test(x)), subjects.join('\n'));
+        assert.ok(!readFileSync(join(dir, 'site', 'index.html'), 'utf8').includes('title="About us"'));
+        assert.equal(g('status', '--porcelain', '--', 'site'), '');
+        const ledger = loadLedger(join(dir, 'a11y-508-work', 'ledger.json'));
+        const iframe = Object.values(ledger.findings).find((e) => e.test === '12.D' && e.attempts.length);
+        assert.equal(iframe.status, 'open');
+        assert.equal(iframe.attempts.at(-1).outcome, 'failed-gate');
+      });
+    }
+    removeOwn(dir);
+  }
+
   // AC 6 and 11: an assistant that never runs is an error, not a quiet finish; a quota refusal is a
   // wait the dashboard can count down; a call given up is said in plain words.
   {

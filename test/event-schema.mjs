@@ -30,6 +30,7 @@ export const EVENT_SCHEMA = {
   'await-deploy': { round: num, committed: num, nextRound: num },
   'agent-wait': { round: num, task: num, kind: oneOf('fix', 'triage'), reason: oneOf('quota'), delayMs: num, attempt: num, attempts: num },
   'agent-result': { round: num, task: num, kind: oneOf('fix', 'triage'), ok: bool, timedOut: bool, quota: bool, code: opt(num), message: opt(str) },
+  bisect: { round: num, state: oneOf('start', 'found'), count: opt(num), n: opt(num), commit: opt(str) },
   gate: { round: num, state: oneOf('start', 'done'), check: str, n: opt(num), m: opt(num), ok: opt(bool), durationMs: opt(num), tail: opt(str) },
   'gate-output': { round: num, text: str },
   commit: { round: num, n: num, m: num, commit: str, files: arr },

@@ -155,6 +155,10 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
         Edits <code>{{ pl.source }}</code> · @if (pl.check) {gate <code>{{ pl.check }}</code>} @else {no build or test command found, fixes are committed without a gate} · commits to branch <code>{{ pl.branch }}</code> · @if (pl.push && pl.remote) {pushes to <code>{{ pl.remote }}</code>} @else {does not push}
       }
     </p>
+    @if (plan(); as pl) {
+      @if (repoOk() && pl.check && pl.check.includes('&&')) { <p class="hint" data-testid="check-hint">Each fix is built; the tests run once per round.</p> }
+      @if (repoOk() && defaults()?.package?.testHint && pl.check === defaults()?.effective?.check) { <p class="hint" data-testid="test-hint">{{ defaults()!.package.testHint }}.</p> }
+    }
     @if (!loopUrl()) {
       <p class="hint" data-testid="no-url">No start URL yet: run a crawl from Run first.</p>
     }
@@ -447,6 +451,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     const current = s?.['n'] === undefined || (t?.n === s?.['n'] && t?.state === 'start');
     const g = this.store.gate();
     const last = this.store.lastGateMs();
+    if (g && !g.endedAt && g.round === r && g.part === 'test') return `Round ${r}: running the tests once for the round (${g.check}) · ${secs(g.startedAt)}`;
     if (g && !g.endedAt && g.round === r) return `Checking ${g.n ? `fix ${g.n}` : "the round's fixes"} with ${g.check} · ${secs(g.startedAt)}${last !== null ? ` (the last check took ${spoken(last)})` : ''}`;
     if (step === 'commit' && current) return `Round ${r}: committing fix ${s?.['n']} of ${s?.['m']}`;
     const seen = r === this.store.reportRound() ? ' from the report you just saw' : '';

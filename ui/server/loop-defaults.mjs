@@ -52,10 +52,16 @@ function sourceFolders(cwd) {
   return found.length ? found : ['.'];
 }
 
+// `ng test` (Karma) watches for changes and never exits unless told to run once.
+export const WATCHING_TEST = (script) => /\bng\s+test\b|\bkarma\b/.test(script) && !/--watch[= ]false|--no-watch|--single-run/.test(script);
+export const WATCH_HINT = 'ng test watches for changes and never exits; the check runs it once';
+
 export function checkCommand(scripts) {
   const build = scripts && typeof scripts.build === 'string' && scripts.build.trim() ? 'npm run build' : null;
-  const test = scripts && typeof scripts.test === 'string' && scripts.test.trim() && !PLACEHOLDER_TEST.test(scripts.test) ? 'npm test' : null;
-  return { build, test, check: build && test ? `${build} && ${test}` : build || test || null };
+  const raw = scripts && typeof scripts.test === 'string' && scripts.test.trim() && !PLACEHOLDER_TEST.test(scripts.test) ? scripts.test : null;
+  const watching = !!raw && WATCHING_TEST(raw);
+  const test = raw ? (watching ? 'npm test -- --watch=false --browsers=ChromeHeadless' : 'npm test') : null;
+  return { build, test, check: build && test ? `${build} && ${test}` : build || test || null, ...(watching ? { testHint: WATCH_HINT } : {}) };
 }
 
 export function loopDefaults(cwd, config = null) {
@@ -66,7 +72,7 @@ export function loopDefaults(cwd, config = null) {
   // symbolic-ref also names the branch of a repository with no commits yet.
   const branch = inRepo ? git(cwd, ['symbolic-ref', '--short', 'HEAD']) || git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']) : null;
   const pkg = readJson(join(cwd, 'package.json'));
-  const { build, test, check } = checkCommand(pkg && pkg.scripts);
+  const { build, test, check, testHint } = checkCommand(pkg && pkg.scripts);
   const source = sourceFolders(cwd);
   // The branch the loop will really use: a11y-508 cannot be created while an a11y-508/* branch
   // exists, and the loop then continues on that one (resolveBranch, the loop's own rule).
@@ -82,7 +88,7 @@ export function loopDefaults(cwd, config = null) {
   return {
     repo: { git: inRepo, remote, branch },
     branch: { wanted, used: used.branch, reason: used.reason || null },
-    package: { exists: !!pkg, build, test },
+    package: { exists: !!pkg, build, test, ...(testHint ? { testHint } : {}) },
     source,
     suggested,
     effective,

@@ -23,9 +23,10 @@ test('loop defaults: build and test scripts, a source folder and a remote', asyn
     const r = await s.call('GET', '/api/loop/defaults');
     assert.equal(r.status, 200);
     assert.deepEqual(r.json.repo, { git: true, remote: 'origin', branch: 'main' });
-    assert.deepEqual(r.json.package, { exists: true, build: 'npm run build', test: 'npm test' });
+    // ng test watches unless told otherwise (AC 19): the check runs it once, and says why.
+    assert.deepEqual(r.json.package, { exists: true, build: 'npm run build', test: 'npm test -- --watch=false --browsers=ChromeHeadless', testHint: 'ng test watches for changes and never exits; the check runs it once' });
     assert.deepEqual(r.json.source, ['src']);
-    assert.deepEqual(r.json.suggested, { source: ['src'], check: 'npm run build && npm test', branch: 'a11y-508', push: true, deployed: 'bundle-change', deployTimeout: 1800000, maxAttempts: 3 });
+    assert.deepEqual(r.json.suggested, { source: ['src'], check: 'npm run build && npm test -- --watch=false --browsers=ChromeHeadless', branch: 'a11y-508', push: true, deployed: 'bundle-change', deployTimeout: 1800000, maxAttempts: 3 });
     assert.equal(r.json.configExists, false);
   } finally {
     await s.stop();
@@ -63,6 +64,22 @@ test('loop defaults: no package.json and not a repository', async () => {
     assert.equal(r.json.package.exists, false);
     assert.equal(r.json.suggested.check, null);
     assert.deepEqual(r.json.source, ['pages']);
+  } finally {
+    await s.stop();
+  }
+});
+
+// docs/plans/loop-resilience.md AC 19: `ng test` watches and never exits; the suggested check runs it once.
+test('loop defaults: a test script that runs ng test in watch mode is run once, with the reason', async () => {
+  const s = await startServer({ cwd: repo({ build: 'ng build', test: 'ng test' }) });
+  try {
+    const r = await s.call('GET', '/api/loop/defaults');
+    assert.equal(r.json.suggested.check, 'npm run build && npm test -- --watch=false --browsers=ChromeHeadless');
+    assert.equal(r.json.package.testHint, 'ng test watches for changes and never exits; the check runs it once');
+    writeFileSync(join(s.cwd, 'package.json'), JSON.stringify({ name: 'app', scripts: { build: 'ng build', test: 'ng test --watch=false' } }));
+    const once = await s.call('GET', '/api/loop/defaults');
+    assert.equal(once.json.suggested.check, 'npm run build && npm test');
+    assert.equal(once.json.package.testHint, undefined);
   } finally {
     await s.stop();
   }
