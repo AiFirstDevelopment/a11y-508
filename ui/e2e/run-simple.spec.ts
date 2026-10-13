@@ -1,29 +1,28 @@
-// docs/plans/run-simple.md: the Run screen for the common case. A start URL,
-// the sign-in state with a Sign in button that runs the login flow in place,
-// Start, and everything else behind a closed "More options…".
+// docs/plans/run-simple.md: the Run screen for the common case. A start URL and one
+// button, Start, which opens a fresh browser window to sign in in and crawls there
+// (--login --stay); everything else behind a closed "More options…".
 
 import { test, expect, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { api, dashboard, fixtureSite, moreOptions, open, readReport, startFromRun, tempDir, waitFinished } from './harness';
+import { api, dashboard, fixtureSite, moreOptions, open, readReport, startFromRun, status, tempDir, waitFinished } from './harness';
 // @ts-ignore -- plain JS fixture shared with the core's tests
 import { SESSION_COOKIE, SESSION_VALUE } from '../../test/fixture-site.mjs';
 
 const start = (page: Page) => page.getByRole('button', { name: 'Start', exact: true });
-const signInState = (page: Page) => page.getByTestId('signin-state');
+const WAITING = 'A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.';
 
-test('run-simple (a): the Run screen shows the URL, the sign-in state and Start; the rest stays hidden until More options… is opened', async ({ page }) => {
+test('run-simple (a): the Run screen shows the URL and Start, with no sign-in wording; the rest stays hidden until More options… is opened', async ({ page }) => {
   const dash = await dashboard();
   try {
     await open(page, dash, '/run');
     await expect(page.getByLabel('Start URL')).toBeVisible();
-    await expect(signInState(page)).toBeVisible();
-    await expect(signInState(page)).toHaveAttribute('role', 'status');
-    await expect(signInState(page)).toHaveText('Not signed in');
-    await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
-    // One assumed way in: with no session there is no Start button, only Sign in.
-    await expect(start(page)).toHaveCount(0);
+    await expect(start(page)).toBeVisible();
+    // No sign-in concept on the screen: no Sign in button, no sign-in state, no session line.
+    await expect(page.getByRole('button', { name: /sign in/i })).toHaveCount(0);
+    await expect(page.getByTestId('signin-state')).toHaveCount(0);
+    await expect(page.getByTestId('session-line')).toHaveCount(0);
     // The nav no longer offers a Sign in screen.
     await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Sign in' })).toHaveCount(0);
 
@@ -50,25 +49,27 @@ test('run-simple (a): the Run screen shows the URL, the sign-in state and Start;
   }
 });
 
-test('run-simple (b): with no session, Sign in runs one crawl that signs in and stays in that window: the wait, then the pages, with --login --stay', async ({ page }) => {
+// Start, then the Live screen: the run is the sign-in crawl.
+async function startSignIn(page: Page): Promise<void> {
+  await start(page).click();
+  await expect(page).toHaveURL(/\/live$/);
+}
+
+test('run-simple (b): Start opens a window to sign in in and crawls there (--login --stay): the wait, then the pages; the session is saved on the way', async ({ page }) => {
   const site = await fixtureSite({ autoLogin: true });
   const dash = await dashboard();
   try {
     await open(page, dash, '/run');
-    await expect(signInState(page)).toHaveText('Not signed in');
     await page.getByLabel('Start URL').fill(site.base + 'app.html');
-    await expect(start(page)).toHaveCount(0);
-    // The run's options come from the form, as for Start.
+    // The run's options come from the form.
     await moreOptions(page);
     await page.getByLabel('Maximum pages').fill('1');
     await page.locator('details.advanced > summary').click();
     await page.locator('#adv-no-zoom').check();
     await page.locator('#adv-no-screenshots').check();
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    // No Start: the sign-in is the run, and Live follows it.
-    await expect(page).toHaveURL(/\/live$/);
+    await startSignIn(page);
     // The wait is the Live status line, not a warning.
-    await expect(page.getByTestId('run-status')).toHaveText('A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.', { timeout: 60_000 });
+    await expect(status(page)).toHaveText(WAITING, { timeout: 60_000 });
     await expect(page.locator('[data-notice="warn"]', { hasText: 'A browser window is open' })).toHaveCount(0);
     await expect(page.getByTestId('run-command')).toContainText('--login --stay --state a11y-508-state.json');
     const cur = (await api(dash, '/api/runs/current')).json;
@@ -84,22 +85,18 @@ test('run-simple (b): with no session, Sign in runs one crawl that signs in and 
     expect(report.pages[0].finalUrl).toBe(site.base + 'app.html');
     expect(report.pages[0].error).toBeNull();
     expect(report.pages[0].title).toBe('Application - a11y-508 test site');
-    // Back on Run: the session is saved, and Start uses it from now on.
+    expect(existsSync(join(dash.cwd, 'a11y-508-state.json')), 'the session file, saved for the fix loop').toBe(true);
+    // Back on Run: still one Start, which signs in afresh next time too.
     await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
-    await expect(signInState(page)).toHaveText(/^Signed in · session saved just now \(.+\)$/);
-    // The time saved, in local time, with the ISO string for precision.
-    const t = signInState(page).locator('time');
-    const iso = await t.getAttribute('datetime');
-    await expect(t).toHaveText(await page.evaluate((a) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(a!)), iso));
-    await expect(page.getByRole('button', { name: 'Sign in again' })).toBeVisible();
     await expect(start(page)).toBeEnabled();
+    await expect(page.getByTestId('session-line')).toHaveCount(0);
   } finally {
     await dash.stop();
     site.close();
   }
 });
 
-test('run-simple (c): a session saved before launch is shown with its age, and Start uses it without a sign-in', async ({ page }) => {
+test('run-simple (c): with a saved session, Start still signs in afresh; the saved session is used headless only when chosen under More options', async ({ page }) => {
   const site = await fixtureSite({ autoLogin: true });
   const cwd = tempDir('a11y-508-simple-');
   const origin = new URL(site.base).origin;
@@ -117,27 +114,30 @@ test('run-simple (c): a session saved before launch is shown with its age, and S
   const dash = await dashboard({ cwd });
   try {
     await open(page, dash, '/run');
-    await expect(signInState(page)).toHaveText(/^Signed in · session saved 5 min ago \(.+\)$/);
-    await expect(page.getByRole('button', { name: 'Sign in again' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0);
-    await expect(start(page)).toBeVisible();
     await page.getByLabel('Start URL').fill(site.base + 'app.html');
-    await expect(start(page)).toBeEnabled();
-    // On first load the saved session is the mode in effect, not "A token".
     await moreOptions(page);
-    await expect(page.getByLabel(/^Use saved session/)).toBeChecked();
-    await expect(page.getByLabel('A token')).not.toBeChecked();
-    await expect(page.getByTestId('command')).toContainText('--state a11y-508-state.json');
+    // The saved session is offered under More options, with its age, and is not the default.
+    const saved = page.getByLabel(/^Use saved session/);
+    await expect(saved).toBeEnabled();
+    await expect(saved).not.toBeChecked();
+    await expect(page.locator('label[for="auth-state"]')).toContainText('a11y-508-state.json, 5 minutes old');
     await page.getByLabel('Maximum pages').fill('1');
     await page.locator('details.advanced > summary').click();
     await page.locator('#adv-no-zoom').check();
     await page.locator('#adv-no-screenshots').check();
+    // Start: a fresh sign-in window, never the saved session headless.
+    await startSignIn(page);
+    await expect(page.getByTestId('run-command')).toContainText('--login --stay');
+    await waitFinished(page);
+    // Chosen under More options, the saved session runs the headless crawl.
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
+    await moreOptions(page);
+    await page.getByLabel(/^Use saved session/).check();
     await startFromRun(page);
     await expect(page.getByTestId('run-command')).toContainText('--state a11y-508-state.json');
     const cur = (await api(dash, '/api/runs/current')).json;
     expect(cur.kind).toBe('crawl');
     expect(cur.meta.command).toContain('--state a11y-508-state.json');
-    // A session that already exists: the faster headless crawl, no sign-in window.
     expect(cur.meta.command).not.toContain('--login');
     await waitFinished(page);
     const report = readReport(cwd);
@@ -188,13 +188,10 @@ test('run-simple (d): a run bounced to a sign-in page on another origin offers S
     expect(cur.kind).toBe('crawl');
     expect(cur.meta.command).toContain('--login --stay');
     expect(cur.meta.url).toBe(appBase + '/');
-    // This portal never lets anyone in: on Run, cancel the sign-in, which says so in place with Try again.
+    // This portal never lets anyone in: Stop ends the sign-in, and Start is ready again.
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(status(page)).toHaveText('Stopped', { timeout: 30_000 });
     await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
-    await expect(signInState(page)).toContainText('A Chrome window is open');
-    await page.getByRole('button', { name: 'Cancel sign-in' }).click();
-    await expect(signInState(page)).toContainText('Sign-in did not finish', { timeout: 30_000 });
-    await expect(signInState(page)).toBeFocused();
-    await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
     await expect(start(page)).toBeEnabled();
   } finally {
     await dash.stop();

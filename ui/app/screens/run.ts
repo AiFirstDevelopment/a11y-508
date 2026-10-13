@@ -5,11 +5,11 @@ import { EnvStore } from '../core/env.store';
 import { ADVANCED, AuthMode, FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { ageText } from '../core/format';
-import { SignInState } from '../shared/sign-in-state';
+import { SignInFlow } from '../core/sign-in';
 
 @Component({
   selector: 'app-run-screen',
-  imports: [RouterLink, SignInState],
+  imports: [RouterLink],
   template: `
     <h1>Run a crawl</h1>
     @if (noBrowser()) {
@@ -25,15 +25,11 @@ import { SignInState } from '../shared/sign-in-state';
         <label for="url">Start URL</label>
         <input id="url" name="url" type="url" required [value]="form.url()" (input)="form.url.set(val($event))" (blur)="form.rememberUrl()" placeholder="https://app.example.gov" />
       </div>
-      <app-sign-in-state [url]="form.url()" [goLive]="true" />
       @if (commandError() || error()) {
         <div class="notice error" role="alert" data-notice="form-error">{{ commandError() || error() }}</div>
       }
       <div class="actions">
-        <!-- Without a session the way in is Sign in; Start appears once there is one, or a way is chosen under More options. -->
-        @if (!needsSignIn()) {
-          <button type="submit" [disabled]="!canStart()">Start</button>
-        }
+        <button type="submit" [disabled]="!canStart()">Start</button>
         @if (run.active()) {
           <p class="hint">A run is active. <a routerLink="/live">Watch it</a>.</p>
         }
@@ -160,8 +156,8 @@ export class RunScreen implements OnInit {
     return s?.exists ? ` (${s.file}, ${ageText(s.ageMs)})` : ' (none saved yet)';
   });
   // No saved session and no other way chosen under More options: sign in first.
-  readonly needsSignIn = computed(() => !this.form.hasWayIn());
-  readonly canStart = computed(() => !!this.form.url().trim() && !this.run.active() && !this.needsSignIn() && (!this.noBrowser() || !!String(this.adv()['chrome'] || '').trim()));
+  private flow = inject(SignInFlow);
+  readonly canStart = computed(() => !!this.form.url().trim() && !this.run.active() && (!this.noBrowser() || !!String(this.adv()['chrome'] || '').trim()));
   private timer: any;
 
   constructor() {
@@ -186,6 +182,18 @@ export class RunScreen implements OnInit {
     this.form.choose(m);
   }
 
+  // The sign-in crawl (--login --stay): a new browser, a new session, and the crawl in that window; Live follows it.
+  private async signInCrawl(): Promise<void> {
+    if (!this.canStart()) return;
+    this.error.set('');
+    try {
+      await this.flow.start();
+      await this.router.navigateByUrl('/live');
+    } catch (e: any) {
+      this.error.set(e.message);
+    }
+  }
+
   private async refreshCommand(body: Record<string, unknown>): Promise<void> {
     if (!body['url']) return this.command.set('');
     try {
@@ -207,8 +215,13 @@ export class RunScreen implements OnInit {
     }
   }
 
+  // Start opens a fresh browser window to sign in in (or the portal lets the person straight
+  // through) and crawls in it (--login --stay); the session file is saved on the way, for the fix
+  // loop. Only a way in chosen under More options (a saved session, a token, cookies, none) runs
+  // the headless crawl instead.
   async start(): Promise<void> {
     if (!this.canStart()) return;
+    if (!this.form.authChosen()) return this.signInCrawl();
     this.error.set('');
     try {
       this.form.rememberUrl();

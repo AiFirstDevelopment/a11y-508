@@ -52,8 +52,8 @@ export class FormStore {
   // do, a saved session is used whenever one exists, and no sign-in otherwise
   // (the app then sends the crawler to its sign-in page, and Live offers Sign in).
   readonly authChosen = signal(false);
-  // The radio shown checked under More options: none until a choice is made, unless a session exists.
-  readonly checkedMode = computed<AuthMode | null>(() => (this.authChosen() ? this.authMode() : this.env.env()?.session?.exists ? 'state' : null));
+  // The radio shown checked under More options: none until a choice is made (Start signs in itself).
+  readonly checkedMode = computed<AuthMode | null>(() => (this.authChosen() ? this.authMode() : null));
   readonly mode = computed<AuthMode>(() => (this.authChosen() ? this.authMode() : this.env.env()?.session?.exists ? 'state' : 'none'));
   readonly token = signal('');
   readonly cookies = signal('');
@@ -71,18 +71,10 @@ export class FormStore {
     } catch {}
   }
 
-  // Start needs a way in: the saved session, or a choice made under More options.
-  readonly hasWayIn = computed(() => this.authChosen() || !!this.env.env()?.session?.exists);
 
   choose(m: AuthMode): void {
     this.authMode.set(m);
     this.authChosen.set(true);
-  }
-
-  // After a sign-in: the new session is what the next run uses.
-  useSession(): void {
-    this.authMode.set('state');
-    this.authChosen.set(false);
   }
 
   setAdvanced(flag: string, value: string | boolean): void {

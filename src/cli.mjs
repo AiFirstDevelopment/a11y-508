@@ -21,7 +21,7 @@ const HELP = `a11y-508 ${pkg.version} - Section 508 crawler (DHS Trusted Tester 
 
 Usage: a11y-508 <url> [options]
        npm run e2e:a11y-508 <url> [-- options]
-       a11y-508 loop [url] [--config <file>] [--max-rounds <n>] [--agent <spec>] [--dry-run] [crawl options]
+       a11y-508 loop [url] [--config <file>] [--max-rounds <n>] [--agent <spec>] [--dry-run] [--sign-in-first] [crawl options]
        a11y-508 status
 
 Crawls every same-origin page reachable from <url> in headless Chrome, runs the
@@ -100,6 +100,8 @@ Fix loop
     --max-rounds <n>   Rounds to run before stopping (default 20)
     --agent <spec>     claude | gemini | codex | a command with {promptFile} (overrides config)
     --dry-run          Crawl and update the ledger only; no agent, no commits
+    --sign-in-first    Round 1 crawls in a visible window after you sign in (--login --stay),
+                       saving the session the later rounds crawl with
   status        Print the ledger: what is open, pending, verified, and needs a person.
 
 Exit codes
@@ -224,7 +226,7 @@ export function parseArgs(argv) {
 export function splitLoopArgs(argv) {
   const [command, ...rest] = argv;
   if (command !== 'loop' && command !== 'status') return null;
-  const loop = { command, config: 'a11y-508.config.json', maxRounds: 20, agent: null, dryRun: false, help: false };
+  const loop = { command, config: 'a11y-508.config.json', maxRounds: 20, agent: null, dryRun: false, signInFirst: false, help: false };
   const remaining = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -239,6 +241,7 @@ export function splitLoopArgs(argv) {
     else if (key === '--max-rounds') loop.maxRounds = Math.max(1, parseInt(val(), 10) || 0);
     else if (key === '--agent') loop.agent = val();
     else if (key === '--dry-run') loop.dryRun = true;
+    else if (key === '--sign-in-first') loop.signInFirst = true;
     else if (key === '-h' || key === '--help') loop.help = true;
     else remaining.push(a);
   }
@@ -291,7 +294,7 @@ async function loopMain(split) {
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
   try {
-    return await runLoop({ config, cwd: process.cwd(), log, maxRounds: loop.maxRounds, dryRun: loop.dryRun, passthrough, stopSignal, events });
+    return await runLoop({ config, cwd: process.cwd(), log, maxRounds: loop.maxRounds, dryRun: loop.dryRun, signInFirst: loop.signInFirst, passthrough, stopSignal, events });
   } finally {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);

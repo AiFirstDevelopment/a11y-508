@@ -91,11 +91,13 @@ export function crawlArgs({ kind = 'crawl', url, options, auth }) {
   return { args, token: a.token };
 }
 
-export function loopArgs({ kind, url, options, auth, maxRounds, agent }) {
+export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = false }) {
   const a = authArgs(auth);
   const args = ['loop'];
   if (url) args.push(validateUrl(url));
   if (kind === 'dry-run') args.push('--dry-run');
+  // The Fix loop's first round signs in, in a visible window (--login --stay).
+  if (signIn && kind === 'loop') args.push('--sign-in-first');
   if (maxRounds) {
     const n = parseInt(maxRounds, 10);
     if (!(n >= 1)) throw new BadRequest('maxRounds must be a positive number');

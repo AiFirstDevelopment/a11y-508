@@ -131,3 +131,4 @@ button.big { font-size: 1.1rem; padding: 10px 22px; }
 .pane-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
 .pane-head h2 { font-size: 1rem; margin: 8px 0 4px; }
 pre.pane { height: calc(12 * 1.4em + 16px); max-height: none; overflow: auto; white-space: pre-wrap; }
+.wrap { overflow-wrap: anywhere; }

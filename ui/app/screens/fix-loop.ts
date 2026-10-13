@@ -9,7 +9,6 @@ import { localTime } from '../core/format';
 import { AgentTest, LedgerInfo, LoopDefaults, Preset } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
 import { RunView } from '../shared/run-view';
-import { SignInState } from '../shared/sign-in-state';
 
 const STATUSES: [string, string][] = [
   ['open', 'Open'], ['review', 'Awaiting triage'], ['pending', 'Pending verification'], ['verified', 'Verified fixed'],
@@ -24,7 +23,7 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
 // and shows it, with one button; everything it inferred is editable under More options.
 @Component({
   selector: 'app-fix-loop-screen',
-  imports: [ChartPanel, LineChartModule, RunView, SignInState],
+  imports: [ChartPanel, LineChartModule, RunView],
   template: `
     <h1>Fix loop</h1>
 
@@ -137,14 +136,13 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
       </section>
     }
 
-    <app-sign-in-state [url]="loopUrl()" [goLive]="false" />
 
     <p data-testid="loop-plan">
       @if (!repoOk()) {
         @if (defaults() && !defaults()!.repo.git) {
-          <span data-testid="not-git">Choose the app's repository with Change… above; {{ env.cwd() }} {{ repoProblem() }}.</span>
+          <span class="wrap" data-testid="not-git">Choose the app's repository with Change… above; {{ env.cwd() }} {{ repoProblem() }}.</span>
         } @else {
-          <span data-testid="no-package">Choose the app's repository with Change… above; {{ env.cwd() }} {{ repoProblem() }}.</span>
+          <span class="wrap" data-testid="no-package">Choose the app's repository with Change… above; {{ env.cwd() }} {{ repoProblem() }}.</span>
         }
       } @else if (plan(); as pl) {
         Edits <code>{{ pl.source }}</code> · @if (pl.check) {gate <code>{{ pl.check }}</code>} @else {no build or test command found, fixes are committed without a gate} · commits to branch <code>{{ pl.branch }}</code> · @if (pl.push && pl.remote) {pushes to <code>{{ pl.remote }}</code>} @else {does not push}
@@ -152,8 +150,6 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
     </p>
     @if (!loopUrl()) {
       <p class="hint" data-testid="no-url">No start URL yet: run a crawl from Run first, or set it under More options.</p>
-    } @else if (needsSignIn()) {
-      <p class="hint" data-testid="sign-in-first">Sign in first</p>
     }
 
     <div class="actions">
@@ -173,6 +169,9 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
     }
     @if (isLoop()) {
       <p role="status" data-testid="loop-step">{{ stepText() }}</p>
+      @if (store.loginWaiting() && store.active()) {
+        <p class="notice" role="status" data-testid="loop-login-waiting">A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.</p>
+      }
       <app-run-view [showChart]="false" />
     }
 
@@ -299,21 +298,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
       maxAttempts: c['maxAttempts'] ?? d.effective.maxAttempts,
     };
   });
-  // Auth the loop's crawls use without a session: a way chosen on the Run screen, or in the crawl options.
-  readonly authConfigured = computed(() => this.form.authChosen() || (Array.isArray(this.cfg()['args']) && this.cfg()['args'].some((a: string) => /^--(state|login|cookie|token-storage)(=|$)/.test(a))));
-  readonly needsSignIn = computed(() => {
-    const url = this.loopUrl();
-    if (!url || this.authConfigured()) return false;
-    const s = this.env.env()?.session;
-    if (!s?.exists) return true;
-    if (!s.origins?.length) return false;
-    try {
-      return !s.origins.includes(new URL(url).origin);
-    } catch {
-      return false;
-    }
-  });
-  readonly canStart = computed(() => this.agentReady() && this.repoOk() && !!this.loopUrl() && !this.needsSignIn() && !this.store.active());
+  readonly canStart = computed(() => this.agentReady() && this.repoOk() && !!this.loopUrl() && !this.store.active());
   readonly host = computed(() => {
     try {
       return new URL(this.loopUrl()).host;
@@ -607,7 +592,9 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   async startLoop(kind: 'loop' | 'dry-run'): Promise<void> {
     this.runError.set('');
     try {
-      await this.store.start({ kind, auth: this.form.auth(true), agent: kind === 'loop' ? this.agentSpec() : undefined });
+      // Fix the violations signs in first, in a fresh window, unless a way in was chosen on Run
+      // (More options); the later rounds crawl headless with the session it saves.
+      await this.store.start({ kind, auth: this.form.auth(true), agent: kind === 'loop' ? this.agentSpec() : undefined, signIn: kind === 'loop' && !this.form.authChosen() });
       this.form.clearToken();
     } catch (e: any) {
       this.runError.set(e.message);

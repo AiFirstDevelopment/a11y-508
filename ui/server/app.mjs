@@ -168,7 +168,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       let agentArg = null;
       if (resolved && PRESETS[chosen] && resolved !== PRESETS[chosen]) agentArg = resolved;
       else if (resolved && body.agent) agentArg = body.agent;
-      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg });
+      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn: body.signIn === true });
       meta = { agent: resolved };
     } else {
       built = crawlArgs({ kind, url: body.url, options: body.options, auth });

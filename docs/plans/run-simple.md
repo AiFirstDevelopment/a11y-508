@@ -71,3 +71,21 @@ written config gains the inferred `branch`, `deployed` and `deployTimeout`, plus
 that no deploy field is on screen. AC 12 / AC 14 / gemini run: set up a package.json (and
 for AC 12 a session file covering the start URL), open the picker with *change*, and no
 longer set "Rounds to run". Dry runs go through More options.
+
+## One Start, no sign-in concept on screen
+
+Start on the Run screen always runs the sign-in crawl (`--login --stay`) in a fresh browser
+(each run launches its own browser with a new temporary profile; none survives a run), unless
+a way in (saved session, token, shell token, cookies, none) was chosen under More options….
+The session file is saved on the way, for the fix loop. **Fix the violations** passes
+`signIn` to the server, which adds the loop's new `--sign-in-first`: round 1 crawls via
+`--login --stay`, the later rounds headless with `--state`; a way in chosen on Run skips it.
+The Sign in route's login-only run still chooses the saved session for the next Start.
+
+Spec changes: run-simple (a) asserts no sign-in wording/buttons and Start present; (b) Start
+launches the `--login --stay` crawl (status line, pages, `options.stay`, session file saved);
+(c) a saved session at launch is offered under More options (age shown, unchecked), Start
+still signs in afresh, and choosing it runs headless with `--state` and no `--login`; (d)
+ends the Live notice's sign-in with Stop (the Run screen's Cancel/Try again/focus state no
+longer exists). fix-loop-simple: no sign-in button; a token chosen means no
+`--sign-in-first`; a new case asserts `--sign-in-first` with no way in chosen.

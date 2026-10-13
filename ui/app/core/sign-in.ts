@@ -33,7 +33,9 @@ export class SignInFlow {
       const saved = this.saved();
       const done = this.isSignIn() && this.run.done();
       untracked(() => {
-        if (saved) this.form.useSession();
+        // The Sign in route's login-only run chooses the saved session for the next run; the
+        // sign-in crawl leaves the choice alone (every Start signs in afresh).
+        if (saved && this.run.kind() === 'login') this.form.choose('state');
         if (saved || done) void this.env.load();
       });
     });

@@ -93,7 +93,7 @@ export function sessionArgs(cfg, passthrough = [], cwd = process.cwd()) {
 }
 
 // Event types from a round's crawl that the loop passes on, tagged with the round.
-const RELAYED = new Set(['page', 'coverage', 'summary']);
+const RELAYED = new Set(['page', 'coverage', 'summary', 'login-waiting', 'session-saved']);
 
 async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = [] }) {
   const out = join(cwd, WORK_DIR, `round-${round}`);
@@ -202,7 +202,7 @@ async function callAgent(work, label, args, onOutput = null) {
   return res;
 }
 
-export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false, passthrough = [], stopSignal, events = false }) {
+export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false, signInFirst = false, passthrough = [], stopSignal, events = false }) {
   const { cfg, errors } = normalizeConfig(config, { url: config._url, agent: config._agent }, { interactive: events || !!process.stdin.isTTY });
   const ev = (type, data) => log.event && log.event(type, data);
   const ledgerEvent = () => ev('ledger', { rounds: ledger.rounds.length, counts: statusCounts(ledger), line: summaryLine(ledger) });
@@ -248,8 +248,12 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     if (!cfg.check) log.warn('no "check" command in the config: fixes are committed without a build or test gate');
   }
 
-  const session = sessionArgs(cfg, passthrough, cwd);
-  if (session.length) log.info(`crawling with the saved session ${session[1]}`);
+  // --sign-in-first: round 1 signs in, in a visible window, and crawls there (saving a fresh
+  // session); the later rounds crawl headless with that session.
+  const signInArgs = ['--login', '--stay', '--state', cfg.state];
+  let session = sessionArgs(cfg, passthrough, cwd);
+  if (signInFirst) log.info(`round 1 signs in first in a visible window; the later rounds crawl with the saved session ${cfg.state}`);
+  else if (session.length) log.info(`crawling with the saved session ${session[1]}`);
   // The assistant's output as it arrives (--events): a few events a second at most per call.
   const outputTo = (round, task, kind) => {
     if (!events) return null;
@@ -294,7 +298,9 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     const signatureBefore = cfg.deployed === 'bundle-change' ? await bundleSignature(cfg.url) : null;
     let crawl;
     try {
-      crawl = await crawlOnce({ cfg, cwd, round, log, passthrough, events, session });
+      const first = signInFirst && round === startRound;
+      crawl = await crawlOnce({ cfg, cwd, round, log, passthrough: first ? passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') : passthrough, events, session: first ? signInArgs : session });
+      if (first) session = sessionArgs(cfg, passthrough, cwd);
     } catch (e) {
       log.error(`crawl failed: ${e.message}`);
       save();

@@ -122,6 +122,10 @@ check('loop flags are split from crawl options', () => {
   assert.equal(s.loop.dryRun, true);
   assert.deepEqual(s.remaining, ['http://x', '--max-pages', '10']);
   assert.equal(splitLoopArgs(['http://x']), null);
+  // --sign-in-first is the loop's own flag, not a crawl option.
+  const f = splitLoopArgs(['loop', '--sign-in-first', '--max-pages', '2']);
+  assert.equal(f.loop.signInFirst, true);
+  assert.deepEqual(f.remaining, ['--max-pages', '2']);
 });
 
 // ---- e2e: a throwaway repository with the fixture site, served from disk
