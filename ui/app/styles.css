@@ -145,3 +145,7 @@ table.findings td { overflow-wrap: anywhere; }
 .badge { display: inline-block; font-size: 0.85rem; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line); background: #f4f4f4; }
 .badge.violation.critical, .badge.violation.serious { border-color: var(--crit); background: var(--err-bg); color: var(--crit); }
 .badge.violation.moderate { border-color: var(--ser); color: var(--ser); background: #fff3e8; }
+.route-link { text-decoration: none; color: var(--fg); }
+.route-link strong { color: var(--accent); text-decoration: underline; }
+.query { color: var(--muted); font-size: 0.85rem; margin-left: 2px; }
+p.phase { margin: 2px 0 0; }

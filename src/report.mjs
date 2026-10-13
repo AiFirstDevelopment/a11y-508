@@ -56,9 +56,10 @@ export function coverage(pages, crawl, opts) {
   for (const p of pages.filter((x) => x.modalOnLoad && x.modalOnLoad.dismissed === false)) {
     warnings.push(`A modal dialog (${p.modalOnLoad.name || p.modalOnLoad.selector}) was open when ${short(p.finalUrl || p.url)} loaded and did not close with Escape; the page behind it was not audited. Dismiss it with --cookie or a saved session, or audit the dialog's close control.`);
   }
-  for (const p of pages.filter((p) => p.servedWith && !p.error && !p.skipped)) {
-    warnings.push(`${short(p.finalUrl || p.url)} was served with HTTP ${p.servedWith} but rendered a page, so it was audited. The server answers "not found" for this address; a browser shows the page anyway, but search engines and some assistive tools may not. Check the deployment's handling of deep links.`);
-  }
+  // Routes the server answers 404 for and the app renders anyway: audited, so coverage is not
+  // reduced; one note for the run (a deployment setting, not something to fix page by page).
+  const soft = pages.filter((p) => p.servedWith && !p.error && !p.skipped).map((p) => short(p.finalUrl || p.url));
+  if (soft.length) notes.push(softNotFoundNote(soft));
   if (crawl.overflow) warnings.push(`Stopped at --max-pages ${opts.maxPages}: ${crawl.overflow} more link(s) were found but not audited.`);
   if (crawl.variantOverflow) {
     const routes = crawl.variantRoutes || [];
@@ -328,6 +329,12 @@ export const resultOf = (report) => {
   return s.coverage && !s.coverage.complete ? 'incomplete' : 'pass';
 };
 
+// The coverage note for routes served with 404 that the app rendered anyway.
+export function softNotFoundNote(paths) {
+  const shown = paths.slice(0, 5).join(', ') + (paths.length > 5 ? ` and ${paths.length - 5} more` : '');
+  return `The server answers 404 for ${paths.length} of the app's routes, which the app rendered anyway, so they were audited: ${shown}. Refreshing the browser on those routes shows the same; serve the app with a 200 for unknown routes (a deployment setting) to fix it.`;
+}
+
 // What discovery did on a page: links found, controls clicked and the new URLs
 // those clicks led to, and the controls left alone because they look like actions.
 // clicked and clickedNew are null when click discovery did not run on the page.
@@ -354,7 +361,7 @@ export function pageEvent(p, done, discovered, limit) {
   return {
     url: p.url, finalUrl: p.finalUrl || p.url, title: p.title || '', status: p.status ?? null, error: p.error || null, skipped: p.skipped || null,
     violations, reviews: findings.length - violations, byImpact, durationMs: p.durationMs || 0, foundBy: p.foundBy || 'link',
-    modalOnLoad: p.modalOnLoad || null, ...discoveryFacts(p), done, discovered, limit: limit ?? null,
+    modalOnLoad: p.modalOnLoad || null, servedWith: p.servedWith || null, ...discoveryFacts(p), done, discovered, limit: limit ?? null,
   };
 }
 

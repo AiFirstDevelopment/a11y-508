@@ -118,6 +118,7 @@ export async function keyboardPass(page, add, opts, scope = {}) {
   let bodyHits = 0;
 
   for (let i = 0; i < max; i++) {
+    if (page.progress) page.progress('keyboard', { stops: i + 1, of: max });
     await page.press('Tab');
     await sleep(35);
     let s;
@@ -289,7 +290,8 @@ async function disclosureScope(page, add, fingerprints, reload, fr, max, out) {
   }
   out.candidates += cands.length;
   const state = (sel) => ev(`window.__a11y508.disclosureState(${JSON.stringify(sel)})`);
-  for (const c of cands) {
+  for (const [i, c] of cands.entries()) {
+    if (page.progress) page.progress('disclosures', { done: i, of: cands.length });
     let focused = false;
     try {
       focused = await ev(`window.__a11y508.focusSelector(${JSON.stringify(c.selector)})`);
@@ -362,7 +364,8 @@ export async function routeDiscoveryPass(page, meta, opts, reload, origin) {
   const out = { candidates: candidates.length, clicked: 0, urls: [], offOrigin: 0, skipped: skipped.slice(0, 20), skippedCount: skipped.length, capped, routes: [] };
   const found = new Set();
   const here = async () => page.evaluate('location.href').catch(() => null);
-  for (const c of candidates) {
+  for (const [i, c] of candidates.entries()) {
+    if (page.progress) page.progress('discovery', { clicked: i, of: candidates.length });
     if ((await here()) !== startHref) await reload();
     let pt = null;
     try {

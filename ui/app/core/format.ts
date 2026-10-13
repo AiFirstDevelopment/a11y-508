@@ -121,6 +121,44 @@ export function discoveryOf(p: { info?: { links?: unknown[] } | null; discovery?
   };
 }
 
+// A page's route for display: the path, and the query (shown collapsed as "?…").
+export function routeParts(u: string): { path: string; query: string } {
+  try {
+    const x = new URL(u);
+    return { path: (x.pathname || '/') + (x.hash && !x.search ? x.hash : ''), query: x.search + (x.search ? x.hash : '') };
+  } catch {
+    return { path: u, query: '' };
+  }
+}
+
+// What a page in flight is doing (a progress event), for the Live screen.
+export interface PhaseEvent {
+  url: string;
+  phase: string;
+  detail: Record<string, number> | null;
+  elapsedMs: number;
+}
+
+const n = (x: number | undefined) => (x ?? 0).toLocaleString('en-US');
+export function phaseText(e: PhaseEvent): string {
+  const d = e.detail || {};
+  switch (e.phase) {
+    case 'loading': return `Loading ${e.url}`;
+    case 'checks': return `Checking ${n(d['elements'])} elements`;
+    case 'keyboard': return `Keyboard pass: ${n(d['stops'])} of ${n(d['of'])} tab stops`;
+    case 'disclosures': return `Opening disclosures: ${n(d['done'])} of ${n(d['of'])}`;
+    case 'frames': return `Frames: ${n(d['done'])} of ${n(d['of'])}`;
+    case 'zoom': return 'Checking at 200% zoom';
+    case 'names': return 'Confirming names with the accessibility tree';
+    case 'screenshots': return `Screenshots: ${n(d['done'])} of ${n(d['of'])}`;
+    case 'discovery': return `Looking for pages behind controls: ${n(d['clicked'])} of ${n(d['of'])}`;
+    default: return e.phase;
+  }
+}
+
+// The Status cell of a page the server answered 404 for and the app rendered anyway.
+export const SOFT_404_TITLE = "The server answers 404 for this route, which the app rendered anyway, so it was audited. Refreshing the browser on it shows the same; serve the app with a 200 for unknown routes (a deployment setting) to fix it.";
+
 // An off-origin redirect: the app sent the crawler to a sign-in portal.
 export const OFF_ORIGIN = /redirected off-origin to/;
 

@@ -1,7 +1,8 @@
-import { Component, computed, inject, input, signal } from '@angular/core';
+import { Component, OnDestroy, computed, inject, input, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { AreaChartModule } from '@swimlane/ngx-charts';
 import { RunStore } from '../core/run.store';
-import { skippedText, foundText, progressLabel, shortUrl } from '../core/format';
+import { skippedText, foundText, phaseText, progressLabel, routeParts, shortUrl, SOFT_404_TITLE } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { IMPACTS } from '../core/types';
 import { ChartPanel } from './chart-panel';
@@ -10,7 +11,7 @@ import { ChartPanel } from './chart-panel';
 // violations as pages finish, the page list, and the raw output on request.
 @Component({
   selector: 'app-run-view',
-  imports: [AreaChartModule, ChartPanel],
+  imports: [AreaChartModule, ChartPanel, RouterLink],
   template: `
     @let s = store;
     @if (s.notices().length || s.unknown().length) {
@@ -37,6 +38,9 @@ import { ChartPanel } from './chart-panel';
     }
     <div class="progress-block">
       <label for="crawl-progress" id="crawl-progress-label">{{ label() }}</label>
+      @if (phaseLine(); as pl) {
+        <p class="hint phase" data-testid="phase-line" aria-live="off">{{ pl }}</p>
+      }
       @if (indeterminate()) {
         <progress id="crawl-progress" aria-labelledby="crawl-progress-label"></progress>
       } @else {
@@ -67,12 +71,21 @@ import { ChartPanel } from './chart-panel';
         @for (p of s.pages(); track $index) {
           <tr [attr.data-url]="p.finalUrl">
             <th scope="row">
-              {{ short(p.finalUrl) }}
+              @let rp = route(p.finalUrl);
+              @if (linkable()) {
+                <a class="route-link" routerLink="/report" [queryParams]="{ route: p.finalUrl }" [attr.title]="p.finalUrl"><strong>{{ rp.path }}</strong>@if (rp.query) {<span class="query">?…</span>}</a>
+              } @else {
+                <span [attr.title]="p.finalUrl"><strong>{{ rp.path }}</strong>@if (rp.query) {<span class="query">?…</span>}</span>
+              }
               @if (p.modalOnLoad; as m) {
                 <span class="modal-note" data-testid="modal-note">{{ modalNote(m) }}</span>
               }
             </th>
-            <td>{{ p.error ? p.error : p.skipped ? 'skipped: ' + p.skipped : p.status }}</td>
+            <td>
+              @if (p.error) { {{ p.error }} } @else if (p.skipped) { skipped: {{ p.skipped }} } @else if (p.servedWith) {
+                <span data-testid="soft-404" [attr.title]="soft404">{{ p.servedWith }} · app rendered</span>
+              } @else { {{ p.status }} }
+            </td>
             <td class="num">{{ p.violations }}</td>
             <td class="num">{{ p.reviews }}</td>
             <td data-testid="found">
@@ -84,7 +97,17 @@ import { ChartPanel } from './chart-panel';
             <td class="num">{{ (p.durationMs / 1000).toFixed(1) }}s</td>
           </tr>
         } @empty {
-          <tr><td colspan="6">No page has finished yet.</td></tr>
+          @if (!flight().length) {
+            <tr><td colspan="6">No page has finished yet.</td></tr>
+          }
+        }
+        @for (f of flight(); track f.url) {
+          <tr data-in-progress="true" [attr.data-in-flight-url]="f.url">
+            <th scope="row"><span [attr.title]="f.url"><strong>{{ route(f.url).path }}</strong>@if (route(f.url).query) {<span class="query">?…</span>}</span></th>
+            <td data-testid="phase">{{ phase(f) }}</td>
+            <td></td><td></td><td></td>
+            <td class="num">{{ secs(f) }}</td>
+          </tr>
         }
       </tbody>
     </table>
@@ -96,7 +119,7 @@ import { ChartPanel } from './chart-panel';
     </details>
   `,
 })
-export class RunView {
+export class RunView implements OnDestroy {
   readonly found = foundText;
   readonly quoted = skippedText;
 
@@ -114,6 +137,29 @@ export class RunView {
   readonly unknownList = computed(() => [...new Set(this.store.unknown())].join(', '));
   readonly indeterminate = computed(() => !this.store.progress().done && !this.store.progress().finished);
   readonly label = computed(() => progressLabel(this.store.progress()));
+  readonly soft404 = SOFT_404_TITLE;
+  readonly route = routeParts;
+  // Rows link to the page's findings on the Report screen once the run's report is written.
+  readonly links = input(true);
+  readonly linkable = computed(() => this.links() && !this.store.active() && !!this.store.summary());
+  readonly now = signal(Date.now());
+  private ticker = setInterval(() => this.now.set(Date.now()), 1000);
+  readonly flight = computed(() => Object.values(this.store.inFlight()));
+  readonly secs = (f: { elapsedMs: number; receivedAt: number }) => `${Math.round((f.elapsedMs + Math.max(0, this.now() - f.receivedAt)) / 1000)} s`;
+  readonly phase = (f: Parameters<typeof phaseText>[0]) => phaseText(f);
+  // The second line under the bar: the sign-in wait, or what the newest page in flight is doing.
+  readonly phaseLine = computed(() => {
+    const s = this.store;
+    if (s.done()) return '';
+    const since = s.loginWaitingSince();
+    if (s.loginWaiting() && since) return `Waiting for you to sign in in the browser window · ${Math.max(0, Math.round((this.now() - since) / 1000))} s`;
+    const f = this.flight().sort((a, b) => b.receivedAt - a.receivedAt)[0];
+    return f ? `${phaseText(f)} · ${this.secs(f)}` : '';
+  });
+
+  ngOnDestroy(): void {
+    clearInterval(this.ticker);
+  }
   readonly liveColumns = [{ key: 'page', label: 'Pages finished' }, ...IMPACTS.map((i) => ({ key: i, label: i }))];
   readonly liveRows = computed(() => this.store.totals().map((t, i) => ({ page: i + 1, ...t })));
   readonly liveSeries = computed(() =>

@@ -15,6 +15,18 @@ function renderedContent(page) {
 }
 
 export async function auditPage(page, url, ctx) {
+  if (ctx.progress) ctx.progress.start(url);
+  // The passes report where they are through the page (--events only).
+  page.progress = ctx.progress ? (phase, detail = null) => ctx.progress.phase(url, phase, detail) : null;
+  try {
+    return await auditPageIn(page, url, ctx);
+  } finally {
+    if (ctx.progress) ctx.progress.end(url);
+    page.progress = null;
+  }
+}
+
+async function auditPageIn(page, url, ctx) {
   const { opts } = ctx;
   const t0 = Date.now();
   const result = { url, finalUrl: url, status: null, title: '', error: null, skipped: null, timedOut: false, findings: [], info: null, passes: {}, errors: [] };
@@ -124,6 +136,7 @@ export async function auditPage(page, url, ctx) {
     result.title = result.info.title;
     // A modal dialog open on load (a cookie or consent banner) hides the page from every check.
     const modal = await page.evaluate('window.__a11y508.modalOnLoad()');
+    if (page.progress) page.progress('checks', { elements: await page.evaluate('document.getElementsByTagName("*").length').catch(() => 0) });
     let base = await page.evaluate('window.__a11y508.run()');
     for (const f of base.findings) add(f);
     if (base.meta.errors && base.meta.errors.length) result.errors.push(...base.meta.errors.map((e) => `check: ${e}`));
@@ -162,7 +175,8 @@ export async function auditPage(page, url, ctx) {
       unaudited.crossOriginFrames = found.crossOrigin;
       unaudited.deepFrames = found.deep;
       let inFrames = 0;
-      for (const fr of found.frames) {
+      for (const [i, fr] of found.frames.entries()) {
+        if (page.progress) page.progress('frames', { done: i, of: found.frames.length });
         let run;
         try {
           run = await page.evaluate('window.__a11y508.run({ frame: true })', { contextId: fr.contextId });
@@ -191,6 +205,7 @@ export async function auditPage(page, url, ctx) {
     }
     // "No accessible name" violations, checked against Chrome's own accessibility tree.
     try {
+      if (page.progress) page.progress('names', { checked: 0, of: result.findings.filter((f) => f.level === 'violation').length });
       const ax = await confirmNames(page, result.findings, found.frames);
       if (ax) result.passes.axNames = ax;
     } catch (e) {
@@ -235,6 +250,7 @@ export async function auditPage(page, url, ctx) {
     const shoot = opts.screenshots ? makeShooter(page, ctx, result) : null;
     if (opts.zoom) {
       try {
+        if (page.progress) page.progress('zoom');
         result.passes.zoom = await zoomPass(page, add, shoot);
       } catch (e) {
         result.errors.push(`zoom pass: ${e.message}`);
@@ -256,9 +272,11 @@ export async function auditPage(page, url, ctx) {
 
     if (shoot) {
       let n = 0;
+      const of = Math.min(opts.maxScreenshots, result.findings.filter((f) => !f.screenshot && f.rect).length);
       for (const f of result.findings) {
         if (n >= opts.maxScreenshots) break;
         if (f.screenshot || !f.rect) continue;
+        if (page.progress) page.progress('screenshots', { done: n, of });
         await shoot(f);
         if (f.screenshot) n++;
       }

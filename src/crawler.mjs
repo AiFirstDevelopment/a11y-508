@@ -1,6 +1,7 @@
 // Same-origin breadth-first crawl with a pool of tabs.
 
 import { Page, sleep } from './page.mjs';
+import { progressReporter } from './progress.mjs';
 import { auditPage } from './audit.mjs';
 
 const BINARY = /\.(pdf|zip|gz|tgz|tar|rar|7z|exe|dmg|pkg|msi|png|jpe?g|gif|svg|webp|bmp|ico|mp3|mp4|m4a|m4v|mov|avi|wmv|webm|ogg|wav|flac|doc|docx|xls|xlsx|ppt|pptx|csv|xml|json|rss|atom|woff2?|ttf|eot|css|js|mjs)(\?.*)?$/i;
@@ -61,7 +62,9 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
   let pageCounter = 0;
   let overflow = 0;
   const clickOnly = new Set();
-  const ctx = { opts, origin, outDir, nextPageIndex: () => ++pageCounter };
+  // --events: where each page in flight is (src/progress.mjs).
+  const progress = opts.events && log.event ? progressReporter((e) => log.event('progress', e)) : null;
+  const ctx = { opts, origin, outDir, nextPageIndex: () => ++pageCounter, progress };
   const allowed = (u) => {
     if (opts.exclude.some((re) => re.test(u))) return false;
     if (opts.include.length && !opts.include.some((re) => re.test(u))) return false;
@@ -160,5 +163,6 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
 
   const n = Math.max(1, Math.min(opts.concurrency, opts.maxPages));
   await Promise.all(Array.from({ length: n }, (_, i) => worker(i)));
+  if (progress) progress.stop();
   return { pages, discovered: seen.size, overflow, clickOnly: clickOnly.size, origin, variantOverflow, variantRoutes: [...variantRoutes], variantsPerRoute: VARIANTS_PER_ROUTE };
 }

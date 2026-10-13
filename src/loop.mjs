@@ -93,7 +93,7 @@ export function sessionArgs(cfg, passthrough = [], cwd = process.cwd()) {
 }
 
 // Event types from a round's crawl that the loop passes on, tagged with the round.
-const RELAYED = new Set(['page', 'coverage', 'summary', 'login-waiting', 'session-saved']);
+const RELAYED = new Set(['page', 'coverage', 'summary', 'login-waiting', 'session-saved', 'progress']);
 
 async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = [] }) {
   const out = join(cwd, WORK_DIR, `round-${round}`);

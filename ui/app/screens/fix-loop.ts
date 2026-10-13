@@ -172,7 +172,7 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
       @if (store.loginWaiting() && store.active()) {
         <p class="notice" role="status" data-testid="loop-login-waiting">A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.</p>
       }
-      <app-run-view [showChart]="false" />
+      <app-run-view [showChart]="false" [links]="false" />
     }
 
     @if (ledger()?.exists) {

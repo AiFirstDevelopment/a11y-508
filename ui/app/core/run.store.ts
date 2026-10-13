@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Api } from './api';
 import { readSse } from './sse';
-import { CANNOT_GET_IN, Discovery, OFF_ORIGIN, Progress, cumulative } from './format';
+import { CANNOT_GET_IN, Discovery, OFF_ORIGIN, PhaseEvent, Progress, cumulative } from './format';
 import { ByImpact, Remedy, RunEvent } from './types';
 
 export interface PageRow {
@@ -20,6 +20,8 @@ export interface PageRow {
   modalOnLoad: { selector: string; name: string; dismissed: boolean } | null;
   // What discovery did (the page event's additive fields; absent from an older CLI).
   discovery: Discovery;
+  // 404 from the server, rendered by the app anyway (audited).
+  servedWith: number | null;
 }
 
 // One call of the fixing assistant (a fix, or a triage batch), with its output as it arrives.
@@ -51,7 +53,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 // event" notice rather than being dropped in silence.
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
-  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output',
+  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress',
 ]);
 
 // The current run, built from its event stream.
@@ -76,6 +78,9 @@ export class RunStore {
   readonly ledger = signal<RunEvent | null>(null);
   readonly awaitingDeploy = signal(false);
   readonly agentCall = signal<AgentCall | null>(null);
+  // Pages in flight (progress events), by URL, with when each event arrived; and when the sign-in wait began.
+  readonly inFlight = signal<Record<string, PhaseEvent & { receivedAt: number }>>({});
+  readonly loginWaitingSince = signal<number | null>(null);
   readonly done = signal<RunEvent | null>(null);
   readonly stopping = signal(false);
   readonly connected = signal(false);
@@ -114,6 +119,8 @@ export class RunStore {
     this.ledger.set(null);
     this.awaitingDeploy.set(false);
     this.agentCall.set(null);
+    this.inFlight.set({});
+    this.loginWaitingSince.set(null);
     this.done.set(null);
     this.stopping.set(false);
   }
@@ -146,9 +153,14 @@ export class RunStore {
           url: ev['url'], finalUrl: ev['finalUrl'], title: ev['title'], status: ev['status'], error: ev['error'], skipped: ev['skipped'],
           violations: ev['violations'], reviews: ev['reviews'], byImpact: ev['byImpact'], durationMs: ev['durationMs'], round: ev['round'] ?? null,
           modalOnLoad: ev['modalOnLoad'] ?? null,
+          servedWith: ev['servedWith'] ?? null,
           discovery: { links: ev['links'] ?? 0, clicked: ev['clicked'] ?? null, clickedNew: ev['clickedNew'] ?? null, skippedActions: ev['skippedActions'] ?? [], skippedActionsCount: ev['skippedActionsCount'] ?? 0 },
         };
         this.pages.update((p) => [...p, row]);
+        this.inFlight.update((m) => {
+          const { [ev['url']]: _, ...rest } = m;
+          return rest;
+        });
         this.progress.update((p) => ({ ...p, done: ev['done'], discovered: ev['discovered'], limit: ev['limit'] ?? p.limit }));
         break;
       }
@@ -161,8 +173,12 @@ export class RunStore {
       case 'troubleshoot':
         this.troubleshoot.set(ev['result']);
         break;
+      case 'progress':
+        this.inFlight.update((m) => ({ ...m, [ev['url']]: { url: ev['url'], phase: ev['phase'], detail: ev['detail'] ?? null, elapsedMs: ev['elapsedMs'] ?? 0, receivedAt: Date.now() } }));
+        break;
       case 'login-waiting':
         this.loginWaiting.set(true);
+        this.loginWaitingSince.set(Date.parse(String(ev['at'])) || Date.now());
         break;
       case 'session-saved':
         this.loginWaiting.set(false);
@@ -212,6 +228,7 @@ export class RunStore {
         break;
       case 'done':
         this.done.set(ev);
+        this.inFlight.set({});
         this.awaitingDeploy.set(false);
         this.agentCall.update((c) => (c && !c.endedAt ? { ...c, endedAt: Date.parse(String(ev['at'])) || Date.now(), outcome: ev['outcome'] === 'stopped' ? 'stopped' : 'ended' } : c));
         this.progress.update((p) => ({ ...p, finished: true }));

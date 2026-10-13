@@ -5,7 +5,7 @@ import { BarChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
-import { localTime, skippedText, discoveryOf, foundText, resultLine, shortUrl } from '../core/format';
+import { SOFT_404_TITLE, localTime, skippedText, discoveryOf, foundText, resultLine, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { Finding, IMPACTS, Report } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
@@ -95,7 +95,7 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
             <li>
               <button type="button" class="route" data-testid="route" [attr.data-url]="rt.url" [attr.aria-current]="rt.key === route()?.key ? 'true' : null" (click)="selectRoute(rt.key)">
                 <span class="mark" [class.bad]="rt.violations > 0" aria-hidden="true">{{ rt.violations ? '✗' : '✓' }}</span>
-                <strong class="path">{{ rt.path }}</strong>@if (rt.query) {<span class="query" [attr.title]="rt.url">{{ rt.query }}</span>}
+                <strong class="path">{{ rt.path }}</strong>@if (rt.query) {<span class="query" [attr.title]="rt.url">?…</span>}
                 <span class="counts">{{ rt.violations }} violation{{ rt.violations === 1 ? '' : 's' }} · {{ rt.reviews }} review</span>
               </button>
             </li>
@@ -185,7 +185,7 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
         <thead><tr><th scope="col">Page</th><th scope="col">Title</th><th scope="col">Status</th><th scope="col">Violations</th><th scope="col">Review</th><th scope="col">Found</th></tr></thead>
         <tbody>
           @for (p of r.pages; track $index) {
-            <tr [attr.data-url]="p.finalUrl || p.url"><th scope="row">{{ short(p.finalUrl || p.url) }}</th><td>{{ p.title }}</td><td>{{ p.error || p.skipped || p.status }}</td><td>{{ count(p.findings, 'violation') }}</td><td>{{ count(p.findings, 'review') }}</td>
+            <tr [attr.data-url]="p.finalUrl || p.url"><th scope="row">{{ short(p.finalUrl || p.url) }}</th><td>{{ p.title }}</td><td>@if (!p.error && !p.skipped && p.servedWith) {<span data-testid="soft-404" [attr.title]="soft404">{{ p.servedWith }} · app rendered</span>} @else { {{ p.error || p.skipped || p.status }} }</td><td>{{ count(p.findings, 'violation') }}</td><td>{{ count(p.findings, 'review') }}</td>
               <td data-testid="found">
                 @let d = discovery(p);
                 {{ found(d) }}
@@ -201,6 +201,7 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
 })
 export class ReportScreen {
   readonly found = foundText;
+  readonly soft404 = SOFT_404_TITLE;
   readonly local = localTime;
   readonly discovery = discoveryOf;
   readonly quoted = skippedText;
@@ -209,6 +210,8 @@ export class ReportScreen {
   private run = inject(RunStore);
   private env = inject(EnvStore);
   readonly id = input<string>();
+  // ?route=<page URL>: the page to show (from a row of the Live screen's page table).
+  readonly routeParam = input<string | undefined>(undefined, { alias: 'route' });
   readonly report = signal<Report | null>(null);
   readonly loading = signal(true);
   readonly animations = !prefersReducedMotion();
@@ -279,7 +282,7 @@ export class ReportScreen {
         path = u.pathname || '/';
         query = u.search + u.hash;
       } catch {}
-      const rt: Route = { key: url, path, query: query.length > 60 ? query.slice(0, 59) + '…' : query, url, byImpact: { critical: 0, serious: 0, moderate: 0, minor: 0 }, violations: 0, reviews: 0 };
+      const rt: Route = { key: url, path, query, url, byImpact: { critical: 0, serious: 0, moderate: 0, minor: 0 }, violations: 0, reviews: 0 };
       for (const f of p.findings || []) {
         if (f.level === 'violation') {
           rt.violations++;
@@ -298,7 +301,7 @@ export class ReportScreen {
   });
   // The selected route: the worst page by default.
   readonly route = computed(() => this.routes().find((r) => r.key === this.selectedRoute()) || this.routes()[0] || null);
-  readonly routeName = computed(() => (this.route() ? (this.route()!.key === 'site-wide' ? 'the whole site' : this.route()!.path + this.route()!.query) : 'no page'));
+  readonly routeName = computed(() => (this.route() ? (this.route()!.key === 'site-wide' ? 'the whole site' : this.route()!.path + (this.route()!.query ? '?…' : '')) : 'no page'));
   readonly routeRows = computed(() => {
     const k = this.route()?.key;
     return this.rows().filter((f) => f.route === k).sort(byWeight);
@@ -333,7 +336,20 @@ export class ReportScreen {
 
   constructor() {
     // Each report has a title of its own.
-    effect(() => this.title.setTitle(`${this.heading()} - a11y-508`));
+    // Opened for one page (?route=), the title names it, so each such address has its own.
+    effect(() => {
+      const want = this.routeParam();
+      let page = '';
+      if (want) {
+        try {
+          const u = new URL(want);
+          page = `: ${u.pathname}${u.search}`;
+        } catch {
+          page = `: ${want}`;
+        }
+      }
+      this.title.setTitle(`${this.heading()}${page} - a11y-508`);
+    });
     // The report, again whenever the working directory changes.
     effect(() => {
       const id = this.reportId();
@@ -371,6 +387,8 @@ export class ReportScreen {
     if (n !== this.loads) return;
     this.report.set(r);
     this.loading.set(false);
+    const want = this.routeParam();
+    if (want && this.routes().some((x) => x.key === want)) this.selectedRoute.set(want);
   }
 
   selectRoute(key: string): void {

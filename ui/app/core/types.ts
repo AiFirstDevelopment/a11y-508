@@ -137,6 +137,7 @@ export interface ReportPage {
   skipped?: string | null;
   findings: Finding[];
   durationMs?: number;
+  servedWith?: number | null;
   info?: { links?: string[] } | null;
   discovery?: { clicked?: number; urls?: string[]; skipped?: { name?: string; selector?: string }[]; skippedCount?: number; capped?: number } | null;
 }

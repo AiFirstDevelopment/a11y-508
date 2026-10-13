@@ -1,4 +1,4 @@
-import { cumulative, progressLabel, resultLine, ageText, savedAgo, localTime, foundText, discoveryOf, CANNOT_GET_IN } from './format';
+import { cumulative, progressLabel, resultLine, ageText, savedAgo, phaseText, routeParts, localTime, foundText, discoveryOf, CANNOT_GET_IN } from './format';
 
 const s = (o: any) => ({ audited: 3, byImpact: { critical: 0, serious: 0, moderate: 1, minor: 0 }, ...o });
 
@@ -38,6 +38,15 @@ describe('format', () => {
     expect(localTime(iso)).not.toMatch(/T\d\d:\d\d.*Z/);
     expect(localTime('')).toBe('');
     expect(localTime('not a date')).toBe('not a date');
+  });
+  it('names the phase a page is in', () => {
+    expect(phaseText({ url: 'http://x/a', phase: 'checks', detail: { elements: 1240 }, elapsedMs: 0 })).toBe('Checking 1,240 elements');
+    expect(phaseText({ url: 'http://x/a', phase: 'keyboard', detail: { stops: 38, of: 120 }, elapsedMs: 0 })).toBe('Keyboard pass: 38 of 120 tab stops');
+    expect(phaseText({ url: 'http://x/a', phase: 'loading', detail: null, elapsedMs: 0 })).toBe('Loading http://x/a');
+  });
+  it('splits a route from its query', () => {
+    expect(routeParts('http://x/a/b?from=1&to=2')).toEqual({ path: '/a/b', query: '?from=1&to=2' });
+    expect(routeParts('http://x/#/layout')).toEqual({ path: '/#/layout', query: '' });
   });
   it('says when a session was saved', () => {
     expect(savedAgo(30_000)).toBe('just now');

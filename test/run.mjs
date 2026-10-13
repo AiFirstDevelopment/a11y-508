@@ -375,7 +375,11 @@ check('a page the server answers 404 for, but which renders content, is audited 
   assert.equal(p.error, null, `audited despite the status: ${p.error}`);
   assert.equal(p.servedWith, 404);
   has('/soft-404.html', '7.A', 'violation');
-  assert.ok((report.summary.coverage.warnings || []).some((w) => /soft-404\.html was served with HTTP 404 but rendered a page/.test(w)), `coverage warnings: ${JSON.stringify(report.summary.coverage.warnings)}`);
+  // One note for the run, not a warning: coverage is not reduced by it.
+  const note = (report.summary.coverage.notes || []).find((n) => /^The server answers 404 for \d+ of the app's routes, which the app rendered anyway, so they were audited: .*\/soft-404\.html/.test(n));
+  assert.ok(note, `coverage notes: ${JSON.stringify(report.summary.coverage.notes)}`);
+  assert.match(note, /serve the app with a 200 for unknown routes \(a deployment setting\) to fix it\.$/);
+  assert.ok(!(report.summary.coverage.warnings || []).some((w) => /soft-404/.test(w)), `no warning for it: ${JSON.stringify(report.summary.coverage.warnings)}`);
 });
 
 check('a page reached both through a redirecting start route and by its own link is audited once', () => {
@@ -1135,6 +1139,17 @@ check('FU AC7 4.D: the Tab pass reaches a control in a frame nested two deep', (
       assert.equal(e.skippedActionsCount, p.discovery ? p.discovery.skippedCount : 0, `${e.finalUrl} skippedActionsCount`);
     }
     assert.ok(pageEvents.some((e) => e.links > 0 && e.clicked > 0), 'some page found links and clicked controls');
+  });
+  check('--events: progress events say which phase each page is in, a few a second at most', () => {
+    const prog = events.filter((e) => e.type === 'progress');
+    assert.ok(prog.length > 0, 'progress events');
+    const phases = new Set(prog.map((e) => e.phase));
+    for (const p of ['loading', 'checks']) assert.ok(phases.has(p), `phase ${p} in ${[...phases].join(', ')}`);
+    const checks = prog.find((e) => e.phase === 'checks');
+    assert.ok(checks.detail && checks.detail.elements > 0, JSON.stringify(checks));
+    // Never more than about five a second: no one-second window holds more than six.
+    const t = prog.map((e) => Date.parse(e.at)).sort((a, b) => a - b);
+    for (let i = 0; i < t.length; i++) assert.ok(t.filter((x) => x >= t[i] && x < t[i] + 1000).length <= 6, `too many progress events after ${new Date(t[i]).toISOString()}`);
   });
   check('--events: page events count up, and discovered never trails done', () => {
     pageEvents.forEach((e, i) => {
