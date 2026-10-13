@@ -25,6 +25,8 @@ export interface LoopDefaults {
   source: string[];
   suggested: Record<string, any>;
   effective: { source: string[]; check: string | null; branch: string; push: boolean; deployed: string; deployTimeout: number; maxAttempts: number };
+  // The configured branch and the one the loop will commit on for it (an a11y-508/* branch in the way).
+  branch?: { wanted: string; used: string; reason: string | null };
   configExists: boolean;
 }
 

@@ -559,8 +559,9 @@ rmSync(repo2, { recursive: true, force: true });
     }
     return { dir, g };
   };
-  const loopIn = (dir, args) => new Promise((resolve) => {
-    const child = spawn(process.execPath, [bin, 'loop', ...args], { cwd: dir, env: { ...process.env, TOKEN, NO_COLOR: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const loopIn = (dir, args) => cli(dir, ['loop', ...args]);
+  const cli = (dir, args) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [bin, ...args], { cwd: dir, env: { ...process.env, TOKEN, NO_COLOR: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let out = '';
     child.stdout.on('data', (d) => ((stdout += d), (out += d)));
@@ -702,6 +703,46 @@ rmSync(repo2, { recursive: true, force: true });
       });
       removeOwn(c.dir);
     }
+  }
+
+  // AC 7, guard 7: Try again after a set-up error continues from the ledger -- what an earlier run
+  // fixed (or gave up on) is not taken up again. The dashboard's Try again runs exactly this command.
+  {
+    const { dir, g } = appRepo('a11y-508-retry-', { maxAttempts: 1 });
+    const site = await serve(dir);
+    const url = `http://127.0.0.1:${site.address().port}/`;
+    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(dir, 'a11y-508.config.json'), 'utf8')), url }, null, 2));
+    g('commit', '-qam', 'the config names the site');
+    const crawl = await cli(dir, [url, ...quick, '--out', 'a11y-508-report', '--quiet', '--fail-on', 'none']);
+    const fromReport = ['--max-rounds', '1', '--from-report', join('a11y-508-report', 'report.json'), '--events'];
+    const first = await loopIn(dir, fromReport);
+    const ledgerFile = join(dir, 'a11y-508-work', 'ledger.json');
+    const afterFirst = loadLedger(ledgerFile);
+    const fixedFirst = Object.values(afterFirst.findings).filter((e) => e.status === 'pending').map((e) => e.message);
+    // Someone edits the source: the next run stops before its first round.
+    writeFileSync(join(dir, 'site', 'index.html'), readFileSync(join(dir, 'site', 'index.html'), 'utf8') + '\n<!-- edited -->\n');
+    const blocked = await loopIn(dir, fromReport);
+    g('checkout', '--', 'site');
+    const retry = await loopIn(dir, fromReport);
+    site.close();
+    const ev1 = parseEvents(blocked.stdout).events;
+    const { events, problems } = parseEvents(retry.stdout);
+    check('loop-resilience AC7: Try again after a set-up error continues from the ledger; nothing already fixed is fixed again', () => {
+      assert.equal(crawl.status, 0, crawl.out);
+      assert.ok(fixedFirst.length >= 2, first.out);
+      assert.equal(ev1.filter((e) => e.type === 'precondition').map((e) => e.code).join(), 'dirty-tree', blocked.out);
+      assert.deepEqual(problems, []);
+      // The retry is the ledger's next round, and every fix of the first run is verified by it.
+      assert.deepEqual(events.filter((e) => e.type === 'round').map((e) => e.round), [2], retry.out);
+      const ledger = loadLedger(ledgerFile);
+      for (const m of fixedFirst) assert.equal(Object.values(ledger.findings).find((e) => e.message === m).status, 'verified', m);
+      // The retried round's fix count: nothing was open, so no assistant call and no new commit.
+      const tasks = events.filter((e) => e.type === 'task' && e.state === 'start');
+      assert.equal(tasks.length, 0, tasks.map((t) => t.message).join('\n'));
+      assert.equal(g('log', '--format=%s', '--grep=^a11y-508: ').split('\n').filter(Boolean).length, fixedFirst.length);
+      assert.equal(retry.status, 0, retry.out);
+    });
+    removeOwn(dir);
   }
 }
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');

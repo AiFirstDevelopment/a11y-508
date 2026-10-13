@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { inGitRepo } from './dirs.mjs';
+import { resolveBranch } from '../../src/loop.mjs';
 
 // npm's own placeholder for a package with no tests.
 export const PLACEHOLDER_TEST = /no test specified/i;
@@ -67,12 +68,20 @@ export function loopDefaults(cwd, config = null) {
   const pkg = readJson(join(cwd, 'package.json'));
   const { build, test, check } = checkCommand(pkg && pkg.scripts);
   const source = sourceFolders(cwd);
-  const suggested = { source, check, branch: 'a11y-508', push: !!remote, deployed: 'bundle-change', deployTimeout: DEPLOY_TIMEOUT, maxAttempts: 3 };
+  // The branch the loop will really use: a11y-508 cannot be created while an a11y-508/* branch
+  // exists, and the loop then continues on that one (resolveBranch, the loop's own rule).
+  const use = (wanted) => (inRepo ? resolveBranch(cwd, wanted) : { branch: wanted, reason: null });
+  const suggested = { source, check, branch: use('a11y-508').branch, push: !!remote, deployed: 'bundle-change', deployTimeout: DEPLOY_TIMEOUT, maxAttempts: 3 };
   const c = config && typeof config === 'object' ? config : null;
   const effective = { ...suggested };
   if (c) for (const k of Object.keys(suggested)) if (c[k] !== undefined && c[k] !== null && c[k] !== '') effective[k] = c[k];
+  // The configured branch, and the one the loop will commit on for it (with why, when they differ).
+  const wanted = c && typeof c.branch === 'string' && c.branch ? c.branch : 'a11y-508';
+  const used = use(wanted);
+  effective.branch = used.branch;
   return {
     repo: { git: inRepo, remote, branch },
+    branch: { wanted, used: used.branch, reason: used.reason || null },
     package: { exists: !!pkg, build, test },
     source,
     suggested,

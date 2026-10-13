@@ -165,6 +165,15 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
 
     }
     @if (isLoop() && store.kind() === 'loop') {
+      @if (problem(); as pr) {
+        <!-- It ended for a reason: what happened and what to do, in the main view. -->
+        <section class="notice error" role="alert" aria-labelledby="loop-problem-h" data-testid="loop-problem" [attr.data-kind]="pr.kind">
+          <h2 id="loop-problem-h">{{ pr.kind === 'start' ? 'The fix loop could not start' : 'The fix loop stopped' }}</h2>
+          <p class="wrap" data-testid="problem-message">{{ pr.message }}</p>
+          @if (pr.remedy) { <p class="wrap" data-testid="problem-remedy">{{ pr.remedy }}</p> }
+        </section>
+        @if (pr.kind === 'stopped') { <p data-testid="fix-counts">{{ fixCounts() }}</p> }
+      } @else {
       <!-- While it runs: one line, a bar, counts, and the assistant's last line. -->
       <p class="big-status" role="status" data-testid="fix-status">{{ fixStatus() }}</p>
       @if (store.task(); as t) {
@@ -176,6 +185,7 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
         }
       }
       <p data-testid="fix-counts">{{ fixCounts() }}</p>
+      }
     }
     @if (paneShown()) {
       @if (lastLine(); as ll) { <p class="hint last-line" data-testid="agent-last-line">{{ ll }}</p> }
@@ -193,6 +203,12 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
     <div class="actions">
       @if (isLoop() && store.active()) {
         <button type="button" class="big" (click)="store.stop()" data-testid="loop-stop">Stop</button>
+      } @else if (problem(); as pr) {
+        <button type="button" class="big" (click)="tryAgain()" [disabled]="store.active()" data-testid="try-again">Try again</button>
+        @if (pr.kind === 'stopped') {
+          <button type="button" class="secondary" (click)="runAgain()" [disabled]="store.active()" data-testid="run-again">Run again</button>
+          <a class="button secondary" routerLink="/history" data-testid="see-changes">See what changed</a>
+        }
       } @else if (loopEnded()) {
         <a class="button big" routerLink="/history" data-testid="see-changes">See what changed</a>
         <button type="button" class="secondary" (click)="runAgain()" [disabled]="store.active()" data-testid="run-again">Run again</button>
@@ -210,7 +226,7 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
     }
     <details class="details" data-testid="details" [open]="showDetails()" (toggle)="toggled($event)">
       <summary>Details<span class="visually-hidden"> of the fix loop</span></summary>
-    @if (isLoop()) {
+    @if (isLoop() && problem()?.kind !== 'start') {
       <p role="status" data-testid="loop-step">{{ stepText() }}</p>
       @if (store.loginWaiting() && store.active()) {
         <p class="notice" role="status" data-testid="loop-login-waiting">A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.</p>
@@ -374,7 +390,8 @@ export class FixLoopScreen implements OnInit, OnDestroy {
       sourceList,
       source: sourceList.join(', '),
       check: (c['check'] ?? d.effective.check) || null,
-      branch: c['branch'] || d.effective.branch,
+      // The branch the loop will really commit on: the server's, unless the person typed another.
+      branch: !c['branch'] || c['branch'] === d.branch?.wanted ? d.effective.branch : c['branch'],
       push: c['push'] ?? d.effective.push,
       remote: d.repo.remote,
       maxAttempts: c['maxAttempts'] ?? d.effective.maxAttempts,
@@ -382,6 +399,19 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   });
   // The loop has ended (nothing open, stopped, or out of rounds): the step's actions change.
   readonly loopEnded = computed(() => this.store.kind() === 'loop' && !!this.store.done());
+  // The loop ended for a reason rather than finishing: before its first round it could not start
+  // (a precondition event, with its remedy); after it, it stopped (the CLI's error says why).
+  // Stopped by the person, or out of rounds, it simply finished.
+  readonly problem = computed<{ kind: 'start' | 'stopped'; message: string; remedy: string | null } | null>(() => {
+    const d = this.store.done();
+    if (!this.loopEnded() || !d || d['outcome'] === 'stopped') return null;
+    const pre = this.store.precondition();
+    if (pre) return { kind: 'start', message: String(pre['message'] || ''), remedy: String(pre['remedy'] || '') || null };
+    const errors = this.store.notices().filter((n) => n.level === 'error' && !/^The run failed \(exit code/.test(n.message)).map((n) => n.message);
+    if (d['outcome'] !== 'error' && !errors.length) return null;
+    const message = errors[errors.length - 1] || `The loop ended with exit code ${d['code']}.`;
+    return { kind: this.store.round() === null ? 'start' : 'stopped', message, remedy: null };
+  });
   // The status line, in words that explain what the loop is doing and why.
   readonly fixStatus = computed(() => {
     const r = this.store.round();
@@ -436,6 +466,21 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     }
   }
 
+  // Try again: the same loop as Fix the violations, from the same latest report (no new crawl);
+  // the loop continues from its ledger. The repository is read again first: the remedy may have changed it.
+  async tryAgain(): Promise<void> {
+    this.runError.set('');
+    const anyway = this.startAnyway();
+    await this.loadDefaults();
+    this.startAnyway.set(anyway);
+    if (!this.canStart()) {
+      const why = this.startWarning() || (!this.repoOk() ? `${this.env.cwd()} ${this.repoProblem()}.` : !this.loopUrl() ? 'There is no start URL: run a crawl from Set up first.' : 'The loop cannot start yet.');
+      this.runError.set(why);
+      return;
+    }
+    await this.fix();
+  }
+
   // The latest report's markup is nowhere in the folders the loop edits: probably the wrong repository.
   readonly match = signal<LoopMatch | null>(null);
   readonly startAnyway = signal(false);
@@ -469,6 +514,8 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     const r = this.store.round();
     const s = this.store.step();
     const t = this.store.task();
+    const pr = this.problem();
+    if (pr) return pr.kind === 'start' ? 'The fix loop could not start.' : 'The fix loop stopped.';
     if (this.store.done()) return `${this.store.kind() === 'dry-run' ? 'Dry run' : 'Loop'} finished${this.store.done()?.['outcome'] === 'stopped' ? ' (stopped)' : ''}.`;
     if (!r) return 'Starting…';
     if (this.store.awaitingDeploy()) return `Round ${r}: waiting for deploy`;

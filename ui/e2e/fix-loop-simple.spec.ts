@@ -30,6 +30,9 @@ test('fix loop: the line says what it will do from the repository; the sign-in s
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app', scripts: { build: 'ng build', test: 'ng test' } }));
   mkdirSync(join(cwd, 'src'));
   writeFileSync(join(cwd, 'src', 'main.ts'), 'export {};\n');
+  // Committed, as an app's source is: uncommitted source would stop the loop before its first round.
+  g('-c', 'user.email=dash-test@example.test', '-c', 'user.name=dash test', '-c', 'commit.gpgsign=false', 'add', '-A');
+  g('-c', 'user.email=dash-test@example.test', '-c', 'user.name=dash test', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'app');
   const dash = await dashboard({ cwd, env });
   try {
     await open(page, dash, '/run');

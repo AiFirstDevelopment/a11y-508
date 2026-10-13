@@ -55,7 +55,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 // event" notice rather than being dropped in silence.
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
-  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress',
+  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition',
 ]);
 
 // The current run, built from its event stream.
@@ -79,6 +79,8 @@ export class RunStore {
   readonly task = signal<{ n: number; m: number; state: string } | null>(null);
   readonly ledger = signal<RunEvent | null>(null);
   readonly awaitingDeploy = signal(false);
+  // The loop could not start: a set-up error before its first round, with its remedy.
+  readonly precondition = signal<RunEvent | null>(null);
   // The loop: the run's first round (it re-checks the site first), and how many fixes the round committed.
   readonly firstRound = signal<number | null>(null);
   readonly committed = signal(0);
@@ -127,6 +129,7 @@ export class RunStore {
     this.task.set(null);
     this.ledger.set(null);
     this.awaitingDeploy.set(false);
+    this.precondition.set(null);
     this.firstRound.set(null);
     this.committed.set(0);
     this.reportRound.set(null);
@@ -248,6 +251,9 @@ export class RunStore {
       case 'await-deploy':
         this.awaitingDeploy.set(true);
         if (typeof ev['committed'] === 'number') this.committed.set(ev['committed']);
+        break;
+      case 'precondition':
+        this.precondition.set(ev);
         break;
       case 'stopping':
         this.stopping.set(true);

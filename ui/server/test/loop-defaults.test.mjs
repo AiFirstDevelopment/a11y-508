@@ -67,3 +67,37 @@ test('loop defaults: no package.json and not a repository', async () => {
     await s.stop();
   }
 });
+
+// docs/plans/loop-resilience.md AC 3: an a11y-508/* branch makes a11y-508 impossible to create, so
+// the suggestion (and the "commits to branch" line) is the branch the loop will continue on.
+test('loop defaults: with a11y-508/fixes in the repository, the branch is a11y-508/fixes, for the suggestion and for a config naming a11y-508', async () => {
+  const dir = repo({ build: 'ng build' });
+  const g = (...a) => {
+    const r = spawnSync('git', a, { cwd: dir, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+  };
+  g('config', 'user.email', 'defaults-test@example.test');
+  g('config', 'user.name', 'defaults test');
+  g('config', 'commit.gpgsign', 'false');
+  g('add', '-A');
+  g('commit', '-q', '-m', 'app');
+  g('branch', 'a11y-508/fixes');
+  const s = await startServer({ cwd: dir });
+  try {
+    const r = await s.call('GET', '/api/loop/defaults');
+    assert.equal(r.json.suggested.branch, 'a11y-508/fixes');
+    assert.equal(r.json.effective.branch, 'a11y-508/fixes');
+    assert.equal(r.json.branch.wanted, 'a11y-508');
+    assert.match(r.json.branch.reason, /a branch a11y-508 cannot be created while a11y-508\/fixes exists/);
+    writeFileSync(join(s.cwd, 'a11y-508.config.json'), JSON.stringify({ url: 'http://x/', branch: 'a11y-508' }));
+    const c = await s.call('GET', '/api/loop/defaults');
+    assert.equal(c.json.effective.branch, 'a11y-508/fixes');
+    assert.deepEqual(c.json.branch, { wanted: 'a11y-508', used: 'a11y-508/fixes', reason: r.json.branch.reason });
+    // A branch nothing is in the way of stays as configured.
+    writeFileSync(join(s.cwd, 'a11y-508.config.json'), JSON.stringify({ url: 'http://x/', branch: 'fixes' }));
+    const f = await s.call('GET', '/api/loop/defaults');
+    assert.deepEqual(f.json.branch, { wanted: 'fixes', used: 'fixes', reason: null });
+  } finally {
+    await s.stop();
+  }
+});

@@ -61,7 +61,7 @@ export function normalizeConfig(c, overrides = {}, { interactive = !!process.std
 }
 
 const git = (cwd, args, opts = {}) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', ...opts });
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, ...opts });
   return { code: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
 
