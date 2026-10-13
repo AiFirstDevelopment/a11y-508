@@ -14,7 +14,7 @@ import { Starter } from '../core/starter';
       <label [for]="ids + 'folder'">App's repository folder</label>
       <div class="inline">
         <input [id]="ids + 'folder'" type="text" data-testid="setup-folder" [value]="folder()" (input)="folder.set(val($event))" [attr.aria-describedby]="warning() ? ids + 'folder-warn' : null" />
-        <button type="button" class="secondary small" (click)="browse()" [disabled]="run.active()" aria-haspopup="dialog" data-testid="browse" [attr.title]="run.active() ? reason : null" [attr.aria-describedby]="run.active() ? ids + 'browse-reason' : null">Browse…<span class="visually-hidden"> for the app's repository folder</span></button>
+        <button type="button" class="secondary small" (click)="browse()" [disabled]="run.active()" aria-haspopup="dialog" [attr.aria-expanded]="starter.pickerOpen()" data-testid="browse" [attr.title]="run.active() ? reason : null" [attr.aria-describedby]="run.active() ? ids + 'browse-reason' : null">Browse…<span class="visually-hidden"> for the app's repository folder</span></button>
         @if (run.active()) {
           <span [id]="ids + 'browse-reason'" class="visually-hidden">{{ reason }}</span>
         }
@@ -50,7 +50,7 @@ export class SetupForm {
   readonly env = inject(EnvStore);
   readonly form = inject(FormStore);
   readonly run = inject(RunStore);
-  private starter = inject(Starter);
+  readonly starter = inject(Starter);
   readonly folder = signal('');
   readonly reason = 'A run is active; the folder can change once it has finished.';
   readonly error = signal('');

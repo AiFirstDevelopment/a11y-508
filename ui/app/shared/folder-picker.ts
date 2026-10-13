@@ -200,6 +200,7 @@ export class FolderPicker {
     this.recents.set(readRecents());
     this.missing.set(new Set());
     this.isOpen.set(true);
+    this.starter.pickerOpen.set(true);
     // Render the content, then open it modal with focus in the path field.
     this.cdr.detectChanges();
     this.dlg().nativeElement.showModal();
@@ -318,6 +319,7 @@ export class FolderPicker {
   // Escape, Cancel and Choose all end here: focus goes back to Browse….
   closed(): void {
     this.isOpen.set(false);
+    this.starter.pickerOpen.set(false);
     this.listing.set(null);
     this.returnFocus?.focus();
   }
