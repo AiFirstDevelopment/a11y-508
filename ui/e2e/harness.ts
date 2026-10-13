@@ -118,18 +118,27 @@ export interface CrawlForm {
   advanced?: Record<string, string | boolean>;
 }
 
-// Opens the Run screen's More options… (sign-in choices, Advanced, the command line), closed by default.
-export async function moreOptions(page: Page): Promise<void> {
-  const more = page.getByTestId('more-options');
-  if (!(await more.evaluate((d: HTMLDetailsElement) => d.open))) await more.locator('> summary').click();
-  await expect(more).toHaveJSProperty('open', true);
+// In-app navigation to a route nothing links to (the app keeps its state, as a click on a link would).
+export async function goInApp(page: Page, path: string): Promise<void> {
+  if (new URL(page.url()).pathname === path) return;
+  await page.evaluate((p) => {
+    history.pushState(null, '', p);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+  }, path);
+  await expect(page).toHaveURL(new RegExp(`${path.replace(/[/]/g, '\\/')}$`));
 }
 
-// The Fix loop screen's More options… (every loop setting, and the dry run), closed by default.
+// The Run screen's settings beyond the start URL (auth choices, Advanced, the command line), at
+// /run/advanced, which nothing links to.
+export async function moreOptions(page: Page): Promise<void> {
+  await goInApp(page, '/run/advanced');
+  await expect(page.getByTestId('more-options')).toBeVisible();
+}
+
+// The Fix loop's settings (every loop setting, and the dry run), at /fix-loop/settings.
 export async function loopOptions(page: Page): Promise<void> {
-  const more = page.getByTestId('loop-more');
-  if (!(await more.evaluate((d: HTMLDetailsElement) => d.open))) await more.locator('> summary').click();
-  await expect(more).toHaveJSProperty('open', true);
+  await goInApp(page, '/fix-loop/settings');
+  await expect(page.getByTestId('loop-more')).toBeVisible();
 }
 
 // The Fix loop's assistant picker, behind "change" once an assistant is installed.

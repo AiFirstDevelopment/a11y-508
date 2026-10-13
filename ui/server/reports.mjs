@@ -114,6 +114,39 @@ export function deleteHistoryEntry(cwd, id) {
   return { status: 200, body: { removed: 1 } };
 }
 
+// The fix loop's rounds as a timeline: per round, from the ledger, the violations its crawl found,
+// the earlier fixes verified gone at that crawl, the commits it made, and what remained after it
+// (for the last round, the ledger's open count; before that, found less committed).
+export function loopTimeline(ledger, counts) {
+  if (!ledger || !Array.isArray(ledger.rounds) || !ledger.rounds.length) return null;
+  const commits = {};
+  for (const e of Object.values(ledger.findings || {})) for (const a of e.attempts || []) if (a.commit) commits[a.round] = (commits[a.round] || 0) + 1;
+  const last = ledger.rounds[ledger.rounds.length - 1].round;
+  const rounds = ledger.rounds.map((r) => {
+    const made = commits[r.round] || 0;
+    const fixed = (r.diff && r.diff.verified) || 0;
+    return { round: r.round, at: r.at || null, found: r.violations, fixed, commits: made, remaining: r.round === last ? counts.open || 0 : Math.max(0, r.violations - made), needsHuman: r.round === last ? counts['needs-human'] || 0 : 0 };
+  });
+  const fixed = counts.verified || 0;
+  const remaining = counts.open || 0;
+  const needsHuman = counts['needs-human'] || 0;
+  return { rounds, total: { rounds: rounds.length, fixed, of: fixed + remaining + (counts.pending || 0) + needsHuman, remaining, needsHuman } };
+}
+
+// Clear the fix loop's history: its rounds (a11y-508-work/round-N/) and the ledger. The prompts
+// and logs stay.
+export function clearLoopHistory(cwd) {
+  const root = resolve(cwd, WORK_DIR);
+  if (!existsSync(root)) return { removed: 0 };
+  let removed = 0;
+  for (const d of readdirSync(root)) {
+    if (!/^round-\d+$/.test(d) && d !== 'ledger.json') continue;
+    rmSync(join(root, d), { recursive: true, force: true, maxRetries: 5 });
+    if (d !== 'ledger.json') removed++;
+  }
+  return { removed };
+}
+
 // Clear history: every entry directly under a11y-508-history/, and nothing else.
 export function clearHistory(cwd) {
   const root = resolve(cwd, HISTORY_DIR);

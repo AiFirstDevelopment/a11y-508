@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
+import { Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
 import { LineChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
@@ -20,7 +20,7 @@ const PREFERENCE = ['claude', 'gemini', 'codex'];
 const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 'no change', 'failed-gate': 'failed the gate', 'commit-failed': 'commit failed', 'timed-out': 'timed out', stopped: 'stopped', done: 'done', ended: 'ended' };
 
 // The Fix loop: it works out what it can (the assistant, the folders, the gate, the branch)
-// and shows it, with one button; everything it inferred is editable under More options.
+// and shows it, with one button; everything it inferred is editable at /fix-loop/settings.
 @Component({
   selector: 'app-fix-loop-screen',
   imports: [ChartPanel, LineChartModule, RunView],
@@ -149,7 +149,7 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
       }
     </p>
     @if (!loopUrl()) {
-      <p class="hint" data-testid="no-url">No start URL yet: run a crawl from Run first, or set it under More options.</p>
+      <p class="hint" data-testid="no-url">No start URL yet: run a crawl from Run first.</p>
     }
 
     <div class="actions">
@@ -201,11 +201,13 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
         }
       </section>
     } @else if (ledger()) {
-      <p class="hint">No ledger yet. Record findings without fixing (under More options) to see what the loop would work on.</p>
+      <p class="hint">No ledger yet. A dry run records what the crawl finds without changing anything.</p>
     }
 
-    <details class="more" data-testid="loop-more">
-      <summary>More options…</summary>
+    <!-- Every loop setting lives at /fix-loop/settings, which nothing links to. -->
+    @if (settings()) {
+    <section data-testid="loop-more" aria-labelledby="settings-h">
+      <h2 id="settings-h">Loop settings</h2>
       <form (submit)="$event.preventDefault(); saveConfig()" class="config" data-testid="config-form">
         <p class="hint">Settings are saved to a11y-508.config.json as you change them.</p>
         <div class="field"><label for="c-url">Start URL</label><input id="c-url" type="url" [value]="cfg()['url'] || loopUrl()" (input)="set('url', v($event))" (change)="saveConfig()" /></div>
@@ -228,10 +230,13 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
         <button type="button" class="secondary small" (click)="startLoop('dry-run')" [disabled]="store.active()">Record findings without fixing</button>
         <span class="hint">A dry run: one crawl, recorded in the ledger; nothing is changed.</span>
       </div>
-    </details>
+    </section>
+    }
   `,
 })
 export class FixLoopScreen implements OnInit, OnDestroy {
+  // Route data: true on /fix-loop/settings, where every loop setting is.
+  readonly settings = input(false);
   private api = inject(Api);
   readonly env = inject(EnvStore);
   readonly store = inject(RunStore);
@@ -593,7 +598,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     this.runError.set('');
     try {
       // Fix the violations signs in first, in a fresh window, unless a way in was chosen on Run
-      // (More options); the later rounds crawl headless with the session it saves.
+      // (/run/advanced); the later rounds crawl headless with the session it saves.
       await this.store.start({ kind, auth: this.form.auth(true), agent: kind === 'loop' ? this.agentSpec() : undefined, signIn: kind === 'loop' && !this.form.authChosen() });
       this.form.clearToken();
     } catch (e: any) {

@@ -89,3 +89,19 @@ still signs in afresh, and choosing it runs headless with `--state` and no `--lo
 ends the Live notice's sign-in with Stop (the Run screen's Cancel/Try again/focus state no
 longer exists). fix-loop-simple: no sign-in button; a token chosen means no
 `--sign-in-first`; a new case asserts `--sign-in-first` with no way in chosen.
+
+## Report routes, History timeline, settings off-screen
+
+- Report: the audited routes, each once, worst first (most critical, then serious …), with
+  Site-wide last; the selected route's findings below in compact rows (badge, test, message,
+  Details), violations first, most serious first; filters apply within the route. AC 5 now
+  selects the forms page in the route list where it used the Page filter, and checks the
+  filters against that page's findings; a new test checks each page listed once and that the
+  second route shows its own findings and not the first's.
+- History: one timeline of crawls and fix rounds (found, fixed, remaining, commits, from the
+  ledger via `GET /api/loop/timeline`), a summary line and a remaining-per-round chart, and
+  **Clear fix-loop history** (`DELETE /api/loop/history`: rounds and ledger, never during a
+  run). loop.spec AC 14 checks the last round's row against `a11y-508 status`.
+- Run and Fix loop show no settings: they are at `/run/advanced` and `/fix-loop/settings`,
+  which nothing links to; the harness's `moreOptions()`/`loopOptions()` navigate there in-app.
+- CLI: Stop while the sign-in window is open now closes that browser (it was left running).

@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, effect, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, effect, inject, input, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
@@ -34,8 +34,10 @@ import { SignInFlow } from '../core/sign-in';
           <p class="hint">A run is active. <a routerLink="/live">Watch it</a>.</p>
         }
       </div>
-      <details class="more" data-testid="more-options">
-      <summary>More options…</summary>
+      <!-- Every other setting lives at /run/advanced, which nothing links to. -->
+      @if (advanced()) {
+      <section data-testid="more-options" aria-labelledby="adv-h">
+      <h2 id="adv-h">Advanced settings</h2>
       <fieldset>
         <legend>How the crawler signs in</legend>
         <div class="choice">
@@ -98,7 +100,7 @@ import { SignInFlow } from '../core/sign-in';
       <details class="advanced">
         <summary>Advanced</summary>
         <div class="grid">
-          @for (a of advanced; track a[0]) {
+          @for (a of flags; track a[0]) {
             @if (a[0] !== 'chrome' || !noBrowser()) {
               @if (a[2] === 'switch') {
                 <div class="choice">
@@ -132,17 +134,20 @@ import { SignInFlow } from '../core/sign-in';
         <button type="button" class="secondary" (click)="copy()" [disabled]="!command()">Copy command</button>
         <span role="status" class="hint">{{ copied() }}</span>
       </section>
-      </details>
+      </section>
+      }
     </form>
   `,
 })
 export class RunScreen implements OnInit {
+  // Route data: true on /run/advanced, where the settings beyond the start URL are.
+  readonly advanced = input(false);
   readonly form = inject(FormStore);
   readonly env = inject(EnvStore);
   readonly run = inject(RunStore);
   private api = inject(Api);
   private router = inject(Router);
-  readonly advanced = ADVANCED;
+  readonly flags = ADVANCED;
   readonly adv = computed(() => this.form.advanced() as Record<string, any>);
   readonly command = signal('');
   readonly copied = signal('');
@@ -155,7 +160,7 @@ export class RunScreen implements OnInit {
     const s = this.env.env()?.session;
     return s?.exists ? ` (${s.file}, ${ageText(s.ageMs)})` : ' (none saved yet)';
   });
-  // No saved session and no other way chosen under More options: sign in first.
+  // No saved session and no other way chosen on /run/advanced: sign in first.
   private flow = inject(SignInFlow);
   readonly canStart = computed(() => !!this.form.url().trim() && !this.run.active() && (!this.noBrowser() || !!String(this.adv()['chrome'] || '').trim()));
   private timer: any;
@@ -217,7 +222,7 @@ export class RunScreen implements OnInit {
 
   // Start opens a fresh browser window to sign in in (or the portal lets the person straight
   // through) and crawls in it (--login --stay); the session file is saved on the way, for the fix
-  // loop. Only a way in chosen under More options (a saved session, a token, cookies, none) runs
+  // loop. Only a way in chosen on /run/advanced (a saved session, a token, cookies, none) runs
   // the headless crawl instead.
   async start(): Promise<void> {
     if (!this.canStart()) return;

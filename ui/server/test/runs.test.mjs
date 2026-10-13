@@ -112,3 +112,32 @@ test('deleting reports: history entries only, confined to a11y-508-history, behi
     await s.stop();
   }
 });
+
+test('the fix loop timeline from the ledger, and clearing the loop history (rounds and ledger only)', async () => {
+  const s = await startServer();
+  try {
+    const work = join(s.cwd, 'a11y-508-work');
+    mkdirSync(join(work, 'round-1'), { recursive: true });
+    mkdirSync(join(work, 'round-2'), { recursive: true });
+    writeFileSync(join(work, 'prompt-r2-fix-0.md'), 'x');
+    const e = (status, attempts = []) => ({ status, test: '7.A', impact: 'serious', message: 'm', pages: ['/'], attempts, selector: 'img' });
+    writeFileSync(join(work, 'ledger.json'), JSON.stringify({
+      version: 1,
+      rounds: [
+        { round: 1, at: '2026-01-01T00:00:00.000Z', pages: 2, audited: 2, violations: 5, reviews: 1, diff: { new: 5, verified: 0, failed: 0 } },
+        { round: 2, at: '2026-01-01T01:00:00.000Z', pages: 2, audited: 2, violations: 3, reviews: 1, diff: { new: 0, verified: 2, failed: 0 } },
+      ],
+      findings: { a: e('verified', [{ round: 1, commit: 'abc', outcome: 'pending' }]), b: e('verified', [{ round: 1, commit: 'def', outcome: 'pending' }]), c: e('open'), d: e('open'), f: e('needs-human') },
+    }));
+    const t = await s.call('GET', '/api/loop/timeline');
+    assert.deepEqual(t.json.rounds.map((r) => [r.round, r.found, r.fixed, r.commits, r.remaining, r.needsHuman]), [[1, 5, 0, 2, 3, 0], [2, 3, 2, 0, 2, 1]]);
+    assert.deepEqual(t.json.total, { rounds: 2, fixed: 2, of: 5, remaining: 2, needsHuman: 1 });
+    const c = await s.call('DELETE', '/api/loop/history');
+    assert.equal(c.status, 200);
+    assert.equal(c.json.removed, 2);
+    assert.deepEqual(readdirSync(work), ['prompt-r2-fix-0.md']);
+    assert.equal((await s.call('GET', '/api/loop/timeline')).json, null);
+  } finally {
+    await s.stop();
+  }
+});

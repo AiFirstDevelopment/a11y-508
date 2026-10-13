@@ -173,42 +173,49 @@ test('AC 4: the Report screen equals report.json: result line, totals, review co
   }
 });
 
-test('AC 5: findings filter by level, impact, test, page and text; the detail panel shows selector, HTML, WCAG and screenshot', async () => {
+test('AC 5: on the selected page, findings filter by level, impact, test and text; the detail panel shows selector, HTML, WCAG and screenshot', async () => {
   await ensureCrawl();
   const report = readReport(dash.cwd);
-  const all = [
-    ...report.pages.flatMap((p: any) => p.findings.map((f: any) => ({ ...f, page: p.finalUrl || p.url }))),
-    ...report.site.findings.map((f: any) => ({ ...f, page: (f.pages || []).join(', ') || 'site-wide' })),
-  ];
+  const urlOf = (p: any) => p.finalUrl || p.url;
   await nav(page, 'Report');
   const count = page.getByTestId('finding-count');
-  await expect(count).toHaveText(`${all.length} of ${all.length} findings shown`);
   const rows = page.getByTestId('finding-row');
+  const route = (url: string) => page.getByTestId('routes').locator(`[data-testid="route"][data-url="${url}"]`);
+  // Selecting a page in the route list stands where the Page filter was.
+  const forms = report.pages.find((p: any) => /forms\.html$/.test(urlOf(p)));
+  await route(urlOf(forms)).click();
+  await expect(route(urlOf(forms))).toHaveAttribute('aria-current', 'true');
+  const all = forms.findings;
+  const shown = (n: number) => new RegExp(`^${n} of ${all.length} findings on /forms\\.html shown$`);
+  await expect(count).toHaveText(shown(all.length));
+  await expect(rows).toHaveCount(Math.min(all.length, 300));
 
   await page.getByLabel('Level', { exact: true }).selectOption('violation');
-  await expect(count).toHaveText(`${all.filter((f) => f.level === 'violation').length} of ${all.length} findings shown`);
+  await expect(count).toHaveText(shown(all.filter((f: any) => f.level === 'violation').length));
   await page.getByLabel('Impact', { exact: true }).selectOption('critical');
-  const crit = all.filter((f) => f.level === 'violation' && f.impact === 'critical');
-  await expect(count).toHaveText(`${crit.length} of ${all.length} findings shown`);
-  for (const t of await rows.locator('td:nth-child(2)').allTextContents()) expect(t).toBe('critical');
+  const crit = all.filter((f: any) => f.level === 'violation' && f.impact === 'critical');
+  await expect(count).toHaveText(shown(crit.length));
+  for (const t of await rows.getByTestId('badge').allTextContents()) expect(t).toBe('critical violation');
   await page.getByLabel('Level', { exact: true }).selectOption('');
   await page.getByLabel('Impact', { exact: true }).selectOption('');
 
-  await page.getByLabel('Test', { exact: true }).selectOption('7.A');
-  await expect(count).toHaveText(`${all.filter((f) => f.test === '7.A').length} of ${all.length} findings shown`);
+  await page.getByLabel('Test', { exact: true }).selectOption('5.A');
+  await expect(count).toHaveText(shown(all.filter((f: any) => f.test === '5.A').length));
   await page.getByLabel('Test', { exact: true }).selectOption('');
-  const formsUrl = report.pages.find((p: any) => /forms\.html$/.test(p.finalUrl || p.url));
-  await page.getByLabel('Page', { exact: true }).selectOption(formsUrl.finalUrl || formsUrl.url);
-  await expect(count).toHaveText(`${all.filter((f) => f.page === (formsUrl.finalUrl || formsUrl.url)).length} of ${all.length} findings shown`);
-  await page.getByLabel('Page', { exact: true }).selectOption('');
   await page.getByLabel('Text', { exact: true }).fill('placeholder');
-  const text = all.filter((f) => `${f.message} ${f.selector || ''} ${f.html || ''}`.toLowerCase().includes('placeholder'));
+  const text = all.filter((f: any) => `${f.message} ${f.selector || ''} ${f.html || ''}`.toLowerCase().includes('placeholder'));
   expect(text.length).toBeGreaterThan(0);
-  await expect(count).toHaveText(`${text.length} of ${all.length} findings shown`);
+  await expect(count).toHaveText(shown(text.length));
   await page.getByLabel('Text', { exact: true }).fill('');
+  // Violations come first, the most serious first.
+  const badges = await rows.getByTestId('badge').allTextContents();
+  const weight = (b: string) => (b.endsWith('violation') ? 0 : 10) + ['critical', 'serious', 'moderate', 'minor'].findIndex((i) => b.includes(i));
+  expect(badges.map(weight)).toEqual([...badges.map(weight)].sort((a, b) => a - b));
 
   // A finding with a screenshot: the detail panel shows all four.
-  const withShot = all.find((f) => f.screenshot && f.selector);
+  const shotPage = report.pages.find((p: any) => p.findings.some((f: any) => f.screenshot && f.selector));
+  const withShot = shotPage.findings.find((f: any) => f.screenshot && f.selector);
+  await route(urlOf(shotPage)).click();
   await page.getByLabel('Text', { exact: true }).fill(withShot.selector);
   await rows.filter({ hasText: withShot.message }).first().getByRole('button', { name: /Details/ }).click();
   const detail = page.getByTestId('detail');
@@ -218,6 +225,37 @@ test('AC 5: findings filter by level, impact, test, page and text; the detail pa
   const img = detail.getByTestId('detail-screenshot');
   await expect(img).toBeVisible();
   await expect.poll(() => img.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth)).toBeGreaterThan(0);
+  await page.getByLabel('Text', { exact: true }).fill('');
+});
+
+test('report routes: each audited page is listed once, worst first; selecting the second shows only its findings', async () => {
+  await ensureCrawl();
+  const report = readReport(dash.cwd);
+  const urlOf = (p: any) => p.finalUrl || p.url;
+  const audited = [...new Set(report.pages.filter((p: any) => !p.error && !p.skipped).map(urlOf))];
+  // A fresh Report screen (the previous test left a page selected).
+  await nav(page, 'Live run');
+  await nav(page, 'Report');
+  const list = page.getByTestId('routes').locator('[data-testid="route"]:not([data-url="site-wide"])');
+  await expect(list).toHaveCount(audited.length);
+  const urls = await list.evaluateAll((bs) => bs.map((b) => b.getAttribute('data-url')));
+  expect([...urls].sort()).toEqual([...audited].sort());
+  expect(new Set(urls).size).toBe(urls.length);
+  // Worst first, and selected by default.
+  await expect(list.first()).toHaveAttribute('aria-current', 'true');
+  const findingsOf = (url: string) => report.pages.find((p: any) => urlOf(p) === url).findings.map((f: any) => f.message);
+  const [first, second] = urls as string[];
+  const onlySecond = findingsOf(second).find((m: string) => !findingsOf(first).includes(m));
+  const onlyFirst = findingsOf(first).find((m: string) => !findingsOf(second).includes(m));
+  expect(onlySecond && onlyFirst, 'each of the two pages has a finding of its own').toBeTruthy();
+  await list.nth(1).click();
+  await expect(list.nth(1)).toHaveAttribute('aria-current', 'true');
+  await expect(list.first()).not.toHaveAttribute('aria-current', 'true');
+  const rows = page.getByTestId('finding-row');
+  await expect(rows.filter({ hasText: onlySecond })).not.toHaveCount(0);
+  await expect(rows.filter({ hasText: onlyFirst })).toHaveCount(0);
+  // No Page column: the route is the list's, not each row's.
+  await expect(page.getByTestId('findings').locator('thead th')).toHaveText(['Kind', 'Test', 'Message', 'Details']);
 });
 
 test('AC 10: the command on the Run screen, run in a terminal with TOKEN set, gives the same summary', async () => {

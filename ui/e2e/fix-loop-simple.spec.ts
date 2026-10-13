@@ -51,6 +51,7 @@ test('fix loop: the line says what it will do from the repository; the sign-in s
       url: 'http://127.0.0.1:9/', agent: 'claude', source: ['src'], check: 'npm run build && npm test', branch: 'a11y-508', push: true, maxAttempts: 3, deployed: 'bundle-change', deployTimeout: 1800000,
     });
     // A token was chosen on Run, so the loop does not sign in first.
+    await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.kind).toBe('loop');
     expect((await api(dash, '/api/runs/current')).json.meta.command).not.toContain('--sign-in-first');
     await api(dash, '/api/runs/current/stop', { method: 'POST' });
     await expect(page.getByTestId('loop-step')).toHaveText(/finished/, { timeout: 60_000 });

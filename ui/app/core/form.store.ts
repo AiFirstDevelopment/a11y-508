@@ -48,11 +48,11 @@ export class FormStore {
   readonly url = signal(readUrl());
   private env = inject(EnvStore);
   readonly authMode = signal<AuthMode>('token');
-  // Whether the person picked a way to sign in under More options. Until they
+  // Whether the person picked a way to sign in on /run/advanced. Until they
   // do, a saved session is used whenever one exists, and no sign-in otherwise
   // (the app then sends the crawler to its sign-in page, and Live offers Sign in).
   readonly authChosen = signal(false);
-  // The radio shown checked under More options: none until a choice is made (Start signs in itself).
+  // The radio shown checked on /run/advanced: none until a choice is made (Start signs in itself).
   readonly checkedMode = computed<AuthMode | null>(() => (this.authChosen() ? this.authMode() : null));
   readonly mode = computed<AuthMode>(() => (this.authChosen() ? this.authMode() : this.env.env()?.session?.exists ? 'state' : 'none'));
   readonly token = signal('');

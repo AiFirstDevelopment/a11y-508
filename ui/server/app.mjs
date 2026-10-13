@@ -15,7 +15,7 @@ import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine }
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
 import { loopDefaults } from './loop-defaults.mjs';
-import { listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, REPORT_DIR } from './reports.mjs';
+import { listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
 
@@ -363,6 +363,16 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       return send(res, 200, { ok: true });
     }
     if (m === 'GET' && path === '/api/reports') return send(res, 200, listReports(state.cwd));
+    if (m === 'GET' && path === '/api/loop/timeline') {
+      const file = join(state.cwd, WORK_DIR, 'ledger.json');
+      if (!existsSync(file)) return send(res, 200, null);
+      const ledger = loadLedger(file);
+      return send(res, 200, loopTimeline(ledger, statusCounts(ledger)));
+    }
+    if (m === 'DELETE' && path === '/api/loop/history') {
+      if (runs.active) return send(res, 409, { error: `a ${runs.current.kind} run is active; clear the fix loop's history when it has finished` });
+      return send(res, 200, clearLoopHistory(state.cwd));
+    }
     if (m === 'DELETE' && (path === '/api/reports/history' || /^\/api\/reports\/[^/]+$/.test(path))) {
       if (runs.active) return send(res, 409, { error: `a ${runs.current.kind} run is active; delete reports when it has finished` });
       if (path === '/api/reports/history') return send(res, 200, clearHistory(state.cwd));

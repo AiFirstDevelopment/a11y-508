@@ -47,7 +47,7 @@ async function setToken(page: Page): Promise<void> {
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Fix loop' }).click();
 }
 
-test('AC 11: the settings under More options save a config a11y-508 loop accepts, and rejects what the core rejects with its message', async ({ page }) => {
+test('AC 11: the settings at /fix-loop/settings save a config a11y-508 loop accepts, and rejects what the core rejects with its message', async ({ page }) => {
   const dash = await dashboard();
   try {
     await open(page, dash, '/fix-loop');
@@ -185,6 +185,25 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     // Each round's time, in the viewer's local time.
     const local = await page.evaluate((ats: string[]) => ats.map((a) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(a))), ledger.rounds.map((r: any) => r.at));
     expect(rows.map((r) => r[3])).toEqual(local);
+
+    // History: one timeline; the last round's row matches `a11y-508 status` (found and fixed from its
+    // round line, remaining from the open count), and the summary line above it.
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'History', exact: true }).click();
+    const last = ledger.rounds[ledger.rounds.length - 1];
+    const statusRound = new RegExp(`round ${last.round} [^\n]*: \\d+/\\d+ pages audited, (\\d+) violations, \\d+ review; \\+\\d+ new, (\\d+) verified`).exec(st)!;
+    const lastRow = page.getByTestId('history').locator(`tr[data-id="round-${last.round}"]`);
+    await expect(lastRow.getByRole('link')).toHaveText(`Fix round ${last.round}`);
+    await expect(lastRow.getByTestId('found')).toHaveText(statusRound[1]);
+    await expect(lastRow.getByTestId('fixed')).toHaveText(statusRound[2]);
+    await expect(lastRow.getByTestId('remaining').locator('span').first()).toHaveText(String(counts.open || 0));
+    await expect(page.getByTestId('history').locator('tr[data-source="round"]')).toHaveCount(ledger.rounds.length);
+    await expect(page.getByTestId('loop-summary')).toHaveText(`Fix loop: ${ledger.rounds.length} rounds · ${counts.verified || 0} of ${(counts.verified || 0) + (counts.open || 0) + (counts.pending || 0) + (counts['needs-human'] || 0)} violations fixed · ${counts.open || 0} remaining · ${counts['needs-human'] || 0} need a person`);
+    // Clear fix-loop history removes the rounds and the ledger, after a confirmation.
+    page.once('dialog', (d) => void d.accept());
+    await page.getByRole('button', { name: 'Clear fix-loop history' }).click();
+    await expect(page.getByTestId('history-status')).toHaveText(new RegExp(`^Removed ${ledger.rounds.length} fix-loop rounds and the ledger\\.$`));
+    await expect(page.getByTestId('history').locator('tr[data-source="round"]')).toHaveCount(0);
+    expect(existsSync(join(cwd, 'a11y-508-work', 'ledger.json'))).toBe(false);
   } finally {
     await dash.stop();
     server.close();

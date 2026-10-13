@@ -1,37 +1,68 @@
 import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { BarChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
-import { resultWord, localTime } from '../core/format';
+import { RunStore } from '../core/run.store';
+import { resultWord, localTime, shortUrl } from '../core/format';
+import { prefersReducedMotion } from '../core/motion';
 import { ReportListEntry } from '../core/types';
+import { ChartPanel } from '../shared/chart-panel';
 
+interface LoopRound { round: number; at: string | null; found: number; fixed: number; commits: number; remaining: number; needsHuman: number }
+interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: number; of: number; remaining: number; needsHuman: number } }
+
+// One timeline: the crawls and the fix loop's rounds, newest first.
 @Component({
   selector: 'app-history-screen',
-  imports: [RouterLink],
+  imports: [RouterLink, ChartPanel, BarChartModule],
   template: `
     <h1>History</h1>
-    <p>Every crawl, newest first, with the fix loop's rounds beside them. The latest crawl stays in a11y-508-report/; earlier ones move to a11y-508-history/.</p>
+    <p>Every crawl and every round of the fix loop, newest first. The latest crawl stays in a11y-508-report/; earlier ones move to a11y-508-history/; the loop's rounds are in a11y-508-work/.</p>
     @if (error()) {
       <div class="notice error" role="alert">{{ error() }}</div>
     }
     <p role="status" class="hint" data-testid="history-status">{{ status() }}</p>
-    @if (earlier().length) {
+    @if (timeline(); as t) {
+      <p data-testid="loop-summary">Fix loop: {{ t.total.rounds }} round{{ t.total.rounds === 1 ? '' : 's' }} · {{ t.total.fixed }} of {{ t.total.of }} violations fixed · {{ t.total.remaining }} remaining · {{ t.total.needsHuman }} need a person</p>
+      <app-chart-panel id="remaining" heading="Violations remaining after each round" [columns]="remainingCols" [rows]="remainingRows()">
+        <ngx-charts-bar-vertical [view]="[480, 180]" [results]="remainingData()" [xAxis]="true" [yAxis]="true" [showXAxisLabel]="true" xAxisLabel="Round" [showYAxisLabel]="true" yAxisLabel="Remaining" [animations]="animations" [tooltipDisabled]="true" />
+      </app-chart-panel>
+    }
+    @if (earlier().length || timeline()) {
       <div class="actions">
-        <button type="button" class="secondary" (click)="clear()" data-testid="clear-history">Clear history</button>
+        @if (earlier().length) {
+          <button type="button" class="secondary" (click)="clear()" data-testid="clear-history">Clear history</button>
+        }
+        @if (timeline()) {
+          <button type="button" class="secondary" (click)="clearLoop()" [disabled]="loopRunning()" data-testid="clear-loop-history">Clear fix-loop history</button>
+        }
       </div>
     }
     @if (list().length) {
       <table data-testid="history">
-        <caption>Reports</caption>
-        <thead><tr><th scope="col">Report</th><th scope="col">Finished</th><th scope="col">Result</th><th scope="col">Pages audited</th><th scope="col">Violations</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+        <caption>Crawls and fix-loop rounds</caption>
+        <thead><tr><th scope="col">Event</th><th scope="col">Finished</th><th scope="col">Pages audited</th><th scope="col">Violations found</th><th scope="col">Review</th><th scope="col">Fixed</th><th scope="col">Remaining</th><th scope="col">Commits</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
         <tbody>
           @for (r of list(); track r.id) {
+            @let lr = loopRound(r);
             <tr [attr.data-id]="r.id" [attr.data-source]="r.source">
-              <th scope="row"><a [routerLink]="r.id === 'latest' ? ['/report'] : ['/report', r.id]">{{ name(r) }}</a></th>
+              <th scope="row"><a [routerLink]="r.id === 'latest' ? ['/report'] : ['/report', r.id]">{{ name(r) }}</a>
+                @if (r.source !== 'round') { <span class="hint"> {{ word(r.result) }}</span> }</th>
               <td><time [attr.datetime]="r.finishedAt" [attr.title]="r.finishedAt" data-testid="finished">{{ local(r.finishedAt) }}</time></td>
-              <td>{{ word(r.result) }}</td>
               <td>{{ r.summary.audited }}</td>
-              <td>{{ r.summary.violations }}</td>
+              <td data-testid="found">{{ lr ? lr.found : r.summary.violations }}</td>
+              <td>{{ r.summary.reviews }}</td>
+              <td data-testid="fixed">{{ lr ? lr.fixed : '—' }}</td>
+              <td data-testid="remaining">
+                @if (lr) {
+                  <span>{{ lr.remaining }}</span>
+                  @if (lr.needsHuman) { <span> ({{ lr.needsHuman }} need a person)</span> }
+                } @else {
+                  —
+                }
+              </td>
+              <td data-testid="commits">{{ lr ? lr.commits : '—' }}</td>
               <td>
                 @if (r.source === 'history') {
                   <button type="button" class="secondary small" (click)="remove(r)" [attr.aria-label]="'Delete ' + name(r) + ', finished ' + local(r.finishedAt)">Delete</button>
@@ -49,14 +80,21 @@ import { ReportListEntry } from '../core/types';
 export class HistoryScreen {
   private api = inject(Api);
   private env = inject(EnvStore);
+  private run = inject(RunStore);
   readonly list = signal<ReportListEntry[]>([]);
+  readonly timeline = signal<LoopTimeline | null>(null);
   readonly word = resultWord;
   readonly local = localTime;
+  readonly animations = !prefersReducedMotion();
   private loads = 0;
   readonly error = signal('');
   readonly status = signal('');
   // The reports in a11y-508-history/, which Clear history and Delete remove.
   readonly earlier = computed(() => this.list().filter((r) => r.source === 'history'));
+  readonly loopRunning = computed(() => this.run.active() && ['loop', 'dry-run'].includes(this.run.kind() || ''));
+  readonly remainingCols = [{ key: 'round', label: 'Round' }, { key: 'remaining', label: 'Remaining' }];
+  readonly remainingRows = computed(() => (this.timeline()?.rounds || []).map((r) => ({ round: r.round, remaining: r.remaining })));
+  readonly remainingData = computed(() => this.remainingRows().map((r) => ({ name: String(r.round), value: r.remaining })));
 
   constructor() {
     // The list, again whenever the working directory changes.
@@ -69,16 +107,29 @@ export class HistoryScreen {
   private async load(): Promise<void> {
     const n = ++this.loads;
     let l: ReportListEntry[] = [];
+    let t: LoopTimeline | null = null;
     try {
-      l = await this.api.get<ReportListEntry[]>('/api/reports');
+      [l, t] = await Promise.all([this.api.get<ReportListEntry[]>('/api/reports'), this.api.get<LoopTimeline | null>('/api/loop/timeline')]);
     } catch {}
-    if (n === this.loads) this.list.set(l);
+    if (n !== this.loads) return;
+    this.list.set(l);
+    this.timeline.set(t);
+  }
+
+  loopRound(r: ReportListEntry): LoopRound | null {
+    return r.source === 'round' ? this.timeline()?.rounds.find((x) => x.round === r.round) || null : null;
   }
 
   async clear(): Promise<void> {
     const n = this.earlier().length;
     if (!confirm(`Remove ${n} earlier report${n === 1 ? '' : 's'} from a11y-508-history? The latest report and the loop's rounds stay. This cannot be undone.`)) return;
     await this.del('/api/reports/history', (r) => `Removed ${r.removed} earlier report${r.removed === 1 ? '' : 's'}.`);
+  }
+
+  async clearLoop(): Promise<void> {
+    const n = this.timeline()?.total.rounds || 0;
+    if (!confirm(`Remove the fix loop's ${n} round${n === 1 ? '' : 's'} and its ledger from a11y-508-work? The next loop starts from round 1. This cannot be undone.`)) return;
+    await this.del('/api/loop/history', (r) => `Removed ${r.removed} fix-loop round${r.removed === 1 ? '' : 's'} and the ledger.`);
   }
 
   async remove(e: ReportListEntry): Promise<void> {
@@ -98,8 +149,8 @@ export class HistoryScreen {
   }
 
   name(r: ReportListEntry): string {
-    if (r.source === 'latest') return `Latest crawl of ${r.baseUrl}`;
-    if (r.source === 'round') return `Loop round ${r.round} of ${r.baseUrl}`;
-    return `Earlier crawl of ${r.baseUrl}`;
+    if (r.source === 'round') return `Fix round ${r.round}`;
+    const route = r.baseUrl ? shortUrl(r.baseUrl) : '';
+    return `${r.source === 'latest' ? 'Crawl' : 'Earlier crawl'} of ${route} (${r.baseUrl})`;
   }
 }

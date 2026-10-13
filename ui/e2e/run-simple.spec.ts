@@ -1,6 +1,6 @@
 // docs/plans/run-simple.md: the Run screen for the common case. A start URL and one
 // button, Start, which opens a fresh browser window to sign in in and crawls there
-// (--login --stay); everything else behind a closed "More options…".
+// (--login --stay); everything else at /run/advanced, which nothing links to.
 
 import { test, expect, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
@@ -13,7 +13,7 @@ import { SESSION_COOKIE, SESSION_VALUE } from '../../test/fixture-site.mjs';
 const start = (page: Page) => page.getByRole('button', { name: 'Start', exact: true });
 const WAITING = 'A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.';
 
-test('run-simple (a): the Run screen shows the URL and Start, with no sign-in wording; the rest stays hidden until More options… is opened', async ({ page }) => {
+test('run-simple (a): the Run screen shows the URL and Start and nothing else; the other settings are at /run/advanced, which nothing links to', async ({ page }) => {
   const dash = await dashboard();
   try {
     await open(page, dash, '/run');
@@ -26,18 +26,18 @@ test('run-simple (a): the Run screen shows the URL and Start, with no sign-in wo
     // The nav no longer offers a Sign in screen.
     await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Sign in' })).toHaveCount(0);
 
-    const more = page.getByTestId('more-options');
-    await expect(more).toHaveJSProperty('open', false);
-    await expect(more.locator('> summary')).toHaveText('More options…');
-    await expect(page.getByLabel('A token')).toBeHidden();
-    await expect(page.getByLabel('Cookies')).toBeHidden();
-    await expect(page.getByLabel('Maximum pages')).toBeHidden();
-    await expect(page.locator('details.advanced > summary')).toBeHidden();
-    await expect(page.getByTestId('command')).toBeHidden();
-    await expect(page.getByRole('button', { name: 'Copy command' })).toBeHidden();
-
-    await page.getByText('More options…').click();
-    await expect(more).toHaveJSProperty('open', true);
+    // Nothing else: no More options control, no token, advanced or command fields.
+    await expect(page.getByText(/More options/)).toHaveCount(0);
+    await expect(page.getByTestId('more-options')).toHaveCount(0);
+    await expect(page.getByLabel('A token')).toHaveCount(0);
+    await expect(page.getByLabel('Cookies')).toHaveCount(0);
+    await expect(page.getByLabel('Maximum pages')).toHaveCount(0);
+    await expect(page.locator('details.advanced')).toHaveCount(0);
+    await expect(page.getByTestId('command')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Copy command' })).toHaveCount(0);
+    // Nothing links to the settings route; it still answers its address, with every field.
+    await expect(page.locator('a[href*="/run/advanced"]')).toHaveCount(0);
+    await moreOptions(page);
     await expect(page.getByLabel('A token')).toBeVisible();
     await expect(page.getByLabel('Cookies')).toBeVisible();
     await expect(page.getByLabel('Maximum pages')).toBeVisible();
@@ -96,7 +96,7 @@ test('run-simple (b): Start opens a window to sign in in and crawls there (--log
   }
 });
 
-test('run-simple (c): with a saved session, Start still signs in afresh; the saved session is used headless only when chosen under More options', async ({ page }) => {
+test('run-simple (c): with a saved session, Start still signs in afresh; the saved session is used headless only when chosen at /run/advanced', async ({ page }) => {
   const site = await fixtureSite({ autoLogin: true });
   const cwd = tempDir('a11y-508-simple-');
   const origin = new URL(site.base).origin;
@@ -116,7 +116,7 @@ test('run-simple (c): with a saved session, Start still signs in afresh; the sav
     await open(page, dash, '/run');
     await page.getByLabel('Start URL').fill(site.base + 'app.html');
     await moreOptions(page);
-    // The saved session is offered under More options, with its age, and is not the default.
+    // The saved session is offered at /run/advanced, with its age, and is not the default.
     const saved = page.getByLabel(/^Use saved session/);
     await expect(saved).toBeEnabled();
     await expect(saved).not.toBeChecked();
@@ -129,7 +129,7 @@ test('run-simple (c): with a saved session, Start still signs in afresh; the sav
     await startSignIn(page);
     await expect(page.getByTestId('run-command')).toContainText('--login --stay');
     await waitFinished(page);
-    // Chosen under More options, the saved session runs the headless crawl.
+    // Chosen at /run/advanced, the saved session runs the headless crawl.
     await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
     await moreOptions(page);
     await page.getByLabel(/^Use saved session/).check();
@@ -171,7 +171,7 @@ test('run-simple (d): a run bounced to a sign-in page on another origin offers S
     await open(page, dash, '/run');
     await page.getByLabel('Start URL').fill(appBase + '/');
     await moreOptions(page);
-    // No session: running without one is a choice made under More options.
+    // No session: running without one is a choice made at /run/advanced.
     await page.getByLabel('No sign-in').check();
     await page.getByLabel('Maximum pages').fill('1');
     await startFromRun(page);

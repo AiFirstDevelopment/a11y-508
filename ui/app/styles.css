@@ -132,3 +132,16 @@ button.big { font-size: 1.1rem; padding: 10px 22px; }
 .pane-head h2 { font-size: 1rem; margin: 8px 0 4px; }
 pre.pane { height: calc(12 * 1.4em + 16px); max-height: none; overflow: auto; white-space: pre-wrap; }
 .wrap { overflow-wrap: anywhere; }
+ul.routes { list-style: none; margin: 8px 0; padding: 0; border: 1px solid var(--line); border-radius: 6px; max-height: 360px; overflow: auto; }
+ul.routes li + li { border-top: 1px solid var(--line); }
+button.route { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; width: 100%; text-align: left; background: #ffffff; color: var(--fg); border: 0; border-radius: 0; padding: 6px 10px; }
+button.route[aria-current="true"] { background: #e8eef8; box-shadow: inset 4px 0 0 var(--accent); }
+button.route .path { overflow-wrap: anywhere; }
+button.route .query { color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+button.route .counts { margin-left: auto; font-size: 0.9rem; color: var(--muted); }
+button.route .mark { color: var(--ok); width: 1em; }
+button.route .mark.bad { color: var(--crit); }
+table.findings td { overflow-wrap: anywhere; }
+.badge { display: inline-block; font-size: 0.85rem; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line); background: #f4f4f4; }
+.badge.violation.critical, .badge.violation.serious { border-color: var(--crit); background: var(--err-bg); color: var(--crit); }
+.badge.violation.moderate { border-color: var(--ser); color: var(--ser); background: #fff3e8; }

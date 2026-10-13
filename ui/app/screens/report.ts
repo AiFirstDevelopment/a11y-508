@@ -13,7 +13,24 @@ import { ChartPanel } from '../shared/chart-panel';
 interface Row extends Finding {
   key: number;
   page: string;
+  // The route this finding is listed under: the page's URL, or 'site-wide'.
+  route: string;
 }
+
+// One entry of the route list: an audited page (or the site-wide findings).
+interface Route {
+  key: string;
+  path: string;
+  query: string;
+  url: string;
+  byImpact: Record<string, number>;
+  violations: number;
+  reviews: number;
+}
+
+const SEVERITY: Record<string, number> = { critical: 0, serious: 1, moderate: 2, minor: 3 };
+// Violations before review items, the most serious first.
+const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level === 'violation' ? -1 : 1) || (SEVERITY[a.impact] ?? 9) - (SEVERITY[b.impact] ?? 9);
 
 @Component({
   selector: 'app-report-screen',
@@ -71,7 +88,20 @@ interface Row extends Finding {
         }
       }
 
-      <h2 id="findings-h">Findings</h2>
+      <h2 id="findings-h">Findings by page</h2>
+      <nav aria-label="Audited pages" data-testid="routes">
+        <ul class="routes">
+          @for (rt of routes(); track rt.key) {
+            <li>
+              <button type="button" class="route" data-testid="route" [attr.data-url]="rt.url" [attr.aria-current]="rt.key === route()?.key ? 'true' : null" (click)="selectRoute(rt.key)">
+                <span class="mark" [class.bad]="rt.violations > 0" aria-hidden="true">{{ rt.violations ? '✗' : '✓' }}</span>
+                <strong class="path">{{ rt.path }}</strong>@if (rt.query) {<span class="query" [attr.title]="rt.url">{{ rt.query }}</span>}
+                <span class="counts">{{ rt.violations }} violation{{ rt.violations === 1 ? '' : 's' }} · {{ rt.reviews }} review</span>
+              </button>
+            </li>
+          }
+        </ul>
+      </nav>
       <form class="filters" aria-labelledby="findings-h" (submit)="$event.preventDefault()">
         <div class="field">
           <label for="f-level">Level</label>
@@ -94,33 +124,25 @@ interface Row extends Finding {
           </select>
         </div>
         <div class="field">
-          <label for="f-page">Page</label>
-          <select id="f-page" (change)="page.set(val($event))"><option value="">All</option>@for (p of pageNames(); track p) { <option [value]="p">{{ short(p) }}</option> }</select>
-        </div>
-        <div class="field">
           <label for="f-text">Text</label>
           <input id="f-text" type="search" (input)="text.set(val($event))" />
         </div>
-        <div class="field">
-          <label for="f-group">Group by</label>
-          <select id="f-group" (change)="group.set(val($event))"><option value="">Nothing</option><option value="test">Test</option><option value="page">Page</option></select>
-        </div>
       </form>
-      <p role="status" data-testid="finding-count">{{ filtered().length }} of {{ rows().length }} findings shown</p>
-      @for (g of groups(); track g.name) {
-        @if (g.name) { <h3>{{ g.name }}</h3> }
-        <table class="findings" data-testid="findings">
-          <thead><tr><th scope="col">Level</th><th scope="col">Impact</th><th scope="col">Test</th><th scope="col">Page</th><th scope="col">Message</th><th scope="col"><span class="visually-hidden">Details</span></th></tr></thead>
-          <tbody>
-            @for (f of g.rows.slice(0, 300); track f.key) {
-              <tr data-testid="finding-row">
-                <td>{{ f.level }}</td><td>{{ f.impact }}</td><td>{{ f.test }}</td><td>{{ short(f.page) }}</td><td>{{ f.message }}</td>
-                <td><button type="button" class="secondary small" (click)="selected.set(f)" [attr.aria-label]="'Details for finding: ' + f.message">Details</button></td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      }
+      <p role="status" data-testid="finding-count">{{ filtered().length }} of {{ routeRows().length }} findings on {{ routeName() }} shown</p>
+      <table class="findings" data-testid="findings">
+        <caption>Findings on {{ routeName() }}</caption>
+        <thead><tr><th scope="col">Kind</th><th scope="col">Test</th><th scope="col">Message</th><th scope="col"><span class="visually-hidden">Details</span></th></tr></thead>
+        <tbody>
+          @for (f of filtered().slice(0, 300); track f.key) {
+            <tr data-testid="finding-row">
+              <td><span class="badge" [class]="'badge ' + f.level + ' ' + f.impact" data-testid="badge">{{ f.level === 'violation' ? f.impact + ' violation' : 'review · ' + f.impact }}</span></td>
+              <td><strong>{{ f.test }}</strong> {{ f.name }}</td>
+              <td class="msg">{{ f.message }}</td>
+              <td><button type="button" class="secondary small" (click)="selected.set(f)" [attr.aria-label]="'Details for finding: ' + f.message">Details</button></td>
+            </tr>
+          }
+        </tbody>
+      </table>
       @if (selected(); as f) {
         <section class="detail" aria-labelledby="detail-h" data-testid="detail">
           <h2 id="detail-h" tabindex="-1">Finding detail</h2>
@@ -195,9 +217,8 @@ export class ReportScreen {
   readonly level = signal('');
   readonly impact = signal('');
   readonly test = signal('');
-  readonly page = signal('');
   readonly text = signal('');
-  readonly group = signal('');
+  readonly selectedRoute = signal<string | null>(null);
   readonly selected = signal<Row | null>(null);
 
   readonly reportId = computed(() => this.id() || 'latest');
@@ -238,9 +259,49 @@ export class ReportScreen {
     if (!r) return [];
     let key = 0;
     const out: Row[] = [];
-    for (const p of r.pages) for (const f of p.findings || []) out.push({ ...f, key: key++, page: p.finalUrl || p.url });
-    for (const f of r.site?.findings || []) out.push({ ...f, key: key++, page: (f.pages || []).join(', ') || 'site-wide' });
+    for (const p of r.pages) for (const f of p.findings || []) out.push({ ...f, key: key++, page: p.finalUrl || p.url, route: p.finalUrl || p.url });
+    for (const f of r.site?.findings || []) out.push({ ...f, key: key++, page: (f.pages || []).join(', ') || 'site-wide', route: 'site-wide' });
     return out;
+  });
+  // The audited pages, each once, worst first (most critical, then serious … violations), then Site-wide.
+  readonly routes = computed<Route[]>(() => {
+    const r = this.report();
+    if (!r) return [];
+    const seen = new Map<string, Route>();
+    for (const p of r.pages) {
+      if (p.error || p.skipped) continue;
+      const url = p.finalUrl || p.url;
+      if (seen.has(url)) continue;
+      let path = url;
+      let query = '';
+      try {
+        const u = new URL(url);
+        path = u.pathname || '/';
+        query = u.search + u.hash;
+      } catch {}
+      const rt: Route = { key: url, path, query: query.length > 60 ? query.slice(0, 59) + '…' : query, url, byImpact: { critical: 0, serious: 0, moderate: 0, minor: 0 }, violations: 0, reviews: 0 };
+      for (const f of p.findings || []) {
+        if (f.level === 'violation') {
+          rt.violations++;
+          rt.byImpact[f.impact] = (rt.byImpact[f.impact] || 0) + 1;
+        } else rt.reviews++;
+      }
+      seen.set(url, rt);
+    }
+    const worst = (a: Route, b: Route) => IMPACTS.map((i) => b.byImpact[i] - a.byImpact[i]).find((d) => d !== 0) || b.reviews - a.reviews;
+    const list = [...seen.values()].sort(worst);
+    const site = r.site?.findings || [];
+    if (site.length) {
+      list.push({ key: 'site-wide', path: 'Site-wide', query: '', url: 'site-wide', byImpact: {}, violations: site.filter((f) => f.level === 'violation').length, reviews: site.filter((f) => f.level !== 'violation').length });
+    }
+    return list;
+  });
+  // The selected route: the worst page by default.
+  readonly route = computed(() => this.routes().find((r) => r.key === this.selectedRoute()) || this.routes()[0] || null);
+  readonly routeName = computed(() => (this.route() ? (this.route()!.key === 'site-wide' ? 'the whole site' : this.route()!.path + this.route()!.query) : 'no page'));
+  readonly routeRows = computed(() => {
+    const k = this.route()?.key;
+    return this.rows().filter((f) => f.route === k).sort(byWeight);
   });
   readonly tests = computed(() => [...new Set(this.rows().map((f) => f.test))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
   // With the beyond-508 profile (--wcag 2.1 / 2.2), its rules are listed under a heading of their own.
@@ -258,30 +319,16 @@ export class ReportScreen {
       .filter(([t, c]) => this.isBeyond(t) && (c.violations || c.reviews))
       .map(([test, c]) => ({ test, name: r.catalog[test].name, wcag: r.catalog[test].wcag, violations: c.violations, reviews: c.reviews }));
   });
-  readonly pageNames = computed(() => [...new Set(this.rows().map((f) => f.page))]);
   readonly filtered = computed(() => {
     const q = this.text().toLowerCase().trim();
-    return this.rows().filter(
+    return this.routeRows().filter(
       (f) =>
         (!this.level() || f.level === this.level()) &&
         (!this.impact() || f.impact === this.impact()) &&
         (!this.test() || f.test === this.test()) &&
-        (!this.page() || f.page === this.page()) &&
         (!q || `${f.message} ${f.selector || ''} ${f.html || ''}`.toLowerCase().includes(q))
     );
   });
-  readonly groups = computed(() => {
-    const g = this.group();
-    if (!g) return [{ name: '', rows: this.filtered() }];
-    const map = new Map<string, Row[]>();
-    for (const f of this.filtered()) {
-      const k = g === 'test' ? f.test : shortUrl(f.page);
-      if (!map.has(k)) map.set(k, []);
-      map.get(k)!.push(f);
-    }
-    return [...map.entries()].map(([name, rows]) => ({ name, rows }));
-  });
-
   private title = inject(Title);
 
   constructor() {
@@ -313,6 +360,7 @@ export class ReportScreen {
     const n = ++this.loads;
     if (blank) this.loading.set(true);
     this.selected.set(null);
+    this.selectedRoute.set(null);
     let r: Report | null = null;
     try {
       r = await this.api.get<Report>(`/api/reports/${encodeURIComponent(id)}`);
@@ -323,6 +371,11 @@ export class ReportScreen {
     if (n !== this.loads) return;
     this.report.set(r);
     this.loading.set(false);
+  }
+
+  selectRoute(key: string): void {
+    this.selectedRoute.set(key);
+    this.selected.set(null);
   }
 
   val(e: Event): string {

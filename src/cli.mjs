@@ -399,12 +399,23 @@ async function run(argv) {
       log.error(e.message);
       return 3;
     }
+    // Stopped while the sign-in window is open (Ctrl+C, the dashboard's Stop): close that browser too.
+    const onLoginSignal = async () => {
+      log.warn('interrupted; closing the sign-in browser');
+      await closeBrowser(headed).catch(() => {});
+      process.exit(130);
+    };
+    process.once('SIGINT', onLoginSignal);
+    process.once('SIGTERM', onLoginSignal);
     try {
       opts.state = await interactiveLogin({ browser: headed, startUrl: startUrl.href, origins: [...origins], timeout: opts.timeout, log, keepOpen: opts.stay });
     } catch (e) {
       log.error(`login failed: ${e.message}`);
       await closeBrowser(headed);
       return 2;
+    } finally {
+      process.off('SIGINT', onLoginSignal);
+      process.off('SIGTERM', onLoginSignal);
     }
     // --stay: the signed-in window stays open and the crawl runs in it, one tab at
     // a time (a visible browser paints only its front tab).
