@@ -23,6 +23,17 @@ export function normalizeUrl(href, origin) {
   return s;
 }
 
+// The route a URL belongs to: its path (and hash route) plus the names of its
+// query parameters, not their values. /search?from=1&to=2 and
+// /search?from=3&to=4 are one route, and an app whose pages link to date
+// variants of themselves would otherwise be crawled to the page limit.
+export function routeKey(url) {
+  const u = new URL(url);
+  const keys = [...u.searchParams.keys()].sort().join('&');
+  return `${u.pathname}${u.hash}${keys ? '?' + keys : ''}`;
+}
+const VARIANTS_PER_ROUTE = 2;
+
 export async function crawl({ browser, startUrl, opts, log, outDir }) {
   const origin = new URL(startUrl).origin;
   const first = normalizeUrl(startUrl, origin) || startUrl;
@@ -31,6 +42,20 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
   // URLs a page landed on after a redirect: already audited, never queued again.
   const landed = new Set();
   const audited = new Set(); // final URLs of pages audited so far, so a redirect target is audited once
+  const variants = new Map(); // route key -> query variants of it accepted so far
+  const variantRoutes = new Set();
+  let variantOverflow = 0;
+  // True when this URL may be crawled: a URL without a query always, one with a query
+  // only while its route has fewer than VARIANTS_PER_ROUTE variants accepted.
+  const acceptVariant = (u) => {
+    if (!new URL(u).search) return true;
+    const k = routeKey(u);
+    const c = variants.get(k) || 0;
+    if (c >= VARIANTS_PER_ROUTE) return false;
+    variants.set(k, c + 1);
+    return true;
+  };
+  acceptVariant(first);
   const pages = [];
   let active = 0;
   let pageCounter = 0;
@@ -98,6 +123,7 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
                 // Not added to seen: that set is the "pages found" count, and the
                 // landing page is the same page as the URL that led to it.
                 landed.add(landedOn);
+                acceptVariant(landedOn); // the landing page counts as a variant of its route
                 for (let i = queue.length - 1; i >= 0; i--) if (queue[i].url === landedOn) queue.splice(i, 1);
               }
             }
@@ -109,6 +135,11 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
             for (const link of [...res.info.links, ...viaClick]) {
               const n = normalizeUrl(link, origin);
               if (!n || seen.has(n) || landed.has(n) || !allowed(n)) continue;
+              if (!acceptVariant(n)) {
+                variantOverflow++;
+                variantRoutes.add(routeKey(n));
+                continue;
+              }
               if (seen.size >= opts.maxPages) {
                 overflow++;
                 continue;
@@ -129,5 +160,5 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
 
   const n = Math.max(1, Math.min(opts.concurrency, opts.maxPages));
   await Promise.all(Array.from({ length: n }, (_, i) => worker(i)));
-  return { pages, discovered: seen.size, overflow, clickOnly: clickOnly.size, origin };
+  return { pages, discovered: seen.size, overflow, clickOnly: clickOnly.size, origin, variantOverflow, variantRoutes: [...variantRoutes], variantsPerRoute: VARIANTS_PER_ROUTE };
 }

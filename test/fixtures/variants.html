@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Query variants - a11y-508 test site</title>
+</head>
+<body>
+<main>
+  <h1>One route, many query values</h1>
+  <p>These links differ only in their query values, as a search page's date ranges do. The crawler audits a route's variants at most twice and notes the rest.</p>
+  <ul>
+    <li><a href="/variant-target.html?from=1&amp;to=2">Range 1</a></li>
+    <li><a href="/variant-target.html?from=3&amp;to=4">Range 2</a></li>
+    <li><a href="/variant-target.html?from=5&amp;to=6">Range 3</a></li>
+    <li><a href="/variant-target.html?from=7&amp;to=8">Range 4</a></li>
+    <li><a href="/variant-target.html?tab=settings">Different parameter set</a></li>
+  </ul>
+  <p><a href="/">Home</a></p>
+</main>
+</body>
+</html>

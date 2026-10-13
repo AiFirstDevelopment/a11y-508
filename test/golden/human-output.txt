@@ -61,7 +61,7 @@ report: OUT/report.html
         OUT/summary.md
 
 coverage warning 1 clickable control(s) on 1 page(s) were not clicked because they look like actions ("Delete account"). Any pages behind them were not audited.
-coverage warning Stopped at --max-pages 8: 68 more link(s) were found but not audited.
+coverage warning Stopped at --max-pages 8: 69 more link(s) were found but not audited.
 coverage note 1 page(s) were reachable only by clicking a control with no link (href); they were found by clicking and audited. Screen reader users cannot discover these destinations as links (check WCAG 2.1.1, 4.1.2).
 
 FAIL (11 critical, 24 serious violations)
