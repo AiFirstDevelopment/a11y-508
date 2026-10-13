@@ -28,6 +28,15 @@ export interface LoopDefaults {
   configExists: boolean;
 }
 
+// GET /api/loop/match: whether the folders the loop edits hold the latest report's markup.
+export interface LoopMatch {
+  report: boolean;
+  source: string[];
+  checked: number;
+  found: number;
+  examples: { token: string; kind: string; file: string }[];
+}
+
 export interface Remedy {
   id: string;
   text: string;

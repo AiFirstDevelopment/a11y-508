@@ -9,7 +9,7 @@ import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { prefersReducedMotion } from '../core/motion';
 import { localTime } from '../core/format';
-import { AgentTest, LedgerInfo, LoopDefaults, Preset } from '../core/types';
+import { AgentTest, LedgerInfo, LoopDefaults, LoopMatch, Preset } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
 import { RunView } from '../shared/run-view';
 
@@ -149,6 +149,14 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
     </p>
     @if (!loopUrl()) {
       <p class="hint" data-testid="no-url">No start URL yet: run a crawl from Run first.</p>
+    }
+    @if (wrongRepo() && !store.active()) {
+      <div class="notice warn" role="alert" data-testid="wrong-repo">
+        <p>This repository does not seem to contain the app's code: none of the findings' markup was found under @for (d of match()!.source; track d; let last = $last) {<code>{{ d }}</code>@if (!last) {, }}. Choose the app's repository with Change…</p>
+        @if (!startAnyway()) {
+          <button type="button" class="link small" (click)="startAnyway.set(true)" data-testid="start-anyway">Start anyway</button>
+        }
+      </div>
     }
 
     }
@@ -421,7 +429,14 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     }
   }
 
-  readonly canStart = computed(() => this.agentReady() && this.repoOk() && !!this.loopUrl() && !this.store.active());
+  // The latest report's markup is nowhere in the folders the loop edits: probably the wrong repository.
+  readonly match = signal<LoopMatch | null>(null);
+  readonly startAnyway = signal(false);
+  readonly wrongRepo = computed(() => {
+    const m = this.match();
+    return !!m && m.report && m.checked > 0 && m.found === 0;
+  });
+  readonly canStart = computed(() => this.agentReady() && this.repoOk() && !!this.loopUrl() && !this.store.active() && (!this.wrongRepo() || this.startAnyway()));
   readonly host = computed(() => {
     try {
       return new URL(this.loopUrl()).host;
@@ -582,8 +597,11 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   async loadDefaults(): Promise<void> {
     const n = ++this.defaultsLoads;
     try {
-      const d = await this.api.get<LoopDefaults>('/api/loop/defaults');
-      if (n === this.defaultsLoads) this.defaults.set(d);
+      const [d, m] = await Promise.all([this.api.get<LoopDefaults>('/api/loop/defaults'), this.api.get<LoopMatch>('/api/loop/match').catch(() => null)]);
+      if (n !== this.defaultsLoads) return;
+      this.defaults.set(d);
+      this.match.set(m);
+      this.startAnyway.set(false);
     } catch {}
   }
 

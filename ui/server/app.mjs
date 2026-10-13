@@ -17,6 +17,7 @@ import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
 import { loopDefaults } from './loop-defaults.mjs';
 import { paths as statePaths, excludeOutputs, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
+import { matchSource } from './loop-match.mjs';
 import { listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
@@ -464,6 +465,15 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     if (m === 'GET' && path === '/api/loop/defaults') {
       const c = readConfig();
       return send(res, 200, loopDefaults(state.cwd, c.exists ? c.config : null));
+    }
+    // Whether the folders the loop would edit hold the markup of the latest report's findings.
+    if (m === 'GET' && path === '/api/loop/match') {
+      const c = readConfig();
+      const eff = loopDefaults(state.cwd, c.exists ? c.config : null).effective.source;
+      const source = (Array.isArray(eff) ? eff : [eff]).filter((d) => typeof d === 'string' && d);
+      const latest = readReport(state.cwd, 'latest');
+      if (!latest) return send(res, 200, { report: false, source, checked: 0, found: 0, examples: [] });
+      return send(res, 200, { report: true, source, ...matchSource(state.cwd, latest, source) });
     }
     if (m === 'PUT' && path === '/api/config') return send(res, 200, writeConfig(await readBody(req)));
     if (m === 'GET' && path === '/api/command') {
