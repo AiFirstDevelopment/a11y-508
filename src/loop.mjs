@@ -202,7 +202,41 @@ async function callAgent(work, label, args, onOutput = null) {
   return res;
 }
 
-export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false, signInFirst = false, passthrough = [], stopSignal, events = false }) {
+// --from-report: the report a crawl just produced, used for the run's first round instead of a
+// crawl, when it is for the config's URL and newer than the loop's last commit. Returns the report,
+// or null with the reason logged (the round then crawls as before).
+export function reportForFirstRound(file, cfg, cwd, log) {
+  if (!file) return null;
+  const why = (reason) => {
+    log.warn(`not starting from ${file}: ${reason}; round 1 crawls instead`);
+    return null;
+  };
+  let report;
+  try {
+    report = JSON.parse(readFileSync(resolve(cwd, file), 'utf8'));
+  } catch (e) {
+    return why(`cannot read it (${e.message})`);
+  }
+  if (!report || !Array.isArray(report.pages) || !report.summary) return why('it is not an a11y-508 report');
+  const same = (a, b) => {
+    try {
+      const x = new URL(a);
+      const y = new URL(b);
+      return x.origin === y.origin && x.pathname.replace(/\/+$/, '') === y.pathname.replace(/\/+$/, '');
+    } catch {
+      return false;
+    }
+  };
+  if (!same(report.baseUrl, cfg.url)) return why(`it is for ${report.baseUrl}, not ${cfg.url}`);
+  if (!report.summary.audited) return why('no page was audited in it');
+  const finished = Date.parse(report.finishedAt);
+  if (!finished) return why('it has no finishedAt');
+  const last = git(cwd, ['log', '-1', '--format=%cI', '--grep=^a11y-508: ']).out;
+  if (last && Date.parse(last) >= finished) return why(`it is older than the loop's last commit (${last}), so it would not show that fix`);
+  return report;
+}
+
+export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false, signInFirst = false, fromReport = null, passthrough = [], stopSignal, events = false }) {
   const { cfg, errors } = normalizeConfig(config, { url: config._url, agent: config._agent }, { interactive: events || !!process.stdin.isTTY });
   const ev = (type, data) => log.event && log.event(type, data);
   const ledgerEvent = () => ev('ledger', { rounds: ledger.rounds.length, counts: statusCounts(ledger), line: summaryLine(ledger) });
@@ -260,7 +294,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   if (ci >= 0) passthrough = passthrough.filter((a, i) => i !== ci && i !== ci + 1);
   const signInArgs = connectArgs.length ? [...connectArgs, '--login', '--state', stateFile] : ['--login', '--stay', '--state', stateFile];
   let session = sessionArgs(cfg, passthrough, cwd);
-  if (signInFirst) log.info(`round 1 signs in first in a visible window; the later rounds crawl with the saved session ${stateFile}`);
+  if (signInFirst && fromReport) log.info(`the first round that crawls signs in first in a visible window; the later rounds crawl with the saved session ${stateFile}`);
+  else if (signInFirst) log.info(`round 1 signs in first in a visible window; the later rounds crawl with the saved session ${stateFile}`);
   else if (session.length) log.info(`crawling with the saved session ${session[1]}`);
   // The assistant's output as it arrives (--events): a few events a second at most per call.
   const outputTo = (round, task, kind) => {
@@ -295,6 +330,9 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   };
 
   const startRound = ledger.rounds.length + 1;
+  // The report the person just saw stands in for round 1's crawl; the first crawl (and its sign-in) is round 2's.
+  const given = reportForFirstRound(fromReport, cfg, cwd, log);
+  const firstCrawl = given ? startRound + 1 : startRound;
   log.info(`a11y-508 loop: ${cfg.url}  agent: ${cfg.agent}  ledger: ${relative(cwd, ledgerFile)}${ledger.rounds.length ? `  (resuming after round ${ledger.rounds.length})` : ''}`);
 
   for (let round = startRound; round < startRound + maxRounds; round++) {
@@ -303,11 +341,15 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     log.info(`=== round ${round}: crawl ===`);
     ev('round', { round });
     // first: the run's first round, which re-checks the site so this run's fixes are verified against it.
-    ev('step', { round, step: 'crawl', first: round === startRound });
+    const fromGiven = given && round === startRound;
+    ev('step', fromGiven ? { round, step: 'report', file: fromReport, finishedAt: given.finishedAt } : { round, step: 'crawl', first: round === startRound });
     const signatureBefore = cfg.deployed === 'bundle-change' ? await bundleSignature(cfg.url) : null;
     let crawl;
-    try {
-      const first = signInFirst && round === startRound;
+    if (fromGiven) {
+      log.info(`round ${round}: starting from ${fromReport} (${given.finishedAt}) instead of crawling; round ${round + 1} crawls to verify the fixes`);
+      crawl = { report: given };
+    } else try {
+      const first = signInFirst && round === firstCrawl;
       crawl = await crawlOnce({ cfg, cwd, round, log, passthrough: first ? passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') : passthrough, events, session: first ? signInArgs : session });
       if (first) session = sessionArgs(cfg, passthrough, cwd);
     } catch (e) {
@@ -323,6 +365,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       return 2;
     }
     const diff = applyReport(ledger, report, round, { maxAttempts: cfg.maxAttempts });
+    if (fromGiven) Object.assign(ledger.rounds[ledger.rounds.length - 1], { source: 'report', reportFinishedAt: given.finishedAt });
     save();
     ledgerEvent();
     log.info(`pages: ${s.pages} crawled, ${s.audited} audited  violations: ${s.violations}  review items: ${s.reviews}`);

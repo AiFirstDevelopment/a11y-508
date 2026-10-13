@@ -406,5 +406,110 @@ site2.close();
   });
 }
 rmSync(repo2, { recursive: true, force: true });
+
+// ---- e2e: --from-report: round 1 starts from the report a crawl just produced, without crawling
+{
+  const { mkdtempSync, realpathSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const repo3 = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-fromreport-')));
+  mkdirSync(join(repo3, 'site'), { recursive: true });
+  for (const f of ['index.html', 'about.html', 'forms.html']) cpSync(join(here, 'fixtures', f), join(repo3, 'site', f));
+  const site3 = createServer((req, res) => {
+    if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+      res.writeHead(401);
+      return res.end();
+    }
+    let path = new URL(req.url, 'http://x').pathname;
+    if (path === '/') path = '/index.html';
+    if (path.startsWith('/img/') || path === '/pixel.png') {
+      res.writeHead(200, { 'content-type': 'image/png' });
+      return res.end(PNG);
+    }
+    const file = join(repo3, 'site', path);
+    if (extname(path) !== '.html' || !existsSync(file)) {
+      res.writeHead(404, { 'content-type': 'text/html' });
+      return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(readFileSync(file, 'utf8').replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN));
+  });
+  await new Promise((r) => site3.listen(0, '127.0.0.1', r));
+  const base3 = `http://127.0.0.1:${site3.address().port}/`;
+  const g3 = (...args) => {
+    const r = spawnSync('git', args, { cwd: repo3, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  g3('init', '-q', '-b', 'main');
+  g3('config', 'user.email', 'loop-test@example.test');
+  g3('config', 'user.name', 'loop test');
+  g3('config', 'commit.gpgsign', 'false');
+  writeFileSync(join(repo3, '.gitignore'), 'a11y-508-work/\na11y-508-report/\n');
+  const crawlArgs = ['--max-pages', '3', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage'];
+  writeFileSync(join(repo3, 'a11y-508.config.json'), JSON.stringify({
+    url: base3, args: crawlArgs,
+    agent: `${JSON.stringify(process.execPath)} ${JSON.stringify(join(here, 'fake-agent.mjs'))} {promptFile} {resultFile}`,
+    source: ['site'], deploy: `${JSON.stringify(process.execPath)} -e 0`, push: false, maxAttempts: 3,
+  }, null, 2));
+  g3('add', '-A');
+  g3('commit', '-q', '-m', 'fixture site');
+  const bin = join(root, 'bin/a11y-508.mjs');
+  const env = { ...process.env, TOKEN, NO_COLOR: '1' };
+  // The crawl the person just ran (the wizard's).
+  const runIn = (args) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [bin, ...args], { cwd: repo3, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let stdout = '';
+    child.stdout.on('data', (d) => ((out += d), (stdout += d)));
+    child.stderr.on('data', (d) => (out += d));
+    const timer = setTimeout(() => child.kill('SIGKILL'), 240000);
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      resolve({ status: code, out, stdout });
+    });
+  });
+  const crawl = await runIn([base3, ...crawlArgs, '--out', 'a11y-508-report', '--quiet', '--fail-on', 'none']);
+  const reportFile = join('a11y-508-report', 'report.json');
+  const report = JSON.parse(readFileSync(join(repo3, reportFile), 'utf8'));
+  const loop1 = await runIn(['loop', '--max-rounds', '1', '--from-report', reportFile, '--events']);
+  const ledger3 = loadLedger(join(repo3, 'a11y-508-work', 'ledger.json'));
+  const { events: ev3 } = parseEvents(loop1.stdout);
+  check('--from-report: round 1 folds the report into the ledger without crawling', () => {
+    assert.equal(crawl.status, 0, crawl.out);
+    assert.equal(ledger3.rounds.length, 1, loop1.out);
+    assert.equal(ledger3.rounds[0].source, 'report', JSON.stringify(ledger3.rounds[0]));
+    assert.equal(ledger3.rounds[0].reportFinishedAt, report.finishedAt);
+    assert.equal(ledger3.rounds[0].violations, report.summary.violations);
+    assert.ok(!existsSync(join(repo3, 'a11y-508-work', 'round-1')), 'round 1 crawled');
+    assert.ok(!ev3.some((e) => e.type === 'page'), 'page events in round 1');
+    assert.ok(ev3.some((e) => e.type === 'step' && e.step === 'report' && e.round === 1));
+    assert.ok(!ev3.some((e) => e.type === 'step' && e.step === 'crawl'));
+  });
+  check('--from-report: the assistant was called for the report\'s findings, and a fix was committed', () => {
+    const msgs = new Set([...report.pages.flatMap((p) => p.findings || []), ...report.site.findings].map((f) => f.message));
+    const fixes = ev3.filter((e) => e.type === 'task' && e.state === 'start');
+    assert.ok(fixes.length > 0, loop1.out);
+    for (const t of fixes) assert.ok(msgs.has(t.message), t.message);
+    assert.ok(existsSync(join(repo3, 'a11y-508-work', 'prompt-r1-fix-0.md')));
+    assert.match(g3('log', '--format=%s'), /^a11y-508: /m);
+  });
+  // The same report again: older than the loop's commit, so the loop says so and crawls.
+  const loop2 = await runIn(['loop', '--max-rounds', '1', '--from-report', reportFile]);
+  check('--from-report: a report older than the loop\'s last commit is refused with the reason, and the round crawls', () => {
+    assert.match(loop2.out, /not starting from .*report\.json: it is older than the loop's last commit/);
+    assert.ok(existsSync(join(repo3, 'a11y-508-work', 'round-2')), loop2.out);
+    assert.equal(loadLedger(join(repo3, 'a11y-508-work', 'ledger.json')).rounds[1].source, undefined);
+  });
+  // A report for another URL: refused, and the round crawls.
+  const other = { ...report, baseUrl: 'http://127.0.0.1:9/elsewhere/', finishedAt: new Date(Date.now() + 60000).toISOString() };
+  writeFileSync(join(repo3, 'a11y-508-work', 'other.json'), JSON.stringify(other));
+  const loop3 = await runIn(['loop', '--max-rounds', '1', '--from-report', join('a11y-508-work', 'other.json')]);
+  check('--from-report: a report for another URL is refused with the reason, and the round crawls', () => {
+    assert.match(loop3.out, /it is for http:\/\/127\.0\.0\.1:9\/elsewhere\/, not /);
+    assert.ok(existsSync(join(repo3, 'a11y-508-work', 'round-3')), loop3.out);
+  });
+  site3.close();
+  rmSync(repo3, { recursive: true, force: true });
+}
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
 process.exitCode = failures ? 1 : 0;

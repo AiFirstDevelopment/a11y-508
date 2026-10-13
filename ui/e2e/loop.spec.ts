@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { moreOptions, loopOptions, dryRun, dashboard, gitRepo, open, tempDir, BIN, ROOT, TOKEN, type Dash, nav, api } from './harness';
+import { moreOptions, loopOptions, dryRun, dashboard, fillRun, gitRepo, open, startFromRun, tempDir, waitFinished, BIN, ROOT, TOKEN, type Dash, nav, api } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -239,6 +239,50 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     expect((await api(dash, '/api/runs/current')).json.kind).toBe('crawl');
     await api(dash, '/api/runs/current/stop', { method: 'POST' });
     await expect(page.getByTestId('crawl-status')).toHaveText('Stopped', { timeout: 30_000 });
+  } finally {
+    await dash.stop();
+    server.close();
+  }
+});
+
+test('from the report: after a wizard crawl, Fix the violations starts with triage and fixes, not a second crawl', async ({ page }) => {
+  const cwd = tempDir('a11y-508-fromrep-');
+  const g = gitRepo(cwd);
+  const { base, server } = await repoSite(cwd);
+  writeFileSync(join(cwd, '.gitignore'), 'a11y-508-work/\na11y-508-report/\na11y-508-history/\n');
+  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
+  writeFileSync(join(cwd, 'a11y-508.config.json'), JSON.stringify({
+    url: base,
+    args: ['--max-pages', '3', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage', '--concurrency', '1'],
+    agent: FAKE, source: ['site'], check: `${JSON.stringify(process.execPath)} -e 0`, push: false, deployed: 'none', triageBatch: 50,
+  }, null, 2));
+  g('add', '-A');
+  g('commit', '-q', '-m', 'fixture site');
+  const dash: Dash = await dashboard({ cwd });
+  try {
+    await api(dash, '/api/settings', { method: 'PUT', body: { rounds: 1 } });
+    await open(page, dash, '/run');
+    await fillRun(page, { url: base, token: TOKEN, maxPages: 3, advanced: { 'no-zoom': true, 'no-screenshots': true } });
+    await startFromRun(page);
+    await waitFinished(page);
+    await nav(page, 'Fix loop');
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__status = [];
+      new MutationObserver(() => {
+        const t = document.querySelector('[data-testid="fix-status"]')?.textContent?.trim() || '';
+        if (t && w.__status[w.__status.length - 1] !== t) w.__status.push(t);
+      }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    });
+    await page.getByRole('button', { name: 'Fix the violations' }).click();
+    await expect(page.getByTestId('loop-step')).toHaveText(/Loop finished/, { timeout: 200_000 });
+    const said: string[] = await page.evaluate(() => (window as any).__status);
+    expect(said.filter((s) => /^Round 1: re-checking/.test(s)), said.join(' | ')).toEqual([]);
+    expect(said.some((s) => /^Round 1: (triaging .+|fixing \d+ of \d+) from the report you just saw · /.test(s)), said.join(' | ')).toBe(true);
+    expect((await api(dash, '/api/runs/current')).json.meta.command).toContain('--from-report');
+    const ledger = JSON.parse(readFileSync(join(cwd, 'a11y-508-work', 'ledger.json'), 'utf8'));
+    expect(ledger.rounds[0].source).toBe('report');
+    expect(existsSync(join(cwd, 'a11y-508-work', 'round-1'))).toBe(false);
   } finally {
     await dash.stop();
     server.close();

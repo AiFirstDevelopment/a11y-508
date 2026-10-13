@@ -82,6 +82,8 @@ export class RunStore {
   // The loop: the run's first round (it re-checks the site first), and how many fixes the round committed.
   readonly firstRound = signal<number | null>(null);
   readonly committed = signal(0);
+  // The round that started from the report the person had just seen (no crawl), if any.
+  readonly reportRound = signal<number | null>(null);
   readonly agentCall = signal<AgentCall | null>(null);
   // Pages in flight (progress events), by URL, with when each event arrived; and when the sign-in wait began.
   readonly inFlight = signal<Record<string, PhaseEvent & { receivedAt: number }>>({});
@@ -127,6 +129,7 @@ export class RunStore {
     this.awaitingDeploy.set(false);
     this.firstRound.set(null);
     this.committed.set(0);
+    this.reportRound.set(null);
     this.agentCall.set(null);
     this.inFlight.set({});
     this.loginWaitingSince.set(null);
@@ -216,6 +219,7 @@ export class RunStore {
           this.agentCall.set({ round: ev['round'], task: ev['batch'], kind: 'triage', n: ev['batch'], m: ev['batches'] ?? null, count: ev['count'] ?? null, label: `${ev['count']} review item${ev['count'] === 1 ? '' : 's'}`, startedAt: at, endedAt: null, outcome: null, text: '' });
         }
         if (typeof ev['committed'] === 'number') this.committed.set(ev['committed']);
+        if (ev['step'] === 'report') this.reportRound.set(ev['round']);
         if (ev['step'] === 'fix') this.task.set({ n: 0, m: ev['count'], state: 'start' });
         break;
       }

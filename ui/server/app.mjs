@@ -209,7 +209,20 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       else if (resolved && body.agent) agentArg = body.agent;
       // The config and the session from the dashboard's directory (or the repository's own config).
       const signIn = body.signIn === true;
-      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null, connect: signIn ? state.browserPort : null });
+      // Fix the violations starts from the latest report when it is for the loop's URL.
+      const latest = kind === 'loop' ? readReport(cwd, 'latest') : null;
+      const loopUrl = body.url || cfg.url;
+      const sameUrl = (a, b) => {
+        try {
+          const x = new URL(a);
+          const y = new URL(b);
+          return x.origin === y.origin && x.pathname.replace(/\/+$/, '') === y.pathname.replace(/\/+$/, '');
+        } catch {
+          return false;
+        }
+      };
+      const fromReport = latest && loopUrl && sameUrl(latest.baseUrl, loopUrl) ? join(cwd, REPORT_DIR, 'report.json') : null;
+      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null, connect: signIn ? state.browserPort : null, fromReport });
       meta = { agent: resolved };
     } else {
       built = crawlArgs({ kind, url: body.url, options: body.options, auth });

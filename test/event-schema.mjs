@@ -23,7 +23,7 @@ export const EVENT_SCHEMA = {
   'login-waiting': { url: str, stableSeconds: num },
   'session-saved': { file: str, summary: str },
   round: { round: num },
-  step: { round: num, step: oneOf('crawl', 'triage', 'fix', 'gate', 'commit', 'push', 'deploy', 'await-deploy') },
+  step: { round: num, step: oneOf('crawl', 'report', 'triage', 'fix', 'gate', 'commit', 'push', 'deploy', 'await-deploy') },
   'agent-output': { round: num, task: num, kind: oneOf('fix', 'triage'), stream: oneOf('stdout', 'stderr'), text: str },
   task: { round: num, n: num, m: num, test: str, impact: str, message: str, state: oneOf('start', 'done'), outcome: opt(str) },
   ledger: { rounds: num, counts: obj, line: str },

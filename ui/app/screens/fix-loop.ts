@@ -395,11 +395,13 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     const current = s?.['n'] === undefined || (t?.n === s?.['n'] && t?.state === 'start');
     if (step === 'gate' && current) return `Round ${r}: checking the fixes${s?.['check'] ? ` (${s['check']})` : ''}`;
     if (step === 'commit' && current) return `Round ${r}: committing fix ${s?.['n']} of ${s?.['m']}`;
-    if (c && !c.endedAt && c.kind === 'fix') return `Round ${r}: fixing ${c.n ?? c.task} of ${c.m ?? t?.m ?? '?'} · ${c.label} · ${secs(c.startedAt)}`;
-    if (c && !c.endedAt && c.kind === 'triage') return `Round ${r}: triaging ${c.label}${c.m ? ` · call ${c.n ?? c.task} of ${c.m}` : ''} · ${secs(c.startedAt)}`;
+    const seen = r === this.store.reportRound() ? ' from the report you just saw' : '';
+    if (c && !c.endedAt && c.kind === 'fix') return `Round ${r}: fixing ${c.n ?? c.task} of ${c.m ?? t?.m ?? '?'}${seen} · ${c.label} · ${secs(c.startedAt)}`;
+    if (c && !c.endedAt && c.kind === 'triage') return `Round ${r}: triaging ${c.label}${seen}${c.m ? ` · call ${c.n ?? c.task} of ${c.m}` : ''} · ${secs(c.startedAt)}`;
     if (step === 'gate' || step === 'commit') return `Round ${r}: fixing ${t?.n ?? ''} of ${t?.m ?? ''}`;
     if (step === 'push') return `Round ${r}: pushing ${n} fix${n === 1 ? '' : 'es'}`;
     if (step === 'deploy' || step === 'await-deploy') return waiting;
+    if (step === 'report') return `Round ${r}: starting from the report you just saw`;
     if (step === 'fix') return `Round ${r}: fixing ${t?.m ?? s?.['count'] ?? ''} open finding${(t?.m ?? s?.['count']) === 1 ? '' : 's'}`;
     if (step === 'triage') return `Round ${r}: triaging ${s?.['count']} review items`;
     // The crawl: the run's first round re-checks the site before anything is changed.
