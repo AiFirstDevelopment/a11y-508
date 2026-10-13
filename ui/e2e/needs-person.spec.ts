@@ -126,10 +126,10 @@ test('NP AC 2 and 3, guards 2 and 3: each card says what to check and where to l
     const shot = img.getByTestId('review-screenshot');
     await expect(shot).toBeVisible();
     const src = await shot.getAttribute('src');
-    expect(src).toMatch(/^\/api\/reports\/latest\/screenshots\/[^/]+\.png$/);
     const res = await page.request.get(app.dash.origin + src);
-    expect(res.status()).toBe(200);
+    expect(res.status(), `GET ${src}`).toBe(200);
     expect(res.headers()['content-type']).toBe('image/png');
+    expect(src).toMatch(/^\/api\/reports\/latest\/screenshots\/[^/]+\.png$/);
     await expect.poll(() => shot.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth > 0)).toBe(true);
     // Not copied into the dashboard: the file is the report's own.
     expect(readdirSync(join(app.cwd, 'a11y-508-report', 'screenshots'))).toContain(src!.split('/').pop());
