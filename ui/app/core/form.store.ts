@@ -1,4 +1,5 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { EnvStore } from './env.store';
 
 export type AuthMode = 'token' | 'env' | 'state' | 'cookies' | 'none';
 
@@ -30,11 +31,30 @@ export const ADVANCED: [string, string, 'value' | 'list' | 'switch' | 'profile']
   ['no-sandbox', 'Pass --no-sandbox to Chrome', 'switch'],
 ];
 
+// The last start URL, kept in this browser across dashboard sessions and
+// working directories (a per-viewer convenience; storage can be unavailable).
+const URL_KEY = 'a11y508.startUrl';
+function readUrl(): string {
+  try {
+    return localStorage.getItem(URL_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
 // The Run form, shared by Run, Troubleshoot, Sign in and Fix loop.
 @Injectable({ providedIn: 'root' })
 export class FormStore {
-  readonly url = signal('');
+  readonly url = signal(readUrl());
+  private env = inject(EnvStore);
   readonly authMode = signal<AuthMode>('token');
+  // Whether the person picked a way to sign in under More options. Until they
+  // do, a saved session is used whenever one exists, and no sign-in otherwise
+  // (the app then sends the crawler to its sign-in page, and Live offers Sign in).
+  readonly authChosen = signal(false);
+  // The radio shown checked under More options: none until a choice is made, unless a session exists.
+  readonly checkedMode = computed<AuthMode | null>(() => (this.authChosen() ? this.authMode() : this.env.env()?.session?.exists ? 'state' : null));
+  readonly mode = computed<AuthMode>(() => (this.authChosen() ? this.authMode() : this.env.env()?.session?.exists ? 'state' : 'none'));
   readonly token = signal('');
   readonly cookies = signal('');
   readonly maxPages = signal('');
@@ -42,6 +62,28 @@ export class FormStore {
   readonly exclude = signal('');
   readonly failOn = signal('critical,serious');
   readonly advanced = signal<Record<string, string | boolean>>({});
+
+  rememberUrl(): void {
+    const u = this.url().trim();
+    if (!u) return;
+    try {
+      localStorage.setItem(URL_KEY, u);
+    } catch {}
+  }
+
+  // Start needs a way in: the saved session, or a choice made under More options.
+  readonly hasWayIn = computed(() => this.authChosen() || !!this.env.env()?.session?.exists);
+
+  choose(m: AuthMode): void {
+    this.authMode.set(m);
+    this.authChosen.set(true);
+  }
+
+  // After a sign-in: the new session is what the next run uses.
+  useSession(): void {
+    this.authMode.set('state');
+    this.authChosen.set(false);
+  }
 
   setAdvanced(flag: string, value: string | boolean): void {
     this.advanced.update((a) => ({ ...a, [flag]: value }));
@@ -69,7 +111,7 @@ export class FormStore {
 
   // The token goes into the request only; the field is cleared once sent.
   auth(includeToken: boolean): Record<string, unknown> {
-    const mode = this.authMode();
+    const mode = this.mode();
     if (mode === 'token') return includeToken && this.token() ? { mode, token: this.token() } : { mode };
     if (mode === 'cookies') return { mode, cookies: this.cookies().split('\n').map((c) => c.trim()).filter(Boolean) };
     return { mode };

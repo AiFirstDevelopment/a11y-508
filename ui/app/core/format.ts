@@ -66,5 +66,19 @@ export function ageText(ms: number | undefined): string {
   return `${Math.round(h / 24)} days old`;
 }
 
+// "session saved 5 min ago": the Run screen's sign-in state.
+export function savedAgo(ms: number | undefined): string {
+  if (ms === undefined) return '';
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h} hour${h === 1 ? '' : 's'} ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+
+// An off-origin redirect: the app sent the crawler to a sign-in portal.
+export const OFF_ORIGIN = /redirected off-origin to/;
+
 // The runbook's "could not get in" outputs.
 export const CANNOT_GET_IN = /redirected off-origin to|FAIL \(no page could be audited\)|the start page could not be audited|HTTP 401|HTTP 403|net::ERR_/;

@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { dashboard, gitRepo, open, tempDir, BIN, ROOT, TOKEN, type Dash } from './harness';
+import { moreOptions, dashboard, gitRepo, open, tempDir, BIN, ROOT, TOKEN, type Dash } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -41,6 +41,7 @@ async function repoSite(cwd: string): Promise<{ base: string; server: Server }> 
 
 async function setToken(page: Page): Promise<void> {
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
+  await moreOptions(page);
   await page.getByLabel('A token').check();
   await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Fix loop' }).click();

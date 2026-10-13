@@ -1,8 +1,8 @@
-import { Component, effect, inject } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { EnvStore } from '../core/env.store';
 import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
+import { SignInFlow } from '../core/sign-in';
 
 @Component({
   selector: 'app-sign-in-screen',
@@ -39,18 +39,10 @@ import { RunStore } from '../core/run.store';
 export class SignInScreen {
   readonly store = inject(RunStore);
   readonly form = inject(FormStore);
-  private env = inject(EnvStore);
-
-  constructor() {
-    effect(() => {
-      if (this.store.kind() === 'login' && this.store.sessionSaved()) {
-        this.form.authMode.set('state');
-        void this.env.load();
-      }
-    });
-  }
+  // Saving the session switches Run to it (SignInFlow).
+  private flow = inject(SignInFlow);
 
   async signIn(): Promise<void> {
-    await this.store.start({ kind: 'login', url: this.form.url().trim(), options: {}, auth: { mode: 'none' } });
+    await this.flow.start();
   }
 }

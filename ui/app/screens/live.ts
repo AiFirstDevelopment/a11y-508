@@ -4,6 +4,7 @@ import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { resultWord } from '../core/format';
 import { RunView } from '../shared/run-view';
+import { SignInFlow } from '../core/sign-in';
 
 @Component({
   selector: 'app-live-screen',
@@ -26,7 +27,15 @@ import { RunView } from '../shared/run-view';
       @if (store.cannotGetIn()) {
         <div class="notice error" role="alert" data-notice="cannot-get-in">
           <p>The crawler could not get into the app.</p>
-          <button type="button" (click)="troubleshoot()">Troubleshoot with these settings</button>
+          @if (store.bouncedToSignIn()) {
+            <p>The app sent the crawler to a sign-in page. Sign in once and the next run uses the saved session.</p>
+          }
+          <div class="actions">
+            @if (store.bouncedToSignIn()) {
+              <button type="button" (click)="signIn()">Sign in</button>
+            }
+            <button type="button" [class.secondary]="store.bouncedToSignIn()" (click)="troubleshoot()">Troubleshoot with these settings</button>
+          </div>
         </div>
       }
       <app-run-view />
@@ -37,6 +46,7 @@ export class LiveScreen {
   readonly store = inject(RunStore);
   private form = inject(FormStore);
   private router = inject(Router);
+  private flow = inject(SignInFlow);
 
   readonly status = computed(() => {
     const d = this.store.done();
@@ -51,6 +61,15 @@ export class LiveScreen {
 
   async stop(): Promise<void> {
     await this.store.stop();
+  }
+
+  // Back to Run, where the sign-in's progress shows in place.
+  async signIn(): Promise<void> {
+    try {
+      await this.flow.start();
+    } finally {
+      await this.router.navigateByUrl('/run');
+    }
   }
 
   async troubleshoot(): Promise<void> {

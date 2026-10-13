@@ -46,7 +46,6 @@ export class App implements OnInit {
     { path: '/live', label: 'Live run' },
     { path: '/report', label: 'Report' },
     { path: '/troubleshoot', label: 'Troubleshoot' },
-    { path: '/sign-in', label: 'Sign in' },
     { path: '/fix-loop', label: 'Fix loop' },
     { path: '/history', label: 'History' },
   ];

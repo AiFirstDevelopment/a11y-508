@@ -119,3 +119,9 @@ summary { cursor: pointer; font-weight: 600; color: var(--accent); }
 .chart .legend-labels { background: #f2f2f2 !important; }
 .chart .legend-label, .chart .legend-label-text, .chart .legend-title-text { color: #222222 !important; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+.signin-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 6px 0 12px; }
+.signin-state p { margin: 0; }
+.err-text { color: var(--crit); }
+button.link { background: transparent; border-color: transparent; color: var(--accent); text-decoration: underline; padding: 2px 4px; }
+button.link:disabled { background: transparent; border-color: transparent; color: #595959; }
+details.more { margin: 20px 0 12px; border-top: 1px solid var(--line); padding-top: 10px; }

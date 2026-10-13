@@ -1,4 +1,4 @@
-import { cumulative, progressLabel, resultLine, ageText, CANNOT_GET_IN } from './format';
+import { cumulative, progressLabel, resultLine, ageText, savedAgo, CANNOT_GET_IN } from './format';
 
 const s = (o: any) => ({ audited: 3, byImpact: { critical: 0, serious: 0, moderate: 1, minor: 0 }, ...o });
 
@@ -25,5 +25,11 @@ describe('format', () => {
   it('describes a session age', () => {
     expect(ageText(30_000)).toBe('just now');
     expect(ageText(5 * 60_000)).toBe('5 minutes old');
+  });
+  it('says when a session was saved', () => {
+    expect(savedAgo(30_000)).toBe('just now');
+    expect(savedAgo(5 * 60_000)).toBe('5 min ago');
+    expect(savedAgo(60 * 60_000)).toBe('1 hour ago');
+    expect(savedAgo(3 * 24 * 60 * 60_000)).toBe('3 days ago');
   });
 });

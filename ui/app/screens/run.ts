@@ -1,10 +1,11 @@
-import { Component, OnInit, computed, effect, inject, signal } from '@angular/core';
+import { Component, ElementRef, OnInit, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { ADVANCED, AuthMode, FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
-import { ageText } from '../core/format';
+import { ageText, savedAgo } from '../core/format';
+import { SignInFlow } from '../core/sign-in';
 
 @Component({
   selector: 'app-run-screen',
@@ -22,15 +23,53 @@ import { ageText } from '../core/format';
       <h2 id="form-h" class="visually-hidden">Crawl settings</h2>
       <div class="field">
         <label for="url">Start URL</label>
-        <input id="url" name="url" type="url" required [value]="form.url()" (input)="form.url.set(val($event))" placeholder="https://app.example.gov" />
+        <input id="url" name="url" type="url" required [value]="form.url()" (input)="form.url.set(val($event))" (blur)="form.rememberUrl()" placeholder="https://app.example.gov" />
       </div>
+      <div class="signin-state">
+        <p role="status" id="signin-state" data-testid="signin-state" tabindex="-1" #signinState>
+          @if (flow.active()) {
+            A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.
+          } @else if (flow.failed()) {
+            <span class="err-text">Sign-in did not finish: {{ flow.error() }}</span>
+          } @else if (signedIn()) {
+            <span class="ok">Signed in · session saved {{ savedText() }}</span>
+          } @else {
+            Not signed in
+          }
+        </p>
+        @if (!flow.active()) {
+          @if (flow.failed()) {
+            <button type="button" (click)="signIn()" [disabled]="!canSignIn()">Try again</button>
+          } @else if (signedIn()) {
+            <button type="button" class="link" (click)="signIn()" [disabled]="!canSignIn()">Sign in again</button>
+          } @else {
+            <button type="button" (click)="signIn()" [disabled]="!canSignIn()">Sign in</button>
+          }
+        } @else {
+          <button type="button" class="secondary" (click)="run.stop()">Cancel sign-in</button>
+        }
+      </div>
+      @if (commandError() || error()) {
+        <div class="notice error" role="alert" data-notice="form-error">{{ commandError() || error() }}</div>
+      }
+      <div class="actions">
+        <button type="submit" [disabled]="!canStart()" [attr.aria-describedby]="needsSignIn() ? 'start-hint' : null">Start</button>
+        @if (needsSignIn()) {
+          <p class="hint" id="start-hint" data-testid="start-hint">Sign in first</p>
+        }
+        @if (run.active()) {
+          <p class="hint">A run is active. <a routerLink="/live">Watch it</a>.</p>
+        }
+      </div>
+      <details class="more" data-testid="more-options">
+      <summary>More options…</summary>
       <fieldset>
         <legend>How the crawler signs in</legend>
         <div class="choice">
-          <input type="radio" id="auth-token" name="auth" value="token" [checked]="form.authMode() === 'token'" (change)="mode('token')" />
+          <input type="radio" id="auth-token" name="auth" value="token" [checked]="form.checkedMode() === 'token'" (change)="mode('token')" />
           <label for="auth-token">A token</label>
         </div>
-        @if (form.authMode() === 'token') {
+        @if (form.mode() === 'token') {
           <div class="field indent">
             <label for="token">Token (sent as the Authorization header; held in the dashboard's memory only)</label>
             <input id="token" name="token" type="password" autocomplete="off" [value]="form.token()" (input)="form.token.set(val($event))" />
@@ -40,25 +79,25 @@ import { ageText } from '../core/format';
           </div>
         }
         <div class="choice">
-          <input type="radio" id="auth-env" name="auth" value="env" [checked]="form.authMode() === 'env'" [disabled]="!env.env()?.tokenInEnv" (change)="mode('env')" />
+          <input type="radio" id="auth-env" name="auth" value="env" [checked]="form.checkedMode() === 'env'" [disabled]="!env.env()?.tokenInEnv" (change)="mode('env')" />
           <label for="auth-env">Use TOKEN from my shell{{ env.env()?.tokenInEnv ? '' : ' (not set when the dashboard started)' }}</label>
         </div>
         <div class="choice">
-          <input type="radio" id="auth-state" name="auth" value="state" [checked]="form.authMode() === 'state'" [disabled]="!env.env()?.session?.exists" (change)="mode('state')" />
+          <input type="radio" id="auth-state" name="auth" value="state" [checked]="form.checkedMode() === 'state'" [disabled]="!env.env()?.session?.exists" (change)="mode('state')" />
           <label for="auth-state">Use saved session{{ sessionText() }}</label>
         </div>
         <div class="choice">
-          <input type="radio" id="auth-cookies" name="auth" value="cookies" [checked]="form.authMode() === 'cookies'" (change)="mode('cookies')" />
+          <input type="radio" id="auth-cookies" name="auth" value="cookies" [checked]="form.checkedMode() === 'cookies'" (change)="mode('cookies')" />
           <label for="auth-cookies">Cookies</label>
         </div>
-        @if (form.authMode() === 'cookies') {
+        @if (form.mode() === 'cookies') {
           <div class="field indent">
             <label for="cookies">Cookies, one "name=value" per line</label>
             <textarea id="cookies" rows="2" [value]="form.cookies()" (input)="form.cookies.set(val($event))"></textarea>
           </div>
         }
         <div class="choice">
-          <input type="radio" id="auth-none" name="auth" value="none" [checked]="form.authMode() === 'none'" (change)="mode('none')" />
+          <input type="radio" id="auth-none" name="auth" value="none" [checked]="form.checkedMode() === 'none'" (change)="mode('none')" />
           <label for="auth-none">No sign-in</label>
         </div>
       </fieldset>
@@ -120,16 +159,7 @@ import { ageText } from '../core/format';
         <button type="button" class="secondary" (click)="copy()" [disabled]="!command()">Copy command</button>
         <span role="status" class="hint">{{ copied() }}</span>
       </section>
-      @if (error()) {
-        <div class="notice error" role="alert" data-notice="form-error">{{ error() }}</div>
-      }
-      <div class="actions">
-        <button type="submit" [disabled]="!canStart()">Start</button>
-        <a class="button secondary" routerLink="/sign-in">Sign in</a>
-        @if (run.active()) {
-          <p class="hint">A run is active. <a routerLink="/live">Watch it</a>.</p>
-        }
-      </div>
+      </details>
     </form>
   `,
 })
@@ -143,16 +173,36 @@ export class RunScreen implements OnInit {
   readonly adv = computed(() => this.form.advanced() as Record<string, any>);
   readonly command = signal('');
   readonly copied = signal('');
+  // A Start or Sign in that failed, apart from the form's own errors, which
+  // the command check reports (and clears) as the form changes.
   readonly error = signal('');
+  readonly commandError = signal('');
   readonly noBrowser = computed(() => this.env.env()?.browser.found === false);
   readonly sessionText = computed(() => {
     const s = this.env.env()?.session;
     return s?.exists ? ` (${s.file}, ${ageText(s.ageMs)})` : ' (none saved yet)';
   });
-  readonly canStart = computed(() => !!this.form.url().trim() && !this.run.active() && (!this.noBrowser() || !!String(this.adv()['chrome'] || '').trim()));
+  readonly flow = inject(SignInFlow);
+  private statusEl = viewChild<ElementRef<HTMLElement>>('signinState');
+  readonly signedIn = computed(() => !!this.env.env()?.session?.exists || !!this.flow.saved());
+  readonly savedText = computed(() => {
+    const s = this.env.env()?.session;
+    return s?.exists ? savedAgo(s.ageMs) : 'just now';
+  });
+  readonly canSignIn = computed(() => !!this.form.url().trim() && !this.run.active());
+  // No saved session and no other way chosen under More options: sign in first.
+  readonly needsSignIn = computed(() => !this.form.hasWayIn());
+  readonly canStart = computed(() => !!this.form.url().trim() && !this.run.active() && !this.needsSignIn() && (!this.noBrowser() || !!String(this.adv()['chrome'] || '').trim()));
   private timer: any;
 
   constructor() {
+    // When a sign-in finishes, focus moves to its status, which says how it ended.
+    let wasActive = false;
+    effect(() => {
+      const active = this.flow.active();
+      if (wasActive && !active) untracked(() => setTimeout(() => this.statusEl()?.nativeElement.focus()));
+      wasActive = active;
+    });
     effect(() => {
       // The command is written for the working directory, so it follows a switch.
       this.env.cwd();
@@ -171,7 +221,17 @@ export class RunScreen implements OnInit {
   }
 
   mode(m: AuthMode): void {
-    this.form.authMode.set(m);
+    this.form.choose(m);
+  }
+
+  async signIn(): Promise<void> {
+    if (!this.canSignIn()) return;
+    this.error.set('');
+    try {
+      await this.flow.start();
+    } catch (e: any) {
+      this.error.set(e.message);
+    }
   }
 
   private async refreshCommand(body: Record<string, unknown>): Promise<void> {
@@ -179,10 +239,10 @@ export class RunScreen implements OnInit {
     try {
       const r = await this.api.get<{ command: string }>(`/api/command?form=${encodeURIComponent(JSON.stringify(body))}`);
       this.command.set(r.command);
-      this.error.set('');
+      this.commandError.set('');
     } catch (e: any) {
       this.command.set('');
-      this.error.set(e.message);
+      this.commandError.set(e.message);
     }
   }
 
@@ -199,6 +259,7 @@ export class RunScreen implements OnInit {
     if (!this.canStart()) return;
     this.error.set('');
     try {
+      this.form.rememberUrl();
       await this.run.start(this.form.body('crawl'));
       this.form.clearToken();
       await this.router.navigateByUrl('/live');

@@ -4,7 +4,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath } from './harness';
+import { moreOptions, dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath } from './harness';
 
 const PRESETS = {
   claude: 'claude -p --permission-mode acceptEdits "Read the file {promptFile} and do exactly what it says."',
@@ -155,6 +155,7 @@ test('AC 12: a preset found only in npm prefix -g is run by that path when the l
   const dash = await dashboard({ cwd, env: { ...r.env, PATH: `${r.env.PATH}${delimiter}${dirname(process.execPath)}` } });
   try {
     await open(page, dash, '/run');
+    await moreOptions(page);
     await page.getByLabel('A token').check();
     await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
     await page.getByLabel('Start URL').fill(site.base + 'about.html');

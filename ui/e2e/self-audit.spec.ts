@@ -50,6 +50,20 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     phase(`self crawl exit ${r.status}`);
     if (!existsSync(join(out, 'report.json'))) throw new Error(`the self crawl wrote no report (exit ${r.status}):\n${r.output.slice(-6000)}\n--- dashboard ---\n${dash.output().slice(-3000)}`);
     const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
+    // Nothing links to /sign-in any more (the Run screen signs in in place;
+    // docs/plans/run-simple.md), so its route is audited by a crawl of its own.
+    const out2 = tempDir('a11y-508-self-signin-');
+    const r2 = await run(
+      process.execPath,
+      [BIN, dash.origin + '/sign-in', '--token-header', SECRET_HEADER, '--token-storage', 'a11y508.secret', '--no-follow-clicks', '--max-pages', '1', '--wcag', '2.2', '--out', out2, '--json'],
+      { env: { ...process.env, TOKEN: dash.secret, ...(process.env.CI ? { A11Y_508_DEBUG: '1' } : {}) }, timeout: 120_000 }
+    );
+    phase(`self crawl of /sign-in exit ${r2.status}`);
+    if (!existsSync(join(out2, 'report.json'))) throw new Error(`the /sign-in self crawl wrote no report (exit ${r2.status}):\n${r2.output.slice(-6000)}`);
+    const report2 = JSON.parse(readFileSync(join(out2, 'report.json'), 'utf8'));
+    expect(report2.options.wcag, 'the /sign-in self-audit ran with the profile').toBe('2.2');
+    report.pages.push(...report2.pages);
+    report.site.findings.push(...report2.site.findings);
     const paths = report.pages.map((p: any) => new URL(p.finalUrl || p.url).pathname);
     for (const route of ROUTES) expect(paths, `audited ${route}`).toContain(route);
     expect(report.options.wcag, 'the self-audit ran with the profile').toBe('2.2');
@@ -57,7 +71,7 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     const bad = [...report.pages.flatMap((p: any) => p.findings.map((f: any) => ({ ...f, page: p.url }))), ...report.site.findings].filter(
       (f: any) => f.level === 'violation' && ['critical', 'serious'].includes(f.impact)
     );
-    expect(bad.map((f: any) => `${f.page} ${f.test} ${f.impact}: ${f.message} [${f.selector}]`), r.output).toEqual([]);
+    expect(bad.map((f: any) => `${f.page} ${f.test} ${f.impact}: ${f.message} [${f.selector}]`), r.output + r2.output).toEqual([]);
 
     // The folder picker (Change… in the header, aria-haspopup="dialog") is a
     // disclosure on every screen. Every disclosure on each screen was

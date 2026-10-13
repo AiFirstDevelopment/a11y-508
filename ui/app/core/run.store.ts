@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Api } from './api';
 import { readSse } from './sse';
-import { CANNOT_GET_IN, Progress, cumulative } from './format';
+import { CANNOT_GET_IN, OFF_ORIGIN, Progress, cumulative } from './format';
 import { ByImpact, Remedy, RunEvent } from './types';
 
 export interface PageRow {
@@ -69,6 +69,11 @@ export class RunStore {
     if (s && s['summary'] && !s['summary'].audited) return true;
     return this.notices().some((n) => CANNOT_GET_IN.test(n.message)) || this.pages().some((p) => p.error && CANNOT_GET_IN.test(p.error));
   });
+
+  // The crawl could not get in because the app sent it off to another origin, a sign-in portal.
+  readonly bouncedToSignIn = computed(
+    () => this.cannotGetIn() && (this.notices().some((n) => OFF_ORIGIN.test(n.message)) || this.pages().some((p) => OFF_ORIGIN.test(p.skipped || '') || OFF_ORIGIN.test(p.error || '')))
+  );
 
   private reset(): void {
     this.pages.set([]);

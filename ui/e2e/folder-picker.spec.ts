@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { api, dashboard, fillRun, fixtureSite, nav, open, startFromRun, waitFinished, MAIN, QUICK, TOKEN, WIN, tempDir, type Dash } from './harness';
+import { moreOptions, api, dashboard, fillRun, fixtureSite, nav, open, startFromRun, waitFinished, MAIN, QUICK, TOKEN, WIN, tempDir, type Dash } from './harness';
 // @ts-ignore -- plain JS shared with the server's node:test suite
 import { mergeEnv, unreadableDir } from '../server/test/platform.mjs';
 
@@ -82,8 +82,10 @@ test.afterEach(async () => {
 test('AC 1: every screen shows the working directory; Change… opens a named modal dialog with focus inside; Escape closes it and returns focus', async ({ page }) => {
   const dash = await start();
   await open(page, dash, '/run');
+  // Sign in is no longer in the nav (the Run screen signs in); its route is opened directly.
   for (const label of ['Run', 'Live run', 'Report', 'Troubleshoot', 'Sign in', 'Fix loop', 'History']) {
-    await nav(page, label);
+    if (label === 'Sign in') await open(page, dash, '/sign-in');
+    else await nav(page, label);
     await expect(page.getByTestId('cwd'), label).toHaveAttribute('title', dash.cwd);
     // The full path is the accessible text, however the visible text is shortened.
     await expect(page.getByTestId('cwd').locator('.visually-hidden')).toHaveText(dash.cwd);
@@ -283,6 +285,7 @@ test('AC 6: after a switch a crawl writes its report in the new directory only, 
     expect(existsSync(join(launch, 'a11y-508-report')), 'nothing in the old one').toBe(false);
     // The dry run reads the new directory's config and writes its ledger there.
     await nav(page, 'Run');
+    await moreOptions(page);
     await page.getByLabel('A token').check();
     await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
     await nav(page, 'Fix loop');
@@ -307,6 +310,7 @@ test('AC 7: while a run is active Change… is disabled with a reason and PUT /a
     const dash = await start({ cwd: launch });
     await open(page, dash, '/run');
     await page.getByLabel('Start URL').fill(`http://127.0.0.1:${(hang.address() as any).port}/`);
+    await moreOptions(page);
     await page.getByLabel('No sign-in').check();
     await page.getByRole('button', { name: 'Start', exact: true }).click();
     await expect(page).toHaveURL(/\/live$/);
@@ -334,6 +338,7 @@ test('AC 8: after a switch there is no current run, and Live run says so instead
   const dash = await start({ cwd: launch });
   await open(page, dash, '/run');
   await page.getByLabel('Start URL').fill('http://127.0.0.1:9/');
+  await moreOptions(page);
   await page.getByLabel('No sign-in').check();
   await page.getByLabel('Maximum pages').fill('1');
   await startFromRun(page);

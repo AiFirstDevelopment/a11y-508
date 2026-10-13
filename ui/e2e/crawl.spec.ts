@@ -4,7 +4,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { join } from 'node:path';
-import { dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, readReport, nav, run, api, shellLine, exists, processList, WIN, tempDir, TOKEN, QUICK, type Dash, type Site } from './harness';
+import { moreOptions, dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, readReport, nav, run, api, shellLine, exists, processList, WIN, tempDir, TOKEN, QUICK, type Dash, type Site } from './harness';
 
 let site: Site;
 let dash: Dash;
@@ -201,6 +201,7 @@ test('AC 10: the command on the Run screen, run in a terminal with TOKEN set, gi
   await ensureCrawl();
   const dashboardSummary = readReport(dash.cwd).summary;
   await nav(page, 'Run');
+  await moreOptions(page);
   // The form still holds the crawl's settings; the token field was cleared.
   await expect(page.getByLabel(/^Token \(sent as/)).toHaveValue('');
   // The path is quoted when it holds a backslash (Windows, Git Bash syntax).

@@ -1,7 +1,7 @@
 // Notices, Stop, the run slot, and the way out when a crawl cannot get in.
 
 import { test, expect } from '@playwright/test';
-import { dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, nav, api, cliChromePids, status, TOKEN, type Dash, type Site } from './harness';
+import { moreOptions, dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, nav, api, cliChromePids, status, TOKEN, type Dash, type Site } from './harness';
 
 let site: Site;
 let dash: Dash;
@@ -17,6 +17,7 @@ test.afterEach(async () => {
 test('AC 3: warnings and errors are separate notices during and after a run; raw output only on request', async ({ page }) => {
   await open(page, dash, '/run');
   await fillRun(page, { url: site.base, maxPages: 2 });
+  await moreOptions(page);
   await page.getByLabel('No sign-in').check();
   await startFromRun(page);
   const warn = page.locator('[data-notice="warn"]');

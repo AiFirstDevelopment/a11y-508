@@ -118,6 +118,13 @@ export interface CrawlForm {
   advanced?: Record<string, string | boolean>;
 }
 
+// Opens the Run screen's More options… (sign-in choices, Advanced, the command line), closed by default.
+export async function moreOptions(page: Page): Promise<void> {
+  const more = page.getByTestId('more-options');
+  if (!(await more.evaluate((d: HTMLDetailsElement) => d.open))) await more.locator('> summary').click();
+  await expect(more).toHaveJSProperty('open', true);
+}
+
 export async function fillRun(page: Page, f: CrawlForm): Promise<void> {
   // The Run screen can still be re-rendering the previous run's settings when the field is
   // filled, which left both URLs in it once ("…about.html…tables.html"): fill until it holds this one.
@@ -126,6 +133,7 @@ export async function fillRun(page: Page, f: CrawlForm): Promise<void> {
     await url.fill(f.url);
     await expect(url).toHaveValue(f.url, { timeout: 1000 });
   }).toPass({ timeout: 15_000 });
+  if (f.token !== undefined || f.maxPages || f.failOn || (f.advanced && Object.keys(f.advanced).length)) await moreOptions(page);
   if (f.token !== undefined) {
     await page.getByLabel('A token').check();
     await page.getByLabel(/^Token \(sent as/).fill(f.token);

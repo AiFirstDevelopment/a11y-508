@@ -3,7 +3,7 @@
 import { test, expect } from '@playwright/test';
 import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, nav, readReport, TOKEN, type Dash, type Site } from './harness';
+import { moreOptions, dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, nav, readReport, TOKEN, type Dash, type Site } from './harness';
 
 let site: Site;
 let dash: Dash;
@@ -39,6 +39,7 @@ test('AC 15: History lists both crawls and the loop rounds; each opens on the Re
   // A dry-run loop first, so there is a round to list beside the crawls.
   writeFileSync(join(dash.cwd, 'a11y-508.config.json'), JSON.stringify({ url: site.base + 'about.html', args: ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots'] }));
   await open(page, dash, '/run');
+  await moreOptions(page);
   await page.getByLabel('A token').check();
   await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
   await nav(page, 'Fix loop');
