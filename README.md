@@ -415,6 +415,8 @@ With `--events` the CLI prints one JSON object per line on stdout instead of its
 | `gate` | `round`, `n`/`m` (per fix; absent for the round's gate), `state` (`start`, `done`), `check`, and when done `ok`, `durationMs`, `tail` (its last lines) | loop: the check command runs on a fix |
 | `gate-output` | `round`, `text` | loop: the check's output as it arrives |
 | `commit` | `round`, `n`, `m`, `commit`, `files` | loop: a fix was committed |
+| `changes` | `round`, `n`, `m`, `files` | loop: the files the working tree shows changed after an assistant call |
+| `attempt` | `round`, `n`, `m`, `test`, `message`, `files`, `outcome` (`committed`, `failed-gate`, `no-change`, `timed-out`, `commit-failed`), `commit`, `agentMs`, `gateMs`, `gateCode`, `gateTail` | loop: a fix attempt ended (the Fix step's Changes list) |
 | `precondition` | `code` (`not-a-repo`, `dirty-tree`, `branch`), `message`, `remedy` (what a person can do about it: the files to commit or stash, or the git command) | loop: a set-up error ended it before its first round (exit code 2); without `--events` both lines are printed |
 | `done` | `code` (the exit code) | last |
 

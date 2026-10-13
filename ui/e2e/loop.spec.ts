@@ -176,7 +176,7 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     said(/^Round 2: re-checking the site first \(\d+ of \d+ pages\) so fixes can be verified against it$/);
     said(/^Round 2: asking the assistant about \d+ review items · \d+ s$/);
     said(/^Round 2: fixing \d+ of \d+ · \d+\.[A-Z] .+ · \d+ s$/);
-    said(/^Round 2: checking the fix with .+ -e "setTimeout\(Boolean,1500\)" · \d+ s$/);
+    said(/^Checking fix \d+ with .+ -e "setTimeout\(Boolean,1500\)" · \d+ s( \(the last check took \d+ s\))?$/);
     said(/^Committed \d+ fix(es)? · waiting for the new build on 127\.0\.0\.1:\d+…$/);
     said(/^Round 3: re-checking the site \(\d+ of \d+ pages\)$/);
     // The triage call prints nothing until it ends: the pane, its heading line and its timer are there from its start.

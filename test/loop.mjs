@@ -799,6 +799,24 @@ rmSync(repo2, { recursive: true, force: true });
         assert.ok(at((e) => e === c) > at((e) => e.type === 'gate' && e.state === 'done' && e.n === c.n && e.ok));
       }
     });
+    check('loop-resilience AC17/18: an attempt event per fix with the working tree\'s files, its outcome, and the assistant\'s and the check\'s times; the ledger records them', () => {
+      const attempts = events.filter((e) => e.type === 'attempt');
+      const done = events.filter((e) => e.type === 'task' && e.state === 'done');
+      assert.equal(attempts.length, done.length);
+      const ok = attempts.filter((a) => a.outcome === 'committed');
+      assert.ok(ok.length >= 2);
+      for (const a of ok) {
+        assert.deepEqual(a.files, ['site/index.html']);
+        assert.match(a.commit, /^[0-9a-f]{7,}$/);
+        assert.ok(a.agentMs >= 0 && a.gateMs >= 400 && a.gateCode === 0, JSON.stringify(a));
+      }
+      const bad = attempts.find((a) => a.outcome === 'failed-gate');
+      assert.ok(bad && bad.gateCode === 1 && /error: the build is broken/.test(bad.gateTail), JSON.stringify(bad));
+      assert.ok(events.some((e) => e.type === 'changes' && e.files.includes('site/index.html')));
+      const ledger = loadLedger(join(dir, 'a11y-508-work', 'ledger.json'));
+      const gated = Object.values(ledger.findings).flatMap((e) => e.attempts).filter((x) => x.outcome === 'failed-gate' || x.commit);
+      assert.ok(gated.length >= 3 && gated.every((x) => typeof x.gateMs === 'number' && typeof x.gateCode === 'number' && typeof x.agentMs === 'number'), JSON.stringify(gated));
+    });
     check('loop-resilience AC15: the counts move after the first commit, before the next fix starts', () => {
       const firstCommit = at((e) => e.type === 'commit');
       const nextTask = at((e, i) => i > firstCommit && e.type === 'task' && e.state === 'start');

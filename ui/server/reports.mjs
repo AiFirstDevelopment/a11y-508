@@ -123,10 +123,24 @@ export function loopTimeline(ledger, counts) {
   const commits = {};
   for (const e of Object.values(ledger.findings || {})) for (const a of e.attempts || []) if (a.commit) commits[a.round] = (commits[a.round] || 0) + 1;
   const last = ledger.rounds[ledger.rounds.length - 1].round;
+  // Each round's fix attempts, as the Fix step's "Changes this run" list shows them.
+  const changes = {};
+  for (const e of Object.values(ledger.findings || {})) {
+    for (const a of e.attempts || []) {
+      if (!a || typeof a.round !== 'number') continue;
+      const outcome = a.commit ? 'committed' : a.outcome === 'failed-gate' ? 'failed-gate' : a.note === 'agent timed out' ? 'timed-out' : a.outcome === 'still-present' ? 'committed' : 'no-change';
+      (changes[a.round] = changes[a.round] || []).push({
+        n: a.n ?? null, test: e.test, message: e.message, files: Array.isArray(a.files) ? a.files : [], outcome, commit: a.commit || null,
+        agentMs: a.agentMs ?? null, gateMs: a.gateMs ?? null, gateCode: a.gateCode ?? null,
+        gateTail: a.gateOutput ? String(a.gateOutput).split('\n').filter((l) => l.trim()).slice(-15).join('\n') : null,
+      });
+    }
+  }
+  for (const list of Object.values(changes)) list.sort((x, y) => (x.n ?? 0) - (y.n ?? 0));
   const rounds = ledger.rounds.map((r) => {
     const made = commits[r.round] || 0;
     const fixed = (r.diff && r.diff.verified) || 0;
-    return { round: r.round, at: r.at || null, found: r.violations, fixed, commits: made, remaining: r.round === last ? counts.open || 0 : Math.max(0, r.violations - made), needsHuman: r.round === last ? counts['needs-human'] || 0 : 0 };
+    return { round: r.round, at: r.at || null, found: r.violations, fixed, commits: made, changes: changes[r.round] || [], remaining: r.round === last ? counts.open || 0 : Math.max(0, r.violations - made), needsHuman: r.round === last ? counts['needs-human'] || 0 : 0 };
   });
   const fixed = counts.verified || 0;
   const remaining = counts.open || 0;

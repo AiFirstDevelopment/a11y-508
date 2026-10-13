@@ -424,8 +424,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     } : null);
     if (timer) clearTimeout(timer);
     flush();
-    const tail = gate.out.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim()).slice(-5).join('\n');
-    ev('gate', { round, ...(n ? { n, m } : {}), state: 'done', check: cfg.check, ok: gate.code === 0, durationMs: Date.now() - t0, tail });
+    const tail = gate.out.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim()).slice(-15).join('\n');
+    gate.durationMs = Date.now() - t0;
+    gate.tail = tail;
+    ev('gate', { round, ...(n ? { n, m } : {}), state: 'done', check: cfg.check, ok: gate.code === 0, code: gate.code, durationMs: gate.durationMs, tail });
     return gate;
   };
 
@@ -535,8 +537,17 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     const open = openFindings(ledger);
     log.info(`=== round ${round}: fix ${open.length} open finding(s) ===`);
     ev('step', { round, step: 'fix', count: open.length });
+    // One row of the run's changes: the finding, the files the working tree shows changed, what
+    // became of them, and how long the assistant and the check took.
+    const attemptEvent = (n, entry, a, outcome) => ev('attempt', {
+      round, n, m: open.length, test: entry.test, message: entry.message, files: a.files || [], outcome,
+      commit: a.commit || null, agentMs: a.agentMs ?? null, gateMs: a.gateMs ?? null, gateCode: a.gateCode ?? null,
+      gateTail: a.gateOutput ? a.gateOutput.split('\n').filter((l) => l.trim()).slice(-15).join('\n') : null,
+    });
     const taskDone = (n, entry, outcome) => {
       ev('task', { round, n: n + 1, m: open.length, test: entry.test, impact: entry.impact, message: entry.message, state: 'done', outcome });
+      const a = entry.attempts[entry.attempts.length - 1];
+      attemptEvent(n + 1, entry, a, outcome === 'no-change' && a.note === 'agent timed out' ? 'timed-out' : outcome);
       ledgerEvent();
     };
     let committed = 0;
@@ -560,7 +571,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         git(cwd, ['clean', '-fdq', '--', ...strayChanges]);
       }
       const note = res.result && res.result.note ? String(res.result.note).slice(0, 300) : res.timedOut ? 'agent timed out' : res.quota ? `the assistant's provider refused the call for quota or rate limit (after ${res.quotaRetries} retries)` : `agent exit ${res.code}, no result file`;
-      const attempt = { round, files: changed, note, outcome: 'pending' };
+      const attempt = { round, n: n + 1, files: changed, note, outcome: 'pending', agentMs: res.durationMs ?? null };
+      if (changed.length) ev('changes', { round, n: n + 1, m: open.length, files: changed });
       entry.attempts.push(attempt);
       if (!changed.length) {
         attempt.outcome = 'no-change';
@@ -578,6 +590,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         log.info(`  checking: ${cfg.check}`);
         ev('step', { round, step: 'gate', n: n + 1, m: open.length, check: cfg.check });
         const gate = await runGate(round, n + 1, open.length);
+        attempt.gateMs = gate.durationMs;
+        attempt.gateCode = gate.code;
         if (gate.code !== 0) {
           attempt.outcome = 'failed-gate';
           attempt.gateOutput = gate.out.slice(-2000);
@@ -625,7 +639,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           const a = e.attempts[e.attempts.length - 1];
           a.outcome = 'failed-gate';
           a.gateOutput = gate.out.slice(-2000);
+          a.gateMs = gate.durationMs;
+          a.gateCode = gate.code;
           delete a.commit;
+          attemptEvent(a.n ?? 0, e, a, 'failed-gate');
           e.status = e.attempts.length >= cfg.maxAttempts ? 'needs-human' : 'open';
         }
         committed = 0;

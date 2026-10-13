@@ -189,7 +189,7 @@ export function spoken(ms: number, minutes = false): string {
   if (minutes && total % 60 === 0) return `${total / 60} min`;
   const m = Math.floor(total / 60);
   const sec = total % 60;
-  return sec ? `${m} m ${sec} s` : `${m} min`;
+  return sec ? `${m} m ${String(sec).padStart(2, '0')} s` : `${m} min`;
 }
 
 // The fix loop's counts in the words the Fix step and History share: "3 verified fixed · 1 fixed,

@@ -13,6 +13,7 @@ import { AgentTest, LedgerInfo, LoopDefaults, LoopMatch, Preset } from '../core/
 import { ChartPanel } from '../shared/chart-panel';
 import { RunView } from '../shared/run-view';
 import { NeedsPersonLink } from '../shared/needs-person-link';
+import { ChangesTable } from '../shared/changes-table';
 
 const STATUSES: [string, string][] = [
   ['open', 'Open'], ['review', 'Awaiting triage'], ['pending', 'Fixed, awaiting verification'], ['verified', 'Verified fixed'],
@@ -29,7 +30,7 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 // and shows it, with one button; everything it inferred is editable at /fix-loop/settings.
 @Component({
   selector: 'app-fix-loop-screen',
-  imports: [ChartPanel, LineChartModule, RunView, RouterLink, NeedsPersonLink],
+  imports: [ChartPanel, LineChartModule, RunView, RouterLink, NeedsPersonLink, ChangesTable],
   template: `
     <h1>Fix loop</h1>
     @if (!(store.kind() === 'loop' && store.round())) {
@@ -191,6 +192,12 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
       }
       <p data-testid="fix-counts">{{ fixCounts() }}</p>
       }
+    }
+    @if (isLoop() && store.changes().length) {
+      <section aria-labelledby="changes-h" data-testid="changes">
+        <h2 id="changes-h">Changes this run</h2>
+        <app-changes-table [rows]="store.changes()" label="Changes this run" />
+      </section>
     }
     @if (paneShown()) {
       @if (lastLine(); as ll) { <p class="hint last-line" data-testid="agent-last-line">{{ ll }}</p> }
@@ -430,7 +437,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     if (this.store.done()) return this.stepText();
     if (this.store.loginWaiting() && this.store.active()) return 'Waiting for you to sign in in the browser window';
     if (!r) return 'Starting…';
-    const secs = (from: number) => `${Math.max(0, Math.round((this.now() - from) / 1000))} s`;
+    const secs = (from: number) => spoken(this.now() - from);
     const s = this.store.step();
     const step = s?.['step'];
     const n = this.store.committed();
@@ -439,7 +446,8 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     // The gate and the commit are this finding's while its task has not ended (or the round's, with no n).
     const current = s?.['n'] === undefined || (t?.n === s?.['n'] && t?.state === 'start');
     const g = this.store.gate();
-    if (g && !g.endedAt && g.round === r) return `Round ${r}: checking ${g.n ? 'the fix' : "the round's fixes"} with ${g.check} · ${secs(g.startedAt)}`;
+    const last = this.store.lastGateMs();
+    if (g && !g.endedAt && g.round === r) return `Checking ${g.n ? `fix ${g.n}` : "the round's fixes"} with ${g.check} · ${secs(g.startedAt)}${last !== null ? ` (the last check took ${spoken(last)})` : ''}`;
     if (step === 'commit' && current) return `Round ${r}: committing fix ${s?.['n']} of ${s?.['m']}`;
     const seen = r === this.store.reportRound() ? ' from the report you just saw' : '';
     if (c && !c.endedAt && c.wait && c.wait.until > this.now()) return `${capital(this.assistantName())} is rate-limited; trying again in ${Math.max(1, Math.ceil((c.wait.until - this.now()) / 1000))} s (retry ${c.wait.attempt} of ${c.wait.attempts})`;

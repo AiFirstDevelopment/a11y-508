@@ -187,7 +187,7 @@ test('loop-resilience AC12: the assistant\'s streamed actions reach the pane as 
   });
 });
 
-test('loop-resilience AC13-16: one pane log for the run, the gate and the commit on screen with time, counts that move after each commit, one status for pane and page', async ({ page }) => {
+test('loop-resilience AC13-18: one pane log for the run, the gate and the commit on screen with time, counts that move after each commit, one status for pane and page, the changed files and the check times', async ({ page }) => {
   const site = await fixtureSite();
   const check = `${JSON.stringify(process.execPath)} check.mjs`;
   const { cwd, g } = await appWithReport(site, 'a11y-508-pane-', { check });
@@ -203,27 +203,31 @@ test('loop-resilience AC13-16: one pane log for the run, the gate and the commit
     await page.evaluate(() => {
       const w = window as any;
       w.__pane = [];
+      w.__status = [];
       new MutationObserver(() => {
         const pane = document.querySelector('[data-testid="agent-output"]')?.textContent || '';
         const counts = document.querySelector('[data-testid="fix-counts"]')?.textContent?.trim() || '';
         const last = w.__pane[w.__pane.length - 1];
         if (!last || last.pane !== pane || last.counts !== counts) w.__pane.push({ pane, counts });
+        const st = document.querySelector('[data-testid="fix-status"]')?.textContent?.trim() || '';
+        if (st && w.__status[w.__status.length - 1] !== st) w.__status.push(st);
       }).observe(document.body, { subtree: true, childList: true, characterData: true });
     });
     await page.getByRole('button', { name: 'Fix the violations' }).click();
     const status = page.getByTestId('fix-status');
     const pane = page.getByTestId('agent-output');
     // AC 14: the gate is the status, with a counting time; its output streams into the pane.
-    await expect(status).toHaveText(/^Round 1: checking the fix with .+check\.mjs · \d+ s$/, { timeout: 120_000 });
+    await expect(status).toHaveText(/^Checking fix \d+ with .+check\.mjs · \d+ s$/, { timeout: 120_000 });
     const gateSecs = async () => Number(/ · (\d+) s$/.exec((await status.textContent()) || '')?.[1] ?? -1);
     const first = await gateSecs();
     await expect.poll(gateSecs, { timeout: 5_000 }).toBeGreaterThan(first);
-    await expect(pane).toContainText(/Checking the fix with .+check\.mjs\nbuilding the site/);
+    // AC 17: the files the working tree shows changed, then the gate.
+    await expect(pane).toContainText(/Changed: site\/index\.html\nChecking the fix with .+check\.mjs\nbuilding the site/);
     // AC 16: the pane's heading says what the status line says.
     const [h, s] = await page.evaluate(() => [document.querySelector('[data-testid="agent-heading"]')?.textContent?.trim(), document.querySelector('[data-testid="fix-status"]')?.textContent?.trim()]);
     expect(h).toBe(s);
     // AC 15: right after the first commit the counts move, while the loop goes on.
-    await expect(pane).toContainText(/Build and tests passed in \d+ s\nCommitted 1 file as [0-9a-f]{7,}/, { timeout: 60_000 });
+    await expect(pane).toContainText(/Build and tests passed in \d+ s\nCommitted as [0-9a-f]{7,}/, { timeout: 60_000 });
     await expect(page.getByTestId('fix-counts')).toHaveText(/^1 fixed, awaiting verification · \d+ remaining/, { timeout: 5_000 });
     await expect(page.getByTestId('loop-stop')).toBeEnabled();
     // AC 13: the next fix starts under its own heading line, and the first fix's lines are still there.
@@ -237,14 +241,31 @@ test('loop-resilience AC13-16: one pane log for the run, the gate and the commit
     // AC 15: by the time the fix after the first commit began, the counts had already moved.
     const states: { pane: string; counts: string }[] = await page.evaluate(() => (window as any).__pane);
     const headings = (p: string) => (p.match(/— Fix \d+ of \d+: /g) || []).length;
-    const firstCommit = states.findIndex((x) => /Committed 1 file as/.test(x.pane));
+    const firstCommit = states.findIndex((x) => /Committed as/.test(x.pane));
     const nextFix = states.findIndex((x, i) => i > firstCommit && headings(x.pane) > headings(states[firstCommit].pane));
     expect(firstCommit).toBeGreaterThanOrEqual(0);
     expect(nextFix).toBeGreaterThan(firstCommit);
     expect(states[nextFix].counts).toMatch(/^1 fixed, awaiting verification · \d+ remaining/);
     // The fix that broke the build: said, with the gate's own error.
-    await expect(pane).toContainText(/Build or tests failed — the change is reverted and the finding stays open: .*error: the build is broken/);
+    await expect(pane).toContainText(/Build or tests failed after \d+ s\nReverted — the check failed \(exit 1\):\n[^]*error: the build is broken/);
+    // AC 17: Changes this run, in the main view: a row per attempt with its files and outcome.
+    const changes = page.getByTestId('changes');
+    expect(await changes.evaluate((el) => !!el.closest('details'))).toBe(false);
+    await expect(changes.locator('tr[data-outcome="committed"]').first().getByTestId('change-files')).toHaveText('site/index.html');
+    await expect(changes.locator('tr[data-outcome="committed"]').first().getByTestId('change-outcome')).toHaveText(/^\s*committed [0-9a-f]{7,}\s*$/);
+    const reverted = changes.locator('tr[data-outcome="failed-gate"]');
+    await expect(reverted).toHaveCount(1);
+    await reverted.getByText(/^reverted: check failed \(exit 1\)$/).click();
+    await expect(reverted.locator('pre')).toContainText('error: the build is broken');
+    // AC 18: the gate after the first said how long the last one took.
+    const said: string[] = await page.evaluate(() => (window as any).__status);
+    expect(said.some((x) => /^Checking fix \d+ with .+check\.mjs · \d+ s \(the last check took \d+ s\)$/.test(x)), said.join(' | ')).toBe(true);
     await expect(pane).not.toContainText('(no output yet)');
+    // History has the same list for the round.
+    await page.getByRole('link', { name: 'See what changed' }).click();
+    const round = page.getByTestId('round-changes').first();
+    await round.locator('> summary').click();
+    await expect(round.locator('tr[data-outcome="committed"]').first().getByTestId('change-files')).toHaveText('site/index.html');
   } finally {
     await dash.stop();
     removeTemp(cwd);

@@ -78,6 +78,14 @@ clone): the loop checks it out tracking origin. AC 6's "assistant failed to star
     verification · 19 remaining · 4 need a person" on the Fix step, in History, and in `a11y-508 status`.
 16. The pane's heading and the main status line say the same thing, from one source.
 
+17. Changed files are visible per fix and for the run: the pane says "Changed: <repo-relative paths>" (from the
+    working tree, not the assistant's claim), then the gate's outcome, then "Committed as a1b2c3d" or "Reverted —
+    the check failed (exit 1): <its last 15 lines>". The Fix step shows **Changes this run** in the main view, one
+    row per fix attempt (finding, files, outcome — committed <sha> / reverted: check failed (expandable to the
+    check's last lines) / no change / timed out — assistant time, check time); History shows it per round.
+18. The ledger records per attempt `agentMs`, `gateMs`, `gateCode`. During the gate the status reads "Checking fix 8
+    with npm run build && npm test · 4 m 10 s (the last check took 6 m 02 s)".
+
 ## How this fails silently
 
 1. The nested-branch fallback picks a branch but does not switch to it; commits land on the previous branch.
@@ -115,6 +123,11 @@ clone): the loop checks it out tracking origin. AC 6's "assistant failed to star
     asserting "Checking the fix with …" with a counting time and the "Committed … as" line, fail.
 15. Drop the ledger event after a commit — the loop test asserting a ledger event with pending ≥ 1 before the next
     fix starts, and the Playwright test asserting the counts had moved when the next fix began, fail.
+
+17. Drop the files from the `changes`/`attempt` events — the Playwright test asserting the fixture's path in the
+    pane and in the Changes list fails.
+18. Stop recording `gateMs` — the loop test asserting the field and the Playwright test asserting "(the last check
+    took" fail.
 
 ## Non-goals
 

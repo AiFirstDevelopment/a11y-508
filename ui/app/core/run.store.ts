@@ -3,6 +3,7 @@ import { Api } from './api';
 import { readSse } from './sse';
 import { CANNOT_GET_IN, Discovery, OFF_ORIGIN, PhaseEvent, Progress, cumulative, spoken } from './format';
 import { ByImpact, Remedy, RunEvent } from './types';
+import type { ChangeRow } from '../shared/changes-table';
 
 export interface PageRow {
   url: string;
@@ -64,7 +65,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 // event" notice rather than being dropped in silence.
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
-  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit',
+  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit', 'changes', 'attempt',
 ]);
 
 // The current run, built from its event stream.
@@ -99,6 +100,9 @@ export class RunStore {
   readonly paneLog = signal('');
   readonly paneAt = signal(0);
   // The gate in hand (the build and tests run on a fix), for the status line.
+  // The run's fix attempts, as they end (one row each), and how long the last finished check took.
+  readonly changes = signal<ChangeRow[]>([]);
+  readonly lastGateMs = signal<number | null>(null);
   readonly gate = signal<{ round: number; n: number | null; m: number | null; check: string; startedAt: number; endedAt: number | null; ok: boolean | null } | null>(null);
   // The loop: the run's first round (it re-checks the site first), and how many fixes the round committed.
   readonly firstRound = signal<number | null>(null);
@@ -154,6 +158,8 @@ export class RunStore {
     this.paneLog.set('');
     this.paneAt.set(0);
     this.gate.set(null);
+    this.changes.set([]);
+    this.lastGateMs.set(null);
     this.firstRound.set(null);
     this.committed.set(0);
     this.reportRound.set(null);
@@ -302,18 +308,35 @@ export class RunStore {
           this.pane(`Checking ${each ? 'the fix' : "the round's fixes"} with ${ev['check']}`, true);
         } else {
           this.gate.update((g) => (g ? { ...g, endedAt: Date.now(), ok: !!ev['ok'] } : g));
-          const tail = String(ev['tail'] || '').split('\n').map((l) => l.trim()).filter(Boolean).join(' / ');
           if (ev['ok']) this.pane(`Build and tests passed in ${spoken(Number(ev['durationMs']) || 0)}`, true);
-          else this.pane(`Build or tests failed — ${each ? 'the change is reverted and the finding stays open' : "the round's fixes are rolled back"}${tail ? `: ${tail}` : ''}`, true);
+          else if (each) this.pane(`Build or tests failed after ${spoken(Number(ev['durationMs']) || 0)}`, true);
+          else this.pane(`Build or tests failed — the round's fixes are rolled back (exit ${ev['code'] ?? '?'}):\n${String(ev['tail'] || '')}`, true);
         }
         break;
       }
       case 'gate-output':
         this.pane(String(ev['text'] || ''));
         break;
-      case 'commit': {
-        const files = Array.isArray(ev['files']) ? ev['files'].length : 0;
-        this.pane(`Committed ${files} file${files === 1 ? '' : 's'} as ${ev['commit']}`, true);
+      case 'commit':
+        this.pane(`Committed as ${ev['commit']}`, true);
+        break;
+      case 'changes':
+        this.pane(`Changed: ${(Array.isArray(ev['files']) ? ev['files'] : []).join(', ')}`, true);
+        break;
+      case 'attempt': {
+        const row: ChangeRow = {
+          round: ev['round'], n: ev['n'] ?? null, test: String(ev['test'] || ''), message: String(ev['message'] || ''), elements: ev['elements'] ?? null,
+          files: Array.isArray(ev['files']) ? ev['files'] : [], outcome: String(ev['outcome'] || ''), commit: ev['commit'] ?? null,
+          agentMs: ev['agentMs'] ?? null, gateMs: ev['gateMs'] ?? null, gateCode: ev['gateCode'] ?? null, gateTail: ev['gateTail'] ?? null,
+        };
+        // How long the last check took, as the ledger records it for the attempt.
+        if (typeof row.gateMs === 'number') this.lastGateMs.set(row.gateMs);
+        // A round's rollback updates the rows it reverted.
+        this.changes.update((list) => {
+          const i = list.findIndex((x) => x.round === row.round && x.n === row.n && x.n !== null);
+          return i >= 0 ? list.map((x, k) => (k === i ? row : x)) : [...list, row];
+        });
+        if (row.outcome === 'failed-gate' && typeof ev['n'] === 'number' && this.gate()?.n !== null) this.pane(`Reverted — the check failed (exit ${row.gateCode ?? '?'}):\n${row.gateTail || '(no output)'}`, true);
         break;
       }
       case 'agent-wait':

@@ -33,6 +33,8 @@ export const EVENT_SCHEMA = {
   gate: { round: num, state: oneOf('start', 'done'), check: str, n: opt(num), m: opt(num), ok: opt(bool), durationMs: opt(num), tail: opt(str) },
   'gate-output': { round: num, text: str },
   commit: { round: num, n: num, m: num, commit: str, files: arr },
+  changes: { round: num, n: num, m: num, files: arr },
+  attempt: { round: num, n: num, m: num, test: str, message: str, files: arr, outcome: oneOf('committed', 'failed-gate', 'no-change', 'timed-out', 'commit-failed'), commit: opt(str), agentMs: opt(num), gateMs: opt(num), gateCode: opt(num), gateTail: opt(str) },
   precondition: { code: oneOf('not-a-repo', 'dirty-tree', 'branch'), message: str, remedy: str },
   done: { code: num },
 };
