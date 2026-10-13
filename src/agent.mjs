@@ -44,6 +44,37 @@ export function presetCommandAt(name, exePath) {
   return quoted + cmd.slice(PRESET_INFO[name].bin.length);
 }
 
+// The command a person can paste into their own shell to run the assistant on a prompt
+// file by hand, as the loop runs it: the resolved executable, the real prompt path, the
+// environment the loop sets spelled out for that shell, and stdin redirected as the preset does.
+export function runnableCommand({ name, exePath = null, promptFile, shell = 'sh', platform = process.platform }) {
+  const template = PRESETS[name];
+  if (!template) return null;
+  const k = shellKind(shell);
+  const exe = exePath || PRESET_INFO[name].bin;
+  const quote = (p) => (!/[\s"'&()]/.test(p) ? p : k === 'powershell' ? `'${p.replace(/'/g, "''")}'` : `"${p}"`);
+  let rest = template.slice(PRESET_INFO[name].bin.length);
+  let stdin = null;
+  const m = / < "\{promptFile\}"$/.exec(rest);
+  if (m) {
+    stdin = promptFile;
+    rest = rest.slice(0, m.index);
+  }
+  rest = rest.split('{promptFile}').join(promptFile);
+  const env = agentEnvFor(`"${exe}"`, {}).GEMINI_CLI_TRUST_WORKSPACE ? [['GEMINI_CLI_TRUST_WORKSPACE', 'true']] : [];
+  if (k === 'powershell') {
+    const call = `${/[\s'"]/.test(exe) ? `& ${quote(exe)}` : exe}${rest}`;
+    const pre = env.map(([n, v]) => `$env:${n}='${v}'; `).join('');
+    return `${pre}${stdin ? `Get-Content -Raw ${quote(stdin)} | ` : ''}${call}`;
+  }
+  if (k === 'cmd') {
+    const pre = env.map(([n, v]) => `set ${n}=${v}&& `).join('');
+    return `${pre}${quote(exe)}${rest}${stdin ? ` < "${stdin}"` : ''}`;
+  }
+  const pre = env.map(([n, v]) => `${n}=${v} `).join('');
+  return `${pre}${quote(exe)}${rest}${stdin ? ` < "${stdin}"` : ''}`;
+}
+
 const isWin = (platform) => platform === 'win32';
 const shellKind = (shell = '') => {
   const s = String(shell).toLowerCase();
@@ -194,7 +225,9 @@ export const QUOTA_TERMINAL = /daily quota|TerminalQuotaError|per day|retry in \
 // in the repository it was configured for, so it says so. Any other command's environment is
 // left as it is.
 export function agentEnvFor(command, env = agentEnv()) {
-  const exe = String(command || '').trim().replace(/^"([^"]*)".*$/, '$1').split(/\s+/)[0] || '';
+  // A quoted executable may hold spaces ("C:\\Program Files\\nodejs\\gemini.cmd" ...).
+  const t = String(command || '').trim();
+  const exe = (t.startsWith('"') ? t.slice(1, t.indexOf('"', 1) > 0 ? t.indexOf('"', 1) : undefined) : t.split(/\s+/)[0]) || '';
   if (/(^|[\\/])gemini(\.cmd|\.exe|\.ps1)?$/i.test(exe) && env.GEMINI_CLI_TRUST_WORKSPACE === undefined) return { ...env, GEMINI_CLI_TRUST_WORKSPACE: 'true' };
   return env;
 }
@@ -202,11 +235,12 @@ export function agentEnvFor(command, env = agentEnv()) {
 // Runs the assistant once on a prompt file. A call that writes no result and whose output names a
 // quota or rate limit is run again after each of quotaDelays; quota says the last try was refused
 // that way, quotaRetries how many retries it took.
-export async function runAgent({ command, promptFile, resultFile, cwd, timeout = 15 * 60 * 1000, env = agentEnvFor(command), quotaDelays = QUOTA_DELAYS }) {
+// onOutput(stream, text), when given, sees the assistant's output as it arrives.
+export async function runAgent({ command, promptFile, resultFile, cwd, timeout = 15 * 60 * 1000, env = agentEnvFor(command), quotaDelays = QUOTA_DELAYS, onOutput = null }) {
   const t0 = Date.now();
   let quotaRetries = 0;
   for (;;) {
-    const r = await runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env });
+    const r = await runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env, onOutput });
     // A call that ran out its time while the assistant backed off on its own counts as refused for
     // quota too, but is not run again: it has already spent its time.
     const quota = !r.result && QUOTA.test(r.stdout + '\n' + r.stderr);
@@ -219,15 +253,21 @@ export async function runAgent({ command, promptFile, resultFile, cwd, timeout =
   }
 }
 
-async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env }) {
+async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env, onOutput }) {
   const cmd = command.split('{promptFile}').join(promptFile).split('{resultFile}').join(resultFile);
   if (existsSync(resultFile)) rmSync(resultFile, { force: true });
   const child = spawn(cmd, { cwd, shell: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
   let stderr = '';
   const keep = (s, d) => (s + d).slice(-20000);
-  child.stdout.on('data', (d) => (stdout = keep(stdout, String(d))));
-  child.stderr.on('data', (d) => (stderr = keep(stderr, String(d))));
+  child.stdout.on('data', (d) => {
+    stdout = keep(stdout, String(d));
+    if (onOutput) onOutput('stdout', String(d));
+  });
+  child.stderr.on('data', (d) => {
+    stderr = keep(stderr, String(d));
+    if (onOutput) onOutput('stderr', String(d));
+  });
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;

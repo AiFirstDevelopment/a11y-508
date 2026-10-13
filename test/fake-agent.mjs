@@ -8,6 +8,16 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const [promptFile, resultFile] = process.argv.slice(2);
+// A few lines of output first, as a real assistant prints while it works.
+console.log('fake agent: reading the prompt');
+// The dashboard's test of the live output: the first call takes a while, so its counter visibly runs.
+const slow = process.env.FAKE_AGENT_SLOW_ONCE;
+if (slow && !existsSync(slow)) {
+  writeFileSync(slow, 'slow');
+  await new Promise((r) => setTimeout(r, 4000));
+}
+console.log('fake agent: looking at the finding');
+
 const prompt = readFileSync(promptFile, 'utf8');
 const blocks = [...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => m[1]);
 const task = blocks.map((b) => { try { return JSON.parse(b); } catch { return null; } }).find((o) => o && (o.kind === 'fix' || o.kind === 'triage' || o.kind === 'test'));

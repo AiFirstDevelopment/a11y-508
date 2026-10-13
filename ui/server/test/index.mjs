@@ -3,3 +3,4 @@ import './security.test.mjs';
 import './runs.test.mjs';
 import './agents.test.mjs';
 import './dirs.test.mjs';
+import './loop-defaults.test.mjs';

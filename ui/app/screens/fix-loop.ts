@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
+import { Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { LineChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
@@ -6,166 +6,179 @@ import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { prefersReducedMotion } from '../core/motion';
 import { localTime } from '../core/format';
-import { AgentTest, LedgerInfo, Preset } from '../core/types';
+import { AgentTest, LedgerInfo, LoopDefaults, Preset } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
 import { RunView } from '../shared/run-view';
+import { SignInState } from '../shared/sign-in-state';
 
 const STATUSES: [string, string][] = [
   ['open', 'Open'], ['review', 'Awaiting triage'], ['pending', 'Pending verification'], ['verified', 'Verified fixed'],
   ['needs-human', 'Needs a person'], ['adequate', 'Adequate'], ['gone', 'Gone'], ['wont-fix', "Won't fix"],
 ];
 const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Pending verification'], ['review', 'Awaiting triage'], ['needs-human', 'Needs a person']];
+// The installed assistant chosen when the config names none.
+const PREFERENCE = ['claude', 'gemini', 'codex'];
+const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 'no change', 'failed-gate': 'failed the gate', 'commit-failed': 'commit failed', 'timed-out': 'timed out', stopped: 'stopped', done: 'done', ended: 'ended' };
 
+// The Fix loop: it works out what it can (the assistant, the folders, the gate, the branch)
+// and shows it, with one button; everything it inferred is editable under More options.
 @Component({
   selector: 'app-fix-loop-screen',
-  imports: [ChartPanel, LineChartModule, RunView],
+  imports: [ChartPanel, LineChartModule, RunView, SignInState],
   template: `
     <h1>Fix loop</h1>
-    @if (env.env()?.inGitRepo === false) {
-      <p class="notice warn" role="status" data-testid="not-git">{{ env.env()?.cwd }} is not a git repository. The loop commits each fix, so it needs one; a dry run and a crawl do not.</p>
-    }
-    <p class="notice warn">The assistant's changes are committed without review. The <code>check</code> command below is the only gate between a fix and a commit.</p>
 
-    <section aria-labelledby="agent-h">
-      <h2 id="agent-h">Fixing assistant</h2>
-      <fieldset class="picker" data-testid="picker">
-        <legend>Choose the assistant the loop runs</legend>
-        @for (p of presets(); track p.name) {
-          <div class="choice preset" [class.missing]="!p.found" [attr.data-preset]="p.name" [attr.data-found]="p.found">
-            <input type="radio" name="agent" [id]="'agent-' + p.name" [value]="p.name" [checked]="choice() === p.name" (change)="choose(p.name)" [attr.aria-describedby]="'agent-' + p.name + '-d'" />
-            <label [for]="'agent-' + p.name">{{ p.label }}</label>
-            <div class="desc" [id]="'agent-' + p.name + '-d'">
-              @if (p.found) {
-                <span data-testid="version">{{ p.version || 'version unknown' }}</span> · found {{ p.where === 'PATH' ? 'on PATH' : 'through ' + p.where }} at <code data-testid="where">{{ p.path }}</code><br />
-                runs <code data-testid="agent-command">{{ p.command }}</code>
-              } @else {
-                <strong>not installed</strong>
-              }
-            </div>
-          </div>
-        }
-        <div class="choice preset" data-preset="custom">
-          <input type="radio" name="agent" id="agent-custom" value="custom" [checked]="choice() === 'custom'" (change)="choose('custom')" />
-          <label for="agent-custom">Custom command</label>
-        </div>
-        @if (choice() === 'custom') {
-          <div class="field indent">
-            <label for="custom-command">Command (must contain {{ '{' }}promptFile{{ '}' }}; may use {{ '{' }}resultFile{{ '}' }})</label>
-            <input id="custom-command" type="text" [value]="custom()" (input)="custom.set($any($event.target).value)" (change)="saveAgent()" />
-            @if (custom() && !custom().includes('{promptFile}')) {
-              <p class="notice error" role="alert">The command must contain {{ '{' }}promptFile{{ '}' }}.</p>
-            }
-          </div>
-        }
-      </fieldset>
-
-      @if (chosenPreset(); as p) {
-        @if (!p.found) {
-          <div class="install" data-testid="install-panel">
-            <p>{{ p.label }} is not installed. It installs with <code data-testid="install-command">{{ p.install }}</code>, run in your shell, <strong data-testid="shell-name">{{ shell() }}</strong>.</p>
-            <button type="button" (click)="askInstall()" [disabled]="store.active()">{{ installFailed() ? 'Retry' : 'Install' }}</button>
-          </div>
-        }
+    <p data-testid="assistant-line">
+      @if (assistantLabel(); as label) {
+        Fixing with <strong>{{ label }}</strong>@if (assistantVersion(); as v) { <span> ({{ v }})</span> }
+        <button type="button" class="link" (click)="pickerOpen.set(!pickerOpen())" [attr.aria-expanded]="showPicker()" aria-controls="agent-picker">change<span class="visually-hidden"> the assistant</span></button>
+      } @else if (env.env()) {
+        No assistant is installed yet. Install one below.
       }
-      <dialog #confirm aria-labelledby="confirm-h" data-testid="install-confirm">
-        <h2 id="confirm-h">Install {{ chosenPreset()?.label }}?</h2>
-        <p>This runs <code>{{ chosenPreset()?.install }}</code> in {{ shell() }} as a login shell.</p>
-        <div class="actions">
-          <button type="button" (click)="install()">Run the install</button>
-          <button type="button" class="secondary" (click)="confirmDialog()?.nativeElement?.close()">Cancel</button>
-        </div>
-      </dialog>
-      @if (store.kind() === 'install') {
-        <section aria-labelledby="install-h" data-testid="install-run">
-          <h3 id="install-h">Installing {{ store.run()?.['agent'] }}</h3>
-          <pre data-testid="install-output" tabindex="0" role="region" aria-label="Install output">{{ installOutput() }}</pre>
-          @if (store.done(); as d) {
-            @if (d['found']) {
-              <p class="ok" role="status" data-testid="install-result">Installed. {{ store.run()?.['agent'] }} is ready to use.</p>
-            } @else {
-              <div class="notice error" role="alert" data-testid="install-result">
-                <p>The install did not make the assistant available (exit code <span data-testid="install-code">{{ d['code'] }}</span>).</p>
-                @for (r of store.remedies(); track r.id) {
-                  <div class="remedy" [attr.data-remedy]="r.id">
-                    <p>{{ r.text }}</p>
-                    @if (r.command) {
-                      <pre data-testid="remedy-command" tabindex="0" role="region" [attr.aria-label]="'Remedy command: ' + r.id">{{ r.command }}</pre>
-                      <button type="button" class="secondary small" (click)="copy(r.command)">Copy<span class="visually-hidden"> the command for {{ r.id }}</span></button>
-                    }
-                  </div>
+    </p>
+    @if (showPicker()) {
+      <section id="agent-picker" aria-label="Choose the assistant">
+        <fieldset class="picker" data-testid="picker">
+          <legend>Choose the assistant the loop runs</legend>
+          @for (p of presets(); track p.name) {
+            <div class="choice preset" [class.missing]="!p.found" [attr.data-preset]="p.name" [attr.data-found]="p.found">
+              <input type="radio" name="agent" [id]="'agent-' + p.name" [value]="p.name" [checked]="choice() === p.name" (change)="choose(p.name)" [attr.aria-describedby]="'agent-' + p.name + '-d'" />
+              <label [for]="'agent-' + p.name">{{ p.label }}</label>
+              <div class="desc" [id]="'agent-' + p.name + '-d'">
+                @if (p.found) {
+                  <span data-testid="version">{{ p.version || 'version unknown' }}</span> · found {{ p.where === 'PATH' ? 'on PATH' : 'through ' + p.where }} at <code data-testid="where">{{ p.path }}</code><br />
+                  runs <code data-testid="agent-command">{{ p.command }}</code>
+                  @if (runCommandFor(p); as rc) {
+                    <br />by hand, in your shell: <code data-testid="run-command">{{ rc }}</code>
+                    <button type="button" class="secondary small" (click)="copy(rc, p.name)">Copy<span class="visually-hidden"> the command for {{ p.label }}</span></button>
+                    <span role="status" class="hint">{{ copied() === p.name ? 'Copied.' : '' }}</span>
+                    @if (!store.agentCall()) { <span class="hint"> ({{ promptNote }})</span> }
+                  }
+                } @else {
+                  <strong>not installed</strong>
                 }
               </div>
-            }
+            </div>
           }
-        </section>
-      }
+          <div class="choice preset" data-preset="custom">
+            <input type="radio" name="agent" id="agent-custom" value="custom" [checked]="choice() === 'custom'" (change)="choose('custom')" />
+            <label for="agent-custom">Custom command</label>
+          </div>
+          @if (choice() === 'custom') {
+            <div class="field indent">
+              <label for="custom-command">Command (must contain {{ '{' }}promptFile{{ '}' }}; may use {{ '{' }}resultFile{{ '}' }})</label>
+              <input id="custom-command" type="text" [value]="custom()" (input)="custom.set($any($event.target).value)" (change)="saveAgent()" />
+              @if (custom() && !custom().includes('{promptFile}')) {
+                <p class="notice error" role="alert">The command must contain {{ '{' }}promptFile{{ '}' }}.</p>
+              }
+            </div>
+          }
+        </fieldset>
 
-      <div class="actions">
-        <button type="button" class="secondary" (click)="testAgent()" [disabled]="testing() || !agentSpec()">Test assistant</button>
-        <span role="status" data-testid="test-status">{{ testing() ? 'Testing… this calls the assistant once.' : testText() }}</span>
-      </div>
-      @if (testResult(); as t) {
-        @if (t.status !== 'ready' && t.output.length) {
-          <pre data-testid="test-output" tabindex="0" role="region" aria-label="Assistant output">{{ t.output.join('\\n') }}</pre>
+        @if (chosenPreset(); as p) {
+          @if (!p.found) {
+            <div class="install" data-testid="install-panel">
+              <p>{{ p.label }} is not installed. It installs with <code data-testid="install-command">{{ p.install }}</code>, run in your shell, <strong data-testid="shell-name">{{ shell() }}</strong>.</p>
+              <button type="button" (click)="askInstall()" [disabled]="store.active()">{{ installFailed() ? 'Retry' : 'Install' }}</button>
+            </div>
+          }
         }
-      }
-    </section>
-
-    <section aria-labelledby="config-h">
-      <h2 id="config-h">Loop settings (a11y-508.config.json)</h2>
-      <form (submit)="$event.preventDefault(); saveConfig()" class="config" data-testid="config-form">
-        <div class="field"><label for="c-url">Start URL</label><input id="c-url" type="url" [value]="cfg()['url'] || ''" (input)="set('url', v($event))" /></div>
-        <div class="field"><label for="c-args">Crawl options, one per line</label><textarea id="c-args" rows="2" [value]="lines(cfg()['args'])" (input)="set('args', toLines(v($event)))"></textarea></div>
-        <div class="field"><label for="c-source">Folders the assistant may edit, one per line</label><textarea id="c-source" rows="2" [value]="lines(cfg()['source'])" (input)="set('source', toLines(v($event)))"></textarea></div>
-        <div class="field"><label for="c-check">Check command (build and test)</label><input id="c-check" type="text" [value]="cfg()['check'] || ''" (input)="set('check', v($event))" /></div>
-        <div class="field"><label for="c-checkEvery">Run the check</label>
-          <select id="c-checkEvery" (change)="set('checkEvery', v($event))"><option value="finding" [selected]="cfg()['checkEvery'] !== 'round'">after each fix</option><option value="round" [selected]="cfg()['checkEvery'] === 'round'">once per round</option></select></div>
-        <div class="field"><label for="c-branch">Branch to commit on</label><input id="c-branch" type="text" [value]="cfg()['branch'] || ''" (input)="set('branch', v($event))" /></div>
-        <div class="choice"><input id="c-push" type="checkbox" [checked]="cfg()['push'] !== false" (change)="set('push', $any($event.target).checked)" /><label for="c-push">Push each round's commits</label></div>
-        <div class="field"><label for="c-deployed">How the loop knows the new build is live</label>
-          <select id="c-deployed" (change)="set('deployed', v($event))">
-            @for (d of deployedOptions; track d[0]) { <option [value]="d[0]" [selected]="(cfg()['deployed'] || '') === d[0]">{{ d[1] }}</option> }
-          </select></div>
-        <div class="field"><label for="c-deploy">Deploy command</label><input id="c-deploy" type="text" [value]="cfg()['deploy'] || ''" (input)="set('deploy', v($event))" /></div>
-        <div class="field"><label for="c-maxAttempts">Fix attempts per finding</label><input id="c-maxAttempts" type="number" min="1" [value]="cfg()['maxAttempts'] ?? ''" (input)="setNum('maxAttempts', v($event))" /></div>
-        <div class="field"><label for="c-deployTimeout">Deploy timeout (ms)</label><input id="c-deployTimeout" type="number" min="0" [value]="cfg()['deployTimeout'] ?? ''" (input)="setNum('deployTimeout', v($event))" /></div>
-        <div class="field"><label for="c-agentTimeout">Assistant timeout per task (ms)</label><input id="c-agentTimeout" type="number" min="0" [value]="cfg()['agentTimeout'] ?? ''" (input)="setNum('agentTimeout', v($event))" /></div>
-        <div class="field"><label for="c-triageBatch">Review items per triage prompt</label><input id="c-triageBatch" type="number" min="1" [value]="cfg()['triageBatch'] ?? ''" (input)="setNum('triageBatch', v($event))" /></div>
-        <div class="actions"><button type="submit" class="secondary">Save settings</button><span role="status" data-testid="config-status">{{ configStatus() }}</span></div>
-        @if (configErrors().length) {
-          <div class="notice error" role="alert" data-testid="config-errors"><ul>@for (e of configErrors(); track $index) { <li>{{ e }}</li> }</ul></div>
+        <dialog #confirm aria-labelledby="confirm-h" data-testid="install-confirm">
+          <h2 id="confirm-h">Install {{ chosenPreset()?.label }}?</h2>
+          <p>This runs <code>{{ chosenPreset()?.install }}</code> in {{ shell() }} as a login shell.</p>
+          <div class="actions">
+            <button type="button" (click)="install()">Run the install</button>
+            <button type="button" class="secondary" (click)="confirmDialog()?.nativeElement?.close()">Cancel</button>
+          </div>
+        </dialog>
+        @if (store.kind() === 'install') {
+          <section aria-labelledby="install-h" data-testid="install-run">
+            <h3 id="install-h">Installing {{ store.run()?.['agent'] }}</h3>
+            <pre data-testid="install-output" tabindex="0" role="region" aria-label="Install output">{{ installOutput() }}</pre>
+            @if (store.done(); as d) {
+              @if (d['found']) {
+                <p class="ok" role="status" data-testid="install-result">Installed. {{ store.run()?.['agent'] }} is ready to use.</p>
+              } @else {
+                <div class="notice error" role="alert" data-testid="install-result">
+                  <p>The install did not make the assistant available (exit code <span data-testid="install-code">{{ d['code'] }}</span>).</p>
+                  @for (r of store.remedies(); track r.id) {
+                    <div class="remedy" [attr.data-remedy]="r.id">
+                      <p>{{ r.text }}</p>
+                      @if (r.command) {
+                        <pre data-testid="remedy-command" tabindex="0" role="region" [attr.aria-label]="'Remedy command: ' + r.id">{{ r.command }}</pre>
+                        <button type="button" class="secondary small" (click)="copy(r.command, r.id)">Copy<span class="visually-hidden"> the command for {{ r.id }}</span></button>
+                      }
+                    </div>
+                  }
+                </div>
+              }
+            }
+          </section>
         }
-      </form>
-    </section>
-
-    <section aria-labelledby="run-h">
-      <h2 id="run-h">Run the loop</h2>
-      @if (!cfg()['check']) {
-        <div class="choice"><input id="no-gate" type="checkbox" [checked]="noGate()" (change)="noGate.set($any($event.target).checked)" /><label for="no-gate">Run without a check command (fixes are committed with no build or test gate)</label></div>
-      }
-      <div class="field small"><label for="rounds-to-run">Rounds to run</label><input id="rounds-to-run" type="number" min="1" [value]="rounds()" (input)="rounds.set(v($event))" /></div>
-      <div class="actions">
-        <button type="button" class="secondary" (click)="startLoop('dry-run')" [disabled]="store.active()">Dry run</button>
-        <button type="button" (click)="startLoop('loop')" [disabled]="!canStart()" data-testid="loop-start">Start</button>
-        <button type="button" class="secondary" (click)="store.stop()" [disabled]="!store.active() || !isLoop()">Stop</button>
-        @if (startWarning()) { <span class="hint warn-text" data-testid="start-warning">{{ startWarning() }}</span> }
-      </div>
-      @if (runError()) { <div class="notice error" role="alert">{{ runError() }}</div> }
-      @if (store.awaitingDeploy()) {
-        <div class="notice warn" role="status">
-          <p>The round's fixes are committed. Deploy them, then continue.</p>
-          <button type="button" (click)="store.continueAfterDeploy()">Deployed — continue</button>
+        <div class="actions">
+          <button type="button" class="secondary" (click)="testAgent()" [disabled]="testing() || !agentSpec()">Test assistant</button>
+          <span role="status" data-testid="test-status">{{ testing() ? 'Testing… this calls the assistant once.' : testText() }}</span>
         </div>
-      }
-      @if (isLoop()) {
-        <p role="status" data-testid="loop-step">{{ stepText() }}</p>
-        <app-run-view [showChart]="false" />
-      }
-    </section>
+        @if (testResult(); as t) {
+          @if (t.status !== 'ready' && t.output.length) {
+            <pre data-testid="test-output" tabindex="0" role="region" aria-label="Assistant output">{{ t.output.join('\\n') }}</pre>
+          }
+        }
+      </section>
+    }
 
-    <section aria-labelledby="ledger-h">
-      <h2 id="ledger-h">Ledger</h2>
-      @if (ledger()?.exists) {
+    @if (paneShown()) {
+      <section class="agent-pane" aria-labelledby="pane-h" data-testid="agent-pane">
+        <div class="pane-head">
+          <h2 id="pane-h" data-testid="agent-heading">{{ paneHeading() }}</h2>
+          <div class="choice"><input type="checkbox" id="pane-follow" [checked]="follow()" (change)="setFollow($any($event.target).checked)" /><label for="pane-follow">Follow</label></div>
+        </div>
+        <pre #pane class="pane" role="log" aria-live="off" aria-labelledby="pane-h" tabindex="0" data-testid="agent-output" (scroll)="onPaneScroll()">{{ paneText() }}</pre>
+      </section>
+    }
+
+    <app-sign-in-state [url]="loopUrl()" [goLive]="false" />
+
+    <p data-testid="loop-plan">
+      @if (!repoOk()) {
+        @if (defaults() && !defaults()!.repo.git) {
+          <span data-testid="not-git">Choose the app's repository with Change… above; {{ env.cwd() }} {{ repoProblem() }}.</span>
+        } @else {
+          <span data-testid="no-package">Choose the app's repository with Change… above; {{ env.cwd() }} {{ repoProblem() }}.</span>
+        }
+      } @else if (plan(); as pl) {
+        Edits <code>{{ pl.source }}</code> · @if (pl.check) {gate <code>{{ pl.check }}</code>} @else {no build or test command found, fixes are committed without a gate} · commits to branch <code>{{ pl.branch }}</code> · @if (pl.push && pl.remote) {pushes to <code>{{ pl.remote }}</code>} @else {does not push}
+      }
+    </p>
+    @if (!loopUrl()) {
+      <p class="hint" data-testid="no-url">No start URL yet: run a crawl from Run first, or set it under More options.</p>
+    } @else if (needsSignIn()) {
+      <p class="hint" data-testid="sign-in-first">Sign in first</p>
+    }
+
+    <div class="actions">
+      @if (isLoop() && store.active()) {
+        <button type="button" class="big" (click)="store.stop()" data-testid="loop-stop">Stop</button>
+      } @else {
+        <button type="button" class="big" (click)="fix()" [disabled]="!canStart()" data-testid="loop-start">Fix the violations</button>
+      }
+      @if (startWarning()) { <span class="hint warn-text" data-testid="start-warning">{{ startWarning() }}</span> }
+    </div>
+    @if (runError()) { <div class="notice error" role="alert">{{ runError() }}</div> }
+    @if (waitingForBuild()) {
+      <div class="notice warn" role="status" data-testid="awaiting-deploy">
+        <p>Fixes are committed and pushed. Waiting for the new build on {{ host() }}…</p>
+        <button type="button" (click)="store.continueAfterDeploy()">Deployed — continue</button>
+      </div>
+    }
+    @if (isLoop()) {
+      <p role="status" data-testid="loop-step">{{ stepText() }}</p>
+      <app-run-view [showChart]="false" />
+    }
+
+    @if (ledger()?.exists) {
+      <section aria-labelledby="ledger-h">
+        <h2 id="ledger-h">Ledger</h2>
         <p data-testid="ledger-line">{{ ledger()?.line }}</p>
         <dl class="tiles" data-testid="ledger-counts">
           @for (s of statuses; track s[0]) {
@@ -187,44 +200,128 @@ const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Pending verifi
             <ngx-charts-line-chart [view]="[640, 240]" [results]="roundSeries()" [xAxis]="true" [yAxis]="true" [legend]="true" legendTitle="Findings" [showXAxisLabel]="true" xAxisLabel="Round" [animations]="animations" [tooltipDisabled]="true" />
           </app-chart-panel>
         }
-      } @else {
-        <p>No ledger yet. A dry run records what the crawl finds without changing anything.</p>
-      }
-    </section>
+      </section>
+    } @else if (ledger()) {
+      <p class="hint">No ledger yet. Record findings without fixing (under More options) to see what the loop would work on.</p>
+    }
+
+    <details class="more" data-testid="loop-more">
+      <summary>More options…</summary>
+      <form (submit)="$event.preventDefault(); saveConfig()" class="config" data-testid="config-form">
+        <p class="hint">Settings are saved to a11y-508.config.json as you change them.</p>
+        <div class="field"><label for="c-url">Start URL</label><input id="c-url" type="url" [value]="cfg()['url'] || loopUrl()" (input)="set('url', v($event))" (change)="saveConfig()" /></div>
+        <div class="field"><label for="c-args">Crawl options, one per line</label><textarea id="c-args" rows="2" [value]="lines(cfg()['args'])" (input)="set('args', toLines(v($event)))" (change)="saveConfig()"></textarea></div>
+        <div class="field"><label for="c-source">Folders the assistant may edit, one per line</label><textarea id="c-source" rows="2" [value]="lines(cfg()['source'] || plan()?.sourceList)" (input)="set('source', toLines(v($event)))" (change)="saveConfig()"></textarea></div>
+        <div class="field"><label for="c-check">Check command (build and test)</label><input id="c-check" type="text" [value]="cfg()['check'] ?? (plan()?.check || '')" (input)="set('check', v($event))" (change)="saveConfig()" /></div>
+        <div class="field"><label for="c-checkEvery">Run the check</label>
+          <select id="c-checkEvery" (change)="set('checkEvery', v($event)); saveConfig()"><option value="finding" [selected]="cfg()['checkEvery'] !== 'round'">after each fix</option><option value="round" [selected]="cfg()['checkEvery'] === 'round'">once per round</option></select></div>
+        <div class="field"><label for="c-branch">Branch to commit on</label><input id="c-branch" type="text" [value]="cfg()['branch'] || plan()?.branch || ''" (input)="set('branch', v($event))" (change)="saveConfig()" /></div>
+        <div class="choice"><input id="c-push" type="checkbox" [checked]="cfg()['push'] ?? plan()?.push ?? true" (change)="set('push', $any($event.target).checked); saveConfig()" /><label for="c-push">Push each round's commits</label></div>
+        <div class="field"><label for="c-maxAttempts">Fix attempts per finding</label><input id="c-maxAttempts" type="number" min="1" [value]="cfg()['maxAttempts'] ?? plan()?.maxAttempts ?? ''" (input)="setNum('maxAttempts', v($event))" (change)="saveConfig()" /></div>
+        <div class="field"><label for="c-agentTimeout">Assistant timeout per task (ms)</label><input id="c-agentTimeout" type="number" min="0" [value]="cfg()['agentTimeout'] ?? ''" (input)="setNum('agentTimeout', v($event))" (change)="saveConfig()" /></div>
+        <div class="field"><label for="c-triageBatch">Review items per triage prompt</label><input id="c-triageBatch" type="number" min="1" [value]="cfg()['triageBatch'] ?? ''" (input)="setNum('triageBatch', v($event))" (change)="saveConfig()" /></div>
+        <p><span role="status" data-testid="config-status">{{ configStatus() }}</span></p>
+        @if (configErrors().length) {
+          <div class="notice error" role="alert" data-testid="config-errors"><ul>@for (e of configErrors(); track $index) { <li>{{ e }}</li> }</ul></div>
+        }
+      </form>
+      <div class="actions">
+        <button type="button" class="secondary small" (click)="startLoop('dry-run')" [disabled]="store.active()">Record findings without fixing</button>
+        <span class="hint">A dry run: one crawl, recorded in the ledger; nothing is changed.</span>
+      </div>
+    </details>
   `,
 })
-export class FixLoopScreen implements OnInit {
+export class FixLoopScreen implements OnInit, OnDestroy {
   private api = inject(Api);
   readonly env = inject(EnvStore);
   readonly store = inject(RunStore);
   private form = inject(FormStore);
   readonly confirmDialog = viewChild<ElementRef<HTMLDialogElement>>('confirm');
+  private paneEl = viewChild<ElementRef<HTMLPreElement>>('pane');
   readonly animations = !prefersReducedMotion();
   readonly statuses = STATUSES;
   readonly lists = LISTS;
-  readonly deployedOptions: [string, string][] = [['', 'the default (command if a deploy command is set, else press Continue)'], ['command', 'run the deploy command'], ['bundle-change', "watch the start page's bundles change"], ['enter', 'I press Deployed — continue'], ['none', 'no deploy (served from the working tree)']];
+  readonly promptNote = 'the prompt file the loop writes';
 
   readonly cfg = signal<Record<string, any>>({});
+  readonly configExists = signal(false);
+  readonly defaults = signal<LoopDefaults | null>(null);
   readonly configErrors = signal<string[]>([]);
   readonly configStatus = signal('');
   readonly choice = signal<string | null>(null);
   readonly custom = signal('');
   readonly testResult = signal<AgentTest | null>(null);
   readonly testing = signal(false);
-  readonly noGate = signal(false);
-  readonly rounds = signal('20');
+  readonly testStartedAt = signal(0);
   readonly runError = signal('');
   readonly ledger = signal<LedgerInfo | null>(null);
+  readonly pickerOpen = signal(false);
+  readonly copied = signal('');
+  readonly follow = signal(true);
+  readonly now = signal(Date.now());
+  private ticker: any = setInterval(() => this.now.set(Date.now()), 1000);
 
   readonly presets = computed<Preset[]>(() => this.env.env()?.presets || []);
   readonly shell = computed(() => this.env.env()?.shell?.name || 'your shell');
   readonly chosenPreset = computed(() => this.presets().find((p) => p.name === this.choice()) || null);
   readonly agentSpec = computed(() => (this.choice() === 'custom' ? this.custom().trim() : this.choice()) || '');
   readonly agentReady = computed(() => (this.choice() === 'custom' ? this.custom().includes('{promptFile}') : !!this.chosenPreset()?.found));
+  readonly anyInstalled = computed(() => this.presets().some((p) => p.found));
+  readonly showPicker = computed(() => !!this.env.env() && (this.pickerOpen() || !this.anyInstalled() || (!!this.chosenPreset() && !this.chosenPreset()!.found) || this.store.kind() === 'install'));
+  readonly assistantLabel = computed(() => (this.choice() === 'custom' ? 'a custom command' : this.chosenPreset()?.found ? this.chosenPreset()!.label : null));
+  readonly assistantVersion = computed(() => (this.choice() === 'custom' ? null : this.chosenPreset()?.version || (this.chosenPreset()?.found ? 'version unknown' : null)));
   readonly isLoop = computed(() => ['loop', 'dry-run'].includes(this.store.kind() || ''));
-  readonly canStart = computed(() => this.agentReady() && (!!this.cfg()['check'] || this.noGate()) && !this.store.active());
   readonly installFailed = computed(() => this.store.kind() === 'install' && !!this.store.done() && !this.store.done()!['found']);
   readonly installOutput = computed(() => this.store.raw().map((l) => l.replace(/^! /, '')).join('\n'));
+
+  // The start URL: the config's, else the one remembered from the Run screen.
+  readonly loopUrl = computed(() => String(this.cfg()['url'] || this.form.url() || '').trim());
+  readonly repoOk = computed(() => !!this.defaults()?.repo.git && !!this.defaults()?.package.exists);
+  readonly repoProblem = computed(() => {
+    const d = this.defaults();
+    if (!d) return 'is being read';
+    if (!d.repo.git && !d.package.exists) return 'is not a git repository and has no package.json';
+    return !d.repo.git ? 'is not a git repository' : 'has no package.json';
+  });
+  readonly plan = computed(() => {
+    const d = this.defaults();
+    if (!d) return null;
+    const c = this.cfg();
+    const sourceList: string[] = Array.isArray(c['source']) && c['source'].length ? c['source'] : d.effective.source;
+    return {
+      sourceList,
+      source: sourceList.join(', '),
+      check: (c['check'] ?? d.effective.check) || null,
+      branch: c['branch'] || d.effective.branch,
+      push: c['push'] ?? d.effective.push,
+      remote: d.repo.remote,
+      maxAttempts: c['maxAttempts'] ?? d.effective.maxAttempts,
+    };
+  });
+  // Auth the loop's crawls use without a session: a way chosen on the Run screen, or in the crawl options.
+  readonly authConfigured = computed(() => this.form.authChosen() || (Array.isArray(this.cfg()['args']) && this.cfg()['args'].some((a: string) => /^--(state|login|cookie|token-storage)(=|$)/.test(a))));
+  readonly needsSignIn = computed(() => {
+    const url = this.loopUrl();
+    if (!url || this.authConfigured()) return false;
+    const s = this.env.env()?.session;
+    if (!s?.exists) return true;
+    if (!s.origins?.length) return false;
+    try {
+      return !s.origins.includes(new URL(url).origin);
+    } catch {
+      return false;
+    }
+  });
+  readonly canStart = computed(() => this.agentReady() && this.repoOk() && !!this.loopUrl() && !this.needsSignIn() && !this.store.active());
+  readonly host = computed(() => {
+    try {
+      return new URL(this.loopUrl()).host;
+    } catch {
+      return 'the site';
+    }
+  });
+  readonly waitingForBuild = computed(() => this.store.awaitingDeploy() && !this.store.done());
   readonly testText = computed(() => {
     const t = this.testResult();
     if (!t) return '';
@@ -235,8 +332,7 @@ export class FixLoopScreen implements OnInit {
   readonly startWarning = computed(() => {
     if (!this.agentReady()) return 'Choose an installed assistant first.';
     const t = this.testResult();
-    if (!t) return 'The assistant has not been tested yet.';
-    if (t.status !== 'ready') return 'The last test of this assistant did not pass.';
+    if (t && t.status !== 'ready') return 'The last test of this assistant did not pass.';
     return '';
   });
   readonly stepText = computed(() => {
@@ -250,6 +346,29 @@ export class FixLoopScreen implements OnInit {
     if (step === 'fix' || step === 'gate' || step === 'commit') return `Round ${r}: ${step === 'fix' ? '' : step + ', '}fix ${t?.n || 0} of ${t?.m || 0}`;
     if (step === 'deploy' || step === 'await-deploy') return `Round ${r}: waiting for deploy`;
     return `Round ${r}: ${step || 'crawl'}`;
+  });
+
+  // The assistant's live output: the loop's current call, or Test assistant.
+  readonly paneShown = computed(() => this.testing() || !!this.testResult() || !!this.store.agentCall());
+  readonly paneText = computed(() => {
+    if (this.testing()) return '(waiting for the assistant…)';
+    const c = this.store.agentCall();
+    if (c && (!this.testResult() || c.startedAt > this.testStartedAt())) return c.text || '(no output yet)';
+    const t = this.testResult();
+    return t ? t.output.join('\n') || '(no output)' : '';
+  });
+  readonly paneHeading = computed(() => {
+    const who = this.assistantLabel() || 'The assistant';
+    const secs = (from: number, to: number | null) => `${Math.max(0, Math.round(((to ?? this.now()) - from) / 1000))} s`;
+    if (this.testing()) return `${who}, testing · running ${secs(this.testStartedAt(), null)}`;
+    const c = this.store.agentCall();
+    if (c && (!this.testResult() || c.startedAt > this.testStartedAt())) {
+      const what = c.kind === 'triage' ? `triaging ${c.label}` : `fixing ${c.n ?? c.task} of ${c.m ?? '?'}: ${c.label}`;
+      if (!c.endedAt) return `${who}, ${what} · running ${secs(c.startedAt, null)}`;
+      return `${who}, ${what} · ${OUTCOMES[c.outcome || 'done'] || c.outcome} (${secs(c.startedAt, c.endedAt)})`;
+    }
+    const t = this.testResult();
+    return t ? `${who}, test · ${this.testText()}` : who;
   });
 
   readonly roundCols = [{ key: 'round', label: 'Round' }, { key: 'open', label: 'Open violations' }, { key: 'verified', label: 'Verified fixed (total)' }, { key: 'at', label: 'Finished' }];
@@ -272,14 +391,14 @@ export class FixLoopScreen implements OnInit {
       this.env.cwd();
       void this.loadLedger();
     });
-    // After a switch of directory, the new directory's config; an edit in
+    // After a switch of directory, the new directory's config and defaults; an edit in
     // progress is discarded (the server never saw it).
     let seen: string | null = null;
     effect(() => {
       const cwd = this.env.cwd();
       untracked(() => {
         if (!cwd) return;
-        if (seen && seen !== cwd) void this.loadConfig();
+        if (seen && seen !== cwd) void Promise.all([this.loadConfig(), this.loadDefaults()]);
         seen = cwd;
       });
     });
@@ -287,25 +406,46 @@ export class FixLoopScreen implements OnInit {
       const d = this.store.done();
       if (d && this.store.kind() === 'install') void this.env.load();
     });
+    // Preselect the installed assistant when the config names none.
+    effect(() => {
+      const presets = this.presets();
+      untracked(() => {
+        if (this.choice()) return;
+        const p = PREFERENCE.map((n) => presets.find((x) => x.name === n && x.found)).find(Boolean);
+        if (p) this.choice.set(p.name);
+      });
+    });
+    // Follow the output as it grows, unless the person scrolled up.
+    effect(() => {
+      this.paneText();
+      untracked(() => {
+        if (this.follow()) setTimeout(() => this.scrollPane());
+      });
+    });
   }
 
   async ngOnInit(): Promise<void> {
     // In parallel: the first /api/env can take seconds (assistant detection),
     // and the config must not arrive after the developer has started editing.
-    await Promise.all([this.env.load(), this.loadConfig()]);
+    await Promise.all([this.env.load(), this.loadConfig(), this.loadDefaults()]);
     const spec = this.agentSpec();
     if (!this.testResult() && spec && this.env.env()?.lastTest?.[spec]) this.testResult.set(this.env.env()!.lastTest[spec]);
+  }
+
+  ngOnDestroy(): void {
+    clearInterval(this.ticker);
   }
 
   private configLoads = 0;
   async loadConfig(): Promise<void> {
     const n = ++this.configLoads;
-    let c: { config: Record<string, any> } | null = null;
+    let c: { exists: boolean; config: Record<string, any> } | null = null;
     try {
-      c = await this.api.get<{ config: Record<string, any> }>('/api/config');
+      c = await this.api.get<{ exists: boolean; config: Record<string, any> }>('/api/config');
     } catch {}
     if (n !== this.configLoads || !c) return;
     this.cfg.set(c.config || {});
+    this.configExists.set(!!c.exists);
     this.configErrors.set([]);
     this.configStatus.set('');
     const a = c.config?.['agent'];
@@ -317,9 +457,21 @@ export class FixLoopScreen implements OnInit {
         this.choice.set('custom');
         this.custom.set(a);
       }
+    } else {
+      const p = PREFERENCE.map((x) => this.presets().find((y) => y.name === x && y.found)).find(Boolean);
+      if (p) this.choice.set(p.name);
     }
     const spec = this.agentSpec();
     this.testResult.set((spec && this.env.env()?.lastTest?.[spec]) || null);
+  }
+
+  private defaultsLoads = 0;
+  async loadDefaults(): Promise<void> {
+    const n = ++this.defaultsLoads;
+    try {
+      const d = await this.api.get<LoopDefaults>('/api/loop/defaults');
+      if (n === this.defaultsLoads) this.defaults.set(d);
+    } catch {}
   }
 
   private ledgerLoads = 0;
@@ -352,6 +504,16 @@ export class FixLoopScreen implements OnInit {
     this.set(key, value === '' ? '' : Number(value));
   }
 
+  // The runnable command for the next task's prompt file, or a11y-508-work/prompt.md before any loop.
+  runCommandFor(p: Preset): string | null {
+    const rc = p.runCommand;
+    if (!rc) return null;
+    const c = this.store.agentCall();
+    if (!c) return rc;
+    const file = c.kind === 'triage' ? `prompt-r${c.round}-triage-${c.task - 1}.md` : `prompt-r${c.round}-fix-${c.task - 1}.md`;
+    return rc.replace(/prompt\.md(?=[^\\/]*$)/, file);
+  }
+
   async choose(name: string): Promise<void> {
     this.choice.set(name);
     const spec = this.agentSpec();
@@ -366,19 +528,40 @@ export class FixLoopScreen implements OnInit {
     await this.saveConfig();
   }
 
-  async saveConfig(): Promise<void> {
+  // The config as it will be written: what the person set, with the inferred values filling the
+  // rest, and the deployment watched silently (deployment happens outside this tool).
+  private completed(): Record<string, any> {
+    const c = { ...this.cfg() };
+    if (!c['url'] && this.loopUrl()) c['url'] = this.loopUrl();
+    const pl = this.plan();
+    if (pl) {
+      if (!Array.isArray(c['source']) || !c['source'].length) c['source'] = pl.sourceList;
+      if (c['check'] === undefined && pl.check) c['check'] = pl.check;
+      if (!c['branch']) c['branch'] = pl.branch;
+      if (c['push'] === undefined) c['push'] = !!pl.push && !!pl.remote;
+      if (c['maxAttempts'] === undefined) c['maxAttempts'] = pl.maxAttempts;
+    }
+    if (!c['deployed'] && !c['deploy']) {
+      c['deployed'] = 'bundle-change';
+      if (c['deployTimeout'] === undefined) c['deployTimeout'] = this.defaults()?.effective.deployTimeout ?? 30 * 60 * 1000;
+    }
+    return c;
+  }
+
+  async saveConfig(): Promise<boolean> {
     // A load still in flight must not replace what is being saved.
     this.configLoads++;
-    const c = { ...this.cfg() };
-    if (!c['url'] && this.form.url()) c['url'] = this.form.url();
     try {
-      const r = await this.api.put<{ config: Record<string, any>; warnings: string[] }>('/api/config', { config: c });
+      const r = await this.api.put<{ exists: boolean; config: Record<string, any>; warnings: string[] }>('/api/config', { config: this.completed() });
       this.cfg.set(r.config);
+      this.configExists.set(true);
       this.configErrors.set([]);
       this.configStatus.set(`Saved${r.warnings?.length ? ` (${r.warnings.join('; ')})` : ''}.`);
+      return true;
     } catch (e: any) {
       this.configErrors.set(e.body?.errors || [e.message]);
       this.configStatus.set('Not saved.');
+      return false;
     }
   }
 
@@ -399,6 +582,7 @@ export class FixLoopScreen implements OnInit {
 
   async testAgent(): Promise<void> {
     this.testing.set(true);
+    this.testStartedAt.set(Date.now());
     try {
       this.testResult.set(await this.api.post<AgentTest>('/api/agent/test', { agent: this.agentSpec() }));
     } catch (e: any) {
@@ -408,19 +592,52 @@ export class FixLoopScreen implements OnInit {
     }
   }
 
+  // Fix the violations: the config from what was inferred (written if there is none, or if the
+  // assistant changed), then the loop with its default number of rounds.
+  async fix(): Promise<void> {
+    if (!this.canStart()) return;
+    this.runError.set('');
+    if (!this.configExists() || this.cfg()['agent'] !== this.agentSpec()) {
+      this.set('agent', this.agentSpec());
+      if (!(await this.saveConfig())) return;
+    }
+    await this.startLoop('loop');
+  }
+
   async startLoop(kind: 'loop' | 'dry-run'): Promise<void> {
     this.runError.set('');
     try {
-      await this.store.start({ kind, maxRounds: kind === 'loop' ? this.rounds() : undefined, auth: this.form.auth(true), agent: kind === 'loop' ? this.agentSpec() : undefined });
+      await this.store.start({ kind, auth: this.form.auth(true), agent: kind === 'loop' ? this.agentSpec() : undefined });
       this.form.clearToken();
     } catch (e: any) {
       this.runError.set(e.message);
     }
   }
 
-  async copy(text: string): Promise<void> {
+  setFollow(on: boolean): void {
+    this.follow.set(on);
+    if (on) this.scrollPane();
+  }
+
+  // Scrolling up stops following; Follow (or scrolling back to the end) starts it again.
+  onPaneScroll(): void {
+    const el = this.paneEl()?.nativeElement;
+    if (!el) return;
+    const atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 4;
+    if (atEnd !== this.follow()) this.follow.set(atEnd);
+  }
+
+  private scrollPane(): void {
+    const el = this.paneEl()?.nativeElement;
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
+  async copy(text: string, what = ''): Promise<void> {
     try {
       await navigator.clipboard.writeText(text);
-    } catch {}
+      this.copied.set(what);
+    } catch {
+      this.copied.set('');
+    }
   }
 }

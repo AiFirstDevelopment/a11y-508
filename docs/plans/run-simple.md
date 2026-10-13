@@ -39,6 +39,12 @@ clicked because they look like actions.
 | M2: unchosen auth mode ignores the saved session (`'none'`) | (b) `run-command` `toContainText('--state a11y-508-state.json')`; (c) the same, on the command without `--state` |
 | M3: Live notice's **Sign in** button removed | (d) `notice.getByRole('button', { name: 'Sign in' }).click()` times out |
 | M4: `localStorage.setItem(URL_KEY, …)` removed | (e) new page in the same context: `Start URL` `toHaveValue('http://127.0.0.1:9/remembered')`, received `""` |
+| M5: Found column reads links only | crawl.spec "discovery": `found` expected `8 links · 3 clicked → 2 new`, received `8 links` |
+| M6: `--stay` closes the sign-in browser and crawls headless | sign-in.spec `--login --stay`: `report.options.stay` expected `true`, received `undefined` |
+| M7: the sign-in warning filter removed | run-simple (b): warn notice with "A browser window is open" expected count 0, received 1 |
+| M8: npm's placeholder `test` treated as a real one | server loop-defaults test 2 (and 1): `package.test` expected `null` |
+| M9: the loop ignores the saved session (`sessionArgs` returns `[]`) | test/loop.mjs: the sessionArgs unit check and "each round crawls with --state and says so once" fail |
+| M10: the dashboard drops `agent-output` events | loop.spec AC 14: `agent-output` expected to contain "fake agent: reading the prompt", received "(no output yet)" |
 
 Changed existing specs (no assertion removed): `harness.ts` gains `moreOptions()`,
 and `fillRun` opens More options before token/max pages/fail-on/advanced fields;
@@ -47,3 +53,21 @@ the auth radios or the command box; `sign-in.spec.ts` drives the inline **Sign i
 (plus a check that `/sign-in` still renders and is not in the nav);
 folder-picker AC 1 opens `/sign-in` by address; `self-audit.spec.ts` audits
 `/sign-in` with a second one-page crawl, since nothing links to it now.
+
+## The Fix loop, minimal
+
+`GET /api/loop/defaults` infers the repository facts and suggested settings (config wins).
+The screen: "Fixing with …" (*change* opens the picker), the sign-in state, one line of
+what will happen, **Fix the violations** (writes the inferred config if none), the run's
+progress, the live assistant output pane (`agent-output` events, `role="log"`, Follow,
+running timer), the ledger, and **More options…** (every setting, saved on change; a dry
+run as *Record findings without fixing*). Deploy settings are not on the screen; the
+inferred config watches the bundles (`bundle-change`, 30 min), and **Deployed — continue**
+works in that mode too (the loop listens on stdin while it polls).
+
+Changed loop specs (assertions kept unless noted): AC 11 used the deploy fields, which no
+longer exist; its rejection case now uses the core's "no start URL" message and the
+written config gains the inferred `branch`, `deployed` and `deployTimeout`, plus a check
+that no deploy field is on screen. AC 12 / AC 14 / gemini run: set up a package.json (and
+for AC 12 a session file covering the start URL), open the picker with *change*, and no
+longer set "Rounds to run". Dry runs go through More options.

@@ -165,9 +165,14 @@ export async function npmPrefix(shell, env, platform = process.platform) {
 async function version(path, env, platform) {
   // .cmd and .bat need cmd on Windows; quoted, as a path may hold spaces.
   const win = platform === 'win32';
-  const r = await run(win ? `"${path}"` : path, ['--version'], { env, timeout: 15000, shell: win });
-  const line = `${r.out}\n${r.err}`.split(/\r?\n/).map((l) => l.trim()).find(Boolean);
-  return r.code === 0 && line ? line.slice(0, 120) : null;
+  // Node CLIs can take a while to start the first time; stdout is captured with or without a shell.
+  const r = await run(win ? `"${path}"` : path, ['--version'], { env, timeout: 30000, shell: win });
+  const lines = `${r.out}\n${r.err}`.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // The version is the line that looks like one (a CLI may print a warning first); "unknown" only
+  // when the call failed and printed no version at all.
+  const v = lines.find((l) => /\d+\.\d+(\.\d+)?/.test(l) && l.length <= 120) || null;
+  if (v) return v;
+  return r.code === 0 && lines[0] ? lines[0].slice(0, 120) : null;
 }
 
 // One entry per preset, always all of them, in PRESETS order.

@@ -2,9 +2,9 @@
 // controlling PATH, the shell, and npm through stub executables.
 
 import { test, expect, type Page } from '@playwright/test';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { moreOptions, dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath } from './harness';
+import { moreOptions, openPicker, dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath } from './harness';
 
 const PRESETS = {
   claude: 'claude -p --permission-mode acceptEdits "Read the file {promptFile} and do exactly what it says."',
@@ -78,10 +78,19 @@ test('AC 12: the picker lists every preset, live or greyed as installed, saves t
   const r = rig();
   const claude = cliStub(r, r.pathBin, 'claude');
   const gemini = cliStub(r, r.npmBin, 'gemini'); // only in npm prefix -g's bin directory
-  const dash = await dashboard({ env: r.env });
+  // The app's repository (git and a package.json) with a session covering the start URL, so the
+  // Fix button's state depends on the assistant alone.
+  const cwd = tempDir('a11y-508-picker-');
+  gitRepo(cwd);
+  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app', scripts: { build: 'true' } }));
+  writeFileSync(join(cwd, 'a11y-508-state.json'), JSON.stringify({ version: 1, origins: ['http://127.0.0.1:9'], cookies: [], storage: {} }));
+  const dash = await dashboard({ env: r.env, cwd });
   try {
     writeFileSync(join(dash.cwd, 'a11y-508.config.json'), JSON.stringify({ url: 'http://127.0.0.1:9/', check: 'true' }));
     await open(page, dash, '/fix-loop');
+    // Claude Code is installed, so it is the one preselected; the picker opens with "change".
+    await expect(page.getByTestId('assistant-line')).toContainText('Fixing with Claude Code (9.9.9 (stub claude))', { timeout: 60_000 });
+    await openPicker(page);
     await expect(page.getByTestId('picker').locator('.preset label')).toHaveCount(4);
     const names = await page.getByTestId('picker').locator('.preset label').allTextContents();
     expect(names).toEqual(['Claude Code', 'Gemini CLI', 'Codex', 'Custom command']);
@@ -96,6 +105,12 @@ test('AC 12: the picker lists every preset, live or greyed as installed, saves t
     await expect(entry(page, 'gemini')).toContainText('found through npm prefix -g');
     await expect(entry(page, 'gemini').getByTestId('where')).toHaveText(gemini);
     await expect(entry(page, 'gemini').getByTestId('agent-command')).toHaveText(gemini + PRESETS.gemini.slice('gemini'.length));
+    // By hand: the exact command for this machine, no placeholder, the resolved executable, the real prompt path.
+    const byHand = entry(page, 'gemini').getByTestId('run-command');
+    await expect(byHand).not.toContainText('{');
+    await expect(byHand).toContainText(gemini);
+    await expect(byHand).toContainText(join(dash.cwd, 'a11y-508-work', 'prompt.md'));
+    await expect(byHand).toContainText('GEMINI_CLI_TRUST_WORKSPACE');
 
     await expect(entry(page, 'codex')).toHaveAttribute('data-found', 'false');
     await expect(entry(page, 'codex')).toHaveClass(/missing/);
@@ -124,6 +139,7 @@ test('AC 12: the picker lists every preset, live or greyed as installed, saves t
     await expect(page.getByTestId('test-output')).toContainText('please sign in first');
   } finally {
     await dash.stop();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10 });
   }
 
   // Gemini on PATH is found there, and runs as plain "gemini".
@@ -132,6 +148,7 @@ test('AC 12: the picker lists every preset, live or greyed as installed, saves t
   const dash2 = await dashboard({ env: r2.env });
   try {
     await open(page, dash2, '/fix-loop');
+    await openPicker(page);
     await expect(entry(page, 'gemini')).toContainText('found on PATH');
     await expect(entry(page, 'gemini').getByTestId('where')).toHaveText(gemini2);
     await expect(entry(page, 'gemini').getByTestId('agent-command')).toHaveText(PRESETS.gemini);
@@ -149,6 +166,7 @@ test('AC 12: a preset found only in npm prefix -g is run by that path when the l
   writeFileSync(join(cwd, '.gitignore'), 'a11y-508-work/\na11y-508-report/\n');
   mkdirSync(join(cwd, 'src'));
   writeFileSync(join(cwd, 'src', 'index.html'), '<!doctype html><title>x</title>');
+  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
   writeFileSync(join(cwd, 'a11y-508.config.json'), JSON.stringify({ url: site.base + 'about.html', args: ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots'], agent: 'gemini', check: 'true', push: false, deployed: 'none' }));
   g('add', '-A');
   g('commit', '-q', '-m', 'init');
@@ -160,8 +178,8 @@ test('AC 12: a preset found only in npm prefix -g is run by that path when the l
     await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
     await page.getByLabel('Start URL').fill(site.base + 'about.html');
     await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Fix loop' }).click();
+    await openPicker(page);
     await expect(entry(page, 'gemini')).toHaveAttribute('data-found', 'true');
-    await page.getByLabel('Rounds to run').fill('1');
     await page.getByTestId('loop-start').click();
     await expect(page.getByTestId('loop-step')).toHaveText(/Loop finished/, { timeout: 240_000 });
     const calls = readFileSync(join(r.root, 'gemini-calls.txt'), 'utf8');
@@ -178,6 +196,7 @@ test('AC 13: Install shows the command and shell, runs only after confirmation, 
   const calls = () => (existsSync(r.record) ? readFileSync(r.record, 'utf8').trim().split('\n').filter(Boolean) : []);
   try {
     await open(page, dash, '/fix-loop');
+    await openPicker(page);
     await entry(page, 'codex').getByRole('radio').check();
     const panel = page.getByTestId('install-panel');
     await expect(panel.getByTestId('install-command')).toHaveText('npm install -g @openai/codex');
@@ -239,6 +258,7 @@ test('checks-rule-packs AC 11: remedy command regions have unique names, so the 
   const dash = await dashboard({ env: r.env });
   try {
     await open(page, dash, '/fix-loop');
+    await openPicker(page);
     await entry(page, 'codex').getByRole('radio').check();
     writeFileSync(r.mode, 'eacces-network');
     await page.getByTestId('install-panel').getByRole('button', { name: 'Install' }).click();

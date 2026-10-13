@@ -14,6 +14,18 @@ export interface Preset {
   version: string | null;
   command: string;
   install: string;
+  // What a person can paste into their shell to run it by hand (null when not installed).
+  runCommand?: string | null;
+}
+
+// GET /api/loop/defaults: what the Fix loop infers from the working directory.
+export interface LoopDefaults {
+  repo: { git: boolean; remote: string | null; branch: string | null };
+  package: { exists: boolean; build: string | null; test: string | null };
+  source: string[];
+  suggested: Record<string, any>;
+  effective: { source: string[]; check: string | null; branch: string; push: boolean; deployed: string; deployTimeout: number; maxAttempts: number };
+  configExists: boolean;
 }
 
 export interface Remedy {
@@ -77,7 +89,7 @@ export interface EnvInfo {
   platform: string;
   browser: { found: boolean; path: string | null; error?: string };
   config: { exists: boolean; file: string };
-  session: { exists: boolean; file: string; ageMs?: number; capturedAt?: string | null };
+  session: { exists: boolean; file: string; ageMs?: number; capturedAt?: string | null; origins?: string[] };
   report: { exists: boolean; finishedAt?: string; baseUrl?: string };
   tokenInEnv: boolean;
   tokenHeld: boolean;

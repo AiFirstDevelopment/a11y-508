@@ -1,15 +1,15 @@
-import { Component, ElementRef, OnInit, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
+import { Component, OnInit, computed, effect, inject, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { ADVANCED, AuthMode, FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
-import { ageText, localTime, savedAgo } from '../core/format';
-import { SignInFlow } from '../core/sign-in';
+import { ageText } from '../core/format';
+import { SignInState } from '../shared/sign-in-state';
 
 @Component({
   selector: 'app-run-screen',
-  imports: [RouterLink],
+  imports: [RouterLink, SignInState],
   template: `
     <h1>Run a crawl</h1>
     @if (noBrowser()) {
@@ -25,30 +25,7 @@ import { SignInFlow } from '../core/sign-in';
         <label for="url">Start URL</label>
         <input id="url" name="url" type="url" required [value]="form.url()" (input)="form.url.set(val($event))" (blur)="form.rememberUrl()" placeholder="https://app.example.gov" />
       </div>
-      <div class="signin-state">
-        <p role="status" id="signin-state" data-testid="signin-state" tabindex="-1" #signinState>
-          @if (flow.active()) {
-            A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.
-          } @else if (flow.failed()) {
-            <span class="err-text">Sign-in did not finish: {{ flow.error() }}</span>
-          } @else if (signedIn()) {
-            <span class="ok">Signed in · session saved {{ savedText() }} (<time [attr.datetime]="savedAt().iso" [attr.title]="savedAt().iso">{{ savedAt().local }}</time>)</span>
-          } @else {
-            Not signed in
-          }
-        </p>
-        @if (!flow.active()) {
-          @if (flow.failed()) {
-            <button type="button" (click)="signIn()" [disabled]="!canSignIn()">Try again</button>
-          } @else if (signedIn()) {
-            <button type="button" class="link" (click)="signIn()" [disabled]="!canSignIn()">Sign in again</button>
-          } @else {
-            <button type="button" (click)="signIn()" [disabled]="!canSignIn()">Sign in</button>
-          }
-        } @else {
-          <button type="button" class="secondary" (click)="run.stop()">Cancel sign-in</button>
-        }
-      </div>
+      <app-sign-in-state [url]="form.url()" [goLive]="true" />
       @if (commandError() || error()) {
         <div class="notice error" role="alert" data-notice="form-error">{{ commandError() || error() }}</div>
       }
@@ -182,32 +159,12 @@ export class RunScreen implements OnInit {
     const s = this.env.env()?.session;
     return s?.exists ? ` (${s.file}, ${ageText(s.ageMs)})` : ' (none saved yet)';
   });
-  readonly flow = inject(SignInFlow);
-  private statusEl = viewChild<ElementRef<HTMLElement>>('signinState');
-  readonly signedIn = computed(() => !!this.env.env()?.session?.exists || !!this.flow.saved());
-  readonly savedText = computed(() => {
-    const s = this.env.env()?.session;
-    return s?.exists ? savedAgo(s.ageMs) : 'just now';
-  });
-  readonly savedAt = computed(() => {
-    const s = this.env.env()?.session;
-    const t = s?.exists && s.ageMs !== undefined ? new Date(Date.now() - s.ageMs) : new Date();
-    return { iso: t.toISOString(), local: localTime(t) };
-  });
-  readonly canSignIn = computed(() => !!this.form.url().trim() && !this.run.active());
   // No saved session and no other way chosen under More options: sign in first.
   readonly needsSignIn = computed(() => !this.form.hasWayIn());
   readonly canStart = computed(() => !!this.form.url().trim() && !this.run.active() && !this.needsSignIn() && (!this.noBrowser() || !!String(this.adv()['chrome'] || '').trim()));
   private timer: any;
 
   constructor() {
-    // When a sign-in finishes, focus moves to its status, which says how it ended.
-    let wasActive = false;
-    effect(() => {
-      const active = this.flow.active();
-      if (wasActive && !active) untracked(() => setTimeout(() => this.statusEl()?.nativeElement.focus()));
-      wasActive = active;
-    });
     effect(() => {
       // The command is written for the working directory, so it follows a switch.
       this.env.cwd();
@@ -227,18 +184,6 @@ export class RunScreen implements OnInit {
 
   mode(m: AuthMode): void {
     this.form.choose(m);
-  }
-
-  async signIn(): Promise<void> {
-    if (!this.canSignIn()) return;
-    this.error.set('');
-    try {
-      await this.flow.start();
-      // The crawl runs in the sign-in window; Live shows the wait, then the pages.
-      await this.router.navigateByUrl('/live');
-    } catch (e: any) {
-      this.error.set(e.message);
-    }
   }
 
   private async refreshCommand(body: Record<string, unknown>): Promise<void> {

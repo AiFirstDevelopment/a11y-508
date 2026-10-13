@@ -40,9 +40,10 @@ export class SignInFlow {
   }
 
   // Sign in and crawl in the same window, with the Run form's options.
-  async start(): Promise<void> {
+  // url: the Run form's by default; the Fix loop passes its config's.
+  async start(url = this.form.url().trim()): Promise<void> {
     this.form.rememberUrl();
-    await this.run.start({ kind: 'crawl', url: this.form.url().trim(), options: this.form.options(), auth: { mode: 'signin' } });
+    await this.run.start({ kind: 'crawl', url, options: this.form.options(), auth: { mode: 'signin' } });
   }
 
   // The Sign in route: sign in and save the session, without crawling.

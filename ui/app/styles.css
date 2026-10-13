@@ -126,3 +126,8 @@ button.link { background: transparent; border-color: transparent; color: var(--a
 button.link:disabled { background: transparent; border-color: transparent; color: #595959; }
 details.more { margin: 20px 0 12px; border-top: 1px solid var(--line); padding-top: 10px; }
 .back { margin: 8px 0 0; }
+button.big { font-size: 1.1rem; padding: 10px 22px; }
+.agent-pane { margin: 12px 0; }
+.pane-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+.pane-head h2 { font-size: 1rem; margin: 8px 0 4px; }
+pre.pane { height: calc(12 * 1.4em + 16px); max-height: none; overflow: auto; white-space: pre-wrap; }

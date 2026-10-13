@@ -8,12 +8,13 @@ import { createReadStream, existsSync, mkdtempSync, readFileSync, realpathSync, 
 import { tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import { findChrome } from '../../src/chrome.mjs';
-import { PRESETS, installRemedies, runAgent, agentEnv, agentEnvFor } from '../../src/agent.mjs';
+import { PRESETS, installRemedies, runAgent, agentEnv, agentEnvFor, runnableCommand } from '../../src/agent.mjs';
 import { loadConfig, normalizeConfig, summaryLine, WORK_DIR } from '../../src/loop.mjs';
 import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine } from './args.mjs';
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
+import { loopDefaults } from './loop-defaults.mjs';
 import { listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
@@ -238,10 +239,14 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     if (existsSync(sessionFile)) {
       const st = statSync(sessionFile);
       let capturedAt = null;
+      let origins = [];
       try {
-        capturedAt = JSON.parse(readFileSync(sessionFile, 'utf8')).capturedAt || null;
+        const j = JSON.parse(readFileSync(sessionFile, 'utf8'));
+        capturedAt = j.capturedAt || null;
+        // The origins the session covers (origins only; never cookies or storage values).
+        origins = [...new Set([...(Array.isArray(j.origins) ? j.origins : []), ...Object.keys(j.storage || {})].filter((o) => typeof o === 'string'))];
       } catch {}
-      session = { exists: true, file: DEFAULT_STATE_FILE, ageMs: Date.now() - st.mtimeMs, capturedAt };
+      session = { exists: true, file: DEFAULT_STATE_FILE, ageMs: Date.now() - st.mtimeMs, capturedAt, origins };
     }
     const latest = readReport(cwd, 'latest');
     return {
@@ -250,7 +255,10 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       session,
       report: latest ? { exists: true, finishedAt: latest.finishedAt, baseUrl: latest.baseUrl } : { exists: false },
       tokenInEnv: !!env.TOKEN, tokenHeld: !!state.token,
-      shell: d.shell, npmPrefix: d.npmPrefix, presets: d.presets, detectedAt: d.detectedAt,
+      shell: d.shell, npmPrefix: d.npmPrefix, detectedAt: d.detectedAt,
+      // runCommand: what a person can paste into their shell to run the assistant by hand, on the
+      // prompt file the loop writes (a11y-508-work/prompt.md stands for the next task's file).
+      presets: d.presets.map((p) => ({ ...p, runCommand: p.found ? runnableCommand({ name: p.name, exePath: p.path, promptFile: join(cwd, WORK_DIR, 'prompt.md'), shell: d.shell.kind === 'powershell' || d.shell.kind === 'cmd' ? d.shell.kind : d.shell.path, platform }) : null })),
       lastTest: state.lastTest,
       build: { fresh: build.fresh, reason: build.reason },
       run: runs.current ? runSummary(runs.current) : null,
@@ -374,6 +382,10 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     }
     if (m === 'GET' && path === '/api/ledger') return send(res, 200, ledgerInfo());
     if (m === 'GET' && path === '/api/config') return send(res, 200, readConfig());
+    if (m === 'GET' && path === '/api/loop/defaults') {
+      const c = readConfig();
+      return send(res, 200, loopDefaults(state.cwd, c.exists ? c.config : null));
+    }
     if (m === 'PUT' && path === '/api/config') return send(res, 200, writeConfig(await readBody(req)));
     if (m === 'GET' && path === '/api/command') {
       let form;

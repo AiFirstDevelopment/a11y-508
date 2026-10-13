@@ -125,6 +125,29 @@ export async function moreOptions(page: Page): Promise<void> {
   await expect(more).toHaveJSProperty('open', true);
 }
 
+// The Fix loop screen's More options… (every loop setting, and the dry run), closed by default.
+export async function loopOptions(page: Page): Promise<void> {
+  const more = page.getByTestId('loop-more');
+  if (!(await more.evaluate((d: HTMLDetailsElement) => d.open))) await more.locator('> summary').click();
+  await expect(more).toHaveJSProperty('open', true);
+}
+
+// The Fix loop's assistant picker, behind "change" once an assistant is installed.
+export async function openPicker(page: Page): Promise<void> {
+  const picker = page.getByTestId('picker');
+  // Once the assistants are detected the line says which one fixes, or that none is installed.
+  await expect(page.getByTestId('assistant-line')).toHaveText(/Fixing with|No assistant/, { timeout: 60_000 });
+  if (await picker.isVisible()) return;
+  await page.getByRole('button', { name: 'change the assistant' }).click();
+  await expect(picker).toBeVisible();
+}
+
+// A dry run, from the Fix loop's More options.
+export async function dryRun(page: Page): Promise<void> {
+  await loopOptions(page);
+  await page.getByRole('button', { name: 'Record findings without fixing' }).click();
+}
+
 export async function fillRun(page: Page, f: CrawlForm): Promise<void> {
   // The Run screen can still be re-rendering the previous run's settings when the field is
   // filled, which left both URLs in it once ("…about.html…tables.html"): fill until it holds this one.

@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { moreOptions, api, dashboard, fillRun, fixtureSite, nav, open, startFromRun, waitFinished, MAIN, QUICK, TOKEN, WIN, tempDir, type Dash } from './harness';
+import { moreOptions, dryRun, loopOptions, api, dashboard, fillRun, fixtureSite, nav, open, startFromRun, waitFinished, MAIN, QUICK, TOKEN, WIN, tempDir, type Dash } from './harness';
 // @ts-ignore -- plain JS shared with the server's node:test suite
 import { mergeEnv, unreadableDir } from '../server/test/platform.mjs';
 
@@ -244,6 +244,7 @@ test('AC 5: Choose switches the server, the header, the Report screen, the Fix-l
   await expect(page.getByText('http://a.example/ · finished', { exact: false })).toBeVisible();
   await expect(page.getByTestId('finding-row')).toHaveText([/image without alt on http:\/\/a\.example\//]);
   await nav(page, 'Fix loop');
+  await loopOptions(page);
   await expect(page.getByLabel('Start URL')).toHaveValue('http://a.example/start');
   await expect(page.getByLabel('Check command (build and test)')).toHaveValue('npm test');
   await expect(page.getByTestId('ledger-line')).toHaveText('1 open.');
@@ -289,8 +290,9 @@ test('AC 6: after a switch a crawl writes its report in the new directory only, 
     await page.getByLabel('A token').check();
     await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
     await nav(page, 'Fix loop');
+    await loopOptions(page);
     await expect(page.getByLabel('Start URL')).toHaveValue(site.base + 'about.html');
-    await page.getByRole('button', { name: 'Dry run' }).click();
+    await dryRun(page);
     await expect(page.getByTestId('loop-step')).toHaveText(/Dry run finished/, { timeout: 200_000 });
     expect(existsSync(join(b, 'a11y-508-work', 'ledger.json')), 'the ledger in the new directory').toBe(true);
     expect(existsSync(join(launch, 'a11y-508-work')), 'no ledger in the old one').toBe(false);

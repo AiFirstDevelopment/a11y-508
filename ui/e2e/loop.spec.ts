@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { moreOptions, dashboard, gitRepo, open, tempDir, BIN, ROOT, TOKEN, type Dash } from './harness';
+import { moreOptions, loopOptions, dryRun, dashboard, gitRepo, open, tempDir, BIN, ROOT, TOKEN, type Dash } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -47,27 +47,34 @@ async function setToken(page: Page): Promise<void> {
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Fix loop' }).click();
 }
 
-test('AC 11: the config form writes a config a11y-508 loop accepts, and rejects what the core rejects with its message', async ({ page }) => {
+test('AC 11: the settings under More options save a config a11y-508 loop accepts, and rejects what the core rejects with its message', async ({ page }) => {
   const dash = await dashboard();
   try {
     await open(page, dash, '/fix-loop');
-    await page.getByLabel('Start URL').fill('http://127.0.0.1:9/');
+    await loopOptions(page);
+    // Saved as each field changes. With no start URL anywhere, the core's own message, from normalizeConfig.
     await page.getByLabel('Crawl options, one per line').fill('--max-pages\n1');
-    await page.getByLabel('Folders the assistant may edit, one per line').fill('site');
-    await page.getByLabel('Check command (build and test)').fill('npm test');
-    await page.getByLabel('How the loop knows the new build is live').selectOption('command');
-    await page.getByRole('button', { name: 'Save settings' }).click();
-    // The core's own message, from normalizeConfig.
-    await expect(page.getByTestId('config-errors')).toHaveText('"deployed" is "command" but no "deploy" command is set');
+    await page.getByLabel('Crawl options, one per line').blur();
+    await expect(page.getByTestId('config-errors')).toHaveText('no start URL: pass it on the command line or set "url" in the config');
     expect(existsSync(join(dash.cwd, 'a11y-508.config.json'))).toBe(false);
 
-    await page.getByLabel('Deploy command').fill('npm run deploy');
+    await page.getByLabel('Start URL').fill('http://127.0.0.1:9/');
+    await page.getByLabel('Start URL').blur();
+    await page.getByLabel('Folders the assistant may edit, one per line').fill('site');
+    await page.getByLabel('Folders the assistant may edit, one per line').blur();
+    await page.getByLabel('Check command (build and test)').fill('npm test');
+    await page.getByLabel('Check command (build and test)').blur();
     await page.getByLabel('Fix attempts per finding').fill('2');
+    await page.getByLabel('Fix attempts per finding').blur();
     await page.getByLabel("Push each round's commits").uncheck();
-    await page.getByRole('button', { name: 'Save settings' }).click();
     await expect(page.getByTestId('config-status')).toHaveText(/^Saved/);
+    await expect.poll(() => JSON.parse(readFileSync(join(dash.cwd, 'a11y-508.config.json'), 'utf8')).push).toBe(false);
     const written = JSON.parse(readFileSync(join(dash.cwd, 'a11y-508.config.json'), 'utf8'));
-    expect(written).toEqual({ url: 'http://127.0.0.1:9/', args: ['--max-pages', '1'], source: ['site'], check: 'npm test', deployed: 'command', deploy: 'npm run deploy', maxAttempts: 2, push: false });
+    // What was set, with the inferred branch, and the deployment watched silently (it happens outside this tool).
+    expect(written).toEqual({ url: 'http://127.0.0.1:9/', args: ['--max-pages', '1'], source: ['site'], check: 'npm test', branch: 'a11y-508', maxAttempts: 2, push: false, deployed: 'bundle-change', deployTimeout: 1800000 });
+    // No deploy settings on the screen at all.
+    await expect(page.getByLabel('How the loop knows the new build is live')).toHaveCount(0);
+    await expect(page.getByLabel('Deploy command')).toHaveCount(0);
 
     // a11y-508 loop accepts it: with an agent it passes validation and gets as far as the git check.
     writeFileSync(join(dash.cwd, 'a11y-508.config.json'), JSON.stringify({ ...written, agent: 'claude' }));
@@ -84,6 +91,7 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
   const g = gitRepo(cwd);
   const { base, server } = await repoSite(cwd);
   writeFileSync(join(cwd, '.gitignore'), 'a11y-508-work/\na11y-508-report/\na11y-508-history/\n');
+  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
   writeFileSync(join(cwd, 'a11y-508.config.json'), JSON.stringify({
     url: base,
     args: ['--max-pages', '3', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage', '--concurrency', '1'],
@@ -92,11 +100,13 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
   g('add', '-A');
   g('commit', '-q', '-m', 'fixture site');
   const head = g('rev-parse', 'HEAD');
-  const dash: Dash = await dashboard({ cwd });
+  // The first assistant call takes a few seconds, so the live output pane's counter visibly runs.
+  const slow = join(tempDir('a11y-508-slow-'), 'slow-once');
+  const dash: Dash = await dashboard({ cwd, env: { FAKE_AGENT_SLOW_ONCE: slow } });
   try {
     await open(page, dash, '/fix-loop');
     await setToken(page);
-    await page.getByRole('button', { name: 'Dry run' }).click();
+    await dryRun(page);
     await expect(page.getByTestId('loop-step')).toHaveText(/Dry run finished/, { timeout: 200_000 });
     await expect(page.getByTestId('ledger-counts').locator('[data-status="open"] dd')).not.toHaveText('0');
     await expect(page.locator('[data-list="open"] li').first()).toBeVisible();
@@ -120,8 +130,15 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
       };
       new MutationObserver(sample).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
     });
-    await page.getByLabel('Rounds to run').fill('2');
     await page.getByTestId('loop-start').click();
+    // The assistant's output, live: its lines in the pane while it runs, and a counter that moves.
+    const heading = page.getByTestId('agent-heading');
+    await expect(heading).toHaveText(/running \d+ s$/, { timeout: 200_000 });
+    await expect(page.getByTestId('agent-output')).toContainText('fake agent: reading the prompt');
+    const secs = async () => Number(/running (\d+) s$/.exec((await heading.textContent()) || '')?.[1] ?? -1);
+    const first = await secs();
+    await expect.poll(secs, { timeout: 10_000 }).toBeGreaterThan(first);
+    await expect(page.getByTestId('agent-output')).toHaveAttribute('role', 'log');
     const cont = page.getByRole('button', { name: 'Deployed — continue' });
     await expect(cont).toBeVisible({ timeout: 200_000 });
     expect(g('log', '--format=%s', `${head}..HEAD`)).toMatch(/^a11y-508: /m);

@@ -48,6 +48,8 @@ export function normalizeConfig(c, overrides = {}, { interactive = !!process.std
     maxAttempts: typeof c.maxAttempts === 'number' ? c.maxAttempts : 3,
     agentTimeout: typeof c.agentTimeout === 'number' ? c.agentTimeout : 15 * 60 * 1000,
     triageBatch: typeof c.triageBatch === 'number' ? c.triageBatch : 15,
+    // The session file a crawl behind a sign-in portal uses (see sessionArgs).
+    state: typeof c.state === 'string' && c.state ? c.state : 'a11y-508-state.json',
   };
   const errors = [];
   if (!cfg.url) errors.push('no start URL: pass it on the command line or set "url" in the config');
@@ -80,13 +82,23 @@ const sh = (cwd, command, env) =>
     child.on('exit', (code) => r({ code, out }));
   });
 
+// For an app behind a sign-in portal: when the working directory holds the session file and
+// nothing in the crawl options names a way in (--state, --login, --cookie), every round's crawl
+// uses the saved session. Returns the arguments to add ([] or ['--state', file]).
+export function sessionArgs(cfg, passthrough = [], cwd = process.cwd()) {
+  const given = [...(cfg.args || []), ...passthrough].some((a) => /^--(state|login|login-only|cookie)(=|$)/.test(String(a)));
+  if (given) return [];
+  const file = cfg.state || 'a11y-508-state.json';
+  return existsSync(resolve(cwd, file)) ? ['--state', file] : [];
+}
+
 // Event types from a round's crawl that the loop passes on, tagged with the round.
 const RELAYED = new Set(['page', 'coverage', 'summary']);
 
-async function crawlOnce({ cfg, cwd, round, log, passthrough, events }) {
+async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = [] }) {
   const out = join(cwd, WORK_DIR, `round-${round}`);
   mkdirSync(out, { recursive: true });
-  const args = [BIN, cfg.url, ...cfg.args, ...passthrough, '--out', out, '--json', '--quiet'];
+  const args = [BIN, cfg.url, ...cfg.args, ...passthrough, ...session, '--out', out, '--json', '--quiet'];
   if (events) args.push('--events');
   const child = spawn(process.execPath, args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
@@ -134,6 +146,28 @@ async function bundleSignature(url) {
   }
 }
 
+// With --events, the dashboard's "Deployed — continue" writes a newline to stdin. While the loop
+// polls for a new build it also listens for that, so the button works whatever "deployed" says.
+function enterFromDashboard() {
+  const stdin = process.stdin;
+  let onData;
+  const promise = new Promise((resolve) => {
+    onData = (chunk) => {
+      if (/[\r\n]/.test(String(chunk))) resolve(true);
+    };
+    stdin.setEncoding('utf8');
+    stdin.on('data', onData);
+    if (stdin.ref) stdin.ref();
+    stdin.resume();
+  });
+  const cancel = () => {
+    stdin.off('data', onData);
+    stdin.pause();
+    if (stdin.unref) stdin.unref();
+  };
+  return { promise, cancel };
+}
+
 function waitForEnter(message, prompt) {
   if (prompt) prompt();
   else process.stdout.write(message);
@@ -158,11 +192,11 @@ function waitForEnter(message, prompt) {
 // One line when each assistant call starts and one when it ends (exit code, time, quota, the last
 // lines of its output), in a11y-508-work/agent-calls.log: a call that hangs shows as a start with no
 // end, while the loop is still running and afterwards.
-async function callAgent(work, label, args) {
+async function callAgent(work, label, args, onOutput = null) {
   const file = join(work, 'agent-calls.log');
   const t0 = new Date();
   appendFileSync(file, `${t0.toISOString()} start ${label}\n`);
-  const res = await runAgent(args);
+  const res = await runAgent({ ...args, onOutput });
   const tail = `${res.stdout || ''}\n${res.stderr || ''}`.split('\n').map((l) => l.trim()).filter(Boolean).slice(-5).map((l) => `    ${l.slice(0, 300)}`).join('\n');
   appendFileSync(file, `${new Date().toISOString()} end   ${label} exit ${res.code}${res.timedOut ? ' timed-out' : ''}${res.quota ? ` quota (retries ${res.quotaRetries})` : ''} result ${res.result ? 'yes' : 'no'} ${Math.round((Date.now() - t0) / 1000)}s\n${tail ? tail + '\n' : ''}`);
   return res;
@@ -214,6 +248,40 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     if (!cfg.check) log.warn('no "check" command in the config: fixes are committed without a build or test gate');
   }
 
+  const session = sessionArgs(cfg, passthrough, cwd);
+  if (session.length) log.info(`crawling with the saved session ${session[1]}`);
+  // The assistant's output as it arrives (--events): a few events a second at most per call.
+  const outputTo = (round, task, kind) => {
+    if (!events) return null;
+    const buf = { stdout: '', stderr: '' };
+    let timer = null;
+    const flush = () => {
+      timer = null;
+      for (const stream of ['stdout', 'stderr']) {
+        if (!buf[stream]) continue;
+        ev('agent-output', { round, task, kind, stream, text: buf[stream].slice(-16384) });
+        buf[stream] = '';
+      }
+    };
+    const on = (stream, text) => {
+      buf[stream] += text;
+      if (!timer) timer = setTimeout(flush, 300);
+    };
+    on.flush = () => {
+      if (timer) clearTimeout(timer);
+      flush();
+    };
+    return on;
+  };
+  const withOutput = async (label, args, round, task, kind) => {
+    const on = outputTo(round, task, kind);
+    try {
+      return await callAgent(work, label, args, on);
+    } finally {
+      if (on) on.flush();
+    }
+  };
+
   const startRound = ledger.rounds.length + 1;
   log.info(`a11y-508 loop: ${cfg.url}  agent: ${cfg.agent}  ledger: ${relative(cwd, ledgerFile)}${ledger.rounds.length ? `  (resuming after round ${ledger.rounds.length})` : ''}`);
 
@@ -226,7 +294,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     const signatureBefore = cfg.deployed === 'bundle-change' ? await bundleSignature(cfg.url) : null;
     let crawl;
     try {
-      crawl = await crawlOnce({ cfg, cwd, round, log, passthrough, events });
+      crawl = await crawlOnce({ cfg, cwd, round, log, passthrough, events, session });
     } catch (e) {
       log.error(`crawl failed: ${e.message}`);
       save();
@@ -270,7 +338,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         const promptFile = join(work, `prompt-r${round}-triage-${i}.md`);
         const resultFile = join(work, `result-r${round}-triage-${i}.json`);
         writePrompt(promptFile, triagePrompt({ items, resultFile }));
-        const res = await callAgent(work, `r${round}-triage-${i}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout });
+        const res = await withOutput(`r${round}-triage-${i}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout }, round, i / cfg.triageBatch + 1, 'triage');
         writeFileSync(join(work, `agent-r${round}-triage-${i}.log`), agentLog(res));
         const decisions = Array.isArray(res.result) ? res.result : Array.isArray(res.result && res.result.items) ? res.result.items : null;
         if (!decisions) {
@@ -310,7 +378,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       const promptFile = join(work, `prompt-r${round}-fix-${n}.md`);
       const resultFile = join(work, `result-r${round}-fix-${n}.json`);
       writePrompt(promptFile, fixPrompt({ finding: entry, sourceDirs, protectedDirs, resultFile, condition: testInfo(entry.test).condition }));
-      const res = await callAgent(work, `r${round}-fix-${n}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout });
+      const res = await withOutput(`r${round}-fix-${n}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout }, round, n + 1, 'fix');
       writeFileSync(join(work, `agent-r${round}-fix-${n}.log`), agentLog(res));
       const changed = gitChanged(cwd, sourceDirs);
       const strayChanges = gitChanged(cwd).filter((f) => !changed.includes(f) && !f.startsWith(WORK_DIR) && !f.startsWith('a11y-508-report'));
@@ -429,13 +497,28 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         log.info('waiting for the deployment: polling the start page until its script bundles change');
         const until = Date.now() + cfg.deployTimeout;
         let live = false;
-        while (Date.now() < until && !stopped()) {
-          await sleep(15000);
-          const sig = await bundleSignature(cfg.url);
-          if (sig && sig !== signatureBefore) {
-            live = true;
-            break;
+        const enter = events ? enterFromDashboard() : null;
+        let pressed = false;
+        if (enter) {
+          enter.promise.then(() => (pressed = true));
+          ev('await-deploy', { round, committed, nextRound: round + 1 });
+        }
+        try {
+          while (Date.now() < until && !stopped()) {
+            await Promise.race([sleep(15000), ...(enter ? [enter.promise] : [])]);
+            if (pressed) {
+              log.info('told the new build is live (Deployed — continue)');
+              live = true;
+              break;
+            }
+            const sig = await bundleSignature(cfg.url);
+            if (sig && sig !== signatureBefore) {
+              live = true;
+              break;
+            }
           }
+        } finally {
+          if (enter) enter.cancel();
         }
         if (!live) {
           if (stopped()) break;

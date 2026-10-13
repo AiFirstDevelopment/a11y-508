@@ -11,7 +11,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { applyReport, loadLedger } from '../src/ledger.mjs';
 import { agentEnv, fixPrompt, triagePrompt } from '../src/agent.mjs';
-import { normalizeConfig } from '../src/loop.mjs';
+import { normalizeConfig, sessionArgs } from '../src/loop.mjs';
 import { splitLoopArgs } from '../src/cli.mjs';
 import { statusCounts } from '../src/ledger.mjs';
 import { parseEvents } from './event-schema.mjs';
@@ -100,6 +100,20 @@ check('config validation catches the common mistakes', () => {
   const { cfg, errors } = normalizeConfig({ url: 'http://x', agent: 'gemini', deploy: 'npm run deploy' });
   assert.deepEqual(errors, []);
   assert.equal(cfg.deployed, 'command');
+});
+check('a saved session is used for each round\'s crawl unless the options name a way in', () => {
+  const dir = join(here, '.loop-session');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  assert.deepEqual(sessionArgs({ args: [] }, [], dir), [], 'no session file');
+  writeFileSync(join(dir, 'a11y-508-state.json'), '{}');
+  assert.deepEqual(sessionArgs({ args: [] }, [], dir), ['--state', 'a11y-508-state.json']);
+  assert.deepEqual(sessionArgs({ args: ['--cookie', 'a=b'] }, [], dir), []);
+  assert.deepEqual(sessionArgs({ args: [] }, ['--state', 'other.json'], dir), []);
+  assert.deepEqual(sessionArgs({ args: ['--login'] }, [], dir), []);
+  writeFileSync(join(dir, 'mine.json'), '{}');
+  assert.deepEqual(sessionArgs({ args: [], state: 'mine.json' }, [], dir), ['--state', 'mine.json']);
+  rmSync(dir, { recursive: true, force: true });
 });
 check('loop flags are split from crawl options', () => {
   const s = splitLoopArgs(['loop', 'http://x', '--max-rounds', '3', '--max-pages', '10', '--agent=gemini', '--dry-run']);
@@ -300,6 +314,10 @@ writeFileSync(join(repo2, 'a11y-508.config.json'), JSON.stringify({
 }, null, 2));
 g2('add', '-A');
 g2('commit', '-q', '-m', 'fixture site');
+// A saved session in the working directory (ignored by git, as the README says): every round's crawl uses it.
+writeFileSync(join(repo2, '.gitignore'), 'a11y-508-work/\na11y-508-report/\na11y-508-state.json\n');
+g2('commit', '-qam', 'ignore the session file');
+writeFileSync(join(repo2, 'a11y-508-state.json'), JSON.stringify({ version: 1, origins: [], cookies: [], storage: {} }));
 const evLoop = await new Promise((resolve) => {
   const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), 'loop', '--max-rounds', '2', '--events'], { cwd: repo2, env: { ...process.env, TOKEN, NO_COLOR: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
   let out = '';
@@ -357,6 +375,25 @@ site2.close();
     const iRound2 = events.findIndex((e) => e.type === 'round' && e.round === 2);
     assert.ok(iRound2 > iWait, 'round 2 started after the prompt');
     assert.ok(!/press Enter/.test(evLoop.out), 'the human prompt is not on stdout');
+  });
+  check('loop --events: with a saved session in the directory, each round crawls with --state and says so once', () => {
+    const said = events.filter((e) => e.type === 'info' && /crawling with the saved session a11y-508-state\.json/.test(e.message));
+    assert.equal(said.length, 1, JSON.stringify(events.filter((e) => e.type === 'info').map((e) => e.message)));
+    for (const r of [1, 2]) {
+      const rep = JSON.parse(readFileSync(join(repo2, 'a11y-508-work', `round-${r}`, 'report.json'), 'utf8'));
+      assert.ok(rep.options.session, `round ${r} crawled with the session`);
+    }
+  });
+  check('loop --events: the assistant\'s output streams as agent-output events, per task', () => {
+    const out = ofType('agent-output');
+    assert.ok(out.length > 0, 'agent-output events');
+    const fix1 = out.filter((e) => e.round === 1 && e.kind === 'fix' && e.task === 1);
+    assert.match(fix1.map((e) => e.text).join(''), /fake agent: reading the prompt\n.*fake agent: looking at the finding/s);
+    // The output of a task arrives between its start and done events.
+    const start = events.findIndex((e) => e.type === 'task' && e.round === 1 && e.n === 1 && e.state === 'start');
+    const done = events.findIndex((e) => e.type === 'task' && e.round === 1 && e.n === 1 && e.state === 'done');
+    const at = events.indexOf(fix1[0]);
+    assert.ok(start < at && at < done, `${start} < ${at} < ${done}`);
   });
   check('loop --events: the last ledger event equals the ledger on disk', () => {
     const last = ofType('ledger').at(-1);

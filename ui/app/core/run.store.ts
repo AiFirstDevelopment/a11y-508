@@ -22,6 +22,23 @@ export interface PageRow {
   discovery: Discovery;
 }
 
+// One call of the fixing assistant (a fix, or a triage batch), with its output as it arrives.
+export interface AgentCall {
+  round: number;
+  task: number;
+  kind: 'fix' | 'triage';
+  n: number | null;
+  m: number | null;
+  label: string;
+  startedAt: number;
+  endedAt: number | null;
+  outcome: string | null;
+  text: string;
+}
+
+// The last 64 KB of a call's output are kept.
+export const AGENT_OUTPUT_MAX = 64 * 1024;
+
 export interface Notice {
   level: 'warn' | 'error';
   message: string;
@@ -34,7 +51,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 // event" notice rather than being dropped in silence.
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
-  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy',
+  'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output',
 ]);
 
 // The current run, built from its event stream.
@@ -58,6 +75,7 @@ export class RunStore {
   readonly task = signal<{ n: number; m: number; state: string } | null>(null);
   readonly ledger = signal<RunEvent | null>(null);
   readonly awaitingDeploy = signal(false);
+  readonly agentCall = signal<AgentCall | null>(null);
   readonly done = signal<RunEvent | null>(null);
   readonly stopping = signal(false);
   readonly connected = signal(false);
@@ -95,6 +113,7 @@ export class RunStore {
     this.task.set(null);
     this.ledger.set(null);
     this.awaitingDeploy.set(false);
+    this.agentCall.set(null);
     this.done.set(null);
     this.stopping.set(false);
   }
@@ -159,11 +178,29 @@ export class RunStore {
         break;
       case 'step':
         this.step.set(ev);
+        // A triage batch ends when the next step starts.
+        this.agentCall.update((c) => (c && c.kind === 'triage' && !c.endedAt && ev['step'] !== 'triage' ? { ...c, endedAt: Date.parse(String(ev['at'])) || Date.now(), outcome: 'done' } : c));
         if (ev['step'] === 'fix') this.task.set({ n: 0, m: ev['count'], state: 'start' });
         break;
-      case 'task':
+      case 'task': {
         this.task.set({ n: ev['n'], m: ev['m'], state: ev['state'] });
+        const at = Date.parse(String(ev['at'])) || Date.now();
+        if (ev['state'] === 'start') {
+          this.agentCall.set({ round: ev['round'], task: ev['n'], kind: 'fix', n: ev['n'], m: ev['m'], label: `${ev['test']}: ${String(ev['message'] || '').slice(0, 80)}`, startedAt: at, endedAt: null, outcome: null, text: '' });
+        } else {
+          this.agentCall.update((c) => (c && c.kind === 'fix' && c.task === ev['n'] ? { ...c, endedAt: at, outcome: ev['outcome'] || null } : c));
+        }
         break;
+      }
+      case 'agent-output': {
+        const at = Date.parse(String(ev['at'])) || Date.now();
+        this.agentCall.update((c) => {
+          const same = c && c.round === ev['round'] && c.task === ev['task'] && c.kind === ev['kind'];
+          const call: AgentCall = same ? c! : { round: ev['round'], task: ev['task'], kind: ev['kind'], n: null, m: null, label: ev['kind'] === 'triage' ? `review batch ${ev['task']}` : `finding ${ev['task']}`, startedAt: at, endedAt: null, outcome: null, text: '' };
+          return { ...call, text: (call.text + ev['text']).slice(-AGENT_OUTPUT_MAX) };
+        });
+        break;
+      }
       case 'ledger':
         this.ledger.set(ev);
         break;
@@ -176,6 +213,7 @@ export class RunStore {
       case 'done':
         this.done.set(ev);
         this.awaitingDeploy.set(false);
+        this.agentCall.update((c) => (c && !c.endedAt ? { ...c, endedAt: Date.parse(String(ev['at'])) || Date.now(), outcome: ev['outcome'] === 'stopped' ? 'stopped' : 'ended' } : c));
         this.progress.update((p) => ({ ...p, finished: true }));
         if (ev['outcome'] === 'error') this.notices.update((n) => [...n, { level: 'error', message: `The run failed (exit code ${ev['code']}).` }]);
         break;

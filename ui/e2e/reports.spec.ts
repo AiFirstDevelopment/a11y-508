@@ -3,7 +3,7 @@
 import { test, expect } from '@playwright/test';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { moreOptions, dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, nav, readReport, TOKEN, type Dash, type Site } from './harness';
+import { moreOptions, dryRun, dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, nav, readReport, TOKEN, type Dash, type Site } from './harness';
 
 let site: Site;
 let dash: Dash;
@@ -43,7 +43,7 @@ test('AC 15: History lists both crawls and the loop rounds; each opens on the Re
   await page.getByLabel('A token').check();
   await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
   await nav(page, 'Fix loop');
-  await page.getByRole('button', { name: 'Dry run' }).click();
+  await dryRun(page);
   await expect(page.getByTestId('loop-step')).toHaveText(/Dry run finished/, { timeout: 200_000 });
 
   const crawl = async (path: string) => {
