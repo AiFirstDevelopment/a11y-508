@@ -9,13 +9,17 @@ import { join } from 'node:path';
 
 const [promptFile, resultFile] = process.argv.slice(2);
 // A few lines of output first, as a real assistant prints while it works.
-console.log('fake agent: reading the prompt');
+// FAKE_AGENT_QUIET: nothing is printed until the slow call has waited, as `claude -p` prints
+// nothing until it ends.
+const quiet = !!process.env.FAKE_AGENT_QUIET;
+if (!quiet) console.log('fake agent: reading the prompt');
 // The dashboard's test of the live output: the first call takes a while, so its counter visibly runs.
 const slow = process.env.FAKE_AGENT_SLOW_ONCE;
 if (slow && !existsSync(slow)) {
   writeFileSync(slow, 'slow');
   await new Promise((r) => setTimeout(r, 4000));
 }
+if (quiet) console.log('fake agent: reading the prompt');
 console.log('fake agent: looking at the finding');
 
 const prompt = readFileSync(promptFile, 'utf8');

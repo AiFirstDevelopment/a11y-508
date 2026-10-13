@@ -29,6 +29,9 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
   imports: [ChartPanel, LineChartModule, RunView, RouterLink],
   template: `
     <h1>Fix loop</h1>
+    @if (!(store.kind() === 'loop' && store.round())) {
+      <p class="hint" data-testid="loop-explainer">Each round re-checks the site, fixes what is open one finding at a time, gates every fix with your build, commits, and waits for the new build before checking again.</p>
+    }
 
     <p data-testid="assistant-line">
       @if (assistantLabel(); as label) {
@@ -366,6 +369,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   });
   // The loop has ended (nothing open, stopped, or out of rounds): the step's actions change.
   readonly loopEnded = computed(() => this.store.kind() === 'loop' && !!this.store.done());
+  // The status line, in words that explain what the loop is doing and why.
   readonly fixStatus = computed(() => {
     const r = this.store.round();
     const c = this.store.agentCall();
@@ -373,11 +377,28 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     if (this.store.done()) return this.stepText();
     if (this.store.loginWaiting() && this.store.active()) return 'Waiting for you to sign in in the browser window';
     if (!r) return 'Starting…';
-    if (this.waitingForBuild()) return `Round ${r} · waiting for the new build`;
-    if (c && !c.endedAt && c.kind === 'fix') return `Round ${r} · fixing ${c.n ?? c.task} of ${c.m ?? t?.m ?? '?'}: ${c.label} · ${Math.max(0, Math.round((this.now() - c.startedAt) / 1000))} s`;
-    if (c && !c.endedAt && c.kind === 'triage') return `Round ${r} · triaging ${c.label} · ${Math.max(0, Math.round((this.now() - c.startedAt) / 1000))} s`;
-    const step = this.store.step()?.['step'];
-    return `Round ${r} · ${step === 'crawl' || !step ? 'crawling' : step}`;
+    const secs = (from: number) => `${Math.max(0, Math.round((this.now() - from) / 1000))} s`;
+    const s = this.store.step();
+    const step = s?.['step'];
+    const n = this.store.committed();
+    const waiting = `Committed ${n} fix${n === 1 ? '' : 'es'} · waiting for the new build on ${this.host()}…`;
+    if (this.waitingForBuild()) return waiting;
+    // The gate and the commit are this finding's while its task has not ended (or the round's, with no n).
+    const current = s?.['n'] === undefined || (t?.n === s?.['n'] && t?.state === 'start');
+    if (step === 'gate' && current) return `Round ${r}: checking the fixes${s?.['check'] ? ` (${s['check']})` : ''}`;
+    if (step === 'commit' && current) return `Round ${r}: committing fix ${s?.['n']} of ${s?.['m']}`;
+    if (c && !c.endedAt && c.kind === 'fix') return `Round ${r}: fixing ${c.n ?? c.task} of ${c.m ?? t?.m ?? '?'} · ${c.label} · ${secs(c.startedAt)}`;
+    if (c && !c.endedAt && c.kind === 'triage') return `Round ${r}: triaging ${c.label}${c.m ? ` · call ${c.n ?? c.task} of ${c.m}` : ''} · ${secs(c.startedAt)}`;
+    if (step === 'gate' || step === 'commit') return `Round ${r}: fixing ${t?.n ?? ''} of ${t?.m ?? ''}`;
+    if (step === 'push') return `Round ${r}: pushing ${n} fix${n === 1 ? '' : 'es'}`;
+    if (step === 'deploy' || step === 'await-deploy') return waiting;
+    if (step === 'fix') return `Round ${r}: fixing ${t?.m ?? s?.['count'] ?? ''} open finding${(t?.m ?? s?.['count']) === 1 ? '' : 's'}`;
+    if (step === 'triage') return `Round ${r}: triaging ${s?.['count']} review items`;
+    // The crawl: the run's first round re-checks the site before anything is changed.
+    const p = this.store.progress();
+    const pages = p.discovered ? ` (${p.done} of ${p.discovered} pages)` : '';
+    if (r === this.store.firstRound()) return `Round ${r}: re-checking the site first${pages} so fixes can be verified against it`;
+    return `Round ${r}: re-checking the site${pages}`;
   });
   readonly fixCounts = computed(() => {
     const c = this.store.ledger()?.['counts'] || this.ledger()?.counts || {};
@@ -450,7 +471,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     if (this.testing()) return `${who}, testing · running ${secs(this.testStartedAt(), null)}`;
     const c = this.store.agentCall();
     if (c && (!this.testResult() || c.startedAt > this.testStartedAt())) {
-      const what = c.kind === 'triage' ? `triaging ${c.label}` : `fixing ${c.n ?? c.task} of ${c.m ?? '?'}: ${c.label}`;
+      const what = c.kind === 'triage' ? `triaging ${c.label}${c.m ? ` · call ${c.n ?? c.task} of ${c.m}` : ''}` : `fixing ${c.n ?? c.task} of ${c.m ?? '?'}: ${c.label}`;
       if (!c.endedAt) return `${who}, ${what} · running ${secs(c.startedAt, null)}`;
       return `${who}, ${what} · ${OUTCOMES[c.outcome || 'done'] || c.outcome} (${secs(c.startedAt, c.endedAt)})`;
     }

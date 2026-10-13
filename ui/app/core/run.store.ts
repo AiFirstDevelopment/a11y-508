@@ -32,6 +32,8 @@ export interface AgentCall {
   n: number | null;
   m: number | null;
   label: string;
+  // A triage call: how many review items the round triages.
+  count?: number | null;
   startedAt: number;
   endedAt: number | null;
   outcome: string | null;
@@ -77,6 +79,9 @@ export class RunStore {
   readonly task = signal<{ n: number; m: number; state: string } | null>(null);
   readonly ledger = signal<RunEvent | null>(null);
   readonly awaitingDeploy = signal(false);
+  // The loop: the run's first round (it re-checks the site first), and how many fixes the round committed.
+  readonly firstRound = signal<number | null>(null);
+  readonly committed = signal(0);
   readonly agentCall = signal<AgentCall | null>(null);
   // Pages in flight (progress events), by URL, with when each event arrived; and when the sign-in wait began.
   readonly inFlight = signal<Record<string, PhaseEvent & { receivedAt: number }>>({});
@@ -120,6 +125,8 @@ export class RunStore {
     this.task.set(null);
     this.ledger.set(null);
     this.awaitingDeploy.set(false);
+    this.firstRound.set(null);
+    this.committed.set(0);
     this.agentCall.set(null);
     this.inFlight.set({});
     this.loginWaitingSince.set(null);
@@ -189,23 +196,34 @@ export class RunStore {
         break;
       case 'round':
         this.round.set(ev['round']);
+        if (this.firstRound() === null) this.firstRound.set(ev['round']);
+        this.committed.set(0);
         this.pages.set([]);
         this.summary.set(null);
         this.task.set(null);
         this.awaitingDeploy.set(false);
         this.progress.set({ done: 0, discovered: 0, limit: this.progress().limit, finished: false, result: null });
         break;
-      case 'step':
+      case 'step': {
         this.step.set(ev);
-        // A triage batch ends when the next step starts.
-        this.agentCall.update((c) => (c && c.kind === 'triage' && !c.endedAt && ev['step'] !== 'triage' ? { ...c, endedAt: Date.parse(String(ev['at'])) || Date.now(), outcome: 'done' } : c));
+        const at = Date.parse(String(ev['at'])) || Date.now();
+        // A triage batch ends when the next step (or the next batch) starts.
+        this.agentCall.update((c) => (c && c.kind === 'triage' && !c.endedAt && (ev['step'] !== 'triage' || ev['batch'] !== c.task) ? { ...c, endedAt: at, outcome: 'done' } : c));
+        // A triage call starts now: the assistant prints nothing until it ends, so the pane and
+        // its timer start with the call, not with its first output.
+        const cur = this.agentCall();
+        if (ev['step'] === 'triage' && typeof ev['batch'] === 'number' && !(cur && cur.kind === 'triage' && cur.round === ev['round'] && cur.task === ev['batch'])) {
+          this.agentCall.set({ round: ev['round'], task: ev['batch'], kind: 'triage', n: ev['batch'], m: ev['batches'] ?? null, count: ev['count'] ?? null, label: `${ev['count']} review item${ev['count'] === 1 ? '' : 's'}`, startedAt: at, endedAt: null, outcome: null, text: '' });
+        }
+        if (typeof ev['committed'] === 'number') this.committed.set(ev['committed']);
         if (ev['step'] === 'fix') this.task.set({ n: 0, m: ev['count'], state: 'start' });
         break;
+      }
       case 'task': {
         this.task.set({ n: ev['n'], m: ev['m'], state: ev['state'] });
         const at = Date.parse(String(ev['at'])) || Date.now();
         if (ev['state'] === 'start') {
-          this.agentCall.set({ round: ev['round'], task: ev['n'], kind: 'fix', n: ev['n'], m: ev['m'], label: `${ev['test']}: ${String(ev['message'] || '').slice(0, 80)}`, startedAt: at, endedAt: null, outcome: null, text: '' });
+          this.agentCall.set({ round: ev['round'], task: ev['n'], kind: 'fix', n: ev['n'], m: ev['m'], label: `${ev['test']} ${String(ev['message'] || '').slice(0, 80)}`, startedAt: at, endedAt: null, outcome: null, text: '' });
         } else {
           this.agentCall.update((c) => (c && c.kind === 'fix' && c.task === ev['n'] ? { ...c, endedAt: at, outcome: ev['outcome'] || null } : c));
         }
@@ -225,6 +243,7 @@ export class RunStore {
         break;
       case 'await-deploy':
         this.awaitingDeploy.set(true);
+        if (typeof ev['committed'] === 'number') this.committed.set(ev['committed']);
         break;
       case 'stopping':
         this.stopping.set(true);

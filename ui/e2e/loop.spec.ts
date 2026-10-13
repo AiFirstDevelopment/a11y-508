@@ -99,14 +99,14 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
   writeFileSync(join(cwd, 'a11y-508.config.json'), JSON.stringify({
     url: base,
     args: ['--max-pages', '3', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage', '--concurrency', '1'],
-    agent: FAKE, source: ['site'], check: `${JSON.stringify(process.execPath)} -e 0`, push: false, deployed: 'enter', triageBatch: 50,
+    agent: FAKE, source: ['site'], check: `${JSON.stringify(process.execPath)} -e "setTimeout(Boolean,1500)"`, push: false, deployed: 'enter', triageBatch: 50,
   }, null, 2));
   g('add', '-A');
   g('commit', '-q', '-m', 'fixture site');
   const head = g('rev-parse', 'HEAD');
   // The first assistant call takes a few seconds, so the live output pane's counter visibly runs.
   const slow = join(tempDir('a11y-508-slow-'), 'slow-once');
-  const dash: Dash = await dashboard({ cwd, env: { FAKE_AGENT_SLOW_ONCE: slow } });
+  const dash: Dash = await dashboard({ cwd, env: { FAKE_AGENT_SLOW_ONCE: slow, FAKE_AGENT_QUIET: '1' } });
   try {
     await open(page, dash, '/fix-loop');
     await setToken(page);
@@ -128,20 +128,26 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
           rows: document.querySelectorAll('[data-testid="page-list"] tbody tr[data-url]').length,
           fix,
           step: document.querySelector('[data-testid="loop-step"]')?.textContent?.trim() || '',
+          status: document.querySelector('[data-testid="fix-status"]')?.textContent?.trim() || '',
+          heading: document.querySelector('[data-testid="agent-heading"]')?.textContent?.trim() || '',
+          output: document.querySelector('[data-testid="agent-output"]')?.textContent?.trim() || '',
         };
         const last = w.__loop[w.__loop.length - 1];
         if (!last || JSON.stringify(last) !== JSON.stringify(s)) w.__loop.push(s);
       };
       new MutationObserver(sample).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
     });
+    // Before the first round, what a round does.
+    await expect(page.getByTestId('loop-explainer')).toHaveText('Each round re-checks the site, fixes what is open one finding at a time, gates every fix with your build, commits, and waits for the new build before checking again.');
     await page.getByTestId('loop-start').click();
+    await expect(page.getByTestId('loop-explainer')).toBeHidden({ timeout: 60_000 });
     // The assistant's output, live: its lines in the pane while it runs, and a counter that moves.
     const heading = page.getByTestId('agent-heading');
     await expect(heading).toHaveText(/running \d+ s$/, { timeout: 200_000 });
-    await expect(page.getByTestId('agent-output')).toContainText('fake agent: reading the prompt');
     const secs = async () => Number(/running (\d+) s$/.exec((await heading.textContent()) || '')?.[1] ?? -1);
     const first = await secs();
     await expect.poll(secs, { timeout: 10_000 }).toBeGreaterThan(first);
+    await expect(page.getByTestId('agent-output')).toContainText('fake agent: reading the prompt');
     await expect(page.getByTestId('agent-output')).toHaveAttribute('role', 'log');
     const cont = page.getByRole('button', { name: 'Deployed — continue' });
     await expect(cont).toBeVisible({ timeout: 200_000 });
@@ -165,6 +171,16 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     const fixes = [...new Set(samples.map((s) => s.fix).filter(Boolean))];
     expect(fixes.some((f) => /^fix [1-9]\d* of [1-9]\d*$/.test(f))).toBe(true);
     expect(samples.some((s) => /^Round 2: waiting for deploy$/.test(s.step))).toBe(true);
+    // The status line explains itself at each stage. (The dry run was round 1; this run starts at 2.)
+    const said = (re: RegExp) => expect(samples.some((s) => re.test(s.status)), `${re}: ${[...new Set(samples.map((s) => s.status))].join(' | ')}`).toBe(true);
+    said(/^Round 2: re-checking the site first \(\d+ of \d+ pages\) so fixes can be verified against it$/);
+    said(/^Round 2: triaging \d+ review items · call 1 of 1 · \d+ s$/);
+    said(/^Round 2: fixing \d+ of \d+ · \d+\.[A-Z] .+ · \d+ s$/);
+    said(/^Round 2: checking the fixes \(.+ -e "setTimeout\(Boolean,1500\)"\)$/);
+    said(/^Committed \d+ fix(es)? · waiting for the new build on 127\.0\.0\.1:\d+…$/);
+    said(/^Round 3: re-checking the site \(\d+ of \d+ pages\)$/);
+    // The triage call prints nothing until it ends: the pane and its timer are there from its start.
+    expect(samples.some((s) => /^Round 2: triaging/.test(s.status) && /running \d+ s$/.test(s.heading) && s.output === '(no output yet)'), 'the pane runs before the first output').toBe(true);
 
     // The board equals `a11y-508 status`, and the round chart equals the ledger's rounds.
     const st = spawnSync(process.execPath, [BIN, 'status'], { cwd, encoding: 'utf8' }).stdout;

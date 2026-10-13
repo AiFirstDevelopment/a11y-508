@@ -302,7 +302,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     log.info('');
     log.info(`=== round ${round}: crawl ===`);
     ev('round', { round });
-    ev('step', { round, step: 'crawl' });
+    // first: the run's first round, which re-checks the site so this run's fixes are verified against it.
+    ev('step', { round, step: 'crawl', first: round === startRound });
     const signatureBefore = cfg.deployed === 'bundle-change' ? await bundleSignature(cfg.url) : null;
     let crawl;
     try {
@@ -345,8 +346,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     const review = byStatus(ledger, 'review');
     if (review.length) {
       log.info(`=== round ${round}: triage ${review.length} review item(s) ===`);
-      ev('step', { round, step: 'triage', count: review.length });
+      const batches = Math.ceil(review.length / cfg.triageBatch);
       for (let i = 0; i < review.length && !stopped(); i += cfg.triageBatch) {
+        // One step per assistant call, so the dashboard's timer and output pane start with the call.
+        ev('step', { round, step: 'triage', count: review.length, batch: i / cfg.triageBatch + 1, batches });
         const batch = review.slice(i, i + cfg.triageBatch).map((e, k) => ({ id: `r${round}-${i + k}`, entry: e }));
         const items = batch.map(({ id, entry }) => ({ id, test: entry.test, name: entry.name, wcag: entry.wcag, condition: testInfo(entry.test).condition, message: entry.message, selector: entry.selector, html: entry.html, pages: entry.pages }));
         const promptFile = join(work, `prompt-r${round}-triage-${i}.md`);
@@ -388,7 +391,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       if (stopped()) break;
       const label = `${entry.test} ${entry.impact} "${entry.message.slice(0, 70)}"`;
       log.info(`[${n + 1}/${open.length}] ${label}`);
-      ev('task', { round, n: n + 1, m: open.length, test: entry.test, impact: entry.impact, message: entry.message, state: 'start' });
+      ev('task', { round, n: n + 1, m: open.length, test: entry.test, name: entry.name, impact: entry.impact, message: entry.message, state: 'start' });
       const promptFile = join(work, `prompt-r${round}-fix-${n}.md`);
       const resultFile = join(work, `result-r${round}-fix-${n}.json`);
       writePrompt(promptFile, fixPrompt({ finding: entry, sourceDirs, protectedDirs, resultFile, condition: testInfo(entry.test).condition }));
@@ -418,7 +421,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       }
       if (cfg.check && cfg.checkEvery === 'finding') {
         log.info(`  checking: ${cfg.check}`);
-        ev('step', { round, step: 'gate', n: n + 1, m: open.length });
+        ev('step', { round, step: 'gate', n: n + 1, m: open.length, check: cfg.check });
         const gate = await sh(cwd, cfg.check, process.env);
         if (gate.code !== 0) {
           attempt.outcome = 'failed-gate';
@@ -457,6 +460,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
 
     if (committed && cfg.check && cfg.checkEvery === 'round') {
       log.info(`checking the round's ${committed} fix(es): ${cfg.check}`);
+      ev('step', { round, step: 'gate', check: cfg.check });
       const gate = await sh(cwd, cfg.check, process.env);
       if (gate.code !== 0) {
         log.warn(`check failed (exit ${gate.code}); rolling back this round's ${committed} commit(s)`);
@@ -488,7 +492,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     if (committed && cfg.push) {
       const branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
       log.info(`pushing ${committed} commit(s) to origin/${branch}`);
-      ev('step', { round, step: 'push' });
+      ev('step', { round, step: 'push', committed });
       const p = git(cwd, ['push', '-u', 'origin', branch]);
       if (p.code !== 0) {
         log.error(`push failed: ${p.err}`);
@@ -498,7 +502,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     }
 
     if (committed) {
-      ev('step', { round, step: cfg.deployed === 'enter' ? 'await-deploy' : 'deploy', deployed: cfg.deployed });
+      ev('step', { round, step: cfg.deployed === 'enter' ? 'await-deploy' : 'deploy', deployed: cfg.deployed, committed });
       if (cfg.deployed === 'command') {
         log.info(`deploying: ${cfg.deploy}`);
         const d = await sh(cwd, cfg.deploy, process.env);
