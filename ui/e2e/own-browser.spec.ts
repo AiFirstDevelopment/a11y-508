@@ -27,12 +27,16 @@ test('own browser: the dashboard opens in Chrome of its own, and a crawl runs as
     const origin = /open: (http:\/\/127\.0\.0\.1:\d+)/.exec(out)![1];
     await expect.poll(() => context.pages().filter((p) => p.url().startsWith(origin)).length, { timeout: 30_000 }).toBe(1);
     const dash = context.pages().find((p) => p.url().startsWith(origin))!;
-    // A first visit: Set up. The URL, then the page limit at /run/advanced, then Start.
+    // A first visit, nothing remembered: Set up is shown, by design.
     const dialog = dash.getByRole('dialog', { name: 'Set up' });
     await expect(dialog).toBeVisible({ timeout: 30_000 });
-    await dialog.getByLabel('Start URL').fill(site.base + 'app.html');
-    await dash.keyboard.press('Escape');
+    // Once the working directory is remembered it is not.
+    await dash.evaluate((dir) => localStorage.setItem('a11y508.cwd', dir), cwd);
+    await dash.reload();
+    await expect(dash.locator('h1')).toBeVisible();
     await expect(dialog).toBeHidden();
+    // The URL, then the page limit at /run/advanced, then Start.
+    await dash.getByLabel('Start URL').fill(site.base + 'app.html');
     await dash.evaluate(() => {
       history.pushState(null, '', '/run/advanced');
       dispatchEvent(new PopStateEvent('popstate', { state: null }));

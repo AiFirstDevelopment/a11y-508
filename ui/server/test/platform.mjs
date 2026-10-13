@@ -32,6 +32,14 @@ export const msysPath = (p) => (WIN && /^[A-Za-z]:[\\/]/.test(p) ? `/${p[0].toLo
 export const quote = (p) => (WIN ? `"${p}"` : JSON.stringify(p));
 
 // The file the dashboard finds for a stub named name in dir.
+// A flag and its path on a command line: the path bare, or in single or double quotes (Windows
+// paths come out quoted). `before` is literal text that must come right before the flag.
+const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export function argPattern(flag, path, before = '') {
+  const p = reEscape(path);
+  return new RegExp(`${reEscape(before)}${reEscape(flag)} (?:${p}|'${p}'|"${p}")(?=\\s|$)`);
+}
+
 export const exePath = (dir, name) => join(dir, WIN ? `${name}.cmd` : name);
 
 // npm's global bin directory for a prefix: prefix/bin, or the prefix itself on Windows.

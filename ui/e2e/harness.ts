@@ -14,7 +14,7 @@ import { assertRemovable, removeTemp, tmp } from '../server/test/helpers.mjs';
 // @ts-ignore
 export { assertRemovable, removeTemp, REPO_ROOT } from '../server/test/helpers.mjs';
 // @ts-ignore
-export { WIN, exePath, gitBash, loginShell, msysPath, npmBin, processList, quote, recordOpen, shellLine, shPath, stopTree, stub, stubScript, systemPath } from '../server/test/platform.mjs';
+export { WIN, argPattern, exePath, gitBash, loginShell, msysPath, npmBin, processList, quote, recordOpen, shellLine, shPath, stopTree, stub, stubScript, systemPath } from '../server/test/platform.mjs';
 
 export const UI = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const ROOT = resolve(UI, '..');

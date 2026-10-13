@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer } from './helpers.mjs';
+import { argPattern } from './platform.mjs';
 
 test('one run at a time: 409 while active, Stop ends it', async () => {
   // A page that never finishes loading keeps the run busy.
@@ -44,7 +45,8 @@ test('bad forms are 400 with the core\'s message', async () => {
     const signin = await s.call('GET', '/api/command?form=' + encodeURIComponent(JSON.stringify({ kind: 'crawl', url: 'http://x/', options: {}, auth: { mode: 'signin' } })));
     // The session file is the dashboard's own, outside the working directory.
     const stateFile = (await s.call('GET', '/api/env')).json.session.file;
-    assert.equal(signin.json.command, `node ${signin.json.command.split(' ')[1]} http://x/ --login --stay --state ${stateFile}`);
+    assert.match(signin.json.command, /^node \S+ http:\/\/x\/ --login --stay --state /);
+    assert.match(signin.json.command, argPattern('--state', stateFile, '--login --stay '));
     assert.match(stateFile, /[\\/]state\.json$/);
   } finally {
     await s.stop();

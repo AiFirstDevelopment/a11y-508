@@ -6,7 +6,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { api, dashboard, fixtureSite, moreOptions, open, readReport, startFromRun, status, tempDir, waitFinished, nav, removeTemp } from './harness';
+import { api, dashboard, fixtureSite, moreOptions, open, readReport, startFromRun, status, tempDir, waitFinished, nav, removeTemp, argPattern } from './harness';
 // @ts-ignore -- plain JS fixture shared with the core's tests
 import { SESSION_COOKIE, SESSION_VALUE } from '../../test/fixture-site.mjs';
 
@@ -73,10 +73,10 @@ test('run-simple (b): Start opens a window to sign in in and crawls there (--log
     await expect(page.locator('[data-notice="warn"]', { hasText: 'A browser window is open' })).toHaveCount(0);
     // The session file is the dashboard's own, outside the working directory.
     const sessionFile = (await api(dash, '/api/env')).json.session.file;
-    await expect(page.getByTestId('run-command')).toContainText(`--login --stay --state ${sessionFile}`);
+    await expect(page.getByTestId('run-command')).toHaveText(argPattern('--state', sessionFile, '--login --stay '));
     const cur = (await api(dash, '/api/runs/current')).json;
     expect(cur.kind).toBe('crawl');
-    expect(cur.meta.command).toContain(`--login --stay --state ${sessionFile}`);
+    expect(cur.meta.command).toMatch(argPattern('--state', sessionFile, '--login --stay '));
     await expect(page.getByTestId('page-list').locator('tbody tr[data-url]')).toHaveCount(1, { timeout: 180_000 });
     await waitFinished(page);
     // The CLI's own sign-in lines are not dashboard warnings.
@@ -139,10 +139,10 @@ test('run-simple (c): with a saved session, Start still signs in afresh; the sav
     await moreOptions(page);
     await page.getByLabel(/^Use saved session/).check();
     await startFromRun(page);
-    await expect(page.getByTestId('run-command')).toContainText(`--state ${file}`);
+    await expect(page.getByTestId('run-command')).toHaveText(argPattern('--state', file));
     const cur = (await api(dash, '/api/runs/current')).json;
     expect(cur.kind).toBe('crawl');
-    expect(cur.meta.command).toContain(`--state ${file}`);
+    expect(cur.meta.command).toMatch(argPattern('--state', file));
     expect(cur.meta.command).not.toContain('--login');
     await waitFinished(page);
     const report = readReport(cwd);

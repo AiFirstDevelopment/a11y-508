@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer, tmp } from './helpers.mjs';
+import { argPattern } from './platform.mjs';
 
 const OUTPUTS = new Set(['a11y-508-report', 'a11y-508-history', 'a11y-508-work', '.git']);
 
@@ -24,11 +25,11 @@ test('state dir: the config, the session and the settings go to the per-user dir
     // A session saved: the crawl's and the loop's commands name it there.
     writeFileSync(join(env.stateDir, 'state.json'), JSON.stringify({ version: 1, origins: [], cookies: [], storage: {} }));
     const cmd = await s.call('GET', '/api/command?form=' + encodeURIComponent(JSON.stringify({ kind: 'crawl', url: 'http://x/', options: {}, auth: { mode: 'signin' } })));
-    assert.ok(cmd.json.command.includes(`--login --stay --state ${join(env.stateDir, 'state.json')}`), cmd.json.command);
+    assert.match(cmd.json.command, argPattern('--state', join(env.stateDir, 'state.json'), '--login --stay '));
     const run = await s.call('POST', '/api/runs', { body: { kind: 'dry-run', auth: { mode: 'none' } } });
     assert.equal(run.status, 202, run.text);
-    assert.ok(run.json.meta.command.includes(`--config ${join(env.stateDir, 'config.json')}`), run.json.meta.command);
-    assert.ok(run.json.meta.command.includes(`--state ${join(env.stateDir, 'state.json')}`), run.json.meta.command);
+    assert.match(run.json.meta.command, argPattern('--config', join(env.stateDir, 'config.json')));
+    assert.match(run.json.meta.command, argPattern('--state', join(env.stateDir, 'state.json')));
     for (let i = 0; i < 120 && (await s.call('GET', '/api/runs/current')).json.status !== 'done'; i++) await new Promise((r) => setTimeout(r, 500));
     // Settings, server-side.
     assert.equal((await s.call('PUT', '/api/settings', { body: { url: 'http://127.0.0.1:9/' } })).status, 200);
