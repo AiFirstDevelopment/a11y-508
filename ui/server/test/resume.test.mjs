@@ -238,3 +238,28 @@ test('resume AC1: Quit ends the dashboard (asking first when a run is active), a
     await idle.stop();
   }
 });
+
+test('resume: cookies and extra headers never reach the run record or its events file, which are owner-only', async () => {
+  const site = await hangingSite();
+  const s = await startServer();
+  let pid = null;
+  try {
+    const r = await s.call('POST', '/api/runs', { body: { kind: 'crawl', url: site.url, options: { timeout: '60000', header: ['X-Api-Key: HEADERSECRET789xyz'] }, auth: { mode: 'cookies', cookies: 'sid=COOKIESECRET123' } } });
+    assert.equal(r.status, 202, r.text);
+    const rec = await until(() => records(s.cwd).find((x) => x.pid), 10000, 'run.json');
+    pid = rec.pid;
+    await sleep(2000);
+    for (const n of readdirSync(runsDir(s.cwd))) {
+      const text = readFileSync(join(runsDir(s.cwd), n), 'utf8');
+      for (const secret of ['COOKIESECRET123', 'HEADERSECRET789xyz']) assert.ok(!text.includes(secret), `${n} holds ${secret}`);
+      if (!WIN) assert.equal(statSync(join(runsDir(s.cwd), n)).mode & 0o077, 0, `${n} is owner-only`);
+    }
+    assert.ok(rec.args.some((a) => a.includes('[redacted]')), JSON.stringify(rec.args));
+    await s.call('POST', '/api/runs/current/stop');
+    await s.waitDone(30000);
+  } finally {
+    await endRun(pid);
+    await s.stop();
+    site.close();
+  }
+});

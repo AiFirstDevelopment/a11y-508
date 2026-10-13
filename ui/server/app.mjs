@@ -138,6 +138,29 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   };
 
   const tokens = () => [state.token, env.TOKEN].filter(Boolean);
+  // Cookie and header values a run was given: kept out of its record and its events file.
+  const credentialsIn = (body) => {
+    const out = [];
+    const auth = (body && body.auth) || {};
+    const cookies = Array.isArray(auth.cookies) ? auth.cookies : String(auth.cookies || '').split('\n');
+    for (const c of cookies.map((x) => String(x).trim()).filter(Boolean)) {
+      out.push(c);
+      const eq = c.indexOf('=');
+      if (eq > 0) out.push(c.slice(eq + 1).trim());
+    }
+    const opts = (body && body.options) || {};
+    const headers = [opts.header, opts['token-header']].flat().filter((h) => typeof h === 'string' && h.trim());
+    for (const h of headers.flatMap((x) => x.split('\n')).map((x) => x.trim()).filter(Boolean)) {
+      out.push(h);
+      const colon = h.indexOf(':');
+      if (colon > 0) {
+        const v = h.slice(colon + 1).trim();
+        out.push(v);
+        for (const part of v.split(/\s+/)) if (part.length >= 8) out.push(part);
+      }
+    }
+    return out.sort((a, b) => b.length - a.length);
+  };
 
   // ---- helpers
   const send = (res, status, body, headers = {}) => {
@@ -263,11 +286,13 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (cwd !== state.cwd) throw new BadRequest('the working directory changed while the run was starting; start it again', 409);
     let moved = null;
     if (kind === 'crawl') moved = moveLatestToHistory(cwd);
-    // The request as it can be made again (Continue), without a token.
+    // The request as it can be made again (Continue), without its credentials (a token, cookies,
+    // extra headers): those are never written to the run's record.
     const { preface, ...asked } = body;
-    const request = { ...asked, auth: asked.auth && typeof asked.auth === 'object' ? { ...asked.auth, token: undefined } : asked.auth };
+    const request = { ...asked, auth: asked.auth && typeof asked.auth === 'object' ? { ...asked.auth, token: undefined, cookies: undefined } : asked.auth };
+    if (request.options && typeof request.options === 'object') request.options = { ...request.options, header: undefined, 'token-header': undefined };
     const spec = {
-      kind, file: process.execPath, args: [BIN, ...built.args, '--events'], env: runEnv, cwd, events: true, secrets: tokens(),
+      kind, file: process.execPath, args: [BIN, ...built.args, '--events'], env: runEnv, cwd, events: true, secrets: [...tokens(), ...credentialsIn(body)],
       meta: { ...meta, command: commandLine({ cwd, args: built.args, token: built.token, shell: shellKind() }), url: body.url || null, movedToHistory: moved },
       request, preface: Array.isArray(preface) ? preface : [],
     };
@@ -450,7 +475,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   // loop goes on from the ledger, with no crawl.
   async function resume() {
     const r = runs.current;
-    if (!r || r.status !== 'interrupted' || r.kind !== 'loop') throw new BadRequest('there is no interrupted fix loop to continue', 409);
+    if (!r || r.status !== 'interrupted' || !LOOP_KINDS.has(r.kind)) throw new BadRequest('there is no interrupted fix loop to continue', 409);
     const request = (r.record && r.record.request) || {};
     const where = interruptedDetails(state.cwd, r, []);
     const discarded = discardInterrupted(state.cwd, sourceDirs());
@@ -458,7 +483,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     runs.forget();
     const preface = [{ type: 'resume', discarded, n: where.n, m: where.m, round: where.round, interruptedAt: where.at, at: new Date().toISOString() }];
     try {
-      return await startRun({ ...request, kind: 'loop', resume: true, signIn: request.signIn === true && !existsSync(sp().state), preface });
+      return await startRun({ ...request, kind: r.kind, resume: r.kind === 'loop', signIn: request.signIn === true && !existsSync(sp().state), preface });
     } catch (e) {
       // Not started: the interruption is offered again.
       reattach();

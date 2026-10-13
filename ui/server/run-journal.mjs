@@ -41,7 +41,7 @@ const readJson = (f) => {
 };
 const writeJsonFile = (file, value) => {
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n');
+  writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
   renameSync(tmp, file);
 };
 const line = (ev) => JSON.stringify(ev) + '\n';
@@ -255,15 +255,17 @@ function interruptionOf(run) {
 export function startJournaled(spec) {
   const id = randomUUID();
   const startedAt = new Date().toISOString();
-  mkdirSync(runsDir(spec.cwd), { recursive: true });
+  mkdirSync(runsDir(spec.cwd), { recursive: true, mode: 0o700 });
   const files = filesOf(spec.cwd, id);
   const redact = (t) => (spec.secrets || []).filter((s) => typeof s === 'string' && s.length >= 4).reduce((x, s) => x.split(s).join('[redacted]'), t);
+  // Nothing the run was given as a credential reaches its files (owner-only, like the session).
+  const meta = JSON.parse(redact(JSON.stringify(spec.meta || {})));
   // The run event and anything the server has to say first, before the run's process writes.
-  writeFileSync(files.events, [{ type: 'run', id, kind: spec.kind, at: startedAt, ...(spec.meta || {}) }, ...(spec.preface || [])].map(line).join(''));
-  writeFileSync(files.control, '');
+  writeFileSync(files.events, [{ type: 'run', id, kind: spec.kind, at: startedAt, ...meta }, ...(spec.preface || [])].map(line).join(''), { mode: 0o600 });
+  writeFileSync(files.control, '', { mode: 0o600 });
   const record = {
     id, kind: spec.kind, pid: null, startedAt, cwd: spec.cwd, url: (spec.meta && spec.meta.url) || null,
-    args: spec.args.map((a) => redact(String(a))), meta: spec.meta || {}, request: spec.request || null,
+    args: spec.args.map((a) => redact(String(a))), meta, request: spec.request ? JSON.parse(redact(JSON.stringify(spec.request))) : null,
   };
   const run = new JournalRun(record, spec.cwd);
   let child;
@@ -364,7 +366,9 @@ export function changesUnder(cwd, sourceDirs) {
     const p = parts[i];
     if (p.length < 4) continue;
     const xy = p.slice(0, 2);
-    files.push({ path: p.slice(3), tracked: xy !== '??' && xy[0] !== 'A' });
+    const path = p.slice(3);
+    // Never the tool's own outputs (the ledger, the run records, the reports), whatever the source folders.
+    if (!/^(a11y-508-work|a11y-508-report|a11y-508-history)(\/|$)/.test(relative(cwd, resolve(root, path)).split('\\').join('/'))) files.push({ path, tracked: xy !== '??' && xy[0] !== 'A' });
     // A rename's source follows as its own entry.
     if (xy[0] === 'R' || xy[0] === 'C') i++;
   }
