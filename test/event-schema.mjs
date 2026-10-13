@@ -28,6 +28,7 @@ export const EVENT_SCHEMA = {
   task: { round: num, n: num, m: num, test: str, impact: str, message: str, state: oneOf('start', 'done'), outcome: opt(str) },
   ledger: { rounds: num, counts: obj, line: str },
   'await-deploy': { round: num, committed: num, nextRound: num },
+  precondition: { code: oneOf('not-a-repo', 'dirty-tree', 'branch'), message: str, remedy: str },
   done: { code: num },
 };
 

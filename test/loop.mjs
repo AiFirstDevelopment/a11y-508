@@ -513,5 +513,196 @@ rmSync(repo2, { recursive: true, force: true });
   site3.close();
   rmSync(repo3, { recursive: true, force: true });
 }
+
+// ---- e2e: the loop gets itself onto a usable branch, and set-up errors say what to do
+// (docs/plans/loop-resilience.md). Every repository here is a directory this file created under the
+// OS temp directory; removeOwn removes nothing else.
+{
+  const { mkdtempSync, realpathSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { relative, isAbsolute } = await import('node:path');
+  const ours = new Set();
+  const mkTemp = (prefix) => {
+    const d = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+    ours.add(d);
+    return d;
+  };
+  const removeOwn = (d) => {
+    const rel = relative(realpathSync(tmpdir()), d);
+    if (!ours.has(d) || !rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error(`refusing to remove ${d}: not a directory this test created under the temp directory`);
+    rmSync(d, { recursive: true, force: true, maxRetries: 10 });
+    ours.delete(d);
+  };
+  const bin = join(root, 'bin/a11y-508.mjs');
+  const fake = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(here, 'fake-agent.mjs'))} {promptFile} {resultFile}`;
+  const quick = ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage'];
+  // A repository holding the fixture's start page under site/, with a config; { git: false } leaves it a plain folder.
+  const appRepo = (prefix, config, { git = true } = {}) => {
+    const dir = mkTemp(prefix);
+    mkdirSync(join(dir, 'site'), { recursive: true });
+    cpSync(join(here, 'fixtures', 'index.html'), join(dir, 'site', 'index.html'));
+    writeFileSync(join(dir, '.gitignore'), 'a11y-508-work/\na11y-508-report/\n');
+    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', maxAttempts: 3, ...config }, null, 2));
+    const g = (...args) => {
+      const env = args[0] && typeof args[0] === 'object' ? args.shift() : {};
+      const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, ...env } });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    if (git) {
+      g('init', '-q', '-b', 'main');
+      g('config', 'user.email', 'loop-test@example.test');
+      g('config', 'user.name', 'loop test');
+      g('config', 'commit.gpgsign', 'false');
+      g('add', '-A');
+      g('commit', '-q', '-m', 'fixture site');
+    }
+    return { dir, g };
+  };
+  const loopIn = (dir, args) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [bin, 'loop', ...args], { cwd: dir, env: { ...process.env, TOKEN, NO_COLOR: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let out = '';
+    child.stdout.on('data', (d) => ((stdout += d), (out += d)));
+    child.stderr.on('data', (d) => (out += d));
+    const timer = setTimeout(() => child.kill('SIGKILL'), 240000);
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      resolve({ status: code, stdout, out });
+    });
+  });
+  const serve = (dir) => {
+    const srv = createServer((req, res) => {
+      if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+        res.writeHead(401);
+        return res.end();
+      }
+      let path = new URL(req.url, 'http://x').pathname;
+      if (path === '/') path = '/index.html';
+      if (path.startsWith('/img/') || path === '/pixel.png') {
+        res.writeHead(200, { 'content-type': 'image/png' });
+        return res.end(PNG);
+      }
+      const file = join(dir, 'site', path);
+      if (extname(path) !== '.html' || !existsSync(file)) {
+        res.writeHead(404, { 'content-type': 'text/html' });
+        return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
+      }
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(readFileSync(file, 'utf8').replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN));
+    });
+    return new Promise((r) => srv.listen(0, '127.0.0.1', () => r(srv)));
+  };
+  const infos = (events) => events.filter((e) => e.type === 'info').map((e) => e.message);
+  // Nothing listens on the discard port: the round's crawl fails at once, after the branch is settled.
+  const DEAD = 'http://127.0.0.1:9/';
+
+  // AC 1, guard 1: a11y-508/fixes exists (an earlier run's), the loop's branch is a11y-508.
+  {
+    const { dir, g } = appRepo('a11y-508-nested-', { branch: 'a11y-508' });
+    const site = await serve(dir);
+    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(dir, 'a11y-508.config.json'), 'utf8')), url: `http://127.0.0.1:${site.address().port}/` }, null, 2));
+    g('commit', '-qam', 'the config names the site');
+    g('branch', 'a11y-508/fixes');
+    const r = await loopIn(dir, ['--max-rounds', '1', '--events']);
+    site.close();
+    const { events, problems } = parseEvents(r.stdout);
+    check('loop-resilience AC1: with a11y-508/fixes in the repository, the loop for a11y-508 commits its round on a11y-508/fixes, says why once, and exits as a normal round', () => {
+      assert.deepEqual(problems, []);
+      assert.equal(g('rev-parse', '--abbrev-ref', 'HEAD'), 'a11y-508/fixes', r.out);
+      assert.match(g('log', '--format=%s', 'main..a11y-508/fixes'), /^a11y-508: /m);
+      assert.equal(g('log', '--format=%s', 'main', '--grep=^a11y-508: '), '');
+      const why = infos(events).filter((m) => /^on branch /.test(m));
+      assert.deepEqual(why, ['on branch a11y-508/fixes: a branch a11y-508 cannot be created while a11y-508/fixes exists (git keeps branches as paths); continuing on a11y-508/fixes']);
+      assert.ok(!events.some((e) => e.type === 'error' || e.type === 'precondition'), JSON.stringify(events.filter((e) => e.type === 'error' || e.type === 'precondition')));
+      assert.equal(r.status, 1, r.out);
+      assert.equal(events.at(-1).code, 1);
+    });
+    removeOwn(dir);
+  }
+
+  // Guard 2: of two nested branches, the most recently committed one.
+  {
+    const { dir, g } = appRepo('a11y-508-nested2-', { branch: 'a11y-508', url: DEAD });
+    const at = (iso) => ({ GIT_COMMITTER_DATE: iso, GIT_AUTHOR_DATE: iso });
+    g('checkout', '-q', '-b', 'a11y-508/new');
+    writeFileSync(join(dir, 'new.txt'), 'new\n');
+    g('add', 'new.txt');
+    g(at('2026-09-01T12:00:00Z'), 'commit', '-q', '-m', 'newer');
+    g('checkout', '-q', 'main');
+    g('checkout', '-q', '-b', 'a11y-508/old');
+    writeFileSync(join(dir, 'old.txt'), 'old\n');
+    g('add', 'old.txt');
+    g(at('2020-01-01T12:00:00Z'), 'commit', '-q', '-m', 'older');
+    g('checkout', '-q', 'main');
+    const r = await loopIn(dir, ['--max-rounds', '1', '--events']);
+    const { events } = parseEvents(r.stdout);
+    check('loop-resilience guard 2: with a11y-508/old and a11y-508/new, the loop continues on the most recently committed, a11y-508/new', () => {
+      assert.equal(g('rev-parse', '--abbrev-ref', 'HEAD'), 'a11y-508/new', r.out);
+      assert.ok(infos(events).some((m) => /^on branch a11y-508\/new: .*the most recently committed of 2 a11y-508\/\* branches$/.test(m)), infos(events).join('\n'));
+      assert.ok(!events.some((e) => e.type === 'precondition'));
+    });
+    removeOwn(dir);
+  }
+
+  // AC 2: the reverse -- a11y-508 exists, the loop's branch is a11y-508/fixes.
+  {
+    const { dir, g } = appRepo('a11y-508-parent-', { branch: 'a11y-508/fixes', url: DEAD });
+    g('branch', 'a11y-508');
+    const r = await loopIn(dir, ['--max-rounds', '1', '--events']);
+    const { events } = parseEvents(r.stdout);
+    check('loop-resilience AC2: with a11y-508 in the repository, the loop for a11y-508/fixes continues on a11y-508 and says why', () => {
+      assert.equal(g('rev-parse', '--abbrev-ref', 'HEAD'), 'a11y-508', r.out);
+      assert.deepEqual(infos(events).filter((m) => /^on branch /.test(m)), ['on branch a11y-508: a branch a11y-508/fixes cannot be created while a11y-508 exists (git keeps branches as paths); continuing on a11y-508']);
+      assert.ok(!events.some((e) => e.type === 'precondition'));
+      // It went on to the round (whose crawl had nothing to reach).
+      assert.ok(events.some((e) => e.type === 'round' && e.round === 1), r.out);
+    });
+    removeOwn(dir);
+  }
+
+  // AC 4, guard 4: every set-up error before the first round is one precondition event with a remedy.
+  {
+    const cases = [];
+    {
+      const { dir } = appRepo('a11y-508-norepo-', { url: DEAD }, { git: false });
+      cases.push({ code: 'not-a-repo', dir, message: new RegExp(`^${dir.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')} is not a git repository`), remedy: /git init/ });
+    }
+    {
+      const { dir } = appRepo('a11y-508-dirty-', { url: DEAD });
+      writeFileSync(join(dir, 'site', 'index.html'), readFileSync(join(dir, 'site', 'index.html'), 'utf8') + '\n<!-- edited -->\n');
+      writeFileSync(join(dir, 'site', 'new.html'), '<!doctype html>');
+      cases.push({ code: 'dirty-tree', dir, message: /^uncommitted changes under site: .*site\/index\.html/, remedy: /^Commit or stash them .*site\/index\.html, site\/new\.html$/ });
+    }
+    {
+      const { dir } = appRepo('a11y-508-badbranch-', { url: DEAD, branch: 'bad..name' });
+      cases.push({ code: 'branch', dir, message: /^cannot switch to branch bad\.\.name: /, remedy: /git check-ref-format --branch "bad\.\.name"/ });
+    }
+    for (const c of cases) {
+      const r = await loopIn(c.dir, ['--max-rounds', '1', '--events']);
+      const { events, problems } = parseEvents(r.stdout);
+      check(`loop-resilience AC4: ${c.code} is one precondition event with its remedy, before any round, exit 2`, () => {
+        assert.deepEqual(problems, []);
+        const pre = events.filter((e) => e.type === 'precondition');
+        assert.equal(pre.length, 1, r.out);
+        assert.equal(pre[0].code, c.code);
+        assert.match(pre[0].message, c.message);
+        assert.match(pre[0].remedy, c.remedy);
+        assert.ok(!events.some((e) => e.type === 'round'), 'a round started');
+        assert.equal(r.status, 2);
+        assert.equal(events.at(-1).type, 'done');
+        assert.equal(events.at(-1).code, 2);
+      });
+      const plain = await loopIn(c.dir, ['--max-rounds', '1']);
+      check(`loop-resilience AC4: ${c.code} without --events prints the message and the remedy, exit 2`, () => {
+        assert.equal(plain.status, 2, plain.out);
+        const lines = plain.out.split('\n');
+        assert.ok(lines.some((l) => l.startsWith('error ') && c.message.test(l.slice(6))), plain.out);
+        assert.ok(lines.some((l) => l.startsWith('to fix: ') && c.remedy.test(l.slice(8))), plain.out);
+      });
+      removeOwn(c.dir);
+    }
+  }
+}
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
 process.exitCode = failures ? 1 : 0;

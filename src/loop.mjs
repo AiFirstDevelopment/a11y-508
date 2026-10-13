@@ -202,6 +202,38 @@ async function callAgent(work, label, args, onOutput = null) {
   return res;
 }
 
+// The branch the loop commits on, for the one it was given. Git keeps a branch as a path, so while
+// "a11y-508/fixes" exists no branch "a11y-508" can be created, and the reverse: the loop then
+// continues on the branch in the way (of several nested ones, the most recently committed).
+// { branch, exists, reason } -- reason only when it is not the branch asked for. Reads the refs
+// through git, never the .git directory (packed refs, worktrees, Windows).
+export function resolveBranch(cwd, wanted) {
+  const r = git(cwd, ['for-each-ref', '--sort=-committerdate', '--format=%(refname)', 'refs/heads/']);
+  const heads = r.code === 0 ? r.out.split(/\r?\n/).filter(Boolean).map((l) => l.replace(/^refs\/heads\//, '')) : [];
+  if (!wanted || heads.includes(wanted)) return { branch: wanted, exists: !!wanted && heads.includes(wanted), reason: null };
+  const nested = heads.filter((h) => h.startsWith(`${wanted}/`));
+  if (nested.length) {
+    const more = nested.length > 1 ? `, the most recently committed of ${nested.length} ${wanted}/* branches` : '';
+    return { branch: nested[0], exists: true, reason: `a branch ${wanted} cannot be created while ${nested[0]} exists (git keeps branches as paths); continuing on ${nested[0]}${more}` };
+  }
+  const parts = wanted.split('/');
+  for (let i = parts.length - 1; i > 0; i--) {
+    const parent = parts.slice(0, i).join('/');
+    if (heads.includes(parent)) return { branch: parent, exists: true, reason: `a branch ${wanted} cannot be created while ${parent} exists (git keeps branches as paths); continuing on ${parent}` };
+  }
+  return { branch: wanted, exists: false, reason: null };
+}
+
+// The git command (or setting) that clears a branch the loop could not switch to or create.
+function branchRemedy(cwd, target, err) {
+  const b = target.branch;
+  if (/would be overwritten|commit your changes or stash them/i.test(err)) return `Files outside the source folders block the switch: git stash --include-untracked, then try again.`;
+  if (/not a valid branch name|is not a valid|invalid ref/i.test(err)) return `"${b}" is not a name git accepts: set "branch" in the loop settings to one it does (check with: git check-ref-format --branch "${b}"), then try again.`;
+  const lock = /'refs\/heads\/([^']+)' exists/.exec(err);
+  if (lock) return `Rename the branch in the way: git branch -m "${lock[1]}" "${lock[1]}-old", then try again.`;
+  return `Run git ${target.exists ? 'checkout' : 'checkout -b'} "${b}" in ${cwd} to see what git needs, resolve it, then try again.`;
+}
+
 // --from-report: the report a crawl just produced, used for the run's first round instead of a
 // crawl, when it is for the config's URL and newer than the loop's last commit. Returns the report,
 // or null with the reason logged (the round then crawls as before).
@@ -255,29 +287,36 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   const sourceDirs = cfg.source;
   const stopped = () => stopSignal && stopSignal.stopped;
 
+  // A set-up error that ends the loop before its first round: one event with what went wrong and
+  // what a person can do about it (--events), or both lines printed.
+  const precondition = (code, message, remedy) => {
+    if (log.events) ev('precondition', { code, message, remedy });
+    else {
+      log.error(message);
+      log.info(`to fix: ${remedy}`);
+    }
+    return 2;
+  };
+
   if (!dryRun) {
     if (git(cwd, ['rev-parse', '--is-inside-work-tree']).out !== 'true') {
-      log.error(`${cwd} is not a git repository; the loop commits each fix, so it needs one`);
-      return 2;
+      return precondition('not-a-repo', `${cwd} is not a git repository; the loop commits each fix, so it needs one`,
+        `Choose the folder that holds the app's git repository, or make this one a repository: git init && git add -A && git commit -m "Initial commit"`);
     }
     const dirty = gitChanged(cwd, sourceDirs);
     if (dirty.length) {
-      log.error(`uncommitted changes under ${sourceDirs.join(', ')}; commit or stash them first so the loop's commits contain only its own fixes:\n${dirty.join('\n')}`);
-      return 2;
+      return precondition('dirty-tree', `uncommitted changes under ${sourceDirs.join(', ')}: ${dirty.join(', ')}`,
+        `Commit or stash them (git stash --include-untracked), then try again, so the loop's commits contain only its own fixes: ${dirty.join(', ')}`);
     }
     if (cfg.branch) {
       const current = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
-      if (current !== cfg.branch) {
-        const sw = git(cwd, ['checkout', cfg.branch]);
-        if (sw.code !== 0) {
-          const mk = git(cwd, ['checkout', '-b', cfg.branch]);
-          if (mk.code !== 0) {
-            log.error(`cannot switch to branch ${cfg.branch}: ${mk.err}`);
-            return 2;
-          }
-        }
-        log.info(`on branch ${cfg.branch}`);
+      const target = resolveBranch(cwd, cfg.branch);
+      if (current !== target.branch) {
+        const sw = git(cwd, target.exists ? ['checkout', target.branch] : ['checkout', '-b', target.branch]);
+        if (sw.code !== 0) return precondition('branch', `cannot switch to branch ${target.branch}: ${sw.err.split(/\r?\n/)[0]}`, branchRemedy(cwd, target, sw.err));
       }
+      if (target.reason) log.info(`on branch ${target.branch}: ${target.reason}`);
+      else if (current !== target.branch) log.info(`on branch ${target.branch}`);
     }
     if (!cfg.check) log.warn('no "check" command in the config: fixes are committed without a build or test gate');
   }

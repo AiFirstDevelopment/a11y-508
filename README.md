@@ -188,7 +188,7 @@ Put `a11y-508.config.json` in the repository to fix (the dashboard's Fix loop sc
 | `agent` | `claude`, `gemini`, `codex`, or any command. The presets run the assistant in non-interactive mode with file edits allowed. A custom command gets the prompt's path as `{promptFile}` and may also use `{resultFile}`. |
 | `source` | Folders the assistant may edit (default `["src"]`). Changes anywhere else are reverted. |
 | `check` | Build and test command run after each fix. A non-zero exit reverts the fix. `"checkEvery": "round"` runs it once per round instead and rolls back the whole round on failure. No `check` means no gate, with a warning. |
-| `branch` | Branch to commit on (created if missing). Default: the current branch. `"push": false` keeps commits local. |
+| `branch` | Branch to commit on (created if missing). Default: the current branch. Git keeps branches as paths, so while `a11y-508/fixes` exists no `a11y-508` can be created (and the reverse): the loop then continues on the branch in the way (of several `a11y-508/*`, the most recently committed) and says so. `"push": false` keeps commits local. |
 | `deployed` | How the loop knows the new build is live: `"command"` runs `deploy` and continues when it exits; `"bundle-change"` polls the start page every 15 seconds until its script and stylesheet URLs change (the default `deployTimeout` is 30 minutes); `"enter"` prints a prompt and waits for Enter; `"none"` continues at once (only for sites served straight from the working tree). Default: `"command"` if `deploy` is set, else `"enter"`. |
 | `maxAttempts` | Fix attempts per finding before it is marked needs-human (default 3). |
 
@@ -407,6 +407,7 @@ With `--events` the CLI prints one JSON object per line on stdout instead of its
 | `ledger` | `rounds`, `counts` (by status), `line` | loop: whenever the ledger changes |
 | `await-deploy` | `round`, `committed`, `nextRound` | loop with `"deployed": "enter"`, or `"bundle-change"` under `--events`: write a newline to stdin to continue |
 | `agent-output` | `round`, `task`, `kind` (`fix`, `triage`), `stream` (`stdout`, `stderr`), `text` | loop: the assistant's output as it arrives, a few events a second at most per call |
+| `precondition` | `code` (`not-a-repo`, `dirty-tree`, `branch`), `message`, `remedy` (what a person can do about it: the files to commit or stash, or the git command) | loop: a set-up error ended it before its first round (exit code 2); without `--events` both lines are printed |
 | `done` | `code` (the exit code) | last |
 
 In a loop, each round's crawl runs with `--events` too, and its `page`, `coverage` and `summary` events are passed on with a `round` field, so a round shows the same per-page progress as a plain crawl.

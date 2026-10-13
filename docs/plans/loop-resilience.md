@@ -1,0 +1,84 @@
+# The fix loop recovers from its own set-up errors and never dead-ends
+
+slug: loop-resilience
+branch: main
+
+A fix loop on the CBP laptop stopped before doing anything with
+`cannot switch to branch a11y-508: fatal: cannot lock ref 'refs/heads/a11y-508': 'refs/heads/a11y-508/fixes' exists`.
+An earlier run (when the default branch was `a11y-508/fixes`) had created that branch; git refs are files, so a
+branch `a11y-508/fixes` makes `a11y-508` a directory and plain `a11y-508` can never be created in that repository.
+The loop treated it as fatal, exited 2, and the Fix step then showed "Loop finished. 0 fixed · 0 remaining",
+"Finished: 0 of 0 pages found", the errors folded under Details, and only "Run again" (a new crawl) as a way out.
+
+The loop must get itself onto a usable branch without stopping, and when it really cannot continue, the Fix step
+must say so in plain words with the remedy and a **Try again** that continues from where it stopped (from the
+report or the ledger — never a new crawl). Nothing that merely needs a different branch name, a retry, or a
+one-line remedy may end the loop.
+
+## Acceptance criteria
+
+1. With a branch `<branch>/<anything>` already in the repository (for example `a11y-508/fixes`) and the loop's
+   branch `a11y-508`, the loop continues on the existing nested branch — the most recently committed one when
+   there are several — and logs one info line saying which branch it is on and why. The round's fixes are
+   committed there. No error, exit code as for a normal round.
+2. The reverse: with branch `a11y-508` existing and the loop's branch `a11y-508/fixes`, the loop continues on
+   `a11y-508` with the same kind of info line.
+3. The Fix step shows the branch the loop will actually use (the "commits to branch" line and `GET
+   /api/loop/defaults`'s `effective.branch`): when the suggested `a11y-508` cannot be created because a
+   `a11y-508/*` branch exists, the suggestion is that nested branch; the dashboard and the loop agree.
+4. Every set-up error that still ends the loop before its first round (not a git repository; uncommitted changes
+   under the source folders; a branch that cannot be created or switched to for any other reason) is emitted as
+   one event `{ type: 'precondition', code, message, remedy }` (`code` in `not-a-repo | dirty-tree | branch`),
+   with `remedy` a sentence a person can act on (for the dirty tree, the file list and "commit or stash them";
+   for a branch, the git command that resolves it). The CLI prints message and remedy; the exit code stays 2.
+5. On the Fix step, a loop that ended before its first round shows the heading **"The fix loop could not
+   start"** with the message and the remedy in the main view (not under Details) and a primary **Try again**
+   button. It never shows "Loop finished", "0 fixed · 0 remaining", or a crawl progress line such as
+   "Finished: 0 of 0 pages found".
+6. A loop that ended after its first round for any other reason (crawl failed, no page audited, push failed,
+   deploy failed, assistant failed to start) shows **"The fix loop stopped"**, the reason, the real ledger counts,
+   and the same **Try again** button; "Run again" (a new crawl) stays as the secondary action.
+7. **Try again** starts a new loop run from the same latest report (`--from-report`, as "Fix the violations"
+   does), so no page is re-crawled, and the loop continues from its ledger: findings already fixed are not
+   fixed again. While it runs the screen is the normal running view.
+8. Everything above holds on Windows (Git Bash in CI, `path.win32`-safe) — the branch logic uses `git
+   for-each-ref`/`show-ref`, never the `.git/refs` directory.
+
+## How this fails silently
+
+1. The nested-branch fallback picks a branch but does not switch to it; commits land on the previous branch.
+   Mutation: remove the `checkout` of the chosen branch — the test asserting `rev-parse --abbrev-ref HEAD` after
+   the loop equals `a11y-508/fixes` must fail.
+2. The fallback picks the oldest nested branch instead of the most recently committed one. Mutation: invert
+   the sort — the test with two nested branches must fail.
+3. `loop-defaults` suggests `a11y-508` although it cannot be created. Mutation: drop the nested-branch check in
+   `loop-defaults.mjs` — the server test must fail.
+4. The precondition is logged as a plain error and no `precondition` event is emitted. Mutation: replace the
+   event with `log.error` — the CLI `--events` test asserting the event's `code` and `remedy` must fail.
+5. The Fix step still says "Loop finished" after a precondition failure. Mutation: remove the precondition
+   branch in the template — the Playwright test asserting the "could not start" heading and the absence of
+   "Loop finished" / "fixed ·" / "pages found" text must fail.
+6. Try again starts a crawl instead of a loop from the report. Mutation: make Try again call `runAgain()` —
+   the Playwright test asserting that the run started has `kind: 'loop'` with the report's `finishedAt` and that
+   no `crawl` run was created must fail.
+7. Try again starts a loop with an empty ledger, so already-fixed findings are fixed again. Mutation: delete the
+   ledger before the retried run — the loop test asserting the retried round's fix count must fail.
+
+## Non-goals
+
+- Auto-committing or auto-stashing the user's own uncommitted changes.
+- Changing what the loop does once a round is under way (fix, gate, commit, push, deploy).
+- Any change to the crawler or the checks.
+
+## Notes for the builder
+
+- Branch logic lives in `src/loop.mjs` around the `cfg.branch` block (`git checkout` / `checkout -b`);
+  `ui/server/loop-defaults.mjs` suggests the branch; the Fix step is `ui/app/screens/fix-loop.ts`
+  (`loopEnded()`, `fixCounts()`, the actions block, `fix()`/`startLoop()`); run exits are turned into `done`
+  events in `ui/server/runs.mjs` and read in `ui/app/core/run.store.ts`. Loop tests: `test/loop.mjs` (the `g`
+  helper, fixture repo under tmpdir); server tests `ui/server/test`; Playwright `ui/e2e` with its harness.
+- Test helpers may delete only directories they created themselves under the OS temp dir; never the repository
+  root, never a path a caller passed in. Never run a test with the repository root as its working directory.
+- Run every suite locally (`node test/run.mjs`, `node test/loop.mjs`, the server `node:test` suites, Playwright);
+  do not wait on CI. Push to `main` directly, early (as soon as the branch fallback and its test are green), then
+  the rest. Rebuild `ui/dist` and `build-info.json` before pushing any UI change.
