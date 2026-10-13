@@ -8,6 +8,8 @@ import { resultWord, localTime, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { ReportListEntry } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
+import { Starter } from '../core/starter';
+import { detailsOpen, setDetailsOpen } from '../core/details';
 
 interface LoopRound { round: number; at: string | null; found: number; fixed: number; commits: number; remaining: number; needsHuman: number }
 interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: number; of: number; remaining: number; needsHuman: number } }
@@ -25,9 +27,6 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
     <p role="status" class="hint" data-testid="history-status">{{ status() }}</p>
     @if (timeline(); as t) {
       <p data-testid="loop-summary">Fix loop: {{ t.total.rounds }} round{{ t.total.rounds === 1 ? '' : 's' }} · {{ t.total.fixed }} of {{ t.total.of }} violations fixed · {{ t.total.remaining }} remaining · {{ t.total.needsHuman }} need a person</p>
-      <app-chart-panel id="remaining" heading="Violations remaining after each round" [columns]="remainingCols" [rows]="remainingRows()">
-        <ngx-charts-bar-vertical [view]="[480, 180]" [results]="remainingData()" [xAxis]="true" [yAxis]="true" [showXAxisLabel]="true" xAxisLabel="Round" [showYAxisLabel]="true" yAxisLabel="Remaining" [animations]="animations" [tooltipDisabled]="true" />
-      </app-chart-panel>
     }
     @if (earlier().length || timeline()) {
       <div class="actions">
@@ -75,12 +74,41 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
     } @else {
       <p>No reports yet. <a routerLink="/run">Run a crawl</a>.</p>
     }
+    @if (timeline()) {
+      <details class="details" data-testid="details" [open]="showDetails()" (toggle)="toggled($event)">
+        <summary>Details<span class="visually-hidden"> of the history</span></summary>
+        <app-chart-panel id="remaining" heading="Violations remaining after each round" [columns]="remainingCols" [rows]="remainingRows()">
+          <ngx-charts-bar-vertical [view]="[480, 180]" [results]="remainingData()" [xAxis]="true" [yAxis]="true" [showXAxisLabel]="true" xAxisLabel="Round" [showYAxisLabel]="true" yAxisLabel="Remaining" [animations]="animations" [tooltipDisabled]="true" />
+        </app-chart-panel>
+      </details>
+    }
+    @if (list().length || againUrl()) {
+      <div class="actions next">
+        <button type="button" class="big" (click)="runAgain()" [disabled]="run.active()" data-testid="run-again">Run again</button>
+      </div>
+    }
   `,
 })
 export class HistoryScreen {
   private api = inject(Api);
   private env = inject(EnvStore);
-  private run = inject(RunStore);
+  readonly run = inject(RunStore);
+  private starter = inject(Starter);
+  readonly showDetails = signal(detailsOpen('history'));
+  toggled(e: Event): void {
+    const open = (e.target as HTMLDetailsElement).open;
+    this.showDetails.set(open);
+    setDetailsOpen('history', open);
+  }
+  // Run again: the next crawl from the same set up (a fresh sign-in window), then Results and Fix.
+  async runAgain(): Promise<void> {
+    this.error.set('');
+    try {
+      await this.starter.startCrawl(this.againUrl());
+    } catch (e: any) {
+      this.error.set(e.message);
+    }
+  }
   readonly list = signal<ReportListEntry[]>([]);
   readonly timeline = signal<LoopTimeline | null>(null);
   readonly word = resultWord;
@@ -91,6 +119,9 @@ export class HistoryScreen {
   readonly status = signal('');
   // The reports in a11y-508-history/, which Clear history and Delete remove.
   readonly earlier = computed(() => this.list().filter((r) => r.source === 'history'));
+  // The start URL for Run again: the latest crawl's, else the loop config's.
+  private configUrl = signal('');
+  readonly againUrl = computed(() => this.list().find((r) => r.source === 'latest')?.baseUrl || this.configUrl());
   readonly loopRunning = computed(() => this.run.active() && ['loop', 'dry-run'].includes(this.run.kind() || ''));
   readonly remainingCols = [{ key: 'round', label: 'Round' }, { key: 'remaining', label: 'Remaining' }];
   readonly remainingRows = computed(() => (this.timeline()?.rounds || []).map((r) => ({ round: r.round, remaining: r.remaining })));
@@ -113,6 +144,7 @@ export class HistoryScreen {
     } catch {}
     if (n !== this.loads) return;
     this.list.set(l);
+    this.api.get<{ config: Record<string, any> }>('/api/config').then((c) => this.configUrl.set(String(c?.config?.['url'] || ''))).catch(() => {});
     this.timeline.set(t);
   }
 

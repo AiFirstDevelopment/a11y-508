@@ -4,9 +4,9 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { existsSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { api, dashboard, fixtureSite, moreOptions, open, readReport, startFromRun, status, tempDir, waitFinished } from './harness';
+import { existsSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { api, dashboard, fixtureSite, moreOptions, open, readReport, startFromRun, status, tempDir, waitFinished, nav } from './harness';
 // @ts-ignore -- plain JS fixture shared with the core's tests
 import { SESSION_COOKIE, SESSION_VALUE } from '../../test/fixture-site.mjs';
 
@@ -71,10 +71,12 @@ test('run-simple (b): Start opens a window to sign in in and crawls there (--log
     // The wait is the Live status line, not a warning.
     await expect(status(page)).toHaveText(WAITING, { timeout: 60_000 });
     await expect(page.locator('[data-notice="warn"]', { hasText: 'A browser window is open' })).toHaveCount(0);
-    await expect(page.getByTestId('run-command')).toContainText('--login --stay --state a11y-508-state.json');
+    // The session file is the dashboard's own, outside the working directory.
+    const sessionFile = (await api(dash, '/api/env')).json.session.file;
+    await expect(page.getByTestId('run-command')).toContainText(`--login --stay --state ${sessionFile}`);
     const cur = (await api(dash, '/api/runs/current')).json;
     expect(cur.kind).toBe('crawl');
-    expect(cur.meta.command).toContain('--login --stay --state a11y-508-state.json');
+    expect(cur.meta.command).toContain(`--login --stay --state ${sessionFile}`);
     await expect(page.getByTestId('page-list').locator('tbody tr[data-url]')).toHaveCount(1, { timeout: 180_000 });
     await waitFinished(page);
     // The CLI's own sign-in lines are not dashboard warnings.
@@ -85,9 +87,10 @@ test('run-simple (b): Start opens a window to sign in in and crawls there (--log
     expect(report.pages[0].finalUrl).toBe(site.base + 'app.html');
     expect(report.pages[0].error).toBeNull();
     expect(report.pages[0].title).toBe('Application - a11y-508 test site');
-    expect(existsSync(join(dash.cwd, 'a11y-508-state.json')), 'the session file, saved for the fix loop').toBe(true);
+    expect(existsSync(sessionFile), 'the session file, saved for the fix loop').toBe(true);
+    expect(existsSync(join(dash.cwd, 'a11y-508-state.json')), 'nothing in the working directory').toBe(false);
     // Back on Run: still one Start, which signs in afresh next time too.
-    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
+    await nav(page, 'Run');
     await expect(start(page)).toBeEnabled();
     await expect(page.getByTestId('session-line')).toHaveCount(0);
   } finally {
@@ -100,7 +103,10 @@ test('run-simple (c): with a saved session, Start still signs in afresh; the sav
   const site = await fixtureSite({ autoLogin: true });
   const cwd = tempDir('a11y-508-simple-');
   const origin = new URL(site.base).origin;
-  const file = join(cwd, 'a11y-508-state.json');
+  const dash = await dashboard({ cwd });
+  // The session where the dashboard keeps it.
+  const file = (await api(dash, '/api/env')).json.session.file;
+  mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify({
     version: 1,
     capturedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
@@ -111,7 +117,6 @@ test('run-simple (c): with a saved session, Start still signs in afresh; the sav
   }));
   const fiveMinAgo = new Date(Date.now() - 5 * 60_000 - 10_000);
   utimesSync(file, fiveMinAgo, fiveMinAgo);
-  const dash = await dashboard({ cwd });
   try {
     await open(page, dash, '/run');
     await page.getByLabel('Start URL').fill(site.base + 'app.html');
@@ -120,7 +125,7 @@ test('run-simple (c): with a saved session, Start still signs in afresh; the sav
     const saved = page.getByLabel(/^Use saved session/);
     await expect(saved).toBeEnabled();
     await expect(saved).not.toBeChecked();
-    await expect(page.locator('label[for="auth-state"]')).toContainText('a11y-508-state.json, 5 minutes old');
+    await expect(page.locator('label[for="auth-state"]')).toContainText('state.json, 5 minutes old');
     await page.getByLabel('Maximum pages').fill('1');
     await page.locator('details.advanced > summary').click();
     await page.locator('#adv-no-zoom').check();
@@ -130,14 +135,14 @@ test('run-simple (c): with a saved session, Start still signs in afresh; the sav
     await expect(page.getByTestId('run-command')).toContainText('--login --stay');
     await waitFinished(page);
     // Chosen at /run/advanced, the saved session runs the headless crawl.
-    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
+    await nav(page, 'Run');
     await moreOptions(page);
     await page.getByLabel(/^Use saved session/).check();
     await startFromRun(page);
-    await expect(page.getByTestId('run-command')).toContainText('--state a11y-508-state.json');
+    await expect(page.getByTestId('run-command')).toContainText(`--state ${file}`);
     const cur = (await api(dash, '/api/runs/current')).json;
     expect(cur.kind).toBe('crawl');
-    expect(cur.meta.command).toContain('--state a11y-508-state.json');
+    expect(cur.meta.command).toContain(`--state ${file}`);
     expect(cur.meta.command).not.toContain('--login');
     await waitFinished(page);
     const report = readReport(cwd);
@@ -191,7 +196,7 @@ test('run-simple (d): a run bounced to a sign-in page on another origin offers S
     // This portal never lets anyone in: Stop ends the sign-in, and Start is ready again.
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(status(page)).toHaveText('Stopped', { timeout: 30_000 });
-    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
+    await nav(page, 'Run');
     await expect(start(page)).toBeEnabled();
   } finally {
     await dash.stop();

@@ -1,8 +1,9 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
-import { resultWord } from '../core/format';
+import { phaseText, resultWord, routeParts } from '../core/format';
+import { detailsOpen, setDetailsOpen } from '../core/details';
 import { RunView } from '../shared/run-view';
 import { SignInFlow } from '../core/sign-in';
 
@@ -10,22 +11,23 @@ import { SignInFlow } from '../core/sign-in';
   selector: 'app-live-screen',
   imports: [RunView, RouterLink],
   template: `
-    <h1>Live run</h1>
+    <h1>Crawl</h1>
     @if (!store.run()) {
       <p data-testid="no-run">No run in this directory yet. <a routerLink="/run">Start one</a>.</p>
     } @else {
-      <p class="status" role="status" data-testid="run-status">{{ status() }}</p>
-      @if (store.run()?.['command']; as cmd) {
-        <p class="hint">Running <code data-testid="run-command">{{ cmd }}</code></p>
-      }
+      <!-- What it is doing, in one line; counts, not details. -->
+      <p class="big-status" role="status" data-testid="crawl-status">{{ bigStatus() }}</p>
+      <div class="thin-progress">
+        <progress aria-labelledby="crawl-pages" [value]="store.progress().done" [max]="store.progress().discovered || 1"></progress>
+        <span id="crawl-pages" data-testid="crawl-pages">{{ store.progress().done }} of {{ store.progress().discovered }} pages</span>
+      </div>
+      <p data-testid="crawl-counts">{{ counts() }}</p>
+      <p class="hint" data-testid="crawl-elapsed">{{ elapsed() }}</p>
       @if (signInError()) {
         <div class="notice error" role="alert">{{ signInError() }}</div>
       }
       <div class="actions">
-        <button type="button" (click)="stop()" [disabled]="!store.active()">Stop</button>
-        @if (store.done() && store.summary()) {
-          <a class="button secondary" routerLink="/report">Open the report</a>
-        }
+        <button type="button" class="big" (click)="stop()" [disabled]="!store.active()">Stop</button>
       </div>
       @if (store.cannotGetIn()) {
         <div class="notice error" role="alert" data-notice="cannot-get-in">
@@ -41,16 +43,81 @@ import { SignInFlow } from '../core/sign-in';
           </div>
         </div>
       }
-      <app-run-view />
+      <details class="details" data-testid="details" [open]="showDetails()" (toggle)="toggled($event)">
+        <summary>Details<span class="visually-hidden"> of the crawl</span></summary>
+        <p class="status" role="status" data-testid="run-status">{{ status() }}</p>
+        @if (store.run()?.['command']; as cmd) {
+          <p class="hint">Running <code data-testid="run-command">{{ cmd }}</code></p>
+        }
+        @if (store.done() && store.summary()) {
+          <p><a class="button secondary" routerLink="/report">Open the report</a></p>
+        }
+        <app-run-view />
+      </details>
     }
   `,
 })
-export class LiveScreen {
+export class LiveScreen implements OnDestroy {
   readonly store = inject(RunStore);
   private form = inject(FormStore);
   private router = inject(Router);
   private flow = inject(SignInFlow);
   readonly signInError = signal('');
+  // Details (the command, the chart, the pages table, notices, raw output): closed by default.
+  readonly showDetails = signal(detailsOpen('crawl'));
+  readonly now = signal(Date.now());
+  private ticker = setInterval(() => this.now.set(Date.now()), 1000);
+
+  ngOnDestroy(): void {
+    clearInterval(this.ticker);
+  }
+
+  toggled(e: Event): void {
+    const open = (e.target as HTMLDetailsElement).open;
+    this.showDetails.set(open);
+    setDetailsOpen('crawl', open);
+  }
+
+  readonly counts = computed(() => {
+    const t = this.store.pages().reduce((a, p) => ({ v: a.v + p.violations, r: a.r + p.reviews }), { v: 0, r: 0 });
+    return `${t.v} violation${t.v === 1 ? '' : 's'} · ${t.r} to review`;
+  });
+  readonly elapsed = computed(() => {
+    const t0 = this.store.startedAt();
+    if (!t0) return '';
+    const end = this.store.done() ? Date.parse(String(this.store.done()!['at'])) || this.now() : this.now();
+    const s = Math.max(0, Math.round((end - t0) / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} elapsed`;
+  });
+  // The one line: starting, the sign-in wait, the page being analyzed and its phase, or how it ended.
+  readonly bigStatus = computed(() => {
+    const st = this.store;
+    const d = st.done();
+    if (d) {
+      if (d['outcome'] === 'stopped') return 'Stopped';
+      const s = st.summary();
+      if (s) {
+        const sum = s['summary'] || {};
+        return `Done: ${sum.audited ?? st.pages().length} pages · ${sum.violations ?? 0} violations · ${sum.reviews ?? 0} to review`;
+      }
+      return d['outcome'] === 'error' ? `Failed (exit code ${d['code']})` : 'Done';
+    }
+    if (st.stopping()) return 'Stopping…';
+    const since = st.loginWaitingSince();
+    if (st.loginWaiting() && since) return `Waiting for you to sign in in the browser window · ${Math.max(0, Math.round((this.now() - since) / 1000))} s`;
+    const f = Object.values(st.inFlight()).sort((a, b) => b.receivedAt - a.receivedAt)[0];
+    if (!f) return 'Starting the browser';
+    const path = routeParts(f.url).path;
+    const dd = f.detail || {};
+    const n = (x: number | undefined) => (x ?? 0).toLocaleString('en-US');
+    switch (f.phase) {
+      case 'screenshots': return `Taking screenshots · ${n(dd['done'])} of ${n(dd['of'])}`;
+      case 'loading': return `Loading ${path}`;
+      case 'checks': return `Analyzing ${path} · ${n(dd['elements'])} elements`;
+      case 'keyboard': return `Analyzing ${path} · keyboard pass ${n(dd['stops'])} of ${n(dd['of'])}`;
+      default: return `Analyzing ${path} · ${phaseText(f).replace(/^./, (c) => c.toLowerCase())}`;
+    }
+  });
 
   readonly status = computed(() => {
     const d = this.store.done();

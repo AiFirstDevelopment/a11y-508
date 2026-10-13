@@ -1,6 +1,9 @@
 import { Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
 import { LineChartModule } from '@swimlane/ngx-charts';
+import { RouterLink } from '@angular/router';
 import { Api } from '../core/api';
+import { detailsOpen, setDetailsOpen } from '../core/details';
+import { Starter } from '../core/starter';
 import { EnvStore } from '../core/env.store';
 import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
@@ -23,7 +26,7 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
 // and shows it, with one button; everything it inferred is editable at /fix-loop/settings.
 @Component({
   selector: 'app-fix-loop-screen',
-  imports: [ChartPanel, LineChartModule, RunView],
+  imports: [ChartPanel, LineChartModule, RunView, RouterLink],
   template: `
     <h1>Fix loop</h1>
 
@@ -126,17 +129,10 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
       </section>
     }
 
-    @if (paneShown()) {
-      <section class="agent-pane" aria-labelledby="pane-h" data-testid="agent-pane">
-        <div class="pane-head">
-          <h2 id="pane-h" data-testid="agent-heading">{{ paneHeading() }}</h2>
-          <div class="choice"><input type="checkbox" id="pane-follow" [checked]="follow()" (change)="setFollow($any($event.target).checked)" /><label for="pane-follow">Follow</label></div>
-        </div>
-        <pre #pane class="pane" role="log" aria-live="off" aria-labelledby="pane-h" tabindex="0" data-testid="agent-output" (scroll)="onPaneScroll()">{{ paneText() }}</pre>
-      </section>
+    @if (!isLoop() || store.kind() !== 'loop' || loopEnded()) {
+    @if (repoConfig()) {
+      <p class="hint" data-testid="repo-config">Using the repository's a11y-508.config.json</p>
     }
-
-
     <p data-testid="loop-plan">
       @if (!repoOk()) {
         @if (defaults() && !defaults()!.repo.git) {
@@ -152,9 +148,39 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
       <p class="hint" data-testid="no-url">No start URL yet: run a crawl from Run first.</p>
     }
 
+    }
+    @if (isLoop() && store.kind() === 'loop') {
+      <!-- While it runs: one line, a bar, counts, and the assistant's last line. -->
+      <p class="big-status" role="status" data-testid="fix-status">{{ fixStatus() }}</p>
+      @if (store.task(); as t) {
+        @if (t.m) {
+          <div class="thin-progress">
+            <progress aria-labelledby="fix-count" [value]="t.n" [max]="t.m"></progress>
+            <span id="fix-count" data-testid="fix-count">{{ t.n }} of {{ t.m }} fixes</span>
+          </div>
+        }
+      }
+      <p data-testid="fix-counts">{{ fixCounts() }}</p>
+    }
+    @if (paneShown()) {
+      @if (lastLine(); as ll) { <p class="hint last-line" data-testid="agent-last-line">{{ ll }}</p> }
+      <details class="details" data-testid="show-output" [open]="showOutput()" (toggle)="outputToggled($event)">
+        <summary>Show output</summary>
+      <section class="agent-pane" aria-labelledby="pane-h" data-testid="agent-pane">
+        <div class="pane-head">
+          <h2 id="pane-h" data-testid="agent-heading">{{ paneHeading() }}</h2>
+          <div class="choice"><input type="checkbox" id="pane-follow" [checked]="follow()" (change)="setFollow($any($event.target).checked)" /><label for="pane-follow">Follow</label></div>
+        </div>
+        <pre #pane class="pane" role="log" aria-live="off" aria-labelledby="pane-h" tabindex="0" data-testid="agent-output" (scroll)="onPaneScroll()">{{ paneText() }}</pre>
+      </section>
+      </details>
+    }
     <div class="actions">
       @if (isLoop() && store.active()) {
         <button type="button" class="big" (click)="store.stop()" data-testid="loop-stop">Stop</button>
+      } @else if (loopEnded()) {
+        <a class="button big" routerLink="/history" data-testid="see-changes">See what changed</a>
+        <button type="button" class="secondary" (click)="runAgain()" [disabled]="store.active()" data-testid="run-again">Run again</button>
       } @else {
         <button type="button" class="big" (click)="fix()" [disabled]="!canStart()" data-testid="loop-start">Fix the violations</button>
       }
@@ -167,6 +193,8 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
         <button type="button" (click)="store.continueAfterDeploy()">Deployed — continue</button>
       </div>
     }
+    <details class="details" data-testid="details" [open]="showDetails()" (toggle)="toggled($event)">
+      <summary>Details<span class="visually-hidden"> of the fix loop</span></summary>
     @if (isLoop()) {
       <p role="status" data-testid="loop-step">{{ stepText() }}</p>
       @if (store.loginWaiting() && store.active()) {
@@ -204,6 +232,8 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
       <p class="hint">No ledger yet. A dry run records what the crawl finds without changing anything.</p>
     }
 
+    </details>
+
     <!-- Every loop setting lives at /fix-loop/settings, which nothing links to. -->
     @if (settings()) {
     <section data-testid="loop-more" aria-labelledby="settings-h">
@@ -219,6 +249,7 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
         <div class="field"><label for="c-branch">Branch to commit on</label><input id="c-branch" type="text" [value]="cfg()['branch'] || plan()?.branch || ''" (input)="set('branch', v($event))" (change)="saveConfig()" /></div>
         <div class="choice"><input id="c-push" type="checkbox" [checked]="cfg()['push'] ?? plan()?.push ?? true" (change)="set('push', $any($event.target).checked); saveConfig()" /><label for="c-push">Push each round's commits</label></div>
         <div class="field"><label for="c-maxAttempts">Fix attempts per finding</label><input id="c-maxAttempts" type="number" min="1" [value]="cfg()['maxAttempts'] ?? plan()?.maxAttempts ?? ''" (input)="setNum('maxAttempts', v($event))" (change)="saveConfig()" /></div>
+        <div class="field"><label for="c-rounds">Rounds per run</label><input id="c-rounds" type="number" min="1" [value]="rounds() || ''" placeholder="20" (change)="saveRounds(v($event))" /></div>
         <div class="field"><label for="c-agentTimeout">Assistant timeout per task (ms)</label><input id="c-agentTimeout" type="number" min="0" [value]="cfg()['agentTimeout'] ?? ''" (input)="setNum('agentTimeout', v($event))" (change)="saveConfig()" /></div>
         <div class="field"><label for="c-triageBatch">Review items per triage prompt</label><input id="c-triageBatch" type="number" min="1" [value]="cfg()['triageBatch'] ?? ''" (input)="setNum('triageBatch', v($event))" (change)="saveConfig()" /></div>
         <p><span role="status" data-testid="config-status">{{ configStatus() }}</span></p>
@@ -237,6 +268,34 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
 export class FixLoopScreen implements OnInit, OnDestroy {
   // Route data: true on /fix-loop/settings, where every loop setting is.
   readonly settings = input(false);
+  // ?start=1: Results' "Fix the violations" (start once everything is loaded).
+  readonly startParam = input<string | undefined>(undefined, { alias: 'start' });
+  private starter = inject(Starter);
+  readonly showDetails = signal(detailsOpen('fix'));
+  // Rounds per Fix the violations (the dashboard's setting; the loop's own default is 20).
+  readonly rounds = signal<number | null>(null);
+  async saveRounds(v: string): Promise<void> {
+    const n = parseInt(v, 10);
+    const value = n >= 1 ? n : null;
+    this.rounds.set(value);
+    try {
+      await this.api.put('/api/settings', { rounds: value });
+      this.configStatus.set('Saved.');
+    } catch (e: any) {
+      this.configStatus.set(`Not saved: ${e.message}`);
+    }
+  }
+  readonly showOutput = signal(detailsOpen('output'));
+  toggled(e: Event): void {
+    const open = (e.target as HTMLDetailsElement).open;
+    this.showDetails.set(open);
+    setDetailsOpen('fix', open);
+  }
+  outputToggled(e: Event): void {
+    const open = (e.target as HTMLDetailsElement).open;
+    this.showOutput.set(open);
+    setDetailsOpen('output', open);
+  }
   private api = inject(Api);
   readonly env = inject(EnvStore);
   readonly store = inject(RunStore);
@@ -250,6 +309,8 @@ export class FixLoopScreen implements OnInit, OnDestroy {
 
   readonly cfg = signal<Record<string, any>>({});
   readonly configExists = signal(false);
+  // The repository's own a11y-508.config.json (a team's): used as is, never written.
+  readonly repoConfig = signal(false);
   readonly defaults = signal<LoopDefaults | null>(null);
   readonly configErrors = signal<string[]>([]);
   readonly configStatus = signal('');
@@ -303,6 +364,42 @@ export class FixLoopScreen implements OnInit, OnDestroy {
       maxAttempts: c['maxAttempts'] ?? d.effective.maxAttempts,
     };
   });
+  // The loop has ended (nothing open, stopped, or out of rounds): the step's actions change.
+  readonly loopEnded = computed(() => this.store.kind() === 'loop' && !!this.store.done());
+  readonly fixStatus = computed(() => {
+    const r = this.store.round();
+    const c = this.store.agentCall();
+    const t = this.store.task();
+    if (this.store.done()) return this.stepText();
+    if (this.store.loginWaiting() && this.store.active()) return 'Waiting for you to sign in in the browser window';
+    if (!r) return 'Starting…';
+    if (this.waitingForBuild()) return `Round ${r} · waiting for the new build`;
+    if (c && !c.endedAt && c.kind === 'fix') return `Round ${r} · fixing ${c.n ?? c.task} of ${c.m ?? t?.m ?? '?'}: ${c.label} · ${Math.max(0, Math.round((this.now() - c.startedAt) / 1000))} s`;
+    if (c && !c.endedAt && c.kind === 'triage') return `Round ${r} · triaging ${c.label} · ${Math.max(0, Math.round((this.now() - c.startedAt) / 1000))} s`;
+    const step = this.store.step()?.['step'];
+    return `Round ${r} · ${step === 'crawl' || !step ? 'crawling' : step}`;
+  });
+  readonly fixCounts = computed(() => {
+    const c = this.store.ledger()?.['counts'] || this.ledger()?.counts || {};
+    const fixed = (c['verified'] || 0) + (c['pending'] || 0);
+    const nh = c['needs-human'] || 0;
+    return `${fixed} fixed · ${c['open'] || 0} remaining${nh ? ` · ${nh} need${nh === 1 ? 's' : ''} a person` : ''}`;
+  });
+  readonly lastLine = computed(() => {
+    const t = this.paneText().split('\n').map((l) => l.trim()).filter(Boolean);
+    return t.length ? t[t.length - 1].slice(0, 200) : '';
+  });
+
+  // Run again: the next crawl (a fresh sign-in window) from the same set up; Results, then Fix.
+  async runAgain(): Promise<void> {
+    this.runError.set('');
+    try {
+      await this.starter.startCrawl(this.loopUrl());
+    } catch (e: any) {
+      this.runError.set(e.message);
+    }
+  }
+
   readonly canStart = computed(() => this.agentReady() && this.repoOk() && !!this.loopUrl() && !this.store.active());
   readonly host = computed(() => {
     try {
@@ -420,6 +517,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     await Promise.all([this.env.load(), this.loadConfig(), this.loadDefaults()]);
     const spec = this.agentSpec();
     if (!this.testResult() && spec && this.env.env()?.lastTest?.[spec]) this.testResult.set(this.env.env()!.lastTest[spec]);
+    if (this.startParam() === '1' && this.canStart()) await this.fix();
   }
 
   ngOnDestroy(): void {
@@ -429,16 +527,20 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   private configLoads = 0;
   async loadConfig(): Promise<void> {
     const n = ++this.configLoads;
-    let c: { exists: boolean; config: Record<string, any> } | null = null;
+    let c: { exists: boolean; repository?: boolean; config: Record<string, any> } | null = null;
+    let settings: Record<string, any> = {};
     try {
-      c = await this.api.get<{ exists: boolean; config: Record<string, any> }>('/api/config');
+      [c, settings] = await Promise.all([this.api.get<{ exists: boolean; repository?: boolean; config: Record<string, any> }>('/api/config'), this.api.get<Record<string, any>>('/api/settings').catch(() => ({}))]);
     } catch {}
     if (n !== this.configLoads || !c) return;
     this.cfg.set(c.config || {});
     this.configExists.set(!!c.exists);
+    this.repoConfig.set(!!c.repository);
+    this.rounds.set(typeof settings['rounds'] === 'number' ? settings['rounds'] : null);
     this.configErrors.set([]);
     this.configStatus.set('');
-    const a = c.config?.['agent'];
+    // The assistant: the dashboard's remembered choice, else the config's.
+    const a = settings['agent'] || c.config?.['agent'];
     this.choice.set(null);
     this.custom.set('');
     if (a) {
@@ -511,9 +613,13 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     if (name !== 'custom') await this.saveAgent();
   }
 
+  // The choice is remembered in the dashboard's settings (never in a repository's config); the
+  // dashboard's own config records it too.
   async saveAgent(): Promise<void> {
     const spec = this.agentSpec();
     if (!spec || (this.choice() === 'custom' && !spec.includes('{promptFile}'))) return;
+    await this.api.put('/api/settings', { agent: spec }).catch(() => {});
+    if (this.repoConfig()) return;
     this.set('agent', spec);
     await this.saveConfig();
   }
@@ -539,6 +645,10 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   }
 
   async saveConfig(): Promise<boolean> {
+    if (this.repoConfig()) {
+      this.configStatus.set("Not saved: the repository's a11y-508.config.json is used as is.");
+      return false;
+    }
     // A load still in flight must not replace what is being saved.
     this.configLoads++;
     try {
@@ -587,10 +697,11 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   async fix(): Promise<void> {
     if (!this.canStart()) return;
     this.runError.set('');
-    if (!this.configExists() || this.cfg()['agent'] !== this.agentSpec()) {
+    if (!this.repoConfig() && (!this.configExists() || this.cfg()['agent'] !== this.agentSpec())) {
       this.set('agent', this.agentSpec());
       if (!(await this.saveConfig())) return;
     }
+    await this.api.put('/api/settings', { agent: this.agentSpec() }).catch(() => {});
     await this.startLoop('loop');
   }
 
@@ -599,7 +710,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     try {
       // Fix the violations signs in first, in a fresh window, unless a way in was chosen on Run
       // (/run/advanced); the later rounds crawl headless with the session it saves.
-      await this.store.start({ kind, auth: this.form.auth(true), agent: kind === 'loop' ? this.agentSpec() : undefined, signIn: kind === 'loop' && !this.form.authChosen() });
+      await this.store.start({ kind, maxRounds: kind === 'loop' && this.rounds() ? this.rounds() : undefined, auth: this.form.auth(true), agent: kind === 'loop' ? this.agentSpec() : undefined, signIn: kind === 'loop' && !this.form.authChosen() });
       this.form.clearToken();
     } catch (e: any) {
       this.runError.set(e.message);

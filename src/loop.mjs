@@ -250,9 +250,12 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
 
   // --sign-in-first: round 1 signs in, in a visible window, and crawls there (saving a fresh
   // session); the later rounds crawl headless with that session.
-  const signInArgs = ['--login', '--stay', '--state', cfg.state];
+  // The session file: the one the crawl options name (the dashboard passes its own), else the config's.
+  const named = passthrough.indexOf('--state');
+  const stateFile = named >= 0 && passthrough[named + 1] ? passthrough[named + 1] : cfg.state;
+  const signInArgs = ['--login', '--stay', '--state', stateFile];
   let session = sessionArgs(cfg, passthrough, cwd);
-  if (signInFirst) log.info(`round 1 signs in first in a visible window; the later rounds crawl with the saved session ${cfg.state}`);
+  if (signInFirst) log.info(`round 1 signs in first in a visible window; the later rounds crawl with the saved session ${stateFile}`);
   else if (session.length) log.info(`crawling with the saved session ${session[1]}`);
   // The assistant's output as it arrives (--events): a few events a second at most per call.
   const outputTo = (round, task, kind) => {

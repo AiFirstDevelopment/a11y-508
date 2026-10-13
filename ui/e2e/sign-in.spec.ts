@@ -6,7 +6,7 @@
 import { test, expect } from '@playwright/test';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { dashboard, fixtureSite, open, nav, moreOptions, run, startFromRun, waitFinished, readReport, tempDir, BIN } from './harness';
+import { dashboard, fixtureSite, open, nav, moreOptions, run, startFromRun, waitFinished, readReport, tempDir, BIN, api } from './harness';
 
 test('AC 9: Sign in waits for the session, saves it, switches Run to the saved session, and the next crawl audits app.html', async ({ page }) => {
   const site = await fixtureSite({ autoLogin: true });
@@ -25,7 +25,7 @@ test('AC 9: Sign in waits for the session, saves it, switches Run to the saved s
     await page.getByLabel('Start URL').fill(site.base + 'app.html');
     await page.getByLabel('Maximum pages').fill('1');
     await startFromRun(page);
-    await expect(page.getByTestId('run-command')).toContainText('--state a11y-508-state.json');
+    await expect(page.getByTestId('run-command')).toContainText(`--state ${(await api(dash, '/api/env')).json.session.file}`);
     await waitFinished(page);
     const report = readReport(dash.cwd);
     expect(report.pages[0].finalUrl).toBe(site.base + 'app.html');

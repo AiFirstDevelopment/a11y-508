@@ -105,3 +105,32 @@ longer exists). fix-loop-simple: no sign-in button; a token chosen means no
 - Run and Fix loop show no settings: they are at `/run/advanced` and `/fix-loop/settings`,
   which nothing links to; the harness's `moreOptions()`/`loopOptions()` navigate there in-app.
 - CLI: Stop while the sign-in window is open now closes that browser (it was left running).
+
+## The wizard, uncluttered steps, and a clean repository
+
+- Stepper (`<nav aria-label="Steps">`, an ordered list): Set up (/run) → Crawl (/live) →
+  Results (/report) → Fix (/fix-loop) → History; done steps marked, the current one
+  `aria-current="step"`, unavailable ones `aria-disabled` (Results, Fix and History while a crawl
+  runs; Fix outside a repository). A crawl watched to its end moves to Results by itself (a viewer
+  can keep the Crawl step with `a11y508.stayOnCrawl`, which the specs' returning-viewer `open()`
+  sets). Results ends with **Fix the violations** (→ /fix-loop?start=1); Fix, once the loop
+  ends, with **See what changed** and **Run again**; History with **Run again**.
+- Set up: folder (paste or Browse…, which opens the header picker) + URL + Start, on /run and, on
+  a first visit with no remembered directory, as a modal dialog (Escape does nothing while a field
+  is empty). The browser remembers the directory (`a11y508.cwd`); a directory that already holds
+  the tool's files is taken as remembered.
+- Each step shows counts; a Details disclosure (remembered per step) holds the full view.
+  `open()` in the harness opens every Details (the full views the specs check); the wizard spec
+  checks the default views with `details: false`.
+- The dashboard's own files live in `~/.a11y-508/<12 hex>/` (`A11Y_508_HOME` in tests): config,
+  session, settings (remembered URL, assistant, rounds per run). A repository's own config is
+  used read-only; outputs are added to `.git/info/exclude`; old dashboard files are moved after a
+  confirmation.
+
+Spec changes for this (assertions kept unless noted): the nav helper maps the old tab names to
+the steps and opens unavailable ones by address; `waitFinished` comes back to the Crawl step if
+the wizard moved on; session and config paths in assertions are the state directory's (and the
+working directory is checked to hold neither); the self-audit also crawls /fix-loop on its own
+(the Fix step is not offered outside a repository); AC 12 seeds the session and config through
+the dashboard; loop AC 14 also checks See what changed / Run again and that Run again returns
+the wizard to Crawl with Results, Fix and History unavailable.

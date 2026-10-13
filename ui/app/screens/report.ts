@@ -1,6 +1,7 @@
 import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { Title } from '@angular/platform-browser';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
+import { detailsOpen, setDetailsOpen } from '../core/details';
 import { BarChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
@@ -48,46 +49,9 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
       @let r = report()!;
       <p class="hint">{{ r.baseUrl }} · finished <time [attr.datetime]="r.finishedAt" [attr.title]="r.finishedAt">{{ local(r.finishedAt) }}</time></p>
       <p class="result" [class.pass]="r.passed && complete()" [class.fail]="!r.passed" [class.incomplete]="r.passed && !complete()" data-testid="result-line">{{ line() }}</p>
-      @if (r.summary.coverage?.warnings?.length) {
-        <div class="notice warn" role="status" data-testid="coverage-warnings">
-          <h2>Coverage warnings</h2>
-          <ul>@for (w of r.summary.coverage!.warnings; track $index) { <li>{{ w }}</li> }</ul>
-        </div>
+      @if (!complete()) {
+        <p data-testid="coverage-line">Coverage is incomplete: {{ r.summary.coverage?.warnings?.length || 0 }} warning{{ r.summary.coverage?.warnings?.length === 1 ? '' : 's' }} (under Details). <a routerLink="/troubleshoot" class="small-link">Troubleshoot</a></p>
       }
-      <h2>Totals</h2>
-      <dl class="tiles" data-testid="totals">
-        @for (i of impacts; track i) {
-          <div class="tile" [attr.data-impact]="i"><dt>{{ i }}</dt><dd>{{ r.summary.byImpact[i] }}</dd></div>
-        }
-        <div class="tile" data-impact="review"><dt>for review</dt><dd>{{ r.summary.reviews }}</dd></div>
-      </dl>
-      <p><a [href]="htmlLink()" target="_blank" rel="noopener">Open report.html (opens in a new tab)</a></p>
-
-      <h2>Charts</h2>
-      <app-chart-panel id="by-impact" heading="Violations by impact" [columns]="impactCols" [rows]="impactRows()">
-        <ngx-charts-bar-vertical [view]="[520, 260]" [results]="impactData()" [xAxis]="true" [yAxis]="true" [showXAxisLabel]="true" xAxisLabel="Impact" [showYAxisLabel]="true" yAxisLabel="Violations" [animations]="animations" [tooltipDisabled]="true" />
-      </app-chart-panel>
-      <app-chart-panel id="by-test" heading="Violations by Trusted Tester test" [columns]="testCols" [rows]="testRows()">
-        <ngx-charts-bar-horizontal [view]="[640, testHeight()]" [results]="testData()" [xAxis]="true" [yAxis]="true" [animations]="animations" [tooltipDisabled]="true" />
-      </app-chart-panel>
-      <app-chart-panel id="worst-pages" heading="The 15 pages with the most violations" [columns]="pageCols" [rows]="worstRows()">
-        <ngx-charts-bar-horizontal [view]="[640, 360]" [results]="worstData()" [xAxis]="true" [yAxis]="true" [animations]="animations" [tooltipDisabled]="true" />
-      </app-chart-panel>
-
-      @if (beyondHeading(); as bh) {
-        <h2 id="beyond-h" data-testid="beyond-heading">{{ bh }}</h2>
-        <p class="hint">Rules from WCAG 2.1 and 2.2 and best practices, run because the profile was on (<code>--wcag {{ r.options.wcag }}</code>). Section 508 itself requires WCAG 2.0 AA.</p>
-        @if (beyondRows().length) {
-          <table data-testid="beyond-tests">
-            <caption>Findings beyond Section 508, by rule</caption>
-            <thead><tr><th scope="col">Rule</th><th scope="col">Name</th><th scope="col">WCAG</th><th scope="col">Violations</th><th scope="col">Review</th></tr></thead>
-            <tbody>@for (b of beyondRows(); track b.test) { <tr><th scope="row">{{ b.test }}</th><td>{{ b.name }}</td><td>{{ b.wcag }}</td><td>{{ b.violations }}</td><td>{{ b.reviews }}</td></tr> }</tbody>
-          </table>
-        } @else {
-          <p>No findings beyond Section 508.</p>
-        }
-      }
-
       <h2 id="findings-h">Findings by page</h2>
       <nav aria-label="Audited pages" data-testid="routes">
         <ul class="routes">
@@ -173,6 +137,54 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
         </section>
       }
 
+      @if (reportId() === 'latest') {
+        <div class="actions next">
+          <button type="button" class="big" (click)="fixNext()" [disabled]="!fixable()" data-testid="fix-next">Fix the violations</button>
+          @if (!fixable()) { <span class="hint">{{ fixReason() }}</span> }
+        </div>
+      }
+      <details class="details" data-testid="details" [open]="showDetails()" (toggle)="toggled($event)">
+        <summary>Details<span class="visually-hidden"> of the results</span></summary>
+      @if (r.summary.coverage?.warnings?.length) {
+        <div class="notice warn" role="status" data-testid="coverage-warnings">
+          <h2>Coverage warnings</h2>
+          <ul>@for (w of r.summary.coverage!.warnings; track $index) { <li>{{ w }}</li> }</ul>
+        </div>
+      }
+      <h2>Totals</h2>
+      <dl class="tiles" data-testid="totals">
+        @for (i of impacts; track i) {
+          <div class="tile" [attr.data-impact]="i"><dt>{{ i }}</dt><dd>{{ r.summary.byImpact[i] }}</dd></div>
+        }
+        <div class="tile" data-impact="review"><dt>for review</dt><dd>{{ r.summary.reviews }}</dd></div>
+      </dl>
+      <p><a [href]="htmlLink()" target="_blank" rel="noopener">Open report.html (opens in a new tab)</a></p>
+
+      <h2>Charts</h2>
+      <app-chart-panel id="by-impact" heading="Violations by impact" [columns]="impactCols" [rows]="impactRows()">
+        <ngx-charts-bar-vertical [view]="[520, 260]" [results]="impactData()" [xAxis]="true" [yAxis]="true" [showXAxisLabel]="true" xAxisLabel="Impact" [showYAxisLabel]="true" yAxisLabel="Violations" [animations]="animations" [tooltipDisabled]="true" />
+      </app-chart-panel>
+      <app-chart-panel id="by-test" heading="Violations by Trusted Tester test" [columns]="testCols" [rows]="testRows()">
+        <ngx-charts-bar-horizontal [view]="[640, testHeight()]" [results]="testData()" [xAxis]="true" [yAxis]="true" [animations]="animations" [tooltipDisabled]="true" />
+      </app-chart-panel>
+      <app-chart-panel id="worst-pages" heading="The 15 pages with the most violations" [columns]="pageCols" [rows]="worstRows()">
+        <ngx-charts-bar-horizontal [view]="[640, 360]" [results]="worstData()" [xAxis]="true" [yAxis]="true" [animations]="animations" [tooltipDisabled]="true" />
+      </app-chart-panel>
+
+      @if (beyondHeading(); as bh) {
+        <h2 id="beyond-h" data-testid="beyond-heading">{{ bh }}</h2>
+        <p class="hint">Rules from WCAG 2.1 and 2.2 and best practices, run because the profile was on (<code>--wcag {{ r.options.wcag }}</code>). Section 508 itself requires WCAG 2.0 AA.</p>
+        @if (beyondRows().length) {
+          <table data-testid="beyond-tests">
+            <caption>Findings beyond Section 508, by rule</caption>
+            <thead><tr><th scope="col">Rule</th><th scope="col">Name</th><th scope="col">WCAG</th><th scope="col">Violations</th><th scope="col">Review</th></tr></thead>
+            <tbody>@for (b of beyondRows(); track b.test) { <tr><th scope="row">{{ b.test }}</th><td>{{ b.name }}</td><td>{{ b.wcag }}</td><td>{{ b.violations }}</td><td>{{ b.reviews }}</td></tr> }</tbody>
+          </table>
+        } @else {
+          <p>No findings beyond Section 508.</p>
+        }
+      }
+
       <h2>Manual checklist</h2>
       <table>
         <caption>Trusted Tester conditions a person must test</caption>
@@ -196,6 +208,7 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
           }
         </tbody>
       </table>
+      </details>
     }
   `,
 })
@@ -208,6 +221,20 @@ export class ReportScreen {
 
   private api = inject(Api);
   private run = inject(RunStore);
+  private router = inject(Router);
+  // Details (totals, charts, coverage warnings, the manual checklist, the pages table): closed by default.
+  readonly showDetails = signal(detailsOpen('results'));
+  toggled(e: Event): void {
+    const open = (e.target as HTMLDetailsElement).open;
+    this.showDetails.set(open);
+    setDetailsOpen('results', open);
+  }
+  // The next step: Fix, in the app's repository.
+  readonly fixable = computed(() => !!this.env.env()?.inGitRepo && !this.run.active());
+  readonly fixReason = computed(() => (this.run.active() ? 'A run is active.' : "Fixing needs the app's repository: choose it in Set up."));
+  async fixNext(): Promise<void> {
+    await this.router.navigateByUrl('/fix-loop?start=1');
+  }
   private env = inject(EnvStore);
   readonly id = input<string>();
   // ?route=<page URL>: the page to show (from a row of the Live screen's page table).

@@ -1,4 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
+import { Api } from './api';
 import { EnvStore } from './env.store';
 
 export type AuthMode = 'token' | 'env' | 'state' | 'cookies' | 'none';
@@ -47,6 +48,7 @@ function readUrl(): string {
 export class FormStore {
   readonly url = signal(readUrl());
   private env = inject(EnvStore);
+  private api = inject(Api);
   readonly authMode = signal<AuthMode>('token');
   // Whether the person picked a way to sign in on /run/advanced. Until they
   // do, a saved session is used whenever one exists, and no sign-in otherwise
@@ -69,6 +71,8 @@ export class FormStore {
     try {
       localStorage.setItem(URL_KEY, u);
     } catch {}
+    // Also the dashboard's settings for this directory (server-side: survives a browser clear).
+    void this.api.put('/api/settings', { url: u }).catch(() => {});
   }
 
 

@@ -26,6 +26,7 @@ export function factsOf(dir) {
     report: has('a11y-508-report', 'report.json'),
     ledger: has('a11y-508-work', 'ledger.json'),
     session: has('a11y-508-state.json'),
+    package: has('package.json'),
   };
 }
 

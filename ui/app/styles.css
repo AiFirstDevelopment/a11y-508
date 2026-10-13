@@ -149,3 +149,21 @@ table.findings td { overflow-wrap: anywhere; }
 .route-link strong { color: var(--accent); text-decoration: underline; }
 .query { color: var(--muted); font-size: 0.85rem; margin-left: 2px; }
 p.phase { margin: 2px 0 0; }
+p.big-status { font-size: 1.3rem; font-weight: 600; margin: 8px 0; overflow-wrap: anywhere; }
+.thin-progress { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.thin-progress progress { height: 8px; flex: 1 1 200px; max-width: 520px; }
+details.details { margin: 24px 0 8px; }
+details.details > summary { font-weight: 400; font-size: 0.95rem; }
+ol.steps { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 6px 0 0; padding: 0; counter-reset: none; }
+ol.steps li { display: flex; align-items: center; }
+ol.steps li + li::before { content: "→"; color: #c9d1e3; margin: 0 6px; }
+ol.steps a, ol.steps span[aria-disabled] { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 14px; text-decoration: none; }
+ol.steps .num { display: inline-block; min-width: 1.4em; text-align: center; border: 1px solid currentColor; border-radius: 50%; font-size: 0.8rem; line-height: 1.4em; }
+ol.steps li.current a { background: #ffffff; color: #1f2a44 !important; font-weight: 700; }
+ol.steps li.done a { color: #ffffff; }
+ol.steps li.upcoming a { color: #dbe2f0; }
+ol.steps li.disabled span[aria-disabled] { color: #b4bdd0; cursor: not-allowed; }
+dialog.setup { max-width: min(640px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; }
+dialog.setup::backdrop { background: rgba(0, 0, 0, 0.35); }
+.inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.inline input { flex: 1 1 260px; }

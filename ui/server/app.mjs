@@ -3,6 +3,7 @@
 // per-launch secret and a Host check. Drives the CLI as a child process.
 
 import { createServer } from 'node:http';
+import { spawnSync } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,6 +16,7 @@ import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine }
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
 import { loopDefaults } from './loop-defaults.mjs';
+import { paths as statePaths, excludeOutputs, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
@@ -56,6 +58,36 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
   const shellKind = () => (state.shell ||= detectShell(env, platform)).kind;
   const runs = new Runs({ onExit: () => {} });
   const build = freshness(uiDir);
+  // The dashboard's own files for the working directory (state-dir.mjs).
+  const sp = () => statePaths(state.cwd, env, platform);
+  // The repository's own a11y-508.config.json (a team's, for CI): used as is, never written. One
+  // the dashboard wrote before it kept its files elsewhere is moved out instead (see settle()).
+  const repoConfig = () => {
+    const f = join(state.cwd, REPO_CONFIG);
+    if (!existsSync(f)) return null;
+    try {
+      const c = JSON.parse(readFileSync(f, 'utf8'));
+      return c && c.writtenBy === WRITTEN_BY ? null : f;
+    } catch {
+      return f;
+    }
+  };
+  const configPath = () => repoConfig() || sp().config;
+  // A repository config is asked about (move it out?) only when it looks like one the dashboard
+  // wrote before it marked its files: it names an "agent" and holds no "writtenBy". A team's
+  // committed config is tracked by git and left alone.
+  const repoConfigTeam = (cwd) => {
+    const r = spawnSync('git', ['ls-files', '--error-unmatch', REPO_CONFIG], { cwd, encoding: 'utf8', windowsHide: true });
+    return r.status === 0;
+  };
+  // On launch and on each switch: keep the outputs out of git, and move the dashboard's own
+  // marked files out of the repository.
+  const settle = () => {
+    excludeOutputs(state.cwd);
+    const ours = legacyFiles(state.cwd).filter((f) => f.ours).map((f) => f.name);
+    if (ours.length) moveLegacy(state.cwd, sp(), ours);
+  };
+  settle();
 
   // A forced detection never reuses one that started before it was asked for.
   const detect = (force = false) => {
@@ -154,13 +186,15 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     const cwd = state.cwd;
     if (!['crawl', 'troubleshoot', 'login', 'loop', 'dry-run'].includes(kind)) throw new BadRequest(`unknown run kind "${kind}"`);
     if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is already active`, 409);
-    const auth = body.auth || { mode: 'none' };
+    // The sign-in session lives in the dashboard's own directory, never in the repository.
+    let auth = body.auth || { mode: 'none' };
+    if (['state', 'signin'].includes(auth.mode) || kind === 'login') auth = { ...auth, file: sp().state };
     if (auth.mode === 'token' && typeof auth.token === 'string' && auth.token.trim()) state.token = auth.token.trim();
     let built;
     let meta;
     if (kind === 'loop' || kind === 'dry-run') {
       if (kind === 'loop') await detect();
-      const cfg = loadConfig(CONFIG_FILE, cwd);
+      const cfg = loadConfig(configPath(), cwd);
       const chosen = body.agent || cfg.agent || null;
       const resolved = kind === 'loop' ? agentCommand(chosen) : null;
       // A preset found off PATH runs by its absolute path; otherwise the
@@ -168,7 +202,9 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       let agentArg = null;
       if (resolved && PRESETS[chosen] && resolved !== PRESETS[chosen]) agentArg = resolved;
       else if (resolved && body.agent) agentArg = body.agent;
-      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn: body.signIn === true });
+      // The config and the session from the dashboard's directory (or the repository's own config).
+      const signIn = body.signIn === true;
+      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null });
       meta = { agent: resolved };
     } else {
       built = crawlArgs({ kind, url: body.url, options: body.options, auth });
@@ -234,8 +270,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     } catch (e) {
       browser = { found: false, path: null, error: e.message };
     }
-    const sessionFile = join(cwd, DEFAULT_STATE_FILE);
-    let session = { exists: false, file: DEFAULT_STATE_FILE };
+    const sessionFile = sp().state;
+    let session = { exists: false, file: sessionFile };
     if (existsSync(sessionFile)) {
       const st = statSync(sessionFile);
       let capturedAt = null;
@@ -246,14 +282,19 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
         // The origins the session covers (origins only; never cookies or storage values).
         origins = [...new Set([...(Array.isArray(j.origins) ? j.origins : []), ...Object.keys(j.storage || {})].filter((o) => typeof o === 'string'))];
       } catch {}
-      session = { exists: true, file: DEFAULT_STATE_FILE, ageMs: Date.now() - st.mtimeMs, capturedAt, origins };
+      session = { exists: true, file: sessionFile, ageMs: Date.now() - st.mtimeMs, capturedAt, origins };
     }
     const latest = readReport(cwd, 'latest');
     return {
       cwd, cwdFacts: factsOf(cwd), inGitRepo: inGitRepo(cwd), launchDir: state.launchDir, version: pkg.version, platform, browser,
-      config: { exists: existsSync(join(cwd, CONFIG_FILE)), file: CONFIG_FILE },
+      config: { exists: existsSync(configPath()), file: configPath(), repository: !!repoConfig() },
+      stateDir: sp().dir,
+      // Files the dashboard may have left in the repository before; asked about once.
+      legacy: readSettings(sp().settings).migrationDeclined ? [] : legacyFiles(cwd).filter((f) => !f.ours && (f.name !== REPO_CONFIG || !repoConfigTeam(cwd))).map((f) => f.name),
       session,
       report: latest ? { exists: true, finishedAt: latest.finishedAt, baseUrl: latest.baseUrl } : { exists: false },
+      // Crawls and fix rounds on record (History has something to show).
+      pastRuns: listReports(cwd).length,
       tokenInEnv: !!env.TOKEN, tokenHeld: !!state.token,
       shell: d.shell, npmPrefix: d.npmPrefix, detectedAt: d.detectedAt,
       // runCommand: what a person can paste into their shell to run the assistant by hand, on the
@@ -278,9 +319,10 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
   }
 
   function readConfig() {
-    const c = loadConfig(CONFIG_FILE, state.cwd);
-    const { _path, _missing, ...config } = c;
-    return { exists: !_missing, file: CONFIG_FILE, config: _missing ? {} : config };
+    const file = configPath();
+    const c = loadConfig(file, state.cwd);
+    const { _path, _missing, writtenBy, ...config } = c;
+    return { exists: !_missing, file, repository: !!repoConfig(), config: _missing ? {} : config };
   }
 
   // The core's own validation. A missing agent is a warning, not an error:
@@ -295,11 +337,10 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       err.errors = hard;
       throw err;
     }
-    // Whole or not at all: a reader (the loop, an editor) never sees it half written.
-    const cwd = state.cwd;
-    const tmpFile = join(cwd, `.${CONFIG_FILE}.${process.pid}.tmp`);
-    writeFileSync(tmpFile, JSON.stringify(config, null, 2) + '\n');
-    renameSync(tmpFile, join(cwd, CONFIG_FILE));
+    // The repository's own config is used as is; the dashboard never changes it.
+    if (repoConfig()) throw new BadRequest(`the repository's ${REPO_CONFIG} is used as is; the dashboard does not change it`, 409);
+    // Whole or not at all, in the dashboard's own directory, marked as the dashboard's.
+    writeJson(sp().config, { ...config, writtenBy: WRITTEN_BY });
     return { ...readConfig(), warnings: errors.filter((e) => /^no agent/.test(e)) };
   }
 
@@ -311,6 +352,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is active; switch when it has finished`, 409);
     const dir = realDir(body.path);
     state.cwd = dir;
+    settle();
     // A finished run belongs to the directory it ran in.
     runs.forget();
     // Cached detection (the assistants, the shell, npm's prefix) does not
@@ -392,6 +434,27 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     }
     if (m === 'GET' && path === '/api/ledger') return send(res, 200, ledgerInfo());
     if (m === 'GET' && path === '/api/config') return send(res, 200, readConfig());
+    // The dashboard's remembered choices for this directory (start URL, assistant), server-side.
+    if (m === 'GET' && path === '/api/settings') return send(res, 200, readSettings(sp().settings));
+    if (m === 'PUT' && path === '/api/settings') {
+      const body = await readBody(req);
+      const allowed = ['url', 'agent', 'migrationDeclined', 'rounds'];
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((k) => !allowed.includes(k))) throw new BadRequest(`body may hold only ${allowed.join(', ')}`);
+      const next = { ...readSettings(sp().settings), ...body };
+      writeJson(sp().settings, next);
+      return send(res, 200, next);
+    }
+    // The answer to "Move the dashboard's files out of this repository?": { move: true | false }.
+    if (m === 'POST' && path === '/api/migrate') {
+      const body = await readBody(req);
+      if (!body || typeof body.move !== 'boolean') throw new BadRequest('body must be { "move": true | false }');
+      if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is active; move the files when it has finished`, 409);
+      // Never a config the repository tracks (a team's): only what the dashboard left behind.
+      const names = legacyFiles(state.cwd).filter((f) => !f.ours && (f.name !== REPO_CONFIG || !repoConfigTeam(state.cwd))).map((f) => f.name);
+      const moved = body.move ? moveLegacy(state.cwd, sp(), names) : [];
+      writeJson(sp().settings, { ...readSettings(sp().settings), migrationDeclined: true });
+      return send(res, 200, { moved });
+    }
     if (m === 'GET' && path === '/api/loop/defaults') {
       const c = readConfig();
       return send(res, 200, loopDefaults(state.cwd, c.exists ? c.config : null));
@@ -404,6 +467,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       } catch {
         throw new BadRequest('form must be JSON');
       }
+      if (form.auth && ['state', 'signin'].includes(form.auth.mode)) form.auth = { ...form.auth, file: sp().state };
       const built = form.kind === 'loop' || form.kind === 'dry-run' ? loopArgs(form) : crawlArgs(form);
       return send(res, 200, { command: commandLine({ cwd: state.cwd, args: built.args, token: built.token, shell: shellKind() }) });
     }

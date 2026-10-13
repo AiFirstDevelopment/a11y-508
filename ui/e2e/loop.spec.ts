@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { moreOptions, loopOptions, dryRun, dashboard, gitRepo, open, tempDir, BIN, ROOT, TOKEN, type Dash } from './harness';
+import { moreOptions, loopOptions, dryRun, dashboard, gitRepo, open, tempDir, BIN, ROOT, TOKEN, type Dash, nav, api } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -40,11 +40,11 @@ async function repoSite(cwd: string): Promise<{ base: string; server: Server }> 
 }
 
 async function setToken(page: Page): Promise<void> {
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Run', exact: true }).click();
+  await nav(page, 'Run');
   await moreOptions(page);
   await page.getByLabel('A token').check();
   await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Fix loop' }).click();
+  await nav(page, 'Fix loop');
 }
 
 test('AC 11: the settings at /fix-loop/settings save a config a11y-508 loop accepts, and rejects what the core rejects with its message', async ({ page }) => {
@@ -68,8 +68,12 @@ test('AC 11: the settings at /fix-loop/settings save a config a11y-508 loop acce
     await page.getByLabel('Fix attempts per finding').blur();
     await page.getByLabel("Push each round's commits").uncheck();
     await expect(page.getByTestId('config-status')).toHaveText(/^Saved/);
-    await expect.poll(() => JSON.parse(readFileSync(join(dash.cwd, 'a11y-508.config.json'), 'utf8')).push).toBe(false);
-    const written = JSON.parse(readFileSync(join(dash.cwd, 'a11y-508.config.json'), 'utf8'));
+    // Saved where the dashboard keeps its files, not in the working directory.
+    const cfgFile = (await api(dash, '/api/env')).json.config.file;
+    await expect.poll(() => (existsSync(cfgFile) ? JSON.parse(readFileSync(cfgFile, 'utf8')).push : null)).toBe(false);
+    expect(existsSync(join(dash.cwd, 'a11y-508.config.json'))).toBe(false);
+    const { writtenBy, ...written } = JSON.parse(readFileSync(cfgFile, 'utf8'));
+    expect(writtenBy).toBe('a11y-508-dashboard');
     // What was set, with the inferred branch, and the deployment watched silently (it happens outside this tool).
     expect(written).toEqual({ url: 'http://127.0.0.1:9/', args: ['--max-pages', '1'], source: ['site'], check: 'npm test', branch: 'a11y-508', maxAttempts: 2, push: false, deployed: 'bundle-change', deployTimeout: 1800000 });
     // No deploy settings on the screen at all.
@@ -186,9 +190,13 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     const local = await page.evaluate((ats: string[]) => ats.map((a) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(a))), ledger.rounds.map((r: any) => r.at));
     expect(rows.map((r) => r[3])).toEqual(local);
 
+    // The loop has ended: the Fix step's actions are See what changed and Run again.
+    await expect(page.getByRole('link', { name: 'See what changed' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Run again' })).toBeEnabled();
+
     // History: one timeline; the last round's row matches `a11y-508 status` (found and fixed from its
     // round line, remaining from the open count), and the summary line above it.
-    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'History', exact: true }).click();
+    await nav(page, 'History');
     const last = ledger.rounds[ledger.rounds.length - 1];
     const statusRound = new RegExp(`round ${last.round} [^\n]*: \\d+/\\d+ pages audited, (\\d+) violations, \\d+ review; \\+\\d+ new, (\\d+) verified`).exec(st)!;
     const lastRow = page.getByTestId('history').locator(`tr[data-id="round-${last.round}"]`);
@@ -204,6 +212,17 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     await expect(page.getByTestId('history-status')).toHaveText(new RegExp(`^Removed ${ledger.rounds.length} fix-loop rounds and the ledger\\.$`));
     await expect(page.getByTestId('history').locator('tr[data-source="round"]')).toHaveCount(0);
     expect(existsSync(join(cwd, 'a11y-508-work', 'ledger.json'))).toBe(false);
+
+    // Run again: a new crawl from the same set up; the wizard is back on Crawl, and Results, Fix
+    // and History are not available until it finishes.
+    await page.getByRole('button', { name: 'Run again' }).click();
+    await expect(page).toHaveURL(/\/live$/);
+    const steps = page.getByRole('navigation', { name: 'Steps' });
+    await expect(steps.getByRole('link', { name: /^Crawl/ })).toHaveAttribute('aria-current', 'step');
+    for (const s of ['Results', 'Fix', 'History']) await expect(steps.locator(`[aria-disabled="true"][data-step="${s}"]`)).toHaveCount(1);
+    expect((await api(dash, '/api/runs/current')).json.kind).toBe('crawl');
+    await api(dash, '/api/runs/current/stop', { method: 'POST' });
+    await expect(page.getByTestId('crawl-status')).toHaveText('Stopped', { timeout: 30_000 });
   } finally {
     await dash.stop();
     server.close();

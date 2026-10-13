@@ -2,6 +2,21 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { Api } from './api';
 import { EnvInfo } from './types';
 
+// The working directory last chosen in this browser (a per-viewer convenience).
+export const CWD_KEY = 'a11y508.cwd';
+export function rememberedCwd(): string | null {
+  try {
+    return localStorage.getItem(CWD_KEY);
+  } catch {
+    return null;
+  }
+}
+export function rememberCwd(path: string): void {
+  try {
+    localStorage.setItem(CWD_KEY, path);
+  } catch {}
+}
+
 @Injectable({ providedIn: 'root' })
 export class EnvStore {
   private api = inject(Api);
@@ -25,6 +40,7 @@ export class EnvStore {
   // Switches the server's working directory; throws the server's error.
   async switchTo(path: string): Promise<EnvInfo> {
     const e = await this.api.put<EnvInfo>('/api/cwd', { path });
+    rememberCwd(e.cwd);
     this.env.set(e);
     this.error.set(null);
     return e;

@@ -48,7 +48,8 @@ export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; a
   const cwd = opts.cwd || tempDir('a11y-508-dash-');
   const proc = spawn(process.execPath, [opts.main || MAIN, '--no-open', '--port', '0', ...(opts.args || [])], {
     cwd,
-    env: mergeEnv(process.env, { TOKEN: '', ...opts.env }),
+    // The dashboard's own files (config, session, settings) go to a home of the test's, never ~/.a11y-508.
+    env: mergeEnv(process.env, { TOKEN: '', A11Y_508_HOME: tempDir('a11y-508-home-'), ...opts.env }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';
@@ -100,14 +101,47 @@ export async function api(dash: Dash, path: string, init: { method?: string; bod
   return { status: res.status, json, text };
 }
 
-export async function open(page: Page, dash: Dash, path = '/run'): Promise<void> {
+// Opens the dashboard as a returning viewer: the working directory is remembered (no setup
+// dialog) and every step's Details is open (the full views the specs check). { fresh: true } opens
+// it as a first visit, with nothing remembered.
+export async function open(page: Page, dash: Dash, path = '/run', opts: { fresh?: boolean; details?: boolean } = {}): Promise<void> {
+  if (!opts.fresh) {
+    const details = opts.details !== false;
+    // The server's working directory (it may have been started with --dir).
+    const cwd = (await api(dash, '/api/env')).json.cwd;
+    await page.addInitScript(([cwd, details, origin]) => {
+      // Only for this dashboard: a page can open several (each its own origin).
+      if (location.origin !== origin) return;
+      try {
+        if (!localStorage.getItem('a11y508.cwd')) localStorage.setItem('a11y508.cwd', cwd);
+        // A returning viewer who looks at the Crawl step after a crawl: it stays there when the
+        // crawl finishes (the wizard's own move to Results is tested with details: false).
+        if (details && localStorage.getItem('a11y508.stayOnCrawl') === null) localStorage.setItem('a11y508.stayOnCrawl', '1');
+        for (const k of ['crawl', 'results', 'fix', 'output', 'history']) if (localStorage.getItem(`a11y508.details.${k}`) === null) localStorage.setItem(`a11y508.details.${k}`, details ? '1' : '0');
+      } catch {}
+    }, [cwd, details, dash.origin] as [string, boolean, string]);
+  }
   await page.goto(`${dash.origin}${path}#secret=${dash.secret}`);
   await expect(page.locator('h1')).toBeVisible();
 }
 
-// Navigates inside the app through the nav's real links.
+// The wizard's steps, by the names the specs used for the old nav tabs.
+const STEP_OF: Record<string, [string, string]> = {
+  Run: ['Set up', '/run'], 'Set up': ['Set up', '/run'],
+  'Live run': ['Crawl', '/live'], Crawl: ['Crawl', '/live'],
+  Report: ['Results', '/report'], Results: ['Results', '/report'],
+  'Fix loop': ['Fix', '/fix-loop'], Fix: ['Fix', '/fix-loop'],
+  History: ['History', '/history'],
+  Troubleshoot: ['', '/troubleshoot'],
+};
+
+// Navigates inside the app through the stepper's real links; a step that is not available yet
+// (or a screen that is not a step, Troubleshoot) is opened by its address, in-app.
 export async function nav(page: Page, label: string): Promise<void> {
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: label, exact: true }).click();
+  const [step, path] = STEP_OF[label] || [label, ''];
+  const link = step ? page.getByRole('navigation', { name: 'Steps' }).getByRole('link', { name: new RegExp(`^\\W*\\d?\\s*${step}\\b`) }) : null;
+  if (link && (await link.count())) await link.first().click();
+  else await goInApp(page, path);
 }
 
 export interface CrawlForm {
@@ -197,9 +231,26 @@ export async function startFromRun(page: Page): Promise<void> {
 
 export const status = (page: Page) => page.getByTestId('run-status');
 
+// A finished crawl moves the wizard on to Results; the specs look at the Crawl step afterwards,
+// so this comes back to it (in-app, as the stepper's Crawl link does).
 export async function waitFinished(page: Page, timeout = 280_000): Promise<string> {
-  await expect(status(page)).toHaveText(/^(Finished|Stopped|Failed)/, { timeout });
+  await expect
+    .poll(async () => {
+      if (new URL(page.url()).pathname.startsWith('/report')) return 'moved';
+      const t = (await status(page).textContent({ timeout: 500 }).catch(() => '')) || '';
+      return /^(Finished|Stopped|Failed)/.test(t) ? 'done' : 'running';
+    }, { timeout, intervals: [250] })
+    .not.toBe('running');
+  if (new URL(page.url()).pathname.startsWith('/report')) await goInApp(page, '/live');
+  await expect(status(page)).toHaveText(/^(Finished|Stopped|Failed)/, { timeout: 15_000 });
   return (await status(page).textContent()) || '';
+}
+
+// Opens the current step's Details disclosure (the full view), if it is closed.
+export async function details(page: Page): Promise<void> {
+  const d = page.getByTestId('details').first();
+  if (!(await d.evaluate((x: HTMLDetailsElement) => x.open))) await d.locator('> summary').click();
+  await expect(d).toHaveJSProperty('open', true);
 }
 
 export const readReport = (cwd: string, dir = 'a11y-508-report') => JSON.parse(readFileSync(join(cwd, dir, 'report.json'), 'utf8'));

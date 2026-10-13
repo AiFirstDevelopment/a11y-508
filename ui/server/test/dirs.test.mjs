@@ -47,9 +47,9 @@ test('GET /api/dirs lists subdirectories only, by name, with hidden flags, facts
     // The hidden attribute exists on Windows only; elsewhere the folder is plain.
     assert.equal(by['hidden-attr'].hidden, t.attr, `hidden attribute ${t.attr ? 'set' : 'not available'}`);
     assert.equal(by['Alpha'].path, join(t.root, 'Alpha'));
-    assert.deepEqual(by['Alpha'].facts, { git: true, config: true, report: false, ledger: false, session: false });
-    assert.deepEqual(by['beta'].facts, { git: false, config: false, report: true, ledger: true, session: true });
-    assert.deepEqual(by['gamma9'].facts, { git: false, config: false, report: false, ledger: false, session: false });
+    assert.deepEqual(by['Alpha'].facts, { git: true, config: true, report: false, ledger: false, session: false, package: false });
+    assert.deepEqual(by['beta'].facts, { git: false, config: false, report: true, ledger: true, session: true, package: false });
+    assert.deepEqual(by['gamma9'].facts, { git: false, config: false, report: false, ledger: false, session: false, package: false });
     // Browsing the link lands on the real directory.
     const link = await s.call('GET', q(join(t.root, 'link')));
     assert.equal(link.status, 200, link.text);
@@ -148,7 +148,7 @@ test('PUT /api/cwd switches every handler and a spawned run to the new directory
     const before = (await s.call('GET', '/api/env')).json;
     assert.equal(before.cwd, s.cwd);
     assert.equal(before.launchDir, s.cwd);
-    assert.deepEqual(before.cwdFacts, { git: false, config: false, report: false, ledger: false, session: false });
+    assert.deepEqual(before.cwdFacts, { git: false, config: false, report: false, ledger: false, session: false, package: false });
     // The other directory has a config, a report and a ledger.
     writeFileSync(join(other, 'a11y-508.config.json'), JSON.stringify({ url: 'http://127.0.0.1:9/other', check: 'true' }));
     mkdirSync(join(other, 'a11y-508-report'));
@@ -168,7 +168,7 @@ test('PUT /api/cwd switches every handler and a spawned run to the new directory
     assert.equal(sw.status, 200, sw.text);
     assert.equal(sw.json.cwd, other);
     assert.equal(sw.json.launchDir, s.cwd);
-    assert.deepEqual(sw.json.cwdFacts, { git: false, config: true, report: true, ledger: true, session: false });
+    assert.deepEqual(sw.json.cwdFacts, { git: false, config: true, report: true, ledger: true, session: false, package: false });
     const env = (await s.call('GET', '/api/env')).json;
     assert.equal(env.cwd, other);
     assert.equal(env.report.baseUrl, 'http://other.example/');

@@ -81,6 +81,8 @@ export class RunStore {
   // Pages in flight (progress events), by URL, with when each event arrived; and when the sign-in wait began.
   readonly inFlight = signal<Record<string, PhaseEvent & { receivedAt: number }>>({});
   readonly loginWaitingSince = signal<number | null>(null);
+  // When the current run started (its run event).
+  readonly startedAt = signal<number | null>(null);
   readonly done = signal<RunEvent | null>(null);
   readonly stopping = signal(false);
   readonly connected = signal(false);
@@ -130,6 +132,7 @@ export class RunStore {
       case 'run':
         this.reset();
         this.run.set(ev);
+        this.startedAt.set(Date.parse(String(ev['at'])) || Date.now());
         break;
       case 'raw':
         this.raw.update((r) => [...r, `${ev['stream'] === 'stderr' ? '! ' : ''}${ev['line']}`]);

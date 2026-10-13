@@ -6,10 +6,11 @@ import { ADVANCED, AuthMode, FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { ageText } from '../core/format';
 import { SignInFlow } from '../core/sign-in';
+import { SetupForm } from '../shared/setup-form';
 
 @Component({
   selector: 'app-run-screen',
-  imports: [RouterLink],
+  imports: [RouterLink, SetupForm],
   template: `
     <h1>Run a crawl</h1>
     @if (noBrowser()) {
@@ -19,21 +20,16 @@ import { SignInFlow } from '../core/sign-in';
         <input id="chrome-top" type="text" [value]="adv()['chrome'] || ''" (input)="form.setAdvanced('chrome', val($event))" />
       </div>
     }
-    <form (submit)="$event.preventDefault(); start()" aria-labelledby="form-h">
+    <!-- Set up: the app's folder, its URL, and Start (shared with the setup dialog). -->
+    <app-setup-form [extraOk]="browserOk()" />
+    @if (run.active()) {
+      <p class="hint">A run is active. <a routerLink="/live">Watch it</a>.</p>
+    }
+    <form (submit)="$event.preventDefault()" aria-labelledby="form-h">
       <h2 id="form-h" class="visually-hidden">Crawl settings</h2>
-      <div class="field">
-        <label for="url">Start URL</label>
-        <input id="url" name="url" type="url" required [value]="form.url()" (input)="form.url.set(val($event))" (blur)="form.rememberUrl()" placeholder="https://app.example.gov" />
-      </div>
       @if (commandError() || error()) {
         <div class="notice error" role="alert" data-notice="form-error">{{ commandError() || error() }}</div>
       }
-      <div class="actions">
-        <button type="submit" [disabled]="!canStart()">Start</button>
-        @if (run.active()) {
-          <p class="hint">A run is active. <a routerLink="/live">Watch it</a>.</p>
-        }
-      </div>
       <!-- Every other setting lives at /run/advanced, which nothing links to. -->
       @if (advanced()) {
       <section data-testid="more-options" aria-labelledby="adv-h">
@@ -162,6 +158,7 @@ export class RunScreen implements OnInit {
   });
   // No saved session and no other way chosen on /run/advanced: sign in first.
   private flow = inject(SignInFlow);
+  readonly browserOk = computed(() => !this.noBrowser() || !!String(this.adv()['chrome'] || '').trim());
   readonly canStart = computed(() => !!this.form.url().trim() && !this.run.active() && (!this.noBrowser() || !!String(this.adv()['chrome'] || '').trim()));
   private timer: any;
 

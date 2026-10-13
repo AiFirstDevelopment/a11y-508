@@ -1,4 +1,5 @@
-import { ChangeDetectorRef, Component, ElementRef, computed, inject, signal, viewChild } from '@angular/core';
+import { ChangeDetectorRef, Component, ElementRef, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
+import { Starter } from '../core/starter';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { FormStore } from '../core/form.store';
@@ -166,6 +167,19 @@ export class FolderPicker {
   readonly showHidden = signal(this.readHidden());
   readonly recents = signal<string[]>([]);
   readonly missing = signal<Set<string>>(new Set());
+
+  // Browse… in Set up asks the picker to open.
+  private starter = inject(Starter);
+  private seenBrowse = this.starter.browseRequests();
+  private browseEffect = effect(() => {
+    const n = this.starter.browseRequests();
+    untracked(() => {
+      if (n !== this.seenBrowse) {
+        this.seenBrowse = n;
+        void this.open();
+      }
+    });
+  });
 
   readonly rootsLabel = computed(() => (this.env.env()?.platform === 'win32' ? 'All drives' : 'This computer'));
   readonly visible = computed<DirEntry[]>(() => (this.listing()?.dirs || []).filter((d) => this.showHidden() || !d.hidden));

@@ -4,7 +4,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { moreOptions, openPicker, dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath } from './harness';
+import { moreOptions, openPicker, dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath, nav } from './harness';
 
 const PRESETS = {
   claude: 'claude -p --permission-mode acceptEdits "Read the file {promptFile} and do exactly what it says."',
@@ -72,7 +72,8 @@ const cliStub = (r: Rig, dir: string, name: string): string =>
   stub(dir, name, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "9.9.9 (stub ${name})"; exit 0; fi\necho "\${STUB_SELF:-$0} $*" >> ${JSON.stringify(shPath(join(r.root, name + '-calls.txt')))}\nexit 0\n`);
 
 const entry = (page: Page, name: string) => page.getByTestId('picker').locator(`[data-preset="${name}"]`);
-const config = (dash: Dash) => JSON.parse(readFileSync(join(dash.cwd, 'a11y-508.config.json'), 'utf8'));
+// The dashboard's loop config (kept in its own directory, not the repository).
+const config = async (dash: Dash) => (await api(dash, '/api/config')).json.config;
 
 test('AC 12: the picker lists every preset, live or greyed as installed, saves the choice, and tests the assistant', async ({ page }) => {
   const r = rig();
@@ -83,10 +84,13 @@ test('AC 12: the picker lists every preset, live or greyed as installed, saves t
   const cwd = tempDir('a11y-508-picker-');
   gitRepo(cwd);
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app', scripts: { build: 'true' } }));
-  writeFileSync(join(cwd, 'a11y-508-state.json'), JSON.stringify({ version: 1, origins: ['http://127.0.0.1:9'], cookies: [], storage: {} }));
   const dash = await dashboard({ env: r.env, cwd });
   try {
-    writeFileSync(join(dash.cwd, 'a11y-508.config.json'), JSON.stringify({ url: 'http://127.0.0.1:9/', check: 'true' }));
+    // The session (covering the start URL) and the loop config, where the dashboard keeps them.
+    const sessionFile = (await api(dash, '/api/env')).json.session.file;
+    mkdirSync(dirname(sessionFile), { recursive: true });
+    writeFileSync(sessionFile, JSON.stringify({ version: 1, origins: ['http://127.0.0.1:9'], cookies: [], storage: {} }));
+    expect((await api(dash, '/api/config', { method: 'PUT', body: { config: { url: 'http://127.0.0.1:9/', check: 'true' } } })).status).toBe(200);
     await open(page, dash, '/fix-loop');
     // Claude Code is installed, so it is the one preselected; the picker opens with "change".
     await expect(page.getByTestId('assistant-line')).toContainText('Fixing with Claude Code (9.9.9 (stub claude))', { timeout: 60_000 });
@@ -118,13 +122,13 @@ test('AC 12: the picker lists every preset, live or greyed as installed, saves t
 
     const start = page.getByTestId('loop-start');
     await entry(page, 'gemini').getByRole('radio').check();
-    await expect.poll(() => config(dash).agent).toBe('gemini');
+    await expect.poll(async () => (await config(dash)).agent).toBe('gemini');
     await expect(start).toBeEnabled();
     await entry(page, 'codex').getByRole('radio').check();
-    await expect.poll(() => config(dash).agent).toBe('codex');
+    await expect.poll(async () => (await config(dash)).agent).toBe('codex');
     await expect(start).toBeDisabled();
     await entry(page, 'claude').getByRole('radio').check();
-    await expect.poll(() => config(dash).agent).toBe('claude');
+    await expect.poll(async () => (await config(dash)).agent).toBe('claude');
     await expect(start).toBeEnabled();
 
     // Test assistant: the fake agent answers; an agent that writes nothing fails with its output.
@@ -177,7 +181,7 @@ test('AC 12: a preset found only in npm prefix -g is run by that path when the l
     await page.getByLabel('A token').check();
     await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
     await page.getByLabel('Start URL').fill(site.base + 'about.html');
-    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Fix loop' }).click();
+    await nav(page, 'Fix loop');
     await openPicker(page);
     await expect(entry(page, 'gemini')).toHaveAttribute('data-found', 'true');
     await page.getByTestId('loop-start').click();

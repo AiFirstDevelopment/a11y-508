@@ -5,7 +5,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { api, dashboard, gitRepo, moreOptions, open, stub, systemPath, tempDir, TOKEN } from './harness';
+import { api, dashboard, gitRepo, moreOptions, open, stub, systemPath, tempDir, TOKEN, nav } from './harness';
 
 // A stand-in Claude Code on PATH, so the installed assistant is known and harmless.
 function stubClaude(): { bin: string; env: NodeJS.ProcessEnv } {
@@ -34,7 +34,7 @@ test('fix loop: the line says what it will do from the repository; the sign-in s
   try {
     await open(page, dash, '/run');
     await signInWithToken(page, 'http://127.0.0.1:9/');
-    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Fix loop' }).click();
+    await nav(page, 'Fix loop');
     await expect(page.getByTestId('assistant-line')).toContainText('Fixing with Claude Code (1.2.3 (stub claude))', { timeout: 60_000 });
     // The picker stays out of the way until "change".
     await expect(page.getByTestId('picker')).toBeHidden();
@@ -46,10 +46,14 @@ test('fix loop: the line says what it will do from the repository; the sign-in s
     const fix = page.getByRole('button', { name: 'Fix the violations' });
     await expect(fix).toBeEnabled();
     await fix.click();
-    await expect.poll(() => existsSync(join(cwd, 'a11y-508.config.json'))).toBe(true);
-    expect(JSON.parse(readFileSync(join(cwd, 'a11y-508.config.json'), 'utf8'))).toEqual({
-      url: 'http://127.0.0.1:9/', agent: 'claude', source: ['src'], check: 'npm run build && npm test', branch: 'a11y-508', push: true, maxAttempts: 3, deployed: 'bundle-change', deployTimeout: 1800000,
+    // Written where the dashboard keeps its files, not in the repository.
+    const cfgFile = (await api(dash, '/api/env')).json.config.file;
+    expect(cfgFile.startsWith(cwd)).toBe(false);
+    await expect.poll(() => existsSync(cfgFile)).toBe(true);
+    expect(JSON.parse(readFileSync(cfgFile, 'utf8'))).toEqual({
+      url: 'http://127.0.0.1:9/', agent: 'claude', source: ['src'], check: 'npm run build && npm test', branch: 'a11y-508', push: true, maxAttempts: 3, deployed: 'bundle-change', deployTimeout: 1800000, writtenBy: 'a11y-508-dashboard',
     });
+    expect(existsSync(join(cwd, 'a11y-508.config.json'))).toBe(false);
     // A token was chosen on Run, so the loop does not sign in first.
     await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.kind).toBe('loop');
     expect((await api(dash, '/api/runs/current')).json.meta.command).not.toContain('--sign-in-first');
@@ -68,7 +72,7 @@ test('fix loop: in a folder that is not the app\'s repository the line says to c
   try {
     await open(page, dash, '/run');
     await signInWithToken(page, 'http://127.0.0.1:9/');
-    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Fix loop' }).click();
+    await nav(page, 'Fix loop');
     await expect(page.getByTestId('assistant-line')).toContainText('Fixing with Claude Code', { timeout: 60_000 });
     await expect(page.getByTestId('not-git')).toHaveText(`Choose the app's repository with Change… above; ${dash.cwd} is not a git repository and has no package.json.`);
     await expect(page.getByRole('button', { name: 'Fix the violations' })).toBeDisabled();

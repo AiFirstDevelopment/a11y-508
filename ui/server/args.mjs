@@ -80,7 +80,7 @@ export function crawlArgs({ kind = 'crawl', url, options, auth }) {
   const args = [u, ...optionArgs(options), ...a.args];
   if (kind === 'troubleshoot') args.push('--troubleshoot');
   if (kind === 'login') {
-    const stateFile = (auth && auth.mode === 'state' && auth.file) || DEFAULT_STATE_FILE;
+    const stateFile = (auth && auth.file) || DEFAULT_STATE_FILE;
     return { args: [u, ...optionArgs(options), '--login-only', '--state', stateFile], token: 'none' };
   }
   try {
@@ -91,7 +91,7 @@ export function crawlArgs({ kind = 'crawl', url, options, auth }) {
   return { args, token: a.token };
 }
 
-export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = false }) {
+export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = false, config = null, stateFile = null }) {
   const a = authArgs(auth);
   const args = ['loop'];
   if (url) args.push(validateUrl(url));
@@ -104,7 +104,11 @@ export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = 
     args.push('--max-rounds', String(n));
   }
   if (agent) args.push('--agent', agent);
+  // The dashboard's config (kept out of the repository), when it is not the default file.
+  if (config) args.push('--config', config);
   const crawl = [...optionArgs(options), ...a.args];
+  // The session file (the dashboard's own): every round's crawl uses it, and --sign-in-first saves it.
+  if (stateFile && !crawl.some((x) => /^--(state|login|login-only|cookie)$/.test(x))) crawl.push('--state', stateFile);
   args.push(...crawl);
   try {
     parseArgs(crawl);

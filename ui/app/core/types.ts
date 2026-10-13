@@ -60,6 +60,7 @@ export interface DirFacts {
   report: boolean;
   ledger: boolean;
   session: boolean;
+  package?: boolean;
 }
 export const FACTS: (keyof DirFacts)[] = ['git', 'config', 'report', 'ledger', 'session'];
 
@@ -88,7 +89,11 @@ export interface EnvInfo {
   version: string;
   platform: string;
   browser: { found: boolean; path: string | null; error?: string };
-  config: { exists: boolean; file: string };
+  config: { exists: boolean; file: string; repository?: boolean };
+  // The dashboard's own directory for this working directory, and files it may have left in it before.
+  stateDir?: string;
+  pastRuns?: number;
+  legacy?: string[];
   session: { exists: boolean; file: string; ageMs?: number; capturedAt?: string | null; origins?: string[] };
   report: { exists: boolean; finishedAt?: string; baseUrl?: string };
   tokenInEnv: boolean;
