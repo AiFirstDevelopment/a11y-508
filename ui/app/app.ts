@@ -9,6 +9,8 @@ import { FormStore } from './core/form.store';
 import { Starter } from './core/starter';
 import { FolderPicker } from './shared/folder-picker';
 import { SetupForm } from './shared/setup-form';
+import { QuitButton } from './shared/quit-button';
+import { INITIAL_PATH, Resume, landing, stepPath } from './core/resume';
 
 interface Step {
   n: number;
@@ -46,7 +48,7 @@ export function stepOf(url: string): number {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, FolderPicker, SetupForm],
+  imports: [RouterOutlet, RouterLink, FolderPicker, SetupForm, QuitButton],
   template: `
     <a class="skip" href="#main">Skip to main content</a>
     <header class="top">
@@ -77,6 +79,7 @@ export function stepOf(url: string): number {
         </p>
       }
     </header>
+    <app-quit />
     <app-folder-picker />
     <main id="main" tabindex="-1">
       @if (env.error()) {
@@ -151,7 +154,13 @@ export class App implements OnInit {
   }
 
   private starter = inject(Starter);
+  private resume = inject(Resume);
   constructor() {
+    // The step the person is on, stored server-side: the dashboard opens there next time.
+    effect(() => {
+      const u = this.url();
+      untracked(() => this.resume.saveStep(stepPath(u)));
+    });
     // Where Set up's Continue returns to: the later step the person was on.
     effect(() => {
       const u = this.url();
@@ -249,7 +258,7 @@ export class App implements OnInit {
     // browser's, if it still exists; else the setup dialog (a folder that already holds the tool's
     // files is taken as the choice).
     const remembered = rememberedCwd();
-    const serverKnows = !!e.restored || (!!e.last?.cwd && e.last.cwd === e.cwd);
+    const serverKnows = !!e.restored || (!!e.last?.cwd && e.last.cwd === e.cwd) || !!e.lastStep || !!e.run;
     let needSetup = false;
     if (serverKnows) {
       rememberCwd(e.cwd);
@@ -272,6 +281,11 @@ export class App implements OnInit {
     if (n !== this.starting) return;
     this.ready.set(true);
     if (e?.run) void this.run.connect();
+    // Opened at its address: the step the person was on, a live run, or an interrupted fix loop.
+    const to = INITIAL_PATH === '/' && !needSetup && e ? landing(e) : null;
+    if (to && stepPath(this.router.url) !== to) await this.router.navigateByUrl(to);
+    this.resume.begin(stepPath(this.router.url), e?.lastStep || null);
+    this.resume.heartbeat();
     if (needSetup) {
       this.setupOpen.set(true);
       setTimeout(() => {

@@ -14,6 +14,7 @@ import { ChartPanel } from '../shared/chart-panel';
 import { RunView } from '../shared/run-view';
 import { NeedsPersonLink } from '../shared/needs-person-link';
 import { ChangesTable } from '../shared/changes-table';
+import { InterruptedNotice } from '../shared/interrupted-notice';
 
 const STATUSES: [string, string][] = [
   ['open', 'Open'], ['review', 'Awaiting triage'], ['pending', 'Fixed, awaiting verification'], ['verified', 'Verified fixed'],
@@ -30,7 +31,7 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 // and shows it, with one button; everything it inferred is editable at /fix-loop/settings.
 @Component({
   selector: 'app-fix-loop-screen',
-  imports: [ChartPanel, LineChartModule, RunView, RouterLink, NeedsPersonLink, ChangesTable],
+  imports: [ChartPanel, LineChartModule, RunView, RouterLink, NeedsPersonLink, ChangesTable, InterruptedNotice],
   template: `
     <h1>Fix loop</h1>
     @if (!(store.kind() === 'loop' && store.round())) {
@@ -172,6 +173,7 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
     }
 
     }
+    <app-interrupted-notice />
     @if (isLoop() && store.kind() === 'loop') {
       @if (problem(); as pr) {
         <!-- It ended for a reason: what happened and what to do, in the main view. -->
@@ -225,6 +227,8 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
           <button type="button" class="secondary" (click)="runAgain()" [disabled]="store.active()" data-testid="run-again">Run again</button>
           <a class="button secondary" routerLink="/history" data-testid="see-changes">See what changed</a>
         }
+      } @else if (interrupted()) {
+        <!-- Continue and Start over are on the interrupted notice. -->
       } @else if (loopEnded()) {
         <a class="button big" routerLink="/history" data-testid="see-changes">See what changed</a>
         <button type="button" class="secondary" (click)="runAgain()" [disabled]="store.active()" data-testid="run-again">Run again</button>
@@ -420,12 +424,14 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   });
   // The loop has ended (nothing open, stopped, or out of rounds): the step's actions change.
   readonly loopEnded = computed(() => this.store.kind() === 'loop' && !!this.store.done());
+  // Its process went away without finishing (the dashboard was closed): Continue or Start over.
+  readonly interrupted = computed(() => this.store.done()?.['outcome'] === 'interrupted');
   // The loop ended for a reason rather than finishing: before its first round it could not start
   // (a precondition event, with its remedy); after it, it stopped (the CLI's error says why).
   // Stopped by the person, or out of rounds, it simply finished.
   readonly problem = computed<{ kind: 'start' | 'stopped'; message: string; remedy: string | null } | null>(() => {
     const d = this.store.done();
-    if (!this.loopEnded() || !d || d['outcome'] === 'stopped') return null;
+    if (!this.loopEnded() || !d || d['outcome'] === 'stopped' || d['outcome'] === 'interrupted') return null;
     const pre = this.store.precondition();
     if (pre) return { kind: 'start', message: String(pre['message'] || ''), remedy: String(pre['remedy'] || '') || null };
     const errors = this.store.notices().filter((n) => n.level === 'error' && !/^The run failed \(exit code/.test(n.message)).map((n) => n.message);
@@ -551,6 +557,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     const t = this.store.task();
     const pr = this.problem();
     if (pr) return pr.kind === 'start' ? 'The fix loop could not start.' : 'The fix loop stopped.';
+    if (this.interrupted()) return 'The fix loop was interrupted.';
     if (this.store.done()) return `${this.store.kind() === 'dry-run' ? 'Dry run' : 'Loop'} finished${this.store.done()?.['outcome'] === 'stopped' ? ' (stopped)' : ''}.`;
     if (!r) return 'Starting…';
     if (this.store.awaitingDeploy()) return `Round ${r}: waiting for deploy`;

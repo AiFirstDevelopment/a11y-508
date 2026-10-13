@@ -68,6 +68,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
   'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit', 'changes', 'attempt', 'bisect',
+  'resume',
 ]);
 
 // The current run, built from its event stream.
@@ -365,6 +366,11 @@ export class RunStore {
         break;
       case 'precondition':
         this.precondition.set(ev);
+        break;
+      // Continue after an interruption: the unfinished fix's changes it discarded, in the pane.
+      case 'resume':
+        for (const f of (ev['discarded'] as string[]) || []) this.pane(`Discarded the unfinished change to ${f}`, true);
+        this.pane(ev['n'] && ev['m'] ? `Continuing the fix loop interrupted at fix ${ev['n']} of ${ev['m']}, with no new crawl` : 'Continuing the interrupted fix loop, with no new crawl', true);
         break;
       case 'stopping':
         this.stopping.set(true);

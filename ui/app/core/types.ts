@@ -57,7 +57,8 @@ export interface AgentTest {
 export interface RunInfo {
   id: string;
   kind: string;
-  status: 'running' | 'done';
+  // interrupted: a fix loop whose process is gone without finishing (the dashboard was closed).
+  status: 'running' | 'done' | 'interrupted';
   startedAt: string;
   finishedAt: string | null;
   code: number | null;
@@ -123,6 +124,8 @@ export interface EnvInfo {
   lastTest: Record<string, AgentTest>;
   build: { fresh: boolean | null; reason: string | null };
   run: RunInfo | null;
+  // The wizard step the person was on (settings.json), where the dashboard opens next time.
+  lastStep?: string | null;
 }
 
 // Every event carries type and seq (from the server); the rest varies.

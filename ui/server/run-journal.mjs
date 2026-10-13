@@ -368,6 +368,7 @@ export function changesUnder(cwd, sourceDirs) {
     // A rename's source follows as its own entry.
     if (xy[0] === 'R' || xy[0] === 'C') i++;
   }
+  files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return { top: root, files };
 }
 
