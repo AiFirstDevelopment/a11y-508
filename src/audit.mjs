@@ -6,6 +6,14 @@ import { BEYOND, testInfo } from './checks/catalog.mjs';
 import { listenerProbe, keyboardPass, disclosurePass, zoomPass, spacingPass, reflowPass, routeDiscoveryPass, modalOnLoadPass, redismissModal } from './passes.mjs';
 import { discoverFrames, inFrame, MAX_FRAME_DEPTH, BETWEEN_IMAGES } from './frames.mjs';
 
+// What a document that the server called an error actually rendered: enough
+// text, or scripts with a real element tree, means an application page.
+function renderedContent(page) {
+  return page.evaluate(
+    '(() => { const b = document.body; const text = b ? (b.innerText || b.textContent || "").replace(/\\s+/g, " ").trim() : ""; return { text: text.length, scripts: document.scripts.length, elements: b ? b.getElementsByTagName("*").length : 0 }; })()'
+  );
+}
+
 export async function auditPage(page, url, ctx) {
   const { opts } = ctx;
   const t0 = Date.now();
@@ -72,10 +80,18 @@ export async function auditPage(page, url, ctx) {
   result.finalUrl = nav.finalUrl;
   result.timedOut = nav.timedOut;
   if (nav.status && nav.status >= 400) {
-    result.error = `HTTP ${nav.status}`;
-    if (nav.status === 401 || nav.status === 403) result.error += opts.auth ? ' (TOKEN was sent; check that it is valid for this site)' : ' (no TOKEN set; export TOKEN=... to authenticate)';
-    result.durationMs = Date.now() - t0;
-    return result;
+    // Many single-page apps answer 404 for a deep link and serve the app with
+    // it anyway; the browser shows the page, so the crawler audits it too,
+    // and the coverage section says the server called it not found.
+    const rendered = (nav.status === 404 || nav.status === 410) && (!nav.mimeType || /html/i.test(nav.mimeType)) ? await renderedContent(page).catch(() => null) : null;
+    if (rendered && (rendered.text >= 200 || (rendered.scripts >= 1 && rendered.elements >= 20))) {
+      result.servedWith = nav.status;
+    } else {
+      result.error = `HTTP ${nav.status}`;
+      if (nav.status === 401 || nav.status === 403) result.error += opts.auth ? ' (TOKEN was sent; check that it is valid for this site)' : ' (no TOKEN set; export TOKEN=... to authenticate)';
+      result.durationMs = Date.now() - t0;
+      return result;
+    }
   }
   if (nav.mimeType && !/html|xml/i.test(nav.mimeType)) {
     result.skipped = `not an HTML document (${nav.mimeType})`;

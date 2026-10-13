@@ -367,6 +367,15 @@ const noneOn = (path, test, selectors, level) => {
   assert.equal(hits.length, 0, `${path}: unexpected ${test || 'findings'} on ${selectors.join(', ')}\n  got: ${listed(hits)}`);
 };
 
+check('a page the server answers 404 for, but which renders content, is audited and the coverage section says so', () => {
+  const p = pages['/soft-404.html'];
+  assert.ok(p, '/soft-404.html was crawled');
+  assert.equal(p.error, null, `audited despite the status: ${p.error}`);
+  assert.equal(p.servedWith, 404);
+  has('/soft-404.html', '7.A', 'violation');
+  assert.ok((report.summary.coverage.warnings || []).some((w) => /soft-404\.html was served with HTTP 404 but rendered a page/.test(w)), `coverage warnings: ${JSON.stringify(report.summary.coverage.warnings)}`);
+});
+
 const FOCUS = '/checks-focus.html';
 check('AC1 4.D: hidden checkbox, radio and switch that show focus on the label or box are not reported', () => {
   noneOn(FOCUS, '4.D', ['#cb-styled-label', '#cb-uswds-label', '#rd-styled-label', '#sw-styled-label', '#cb-styled', '#cb-uswds', '#rd-styled', '#sw-styled']);

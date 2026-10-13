@@ -177,6 +177,11 @@ export async function startFixtureSite({ port = 0, host = '127.0.0.1', token = T
       res.writeHead(200, { 'content-type': 'text/html' });
       return res.end('<!doctype html><html lang="en"><title>Submitted</title><main><h1>Submitted</h1></main></html>');
     }
+    if (path === '/soft-404.html') {
+      // A single-page app's deep link: the server says 404 but serves the app.
+      res.writeHead(404, { 'content-type': TYPES['.html'] });
+      return res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Served with 404 - a11y-508 test site</title></head><body><main><h1>Served with a 404 status</h1><p>This page is what the server sends for a deep link it does not know: the application shell, with a not-found status. A browser renders it, so the crawler audits it and warns about the status.</p><img src="/pixel.png" width="40" height="40"><p><a href="/">Home</a></p></main></body></html>');
+    }
     const file = join(fixtures, path);
     if (path === '/landed.html') {
       // Slow landing page for the script redirect from /bounce.html.

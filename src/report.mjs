@@ -56,6 +56,9 @@ export function coverage(pages, crawl, opts) {
   for (const p of pages.filter((x) => x.modalOnLoad && x.modalOnLoad.dismissed === false)) {
     warnings.push(`A modal dialog (${p.modalOnLoad.name || p.modalOnLoad.selector}) was open when ${short(p.finalUrl || p.url)} loaded and did not close with Escape; the page behind it was not audited. Dismiss it with --cookie or a saved session, or audit the dialog's close control.`);
   }
+  for (const p of pages.filter((p) => p.servedWith && !p.error && !p.skipped)) {
+    warnings.push(`${short(p.finalUrl || p.url)} was served with HTTP ${p.servedWith} but rendered a page, so it was audited. The server answers "not found" for this address; a browser shows the page anyway, but search engines and some assistive tools may not. Check the deployment's handling of deep links.`);
+  }
   if (crawl.overflow) warnings.push(`Stopped at --max-pages ${opts.maxPages}: ${crawl.overflow} more link(s) were found but not audited.`);
   if (opts.wcag && opts.wcag !== '2.0') notes.push(`The WCAG ${opts.wcag} profile was on (--wcag ${opts.wcag}): rules beyond Section 508 ran too. Their findings are listed under "${beyondHeading(opts.wcag)}" and count toward --fail-on like any other; Section 508 itself requires WCAG 2.0 AA.`);
   if (!opts.followClicks) notes.push('Click discovery was off (--no-follow-clicks); pages reachable only through click handlers were not looked for.');
