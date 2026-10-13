@@ -27,6 +27,8 @@ export const ADVANCED: [string, string, 'value' | 'list' | 'switch' | 'profile']
   ['max-activations', 'Disclosure controls activated per page', 'value'],
   ['max-clicks', 'Navigation controls clicked per page', 'value'],
   ['no-follow-clicks', 'Follow href links only (do not click controls)', 'switch'],
+  ['no-forms', 'Do not fill and submit search and filter forms', 'switch'],
+  ['search-months', 'Months back a search form searches (default 3)', 'value'],
   ['user-agent', 'User agent', 'value'],
   ['chrome', 'Browser executable path', 'value'],
   ['no-sandbox', 'Pass --no-sandbox to Chrome', 'switch'],

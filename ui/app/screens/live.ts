@@ -137,6 +137,7 @@ export class LiveScreen implements OnDestroy {
     switch (f.phase) {
       case 'screenshots': return `Taking screenshots · ${n(dd['done'])} of ${n(dd['of'])}`;
       case 'loading': return `Loading ${path}`;
+      case 'search': return phaseText(f);
       case 'checks': return `Analyzing ${path} · ${n(dd['elements'])} elements`;
       case 'keyboard': return `Analyzing ${path} · keyboard pass ${n(dd['stops'])} of ${n(dd['of'])}`;
       default: return `Analyzing ${path} · ${phaseText(f).replace(/^./, (c) => c.toLowerCase())}`;

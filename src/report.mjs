@@ -81,6 +81,10 @@ export function coverage(pages, crawl, opts) {
   }
   const deep = unread.filter((p) => p.unaudited.deepFrames);
   if (deep.length) notes.push(`${deep.reduce((a, p) => a + p.unaudited.deepFrames, 0)} frame(s) on ${deep.length} page(s) were nested more than 3 levels deep and were not audited.`);
+  // A search that returned nothing even for the whole date range: the result pages behind it were not reached.
+  const empty = pages.filter((p) => p.search && p.search.empty);
+  if (empty.length) notes.push(`A search on ${empty.length} page(s) (${empty.slice(0, 3).map((p) => short(p.finalUrl || p.url)).join(', ')}${empty.length > 3 ? ', ...' : ''}) returned nothing even for the last ${opts.searchMonths} month${opts.searchMonths === 1 ? '' : 's'}; the pages behind its results were not audited. Search with a wider range (--search-months) or audit a result page by its address.`);
+  if (opts.forms === false) notes.push('Search-form discovery was off (--no-forms); result pages behind search and filter forms were not looked for.');
   if (crawl.clickOnly) notes.push(`${crawl.clickOnly} page(s) were reachable only by clicking a control with no link (href); they were found by clicking and audited. Screen reader users cannot discover these destinations as links (check WCAG 2.1.1, 4.1.2).`);
   return { complete: warnings.length === 0, warnings, notes };
 }
@@ -342,8 +346,11 @@ export function discoveryFacts(p) {
   const d = p.discovery || null;
   return {
     links: p.info && Array.isArray(p.info.links) ? p.info.links.length : 0,
-    clicked: d ? d.clicked || 0 : null,
-    clickedNew: d ? (d.urls || []).length : null,
+    clicked: d && d.clicked !== undefined ? d.clicked || 0 : null,
+    clickedNew: d && d.clicked !== undefined ? (d.urls || []).length : null,
+    // Search-form discovery: forms submitted and the result pages they led to (null when none ran).
+    searched: d && d.forms ? d.forms.submitted : null,
+    searchResults: d && d.forms ? d.forms.results : null,
     skippedActions: d ? (d.skipped || []).map((x) => x.name || x.selector || '').filter(Boolean) : [],
     skippedActionsCount: d ? d.skippedCount || 0 : 0,
   };

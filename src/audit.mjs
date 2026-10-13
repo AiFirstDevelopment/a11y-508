@@ -3,7 +3,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BEYOND, testInfo } from './checks/catalog.mjs';
-import { listenerProbe, keyboardPass, disclosurePass, zoomPass, spacingPass, reflowPass, routeDiscoveryPass, modalOnLoadPass, redismissModal } from './passes.mjs';
+import { listenerProbe, keyboardPass, disclosurePass, zoomPass, spacingPass, reflowPass, routeDiscoveryPass, modalOnLoadPass, redismissModal, searchPass } from './passes.mjs';
 import { discoverFrames, inFrame, MAX_FRAME_DEPTH, BETWEEN_IMAGES } from './frames.mjs';
 
 // What a document that the server called an error actually rendered: enough
@@ -281,6 +281,17 @@ async function auditPageIn(page, url, ctx) {
         if (f.screenshot) n++;
       }
     }
+    // Searches and filters, filled with a date range and submitted: the results they reveal are
+    // re-checked here and the pages behind them queued. The page's own audit is what it was before.
+    if (opts.forms) {
+      try {
+        await reload();
+        const s = await searchPass(page, add, fingerprints, opts, reload, ctx.origin);
+        if (s) result.search = s;
+      } catch (e) {
+        result.errors.push(`search forms: ${e.message}`);
+      }
+    }
     // Last, because it clicks around and reloads: find pages reachable only
     // through click handlers so the crawler can queue them.
     if (opts.followClicks && opts.maxClicks > 0) {
@@ -291,6 +302,7 @@ async function auditPageIn(page, url, ctx) {
         result.errors.push(`route discovery: ${e.message}`);
       }
     }
+    if (result.search && result.search.submitted) result.discovery = { ...(result.discovery || {}), forms: { filled: result.search.filled, submitted: result.search.submitted, results: result.search.results } };
   } catch (e) {
     result.error = `audit failed: ${e.message}`;
   }

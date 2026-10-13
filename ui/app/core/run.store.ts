@@ -167,7 +167,7 @@ export class RunStore {
           violations: ev['violations'], reviews: ev['reviews'], byImpact: ev['byImpact'], durationMs: ev['durationMs'], round: ev['round'] ?? null,
           modalOnLoad: ev['modalOnLoad'] ?? null,
           servedWith: ev['servedWith'] ?? null,
-          discovery: { links: ev['links'] ?? 0, clicked: ev['clicked'] ?? null, clickedNew: ev['clickedNew'] ?? null, skippedActions: ev['skippedActions'] ?? [], skippedActionsCount: ev['skippedActionsCount'] ?? 0 },
+          discovery: { links: ev['links'] ?? 0, clicked: ev['clicked'] ?? null, clickedNew: ev['clickedNew'] ?? null, skippedActions: ev['skippedActions'] ?? [], skippedActionsCount: ev['skippedActionsCount'] ?? 0, searched: ev['searched'] ?? null, searchResults: ev['searchResults'] ?? null },
         };
         this.pages.update((p) => [...p, row]);
         this.inFlight.update((m) => {

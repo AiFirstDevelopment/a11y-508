@@ -113,6 +113,7 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
           }
           res.depth = item.depth;
           if (item.via === 'click') res.foundBy = 'click';
+          if (item.via === 'form') res.foundBy = 'form';
           // A page that lands on another URL (an app's start route that
           // redirects to its default view) is that URL's page: audit it once.
           const landedOn = (res.finalUrl && normalizeUrl(res.finalUrl, origin)) || item.url;
@@ -150,6 +151,26 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
               seen.add(n);
               if (viaClick.includes(link) && !res.info.links.includes(link)) clickOnly.add(n);
               queue.push({ url: n, depth: item.depth + 1, via: clickOnly.has(n) ? 'click' : 'link' });
+            }
+            // What a search revealed: the first two results of each search are queued whatever the
+            // query-variant limit says.
+            for (const { url, priority } of (res.search && res.search.urls) || []) {
+              const n = normalizeUrl(url, origin);
+              if (!n || seen.has(n) || landed.has(n) || !allowed(n)) continue;
+              if (priority) {
+                const k = routeKey(n);
+                variants.set(k, (variants.get(k) || 0) + 1);
+              } else if (!acceptVariant(n)) {
+                variantOverflow++;
+                variantRoutes.add(routeKey(n));
+                continue;
+              }
+              if (seen.size >= opts.maxPages) {
+                overflow++;
+                continue;
+              }
+              seen.add(n);
+              queue.push({ url: n, depth: item.depth + 1, via: 'form' });
             }
           }
         } finally {

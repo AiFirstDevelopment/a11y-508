@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Case search - a11y-508 test site</title>
+<style>
+  tr.clickable { cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+<h1>Case search</h1>
+<p>Cases appear only for a date range that reaches back at least two months.</p>
+
+<!-- A search that renders its results in place (fetch), with a type="date" pair. -->
+<form id="by-date" role="search" aria-label="Search cases by date">
+  <label for="d-from">From</label> <input type="date" id="d-from" name="from">
+  <label for="d-to">To</label> <input type="date" id="d-to" name="to">
+  <label for="d-q">Keywords</label> <input type="text" id="d-q" name="q">
+  <button type="submit">Search</button>
+</form>
+<div id="results" aria-live="polite"></div>
+
+<!-- A search that navigates (GET), with MM/DD/YYYY text fields. -->
+<form id="by-text" action="/search-results.html" method="get">
+  <label for="t-from">Start date</label> <input id="t-from" name="from" placeholder="MM/DD/YYYY">
+  <label for="t-to">End date</label> <input id="t-to" name="to" placeholder="MM/DD/YYYY">
+  <button type="submit">Find</button>
+</form>
+
+<!-- Never submitted: a filter form whose button deletes. -->
+<form id="danger-form" action="/api/delete-filtered" method="post">
+  <label for="x-from">Delete records from</label> <input type="date" id="x-from" name="from">
+  <button type="submit">Delete filtered records</button>
+</form>
+</main>
+<script>
+  document.getElementById('by-date').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const q = new URLSearchParams({ form: 'date', from: f.from.value, to: f.to.value });
+    const res = await fetch('/api/search?' + q, { headers: { authorization: 'Bearer FIXTURE_TOKEN' } });
+    const rows = await res.json();
+    const box = document.getElementById('results');
+    if (!rows.length) {
+      box.innerHTML = '<p>No cases found.</p>';
+      return;
+    }
+    // The result area: rows with links, a row that navigates by script, and an image without alt.
+    box.innerHTML = '<h2>Results</h2><img src="/pixel.png" width="24" height="24" class="result-icon"><table><tr><th>Case</th><th>Opened</th></tr>' +
+      rows.map((r) => r.link ? `<tr><td><a href="${r.url}">${r.title}</a></td><td>${r.opened}</td></tr>` : `<tr class="clickable" data-go="${r.url}"><td>${r.title}</td><td>${r.opened}</td></tr>`).join('') + '</table>';
+    for (const tr of box.querySelectorAll('tr[data-go]')) tr.addEventListener('click', () => (location.href = tr.dataset.go));
+  });
+</script>
+</body>
+</html>

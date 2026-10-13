@@ -16,7 +16,7 @@ export const FLAGS = {
   'max-pages': 'value', 'max-depth': 'value', concurrency: 'value', include: 'list', exclude: 'list', 'fail-on': 'value',
   viewport: 'value', timeout: 'value', settle: 'value', header: 'list', 'token-header': 'value', 'auth-origin': 'list',
   'token-storage': 'list', 'no-token-storage': 'switch', 'no-interact': 'switch', 'no-zoom': 'switch', 'no-screenshots': 'switch',
-  'max-screenshots': 'value', 'max-tabs': 'value', 'max-activations': 'value', 'max-clicks': 'value', 'no-follow-clicks': 'switch',
+  'max-screenshots': 'value', 'max-tabs': 'value', 'max-activations': 'value', 'max-clicks': 'value', 'no-follow-clicks': 'switch', 'no-forms': 'switch', 'search-months': 'value',
   'user-agent': 'value', chrome: 'value', 'no-sandbox': 'switch', wcag: 'value',
 };
 

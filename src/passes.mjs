@@ -493,3 +493,145 @@ export async function reflowPass(page, add) {
   }
   return { issues: found, restored };
 }
+
+// The label of what a search revealed: "after searching the last 3 months".
+export const searchLabel = (months) => `after searching the last ${months} month${months === 1 ? '' : 's'}`;
+
+// Waits until the page stops changing: the same element count, resource count and address for
+// 500 ms (a search's request answered and rendered), then 500 ms more; at most `max` ms.
+async function settle(page, max = 8000) {
+  const until = Date.now() + max;
+  let last = null;
+  let since = Date.now();
+  await sleep(250);
+  while (Date.now() < until) {
+    let sig = null;
+    try {
+      await page.ensureInjected();
+      sig = await page.evaluate('window.__a11y508.searchSignature()');
+    } catch {}
+    if (sig && sig === last) {
+      if (Date.now() - since >= 500) break;
+    } else {
+      last = sig;
+      since = Date.now();
+    }
+    await sleep(150);
+  }
+  await sleep(500);
+}
+
+// Search-form discovery: fills and submits the forms that look like searches or filters (at most
+// three), with a date range from `opts.searchMonths` months ago to today, then follows what they
+// reveal: links in the results, result rows and "view" controls, and pagination (within
+// --max-clicks). The page's audit is what it was before the search, plus a re-check of the result
+// area labelled "after searching the last N months". Returns null when the page has no such form.
+export async function searchPass(page, add, fingerprints, opts, reload, origin) {
+  const months = opts.searchMonths;
+  const label = searchLabel(months);
+  await page.ensureInjected();
+  const { forms, skipped } = await page.evaluate('window.__a11y508.searchForms(3)');
+  if (!forms.length) return skipped.length ? { filled: 0, submitted: 0, results: 0, urls: [], empty: 0, revealedFindings: 0, skipped } : null;
+  if (page.progress) page.progress('search', { months, forms: forms.length });
+  const startHref = await page.evaluate('location.href');
+  const out = { filled: 0, submitted: 0, results: 0, urls: [], empty: 0, revealedFindings: 0, skipped, forms: [] };
+  const known = new Set();
+  const here = async () => page.evaluate('location.href').catch(() => null);
+  const fresh = async () => {
+    if ((await here()) !== startHref) await reload();
+    await page.ensureInjected();
+  };
+  // Fills and submits one form; returns what it filled, or null.
+  const run = async (f) => {
+    await fresh();
+    await page.evaluate('window.__a11y508.markBeforeSearch()');
+    const fill = await page.evaluate(`window.__a11y508.fillSearch(${JSON.stringify(f.selector)}, ${months})`);
+    if (!fill) return null;
+    let pt = null;
+    if (f.submit) pt = await page.evaluate(`window.__a11y508.prepareClick(${JSON.stringify(f.submit)})`).catch(() => null);
+    if (pt) await page.click(pt.x, pt.y);
+    else {
+      await page.evaluate(`(() => { const s = window.__a11y508.query(${JSON.stringify(f.selector)}); const el = s && s.querySelector('input:not([type=hidden]), select, textarea'); if (el) el.focus(); return !!el; })()`);
+      await page.press('Enter');
+    }
+    await settle(page);
+    await page.ensureInjected().catch(() => {});
+    return fill;
+  };
+  let clicks = opts.maxClicks;
+  for (const f of forms) {
+    let fill;
+    try {
+      fill = await run(f);
+    } catch {
+      continue;
+    }
+    if (!fill) continue;
+    out.filled++;
+    out.submitted++;
+    const found = [];
+    const note = (url) => {
+      let u;
+      try {
+        u = new URL(url);
+      } catch {
+        return;
+      }
+      if (u.origin !== origin || known.has(u.href) || u.href === startHref) return;
+      known.add(u.href);
+      found.push(u.href);
+    };
+    const href = await here();
+    const navigated = href && href !== startHref;
+    // A form that navigates (a GET form): its result page is queued itself.
+    if (navigated) note(href);
+    let res = { links: [], candidates: [] };
+    try {
+      res = await page.evaluate(`window.__a11y508.searchResults(${Math.max(0, clicks)})`);
+    } catch {}
+    for (const l of res.links) note(l);
+    // The result area, re-checked in place (a navigated result page gets its own audit).
+    if (!navigated) {
+      try {
+        const again = await page.evaluate('window.__a11y508.run()');
+        for (const g of again.findings) {
+          const fp = `${g.test}|${g.selector}|${g.message}`;
+          if (fingerprints.has(fp)) continue;
+          g.state = label;
+          add(g);
+          out.revealedFindings++;
+        }
+      } catch {}
+    }
+    // Result rows and controls without links: clicked one by one, the search redone in between.
+    for (const [i, c] of res.candidates.entries()) {
+      if (clicks <= 0) break;
+      if (i > 0 || (await here()) !== (navigated ? href : startHref)) {
+        try {
+          if (!(await run(f))) break;
+        } catch {
+          break;
+        }
+      }
+      const before = await here();
+      const pt = await page.evaluate(`window.__a11y508.prepareClick(${JSON.stringify(c.selector)})`).catch(() => null);
+      if (!pt) continue;
+      clicks--;
+      await page.click(pt.x, pt.y).catch(() => {});
+      let after = before;
+      const until = Date.now() + 2000;
+      while (Date.now() < until && after === before) {
+        await sleep(150);
+        after = await here();
+      }
+      if (after && after !== before) note(after);
+    }
+    // The first two results of a search are queued whatever the query-variant limit says.
+    out.urls.push(...found.map((url, k) => ({ url, priority: k < 2 })));
+    out.results += found.length;
+    out.forms.push({ name: f.name, selector: f.selector, from: fill.from || null, to: fill.to || null, preset: fill.preset, results: found.length, navigated: !!navigated });
+    if (!found.length && !res.candidates.length && (fill.dates || fill.preset)) out.empty++;
+  }
+  if ((await here()) !== startHref) await reload();
+  return out;
+}

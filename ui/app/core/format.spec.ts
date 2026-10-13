@@ -29,6 +29,7 @@ describe('format', () => {
   it('says what discovery did on a page', () => {
     expect(foundText({ links: 12, clicked: 8, clickedNew: 3, skippedActions: [], skippedActionsCount: 0 })).toBe('12 links · 8 clicked → 3 new');
     expect(foundText({ links: 1, clicked: null, clickedNew: null, skippedActions: [], skippedActionsCount: 0 })).toBe('1 link');
+    expect(foundText({ links: 2, clicked: 5, clickedNew: 3, skippedActions: [], skippedActionsCount: 0, searched: 1, searchResults: 8 })).toBe('2 links · 5 clicked → 3 new · 1 search → 8 results');
     expect(discoveryOf({ info: { links: ['a', 'b'] }, discovery: { clicked: 4, urls: ['x'], skipped: [{ name: 'Delete' }], skippedCount: 1 } })).toEqual({ links: 2, clicked: 4, clickedNew: 1, skippedActions: ['Delete'], skippedActionsCount: 1 });
     expect(discoveryOf({}).clicked).toBeNull();
   });

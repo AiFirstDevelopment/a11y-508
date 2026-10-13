@@ -103,8 +103,18 @@ const listen = (server, port, host) => new Promise((resolve, reject) => {
   });
 });
 
+// A date as a search form sends it: ISO (2026-07-13) or MM/DD/YYYY.
+function parseDate(s) {
+  if (!s) return null;
+  let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  if (m) return new Date(Number(m[3]), Number(m[1]) - 1, Number(m[2]));
+  return null;
+}
+
 export async function startFixtureSite({ port = 0, host = '127.0.0.1', token = TOKEN, autoLogin = false, dropForms = 2 } = {}) {
-  const state = { externalHits: [], unauthorized: [], cookieHeaders: [], dangerHits: [], dropsLeft: dropForms };
+  const state = { externalHits: [], unauthorized: [], cookieHeaders: [], dangerHits: [], searches: [], deleteHits: [], dropsLeft: dropForms };
 
   const external = createServer((req, res) => {
     state.externalHits.push({ url: req.url, auth: req.headers.authorization || null });
@@ -137,6 +147,34 @@ export async function startFixtureSite({ port = 0, host = '127.0.0.1', token = T
       state.dangerHits.push(req.method);
       res.writeHead(204);
       return res.end();
+    }
+    // search.html: results only for a range reaching back two months or more; every search recorded.
+    if (path === '/api/search' || path === '/search-results.html') {
+      const q = new URL(req.url, 'http://x').searchParams;
+      const from = parseDate(q.get('from'));
+      const ok = !!from && Date.now() - from.getTime() >= 59 * 24 * 3600 * 1000;
+      state.searches.push({ form: path === '/api/search' ? 'date' : 'text', from: q.get('from'), to: q.get('to'), ok });
+      if (path === '/api/search') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify(ok ? [
+          { url: '/result-1.html', title: 'Case 1', opened: 'March', link: true },
+          { url: '/result-2.html', title: 'Case 2', opened: 'April', link: true },
+          { url: '/result-3.html', title: 'Case 3', opened: 'May', link: false },
+        ] : []));
+      }
+      res.writeHead(200, { 'content-type': TYPES['.html'] });
+      return res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Search results - a11y-508 test site</title></head><body><main><h1>Search results</h1>${ok ? '<ul><li><a href="/result-5.html">Case 5</a></li><li><a href="/result-6.html">Case 6</a></li></ul>' : '<p>No cases found.</p>'}</main></body></html>`);
+    }
+    if (path === '/api/delete-filtered') {
+      state.deleteHits.push(req.method);
+      res.writeHead(200, { 'content-type': TYPES['.html'] });
+      return res.end('<!doctype html><html lang="en"><title>Deleted</title><main><h1>Deleted</h1></main></html>');
+    }
+    const result = /^\/result-(\d+)\.html$/.exec(path);
+    if (result) {
+      // A result page, with a planted finding: an image without alt text.
+      res.writeHead(200, { 'content-type': TYPES['.html'] });
+      return res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Case ${result[1]} - a11y-508 test site</title></head><body><main><h1>Case ${result[1]}</h1><img src="/img/case-${result[1]}.png" width="40" height="40"><p><a href="/search.html">Back to search</a></p></main></body></html>`);
     }
     if (path === '/forms.html' && state.dropsLeft > 0) {
       state.dropsLeft--;
