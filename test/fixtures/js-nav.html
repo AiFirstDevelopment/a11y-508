@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Script links - a11y-508 test site</title>
+<script>
+  // Navigation made of links that go nowhere: the click handler does the
+  // routing, as many single-page apps do. A crawler that only follows href
+  // never leaves this page.
+  function go(path) { location.href = path; }
+</script>
+</head>
+<body>
+<header>
+  <nav aria-label="Script navigation">
+    <a href="javascript:void(0)" onclick="go('/js-target.html')">Reports</a>
+    <a href="#" onclick="go('/js-target.html'); return false;">Reports again</a>
+    <a href="javascript:void(0)" onclick="go('/js-delete.html')">Delete account</a>
+  </nav>
+</header>
+<main>
+  <h1>Links that run scripts</h1>
+  <p>The two "Reports" links lead to the same page through a click handler. "Delete account" looks like an action and must never be clicked.</p>
+  <p><a href="/">Home</a></p>
+</main>
+</body>
+</html>

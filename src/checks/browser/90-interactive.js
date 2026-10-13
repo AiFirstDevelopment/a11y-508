@@ -430,6 +430,10 @@
   const NAV_HINT = '[routerlink], [ng-reflect-router-link], [data-href], [data-url], [data-route], [data-link], [data-path], [role="link"], [role="menuitem"], [role="tab"], [role="treeitem"], [onclick]';
   const NAV_AREA = 'nav, [role="navigation"], header, [role="banner"], aside, [role="menu"], [role="menubar"], [role="tablist"], [role="tree"], [class*="nav" i], [class*="menu" i], [class*="sidebar" i], [class*="sidenav" i], [class*="breadcrumb" i], [class*="tab" i]';
 
+  // A link whose href goes nowhere (javascript:, a bare #) is a click handler
+  // dressed as a link: the crawler cannot follow it, so it clicks it.
+  const SCRIPT_LINK = 'a[href^="javascript:" i], a[href="#"]';
+  const isRealLink = (el) => el.matches('a[href], area[href]') && !el.matches(SCRIPT_LINK);
   A.navCandidates = (max, extraSelectors) => {
     const out = [];
     const skipped = [];
@@ -438,9 +442,11 @@
       if (!el || seen.has(el) || out.length >= max * 4) return;
       seen.add(el);
       if (!A.isVisible(el)) return;
-      if (el.matches('a[href], area[href], input, select, textarea, option, label, [type="submit"], [disabled], [aria-disabled="true"], [aria-expanded], [aria-haspopup="dialog"]')) return;
-      if (el.closest('a[href], form, [role="dialog"], dialog, [aria-hidden="true"]')) return;
-      if (el.querySelector('a[href]')) return;
+      if (isRealLink(el) || el.matches('input, select, textarea, option, label, [type="submit"], [disabled], [aria-disabled="true"], [aria-expanded], [aria-haspopup="dialog"]')) return;
+      if (el.closest('form, [role="dialog"], dialog, [aria-hidden="true"]')) return;
+      const enclosing = el.closest('a[href], area[href]');
+      if (enclosing && isRealLink(enclosing)) return;
+      if ([...el.querySelectorAll('a[href]')].some(isRealLink)) return;
       const name = (A.accName(el).name || A.text(el) || '').trim().replace(/\s+/g, ' ').slice(0, 80);
       if (!name) return;
       if (DANGER.test(name)) {
@@ -450,6 +456,7 @@
       out.push({ selector: A.selector(el), name, why });
     };
     for (const el of A.all(NAV_HINT)) consider(el, 'navigation attribute or role');
+    for (const el of A.all(SCRIPT_LINK)) consider(el, 'link that runs a script instead of navigating');
     for (const area of A.all(NAV_AREA)) {
       for (const el of area.querySelectorAll('button, [role="button"], li, span, div')) {
         if (el.localName !== 'button' && el.getAttribute('role') !== 'button') {

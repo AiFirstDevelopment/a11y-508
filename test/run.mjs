@@ -387,6 +387,21 @@ check('a page reached both through a redirecting start route and by its own link
   for (const p of twins.filter((p) => p.skipped)) assert.ok(/already audited/.test(p.skipped), p.skipped);
 });
 
+check('links whose href runs a script are clicked to find pages, except ones that look like actions', () => {
+  const p = pages['/js-nav.html'];
+  assert.ok(p && !p.error, `/js-nav.html audited: ${p && p.error}`);
+  const found = (p.discovery && p.discovery.urls) || [];
+  assert.ok(found.some((u) => /\/js-target\.html$/.test(u)), `click discovery found js-target.html; got ${JSON.stringify(found)}`);
+  assert.ok(!found.some((u) => /js-delete/.test(u)), `"Delete account" was not clicked; got ${JSON.stringify(found)}`);
+  assert.ok((p.discovery.skipped || []).some((s) => /Delete account/.test(s.name)), `the action-like link was skipped by name: ${JSON.stringify(p.discovery.skipped)}`);
+  const target = report.pages.find((q) => /\/js-target\.html$/.test(q.url));
+  if (target) {
+    assert.equal(target.foundBy, 'click', 'js-target.html was reached by a click');
+    assert.equal(target.error, null);
+  }
+  assert.ok(!report.pages.some((q) => /js-delete/.test(q.url)), 'js-delete.html was never visited');
+});
+
 const FOCUS = '/checks-focus.html';
 check('AC1 4.D: hidden checkbox, radio and switch that show focus on the label or box are not reported', () => {
   noneOn(FOCUS, '4.D', ['#cb-styled-label', '#cb-uswds-label', '#rd-styled-label', '#sw-styled-label', '#cb-styled', '#cb-uswds', '#rd-styled', '#sw-styled']);
