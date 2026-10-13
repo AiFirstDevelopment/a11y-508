@@ -34,7 +34,9 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
     }
 
     <p data-testid="assistant-line">
-      @if (assistantLabel(); as label) {
+      @if (env.env()?.detecting) {
+        <span role="status">Detecting assistants…</span>
+      } @else if (assistantLabel(); as label) {
         Fixing with <strong>{{ label }}</strong>@if (assistantVersion(); as v) { <span> ({{ v }})</span> }
         <button type="button" class="link" (click)="pickerOpen.set(!pickerOpen())" [attr.aria-expanded]="showPicker()" aria-controls="agent-picker">change<span class="visually-hidden"> the assistant</span></button>
       } @else if (env.env()) {
@@ -141,9 +143,9 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
         <span class="hint">Reading the repository…</span>
       } @else if (!repoOk()) {
         @if (defaults() && !defaults()!.repo.git) {
-          <span class="wrap" data-testid="not-git">Choose the app's repository with Change… above; {{ env.cwd() }} {{ repoProblem() }}.</span>
+          <span class="wrap" data-testid="not-git">Choose the app's repository on <a routerLink="/run">Set up</a>; {{ env.cwd() }} {{ repoProblem() }}.</span>
         } @else {
-          <span class="wrap" data-testid="no-package">Choose the app's repository with Change… above; {{ env.cwd() }} {{ repoProblem() }}.</span>
+          <span class="wrap" data-testid="no-package">Choose the app's repository on <a routerLink="/run">Set up</a>; {{ env.cwd() }} {{ repoProblem() }}.</span>
         }
       } @else if (plan(); as pl) {
         Edits <code>{{ pl.source }}</code> · @if (pl.check) {gate <code>{{ pl.check }}</code>} @else {no build or test command found, fixes are committed without a gate} · commits to branch <code>{{ pl.branch }}</code> · @if (pl.push && pl.remote) {pushes to <code>{{ pl.remote }}</code>} @else {does not push}
@@ -154,7 +156,7 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
     }
     @if (wrongRepo() && !store.active()) {
       <div class="notice warn" role="alert" data-testid="wrong-repo">
-        <p>This repository does not seem to contain the app's code: none of the findings' markup was found under @for (d of match()!.source; track d; let last = $last) {<code>{{ d }}</code>@if (!last) {, }}. Choose the app's repository with Change…</p>
+        <p>This repository does not seem to contain the app's code: none of the findings' markup was found under @for (d of match()!.source; track d; let last = $last) {<code>{{ d }}</code>@if (!last) {, }}. Choose the app's repository on <a routerLink="/run">Set up</a>.</p>
         @if (!startAnyway()) {
           <button type="button" class="link small" (click)="startAnyway.set(true)" data-testid="start-anyway">Start anyway</button>
         }
@@ -338,6 +340,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   readonly copied = signal('');
   readonly follow = signal(true);
   readonly now = signal(Date.now());
+  private detectPoll: any = null;
   private ticker: any = setInterval(() => this.now.set(Date.now()), 1000);
 
   readonly presets = computed<Preset[]>(() => this.env.env()?.presets || []);
@@ -346,7 +349,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   readonly agentSpec = computed(() => (this.choice() === 'custom' ? this.custom().trim() : this.choice()) || '');
   readonly agentReady = computed(() => (this.choice() === 'custom' ? this.custom().includes('{promptFile}') : !!this.chosenPreset()?.found));
   readonly anyInstalled = computed(() => this.presets().some((p) => p.found));
-  readonly showPicker = computed(() => !!this.env.env() && (this.pickerOpen() || !this.anyInstalled() || (!!this.chosenPreset() && !this.chosenPreset()!.found) || this.store.kind() === 'install'));
+  readonly showPicker = computed(() => !!this.env.env() && !this.env.env()!.detecting && (this.pickerOpen() || !this.anyInstalled() || (!!this.chosenPreset() && !this.chosenPreset()!.found) || this.store.kind() === 'install'));
   readonly assistantLabel = computed(() => (this.choice() === 'custom' ? 'a custom command' : this.chosenPreset()?.found ? this.chosenPreset()!.label : null));
   readonly assistantVersion = computed(() => (this.choice() === 'custom' ? null : this.chosenPreset()?.version || (this.chosenPreset()?.found ? 'version unknown' : null)));
   readonly isLoop = computed(() => ['loop', 'dry-run'].includes(this.store.kind() || ''));
@@ -542,6 +545,14 @@ export class FixLoopScreen implements OnInit, OnDestroy {
         if (p) this.choice.set(p.name);
       });
     });
+    // The assistants are detected in the background: ask again until they are known.
+    effect(() => {
+      const detecting = !!this.env.env()?.detecting;
+      untracked(() => {
+        clearTimeout(this.detectPoll);
+        if (detecting) this.detectPoll = setTimeout(() => void this.env.load(), 1000);
+      });
+    });
     // Follow the output as it grows, unless the person scrolled up.
     effect(() => {
       this.paneText();
@@ -562,6 +573,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     clearInterval(this.ticker);
+    clearTimeout(this.detectPoll);
   }
 
   private configLoads = 0;

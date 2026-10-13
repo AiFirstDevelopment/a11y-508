@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 export const WRITTEN_BY = 'a11y-508-dashboard';
 export const OUTPUT_DIRS = ['a11y-508-report/', 'a11y-508-history/', 'a11y-508-work/'];
@@ -45,6 +45,40 @@ export function writeJson(file, value) {
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
   renameSync(tmp, file);
+}
+
+// The dashboard's own settings across repositories (~/.a11y-508/settings.json): the last app
+// repository folder and start URL, so a new browser profile (the dashboard's own Chrome) starts
+// where the person left off.
+export const globalSettingsFile = (env = process.env, platform = process.platform) => join(stateBase(env, platform), 'settings.json');
+export function readGlobal(env, platform) {
+  return readSettings(globalSettingsFile(env, platform));
+}
+export function writeGlobal(patch, env, platform) {
+  const cur = readGlobal(env, platform);
+  const next = { ...cur, ...patch };
+  if (JSON.stringify(next) !== JSON.stringify(cur)) writeJson(globalSettingsFile(env, platform), next);
+  return next;
+}
+
+// The remembered folder to start in, or null: it must still be a directory, and must not be the
+// launch directory's parent or any ancestor of it (a launch inside a repository is never moved up
+// to the folder that holds it).
+export function rememberedStart(lastCwd, launchDir, realDir) {
+  if (typeof lastCwd !== 'string' || !lastCwd) return null;
+  let dir;
+  try {
+    dir = realDir(lastCwd);
+  } catch {
+    return null;
+  }
+  let launch = resolve(launchDir);
+  try {
+    launch = realDir(launchDir);
+  } catch {}
+  const rel = relative(dir, launch);
+  if (rel && !rel.startsWith('..') && !isAbsolute(rel)) return null;
+  return dir;
 }
 
 export function readSettings(file) {

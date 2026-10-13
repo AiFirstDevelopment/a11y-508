@@ -124,7 +124,7 @@ test('AC 17: 401 without the secret, 403 for a foreign Host, 404 for a screensho
     ]) expect(await raw(port, p, ok), p).toBe(404);
     // The app itself works with the secret it was opened with.
     await open(page, dash, '/run');
-    await expect(page.getByText(/Working directory/)).toBeVisible();
+    await expect(page.locator('h1')).toHaveText('Set up');
   } finally {
     await dash.stop();
   }

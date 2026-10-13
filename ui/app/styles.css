@@ -17,10 +17,10 @@ header.top a:focus { outline-color: #ffffff; }
 .brand span { font-weight: 400; }
 nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 18px; }
 nav a[aria-current="page"] { font-weight: 700; text-decoration-thickness: 3px; }
-.where { margin: 6px 0 0; font-size: 0.85rem; color: #e8ecf5; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.where code { background: transparent; color: #ffffff; }
+.context { margin: 6px 0 0; font-size: 0.85rem; color: #e8ecf5; overflow-wrap: anywhere; }
+header.top .context a { color: #e8ecf5; }
 header.top button:focus { outline-color: #ffffff; }
-.where button.change { padding: 1px 10px; font-size: 0.85rem; }
+.startup { padding: 24px 0; }
 main { padding: 16px 24px 64px; max-width: 1100px; }
 h1 { font-size: 1.6rem; margin: 8px 0 12px; }
 h2 { font-size: 1.25rem; margin: 24px 0 8px; }

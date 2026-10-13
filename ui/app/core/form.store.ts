@@ -1,4 +1,4 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Api } from './api';
 import { EnvStore } from './env.store';
 
@@ -50,6 +50,15 @@ function readUrl(): string {
 export class FormStore {
   readonly url = signal(readUrl());
   private env = inject(EnvStore);
+  constructor() {
+    // The browser remembers nothing (the dashboard's own new profile): the server's last URL.
+    effect(() => {
+      const last = this.env.env()?.last?.url;
+      untracked(() => {
+        if (last && !this.url().trim()) this.url.set(last);
+      });
+    });
+  }
   private api = inject(Api);
   readonly authMode = signal<AuthMode>('token');
   // Whether the person picked a way to sign in on /run/advanced. Until they
@@ -73,8 +82,10 @@ export class FormStore {
     try {
       localStorage.setItem(URL_KEY, u);
     } catch {}
-    // Also the dashboard's settings for this directory (server-side: survives a browser clear).
+    // Also the dashboard's settings for this directory (server-side: survives a browser clear),
+    // and the last URL across directories, for the next launch in a new browser profile.
     void this.api.put('/api/settings', { url: u }).catch(() => {});
+    void this.api.put('/api/last', { url: u }).catch(() => {});
   }
 
 

@@ -46,7 +46,7 @@ test('wrong repository: a copy of a11y-508 holds none of the fixture report\'s m
     expect(m.found, JSON.stringify(m.examples)).toBe(0);
     await open(page, dash, '/run');
     await toFix(page, site.base);
-    await expect(page.getByTestId('wrong-repo')).toContainText("This repository does not seem to contain the app's code: none of the findings' markup was found under src. Choose the app's repository with Change…");
+    await expect(page.getByTestId('wrong-repo')).toContainText("This repository does not seem to contain the app's code: none of the findings' markup was found under src. Choose the app's repository on Set up.");
     const fix = page.getByRole('button', { name: 'Fix the violations' });
     await expect(fix).toBeDisabled();
     await page.getByRole('button', { name: 'Start anyway' }).click();

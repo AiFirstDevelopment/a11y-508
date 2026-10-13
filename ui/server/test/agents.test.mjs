@@ -30,7 +30,7 @@ test('presets are detected on PATH and in npm prefix -g, with versions and the c
   const geminiExe = stub(npmBin(m.prefix), 'gemini', '#!/bin/sh\necho "0.9.0"\n');
   const s = await startServer({ env: m.env });
   try {
-    const env = (await s.call('GET', '/api/env')).json;
+    const env = (await s.call('GET', '/api/env?wait=1')).json;
     assert.deepEqual(env.presets.map((p) => p.name), ['claude', 'gemini', 'codex']);
     const [claude, gemini, codex] = env.presets;
     assert.deepEqual([claude.found, claude.where, claude.path, claude.version], [true, 'PATH', claudeExe, '2.0.0 (Claude Code)']);
@@ -72,7 +72,7 @@ test('install runs the fixed command in the login shell, re-detects, and explain
     assert.deepEqual([done.code, done.found, done.remedies], [0, true, []]);
     assert.equal(readFileSync(join(m.root, 'npm-calls'), 'utf8'), 'install -g @openai/codex\ninstall -g @openai/codex\n');
     assert.ok(!readFileSync(join(m.root, 'npm-env'), 'utf8').includes('server-token-for-install-test'), 'the install never sees TOKEN');
-    const env = (await s.call('GET', '/api/env')).json;
+    const env = (await s.call('GET', '/api/env?wait=1')).json;
     assert.equal(env.presets.find((p) => p.name === 'codex').found, true);
   } finally {
     await s.stop();

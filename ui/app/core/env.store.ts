@@ -25,9 +25,12 @@ export class EnvStore {
   // The working directory; screens that read from it re-read when it changes.
   readonly cwd = computed(() => this.env()?.cwd ?? null);
 
+  // Every startup call gives up after this long, with a notice (never a blank screen).
+  static readonly TIMEOUT_MS = 20000;
+
   async load(refresh = false): Promise<EnvInfo | null> {
     try {
-      const e = await this.api.get<EnvInfo>(`/api/env${refresh ? '?refresh=1' : ''}`);
+      const e = await this.api.get<EnvInfo>(`/api/env${refresh ? '?refresh=1' : ''}`, refresh ? 0 : EnvStore.TIMEOUT_MS);
       this.env.set(e);
       this.error.set(null);
       return e;
@@ -39,7 +42,7 @@ export class EnvStore {
 
   // Switches the server's working directory; throws the server's error.
   async switchTo(path: string): Promise<EnvInfo> {
-    const e = await this.api.put<EnvInfo>('/api/cwd', { path });
+    const e = await this.api.put<EnvInfo>('/api/cwd', { path }, EnvStore.TIMEOUT_MS);
     rememberCwd(e.cwd);
     this.env.set(e);
     this.error.set(null);

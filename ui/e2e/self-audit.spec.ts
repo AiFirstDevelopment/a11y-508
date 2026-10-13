@@ -35,7 +35,7 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     await wait('dry-run');
 
     // Every screen asks for the environment; how long its first detection takes on this host.
-    const env = await api(dash, '/api/env');
+    const env = await api(dash, '/api/env?wait=1');
     phase(`environment detected (${env.json.shell.name}; ${env.json.presets.filter((p: any) => p.found).map((p: any) => p.name).join(', ') || 'no assistants'})`);
 
     const out = tempDir('a11y-508-self-');
@@ -78,19 +78,15 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     );
     expect(bad.map((f: any) => `${f.page} ${f.test} ${f.impact}: ${f.message} [${f.selector}]`), outputs.join('\n')).toEqual([]);
 
-    // The folder picker (Change… in the header, aria-haspopup="dialog") is a
-    // disclosure on every screen. Every disclosure on each screen was
-    // activated, so Change… was, and its dialog's focus checks (4.G focus
-    // moves in, 4.H focus returns) raised nothing. The core closes a dialog
-    // with Escape before it re-audits the page, so the open dialog's own
-    // contents are covered by the picker's Playwright tests instead.
+    // Every disclosure on each screen was activated, and the dialogs' focus checks (4.G focus moves
+    // in, 4.H focus returns) raised nothing. The core closes a dialog with Escape before it
+    // re-audits the page, so the folder picker's own contents are covered by its Playwright tests.
     for (const route of ROUTES) {
       const d = report.pages.find((x: any) => new URL(x.finalUrl || x.url).pathname === route).passes.disclosure;
-      expect(d.candidates, `${route}: disclosure candidates`).toBeGreaterThanOrEqual(1);
-      expect(d.activated, `${route}: every disclosure, Change… among them, was activated`).toBe(d.candidates);
+      expect(d.activated, `${route}: every disclosure was activated`).toBe(d.candidates);
     }
     const dialogIssues = [...report.pages.flatMap((p: any) => p.findings.map((f: any) => ({ ...f, page: p.url }))), ...report.site.findings].filter(
-      (f: any) => ['4.G', '4.H'].includes(f.test) || /Dialog has no accessible name|did not close with Escape|did not change aria-expanded/.test(f.message) || /Change working directory/.test(f.message)
+      (f: any) => ['4.G', '4.H'].includes(f.test) || /Dialog has no accessible name|did not close with Escape|did not change aria-expanded/.test(f.message) || /repository folder/.test(f.message)
     );
     expect(dialogIssues.map((f: any) => `${f.page} ${f.test} ${f.impact}: ${f.message} [${f.selector}]`)).toEqual([]);
   } finally {

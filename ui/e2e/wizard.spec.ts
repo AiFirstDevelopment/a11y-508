@@ -29,7 +29,7 @@ test('setup: a first visit opens the Set up dialog; Start switches the folder, r
     await dialog.getByRole('button', { name: 'Start', exact: true }).click();
     await expect(dialog).toBeHidden();
     await expect(page).toHaveURL(/\/live$/);
-    await expect(page.getByTestId('cwd').locator('.visually-hidden')).toHaveText(repo);
+    await expect(page.getByTestId('cwd').locator('.visually-hidden')).toHaveText(`App's repository folder: ${repo}`);
     expect(await page.evaluate(() => [localStorage.getItem('a11y508.cwd'), localStorage.getItem('a11y508.startUrl')])).toEqual([repo, 'http://127.0.0.1:9/']);
     await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.meta?.command || '').toContain('--login --stay');
     await api(dash, '/api/runs/current/stop', { method: 'POST' });
@@ -37,7 +37,7 @@ test('setup: a first visit opens the Set up dialog; Start switches the folder, r
     // Remembered: a reload shows no dialog, and the header names the folder.
     await page.reload();
     await expect(page.locator('h1')).toBeVisible();
-    await expect(page.getByTestId('cwd').locator('.visually-hidden')).toHaveText(repo);
+    await expect(page.getByTestId('cwd').locator('.visually-hidden')).toHaveText(`App's repository folder: ${repo}`);
     await expect(page.getByRole('dialog', { name: 'Set up' })).toBeHidden();
   } finally {
     await dash.stop();

@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { findChrome } from '../../src/chrome.mjs';
-import { stateBase } from './state-dir.mjs';
+import { readGlobal, rememberedStart, stateBase, writeGlobal } from './state-dir.mjs';
 import { resolve } from 'node:path';
 import { createDashboard } from './app.mjs';
 import { realDir } from './dirs.mjs';
@@ -51,10 +51,22 @@ if (opt.dir !== null) {
   }
 }
 
-const dash = createDashboard({ cwd });
+// No --dir: the app repository folder chosen last time, if it still exists (and is not a folder
+// above the launch directory). The browser's own memory is only a fallback.
+let restored = false;
+if (opt.dir === null && process.env.A11Y_508_NO_RESTORE !== '1') {
+  const last = rememberedStart(readGlobal().lastCwd, cwd, realDir);
+  if (last && last !== cwd) {
+    cwd = last;
+    restored = true;
+  }
+} else if (opt.dir !== null) {
+  writeGlobal({ lastCwd: cwd });
+}
+const dash = createDashboard({ cwd, restored });
 await dash.listen(opt.port);
 if (dash.build.fresh === false) process.stdout.write(`warn ${dash.build.reason}\n`);
-process.stdout.write(`a11y-508 dashboard for ${cwd}\n`);
+process.stdout.write(`a11y-508 dashboard for ${cwd}${restored ? ' (the folder chosen last time)' : ''}\n`);
 process.stdout.write(`open: ${dash.url}\n`);
 process.stdout.write('This address carries a one-time secret for this launch; keep it to yourself. Press Ctrl+C to stop.\n');
 

@@ -33,13 +33,25 @@ export class Api {
     return { [SECRET_HEADER]: secret(), ...extra };
   }
 
-  async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await fetch(path, {
-      method,
-      headers: this.headers(body === undefined ? {} : { 'content-type': 'application/json' }),
-      body: body === undefined ? undefined : JSON.stringify(body),
-      credentials: 'same-origin',
-    });
+  // timeoutMs: give up after that long with an ApiError (status 0) that says so.
+  async request<T>(method: string, path: string, body?: unknown, timeoutMs = 0): Promise<T> {
+    const ctrl = timeoutMs ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+    let res: Response;
+    try {
+      res = await fetch(path, {
+        method,
+        headers: this.headers(body === undefined ? {} : { 'content-type': 'application/json' }),
+        body: body === undefined ? undefined : JSON.stringify(body),
+        credentials: 'same-origin',
+        signal: ctrl?.signal,
+      });
+    } catch (e: any) {
+      if (ctrl?.signal.aborted) throw new ApiError(0, `the dashboard did not answer within ${Math.round(timeoutMs / 1000)} s`, null);
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     const text = await res.text();
     let data: any = null;
     try {
@@ -51,14 +63,14 @@ export class Api {
     return data as T;
   }
 
-  get<T>(path: string): Promise<T> {
-    return this.request<T>('GET', path);
+  get<T>(path: string, timeoutMs = 0): Promise<T> {
+    return this.request<T>('GET', path, undefined, timeoutMs);
   }
   post<T>(path: string, body: unknown = {}): Promise<T> {
     return this.request<T>('POST', path, body);
   }
-  put<T>(path: string, body: unknown): Promise<T> {
-    return this.request<T>('PUT', path, body);
+  put<T>(path: string, body: unknown, timeoutMs = 0): Promise<T> {
+    return this.request<T>('PUT', path, body, timeoutMs);
   }
 
   delete<T>(path: string): Promise<T> {

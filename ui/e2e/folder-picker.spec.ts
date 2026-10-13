@@ -1,18 +1,24 @@
-// The folder picker: the working directory in the header, the dialog that
-// browses the machine's folders, and the switch that every screen follows.
+// The folder picker: the app's repository folder on Set up (Browse…), the dialog that browses the
+// machine's folders, the line under the stepper that names the folder on the later steps, and the
+// switch that every screen follows.
 
 import { test, expect, type Page } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { moreOptions, dryRun, loopOptions, api, dashboard, fillRun, fixtureSite, nav, open, startFromRun, waitFinished, MAIN, QUICK, TOKEN, WIN, tempDir, type Dash, removeTemp } from './harness';
+import { goInApp, moreOptions, dryRun, loopOptions, api, dashboard, fillRun, fixtureSite, nav, open, startFromRun, waitFinished, MAIN, QUICK, TOKEN, WIN, tempDir, type Dash, removeTemp } from './harness';
 // @ts-ignore -- plain JS shared with the server's node:test suite
 import { mergeEnv, unreadableDir } from '../server/test/platform.mjs';
 
-const NAME = 'Choose a working directory';
+const NAME = "Choose the app's repository folder";
 const dialog = (page: Page) => page.getByRole('dialog', { name: NAME });
-const change = (page: Page) => page.getByRole('button', { name: 'Change working directory' });
+const change = (page: Page) => page.getByTestId('browse').first();
+// The folder: the Set up field on Set up, the line under the stepper on every later step.
+async function expectCwd(page: Page, path: string): Promise<void> {
+  if (new URL(page.url()).pathname.startsWith('/run')) await expect(page.getByTestId('setup-folder').first()).toHaveValue(path);
+  else await expect(page.getByTestId('cwd')).toHaveAttribute('title', path);
+}
 const options = (page: Page) => dialog(page).getByRole('option');
 const listLabel = (page: Page) => dialog(page).locator('#picker-list-label');
 const crumbs = (page: Page) => dialog(page).getByRole('navigation', { name: 'Folder path' }).getByRole('button');
@@ -37,6 +43,7 @@ function writeLedger(dir: string): void {
 }
 
 async function openPicker(page: Page): Promise<void> {
+  if (!new URL(page.url()).pathname.startsWith('/run')) await nav(page, 'Run');
   await change(page).click();
   await expect(dialog(page)).toBeVisible();
   await expect(listLabel(page)).toHaveText(/^Folders in /);
@@ -50,12 +57,17 @@ async function browseTo(page: Page, path: string): Promise<void> {
   await expect(listLabel(page)).toHaveText(`Folders in ${path}`);
 }
 
+// Chooses a folder on Set up (Browse…), then returns to the screen it was called from, which
+// follows the switch.
 async function chooseDir(page: Page, path: string): Promise<void> {
+  const from = new URL(page.url()).pathname;
   await openPicker(page);
   await browseTo(page, path);
   await dialog(page).getByRole('button', { name: 'Choose this folder' }).click();
   await expect(dialog(page)).toBeHidden();
-  await expect(page.getByTestId('cwd')).toHaveAttribute('title', path);
+  await expectCwd(page, path);
+  if (!from.startsWith('/run')) await goInApp(page, from);
+  await expectCwd(page, path);
 }
 
 const cwdNow = async (dash: Dash) => (await api(dash, '/api/env')).json.cwd;
@@ -79,29 +91,31 @@ test.afterEach(async () => {
   dirs = [];
 });
 
-test('AC 1: every screen shows the working directory; Change… opens a named modal dialog with focus inside; Escape closes it and returns focus', async ({ page }) => {
+test('AC 1: Set up shows the folder with Browse…; every later step names it under the stepper, linking back; Browse… opens a named modal dialog with focus inside; Escape closes it and returns focus', async ({ page }) => {
   const dash = await start();
   await open(page, dash, '/run');
+  await expect(page.getByTestId('setup-folder').first()).toHaveValue(dash.cwd);
+  await expect(page.getByTestId('context')).toHaveCount(0);
   // Sign in is no longer in the nav (the Run screen signs in); its route is opened directly.
-  for (const label of ['Run', 'Live run', 'Report', 'Troubleshoot', 'Sign in', 'Fix loop', 'History']) {
-    if (label === 'Sign in') await open(page, dash, '/sign-in');
-    else await nav(page, label);
+  for (const label of ['Live run', 'Report', 'Troubleshoot', 'Fix loop', 'History']) {
+    await nav(page, label);
     await expect(page.getByTestId('cwd'), label).toHaveAttribute('title', dash.cwd);
-    // The full path is the accessible text, however the visible text is shortened.
-    await expect(page.getByTestId('cwd').locator('.visually-hidden')).toHaveText(dash.cwd);
-    await expect(change(page), label).toBeEnabled();
+    // The full path is the accessible text; the visible text is the folder's name.
+    await expect(page.getByTestId('cwd').locator('.visually-hidden')).toHaveText(`App's repository folder: ${dash.cwd}`);
+    await expect(page.getByTestId('cwd').locator('[aria-hidden="true"]')).toHaveText(dash.cwd.split(/[\\/]/).pop()!);
   }
-  await expect(change(page)).toHaveAttribute('aria-expanded', 'false');
+  // The folder links back to Set up.
+  await page.getByTestId('cwd').click();
+  await expect(page).toHaveURL(/\/run$/);
+  await expect(change(page)).toBeEnabled();
   await change(page).click();
   await expect(dialog(page)).toBeVisible();
-  await expect(change(page)).toHaveAttribute('aria-expanded', 'true');
   // Modal: a native <dialog> in the top layer, with focus inside it.
   expect(await dialog(page).evaluate((d: HTMLDialogElement) => d.localName === 'dialog' && d.open && d.matches(':modal'))).toBe(true);
   await expect.poll(() => dialog(page).evaluate((d) => d.contains(document.activeElement))).toBe(true);
   await page.keyboard.press('Escape');
   await expect(dialog(page)).toBeHidden();
   await expect(change(page)).toBeFocused();
-  await expect(change(page)).toHaveAttribute('aria-expanded', 'false');
   // Cancel closes it the same way.
   await change(page).click();
   await dialog(page).getByRole('button', { name: 'Cancel' }).click();
@@ -214,7 +228,7 @@ test('AC 4: a typed path browses there, ~ is home; a missing path or a file show
     await expect(listLabel(page)).toHaveText(`Folders in ${target}`);
     await expect(options(page).locator('.dir-name')).toHaveText(['inside']);
     expect(await cwdNow(dash)).toBe(launch);
-    await expect(page.getByTestId('cwd')).toHaveAttribute('title', launch);
+    await expectCwd(page, launch);
   }
   // The server checks the path it is asked to switch to, not what the page saw.
   await browseTo(page, join(target, 'inside'));
@@ -223,7 +237,7 @@ test('AC 4: a typed path browses there, ~ is home; a missing path or a file show
   await expect(dialog(page).getByTestId('picker-error')).toHaveText(/ENOENT/);
   await expect(dialog(page)).toBeVisible();
   expect(await cwdNow(dash)).toBe(launch);
-  await expect(page.getByTestId('cwd')).toHaveAttribute('title', launch);
+  await expectCwd(page, launch);
 });
 
 test('AC 5: Choose switches the server, the header, the Report screen, the Fix-loop config and the ledger', async ({ page }) => {
@@ -240,7 +254,7 @@ test('AC 5: Choose switches the server, the header, the Report screen, the Fix-l
   // Switching while the Report screen is open re-reads it in place.
   await chooseDir(page, a);
   expect(await cwdNow(dash)).toBe(a);
-  await expect(page.getByTestId('cwd').locator('.visually-hidden')).toHaveText(a);
+  await expectCwd(page, a);
   await expect(page.getByText('http://a.example/ · finished', { exact: false })).toBeVisible();
   await expect(page.getByTestId('finding-row')).toHaveText([/image without alt on http:\/\/a\.example\//]);
   await nav(page, 'Fix loop');
@@ -302,7 +316,7 @@ test('AC 6: after a switch a crawl writes its report in the new directory only, 
   }
 });
 
-test('AC 7: while a run is active Change… is disabled with a reason and PUT /api/cwd is 409; afterwards it is enabled', async ({ page }) => {
+test('AC 7: while a run is active Browse… is disabled with a reason and PUT /api/cwd is 409; afterwards it is enabled', async ({ page }) => {
   const { createServer } = await import('node:http');
   const hang = createServer(() => {});
   await new Promise<void>((ok) => hang.listen(0, '127.0.0.1', ok));
@@ -316,6 +330,7 @@ test('AC 7: while a run is active Change… is disabled with a reason and PUT /a
     await page.getByLabel('No sign-in').check();
     await page.getByRole('button', { name: 'Start', exact: true }).click();
     await expect(page).toHaveURL(/\/live$/);
+    await nav(page, 'Run');
     await expect(change(page)).toBeDisabled();
     await expect(change(page)).toHaveAttribute('title', /run is active/);
     await expect(change(page)).toHaveAccessibleDescription(/run is active/);
@@ -323,8 +338,10 @@ test('AC 7: while a run is active Change… is disabled with a reason and PUT /a
     expect(r.status).toBe(409);
     expect(r.json.error).toMatch(/run is active/);
     expect(await cwdNow(dash)).toBe(launch);
+    await nav(page, 'Live run');
     await page.getByRole('button', { name: 'Stop' }).click();
     await expect(page.getByTestId('run-status')).toHaveText('Stopped', { timeout: 30_000 });
+    await nav(page, 'Run');
     await expect(change(page)).toBeEnabled();
     await chooseDir(page, other);
     expect(await cwdNow(dash)).toBe(other);
@@ -412,18 +429,20 @@ test('AC 10: --dir starts in that directory, relative to the launch directory; a
   const repo = join(parent, 'repo');
   expect(await cwdNow(dash)).toBe(repo);
   await open(page, dash, '/report');
-  await expect(page.getByTestId('cwd')).toHaveAttribute('title', repo);
+  await expectCwd(page, repo);
   await expect(page.getByText('http://repo.example/ · finished', { exact: false })).toBeVisible();
   await openPicker(page);
   await expect(dialog(page).getByRole('button', { name: 'Back to where I started' })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await chooseDir(page, other);
+  await goInApp(page, '/report');
   await expect(page.getByText('No report yet.', { exact: false })).toBeVisible();
   await openPicker(page);
   await dialog(page).getByRole('button', { name: 'Back to where I started' }).click();
   await expect(dialog(page)).toBeHidden();
   expect(await cwdNow(dash)).toBe(repo);
-  await expect(page.getByTestId('cwd')).toHaveAttribute('title', repo);
+  await expectCwd(page, repo);
+  await goInApp(page, '/report');
   await expect(page.getByText('http://repo.example/ · finished', { exact: false })).toBeVisible();
 });
 

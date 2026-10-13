@@ -16,7 +16,7 @@ import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine }
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
 import { loopDefaults } from './loop-defaults.mjs';
-import { paths as statePaths, excludeOutputs, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
+import { readGlobal, writeGlobal, paths as statePaths, excludeOutputs, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { matchSource } from './loop-match.mjs';
 import { listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, REPORT_DIR } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
@@ -46,7 +46,7 @@ ${JSON.stringify({ kind: 'test', resultFile }, null, 2)}
 \`\`\`
 `;
 
-export function createDashboard({ cwd: startDir = process.cwd(), env = process.env, platform = process.platform, distDir = join(UI_DIR, 'dist'), uiDir = UI_DIR, agentTestTimeout = 180000 } = {}) {
+export function createDashboard({ cwd: startDir = process.cwd(), launchDir = startDir, restored = false, env = process.env, platform = process.platform, distDir = join(UI_DIR, 'dist'), uiDir = UI_DIR, agentTestTimeout = 180000 } = {}) {
   const secret = randomBytes(24).toString('hex');
   // Report files (<img>, a new tab) cannot send the header, so they take a
   // cookie instead: a separate value that opens report files and nothing else.
@@ -54,7 +54,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
   // cwd is the working directory every handler reads at the time of each
   // request. It is set in exactly two places: here at launch (--dir, else
   // process.cwd()), and by PUT /api/cwd. launchDir is where it started.
-  const state = { browserPort: null, separateSignIn: false, cwd: resolve(startDir), launchDir: resolve(startDir), token: null, port: null, presets: null, detecting: null, lastTest: {}, shell: null };
+  const state = { browserPort: null, separateSignIn: false, cwd: resolve(startDir), launchDir: resolve(launchDir), restored, token: null, port: null, presets: null, detecting: null, lastTest: {}, shell: null };
   // The shell the shown command line is written for; looked up once.
   const shellKind = () => (state.shell ||= detectShell(env, platform)).kind;
   const runs = new Runs({ onExit: () => {} });
@@ -90,11 +90,14 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
   };
   settle();
 
-  // A forced detection never reuses one that started before it was asked for.
+  // A forced detection never reuses one that started before it was asked for. Tests can slow the
+  // lookup down (A11Y_508_DETECT_DELAY_MS) to stand in for a slow machine.
+  const detectDelay = Number(env.A11Y_508_DETECT_DELAY_MS) || 0;
   const detect = (force = false) => {
     if (state.detecting && !force) return state.detecting;
     if (state.presets && !force) return Promise.resolve(state.presets);
     const p = (state.detecting && force ? state.detecting.catch(() => {}) : Promise.resolve())
+      .then(() => (detectDelay ? new Promise((r) => setTimeout(r, detectDelay)) : null))
       .then(() => detectPresets({ env, platform }))
       .then((d) => {
         state.presets = d;
@@ -105,6 +108,15 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       });
     state.detecting = p;
     return p;
+  };
+
+  const global = () => readGlobal(env, platform);
+  const setGlobal = (patch) => {
+    try {
+      return writeGlobal(patch, env, platform);
+    } catch {
+      return global();
+    }
   };
 
   const tokens = () => [state.token, env.TOKEN].filter(Boolean);
@@ -226,6 +238,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       meta = { agent: resolved };
     } else {
       built = crawlArgs({ kind, url: body.url, options: body.options, auth });
+      if (kind === 'crawl' && typeof body.url === 'string' && body.url) setGlobal({ lastUrl: body.url });
     }
     const runEnv = childEnv(built.token);
     // A switch that landed while this request waited must not start a run in the old directory.
@@ -316,10 +329,13 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       tokenInEnv: !!env.TOKEN, tokenHeld: !!state.token,
       // Where a sign-in opens: a tab in the dashboard's own window, or a separate window.
       signIn: state.browserPort ? 'tab' : state.separateSignIn ? 'separate-window' : 'window',
-      shell: d.shell, npmPrefix: d.npmPrefix, detectedAt: d.detectedAt,
+      // The assistants are detected in the background (on Windows this can take tens of seconds):
+      // until then presets is null and detecting true, and the Fix step asks again.
+      detecting: !d, last: { cwd: global().lastCwd || null, url: global().lastUrl || null }, restored: state.restored,
+      shell: d ? d.shell : null, npmPrefix: d ? d.npmPrefix : null, detectedAt: d ? d.detectedAt : null,
       // runCommand: what a person can paste into their shell to run the assistant by hand, on the
       // prompt file the loop writes (a11y-508-work/prompt.md stands for the next task's file).
-      presets: d.presets.map((p) => ({ ...p, runCommand: p.found ? runnableCommand({ name: p.name, exePath: p.path, promptFile: join(cwd, WORK_DIR, 'prompt.md'), shell: d.shell.kind === 'powershell' || d.shell.kind === 'cmd' ? d.shell.kind : d.shell.path, platform }) : null })),
+      presets: !d ? null : d.presets.map((p) => ({ ...p, runCommand: p.found ? runnableCommand({ name: p.name, exePath: p.path, promptFile: join(cwd, WORK_DIR, 'prompt.md'), shell: d.shell.kind === 'powershell' || d.shell.kind === 'cmd' ? d.shell.kind : d.shell.path, platform }) : null })),
       lastTest: state.lastTest,
       build: { fresh: build.fresh, reason: build.reason },
       run: runs.current ? runSummary(runs.current) : null,
@@ -375,9 +391,12 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     settle();
     // A finished run belongs to the directory it ran in.
     runs.forget();
+    state.restored = false;
+    // Remembered for the next launch (the dashboard's own browser profile may forget it).
+    setGlobal({ lastCwd: dir });
     // Cached detection (the assistants, the shell, npm's prefix) does not
     // depend on the directory, so nothing else is invalidated today.
-    return envInfo(await detect());
+    return envInfo(state.presets);
   }
 
   // ---- routing
@@ -399,7 +418,11 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
       return sendFile(res, file, { 'cache-control': 'no-store' });
     }
     if (m === 'GET' && path === '/api/env') {
-      const d = await detect(url.searchParams.get('refresh') === '1');
+      // Never waits for the assistants: the Set up dialog and the Crawl step need only the folder.
+      const refresh = url.searchParams.get('refresh') === '1';
+      const pending = detect(refresh);
+      pending.catch(() => {});
+      const d = refresh || url.searchParams.get('wait') === '1' ? await pending : state.presets;
       return send(res, 200, envInfo(d), { 'set-cookie': `${cookieName()}=${fileSecret}; Path=/api/reports; HttpOnly; SameSite=Strict` });
     }
     if (m === 'GET' && path === '/api/dirs') return send(res, 200, listDirs(url.searchParams.get('path'), platform));
@@ -455,6 +478,12 @@ export function createDashboard({ cwd: startDir = process.cwd(), env = process.e
     if (m === 'GET' && path === '/api/ledger') return send(res, 200, ledgerInfo());
     if (m === 'GET' && path === '/api/config') return send(res, 200, readConfig());
     // The dashboard's remembered choices for this directory (start URL, assistant), server-side.
+    // The last start URL, for the next launch (PUT { url }).
+    if (m === 'PUT' && path === '/api/last') {
+      const body = await readBody(req);
+      if (!body || typeof body.url !== 'string' || body.url.length > 4096) throw new BadRequest('body must be { "url": "<start URL>" }');
+      return send(res, 200, setGlobal({ lastUrl: body.url.trim() }));
+    }
     if (m === 'GET' && path === '/api/settings') return send(res, 200, readSettings(sp().settings));
     if (m === 'PUT' && path === '/api/settings') {
       const body = await readBody(req);

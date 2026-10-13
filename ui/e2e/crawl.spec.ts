@@ -283,7 +283,7 @@ test('AC 10: the command on the Run screen, run in a terminal with TOKEN set, gi
   // Asynchronously: the fixture site is served from this same process.
   const term = tempDir('a11y-508-term-');
   // In the dashboard's shell: sh here, Git Bash on Windows.
-  const [file, args, extra] = shellLine(command, (await api(dash, '/api/env')).json.shell);
+  const [file, args, extra] = shellLine(command, (await api(dash, '/api/env?wait=1')).json.shell);
   const r = await run(file, args, { cwd: term, env: { ...process.env, ...extra, TOKEN } });
   // If the shell returned early, say whether the CLI went on without it.
   let diag = '';

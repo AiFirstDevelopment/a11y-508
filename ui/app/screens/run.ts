@@ -12,7 +12,7 @@ import { SetupForm } from '../shared/setup-form';
   selector: 'app-run-screen',
   imports: [RouterLink, SetupForm],
   template: `
-    <h1>Run a crawl</h1>
+    <h1>Set up</h1>
     @if (noBrowser()) {
       <div class="notice error" role="alert" data-notice="no-browser">
         <p>No Chrome, Chromium or Edge was found on this machine. Give the path to one below; Start stays disabled until you do.</p>

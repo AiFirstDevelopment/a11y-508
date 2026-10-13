@@ -66,15 +66,17 @@ export function stepOf(url: string): number {
           }
         </ol>
       </nav>
-      @if (env.env(); as e) {
-        <div class="where">
-          <span>Working directory</span>
-          <code class="cwd" data-testid="cwd" [attr.title]="e.cwd"><span aria-hidden="true">{{ shortCwd(e.cwd) }}</span><span class="visually-hidden">{{ e.cwd }}</span></code>
-          <app-folder-picker />
-          <span>· tool {{ e.version }}</span>
-        </div>
+      <!-- Where the steps after Set up work: the app's repository folder and its URL, each a way back to Set up. -->
+      @if (current() !== 1 && env.env(); as e) {
+        <p class="context" data-testid="context">
+          <a routerLink="/run" data-testid="cwd" [attr.title]="e.cwd"><span aria-hidden="true">{{ folderName(e.cwd) }}</span><span class="visually-hidden">App's repository folder: {{ e.cwd }}</span></a>
+          @if (form.url().trim()) {
+            <span aria-hidden="true"> · </span><a routerLink="/run" data-testid="context-url" [attr.title]="form.url()"><span class="visually-hidden">Start URL: </span>{{ shortUrl(form.url()) }}</a>
+          }
+        </p>
       }
     </header>
+    <app-folder-picker />
     <main id="main" tabindex="-1">
       @if (env.error()) {
         <div class="notice error" role="alert">{{ env.error() }}</div>
@@ -93,6 +95,15 @@ export function stepOf(url: string): number {
       }
       @if (ready()) {
         <router-outlet />
+      } @else {
+        <!-- Never a blank screen: what the dashboard is waiting for, and after a while a way to try again. -->
+        <section class="startup" data-testid="startup" aria-labelledby="startup-h">
+          <h1 id="startup-h">Loading…</h1>
+          <p role="status" data-testid="startup-note">{{ waited() >= 3 ? 'Still waiting: ' + waitingOn() + '…' : '' }}</p>
+          @if (waited() >= 15 || env.error()) {
+            <button type="button" (click)="retry()" data-testid="startup-retry">Retry</button>
+          }
+        </section>
       }
     </main>
     <dialog #setup class="setup" aria-labelledby="setup-h" data-testid="setup-dialog" (cancel)="onCancel($event)">
@@ -163,10 +174,24 @@ export class App implements OnInit {
     });
   }
 
-  // Long paths are shortened from the left, where they matter least; the
-  // full path is in the tooltip and in the accessible text.
-  shortCwd(p: string): string {
-    return p.length > 56 ? `…${p.slice(-55)}` : p;
+  // The folder's own name (the full path is in the tooltip and the accessible text).
+  folderName(p: string): string {
+    return p.split(/[\\/]/).filter(Boolean).pop() || p;
+  }
+  // The URL without its scheme, shortened from the right.
+  shortUrl(u: string): string {
+    const s = u.trim().replace(/^https?:\/\//, '');
+    return s.length > 60 ? `${s.slice(0, 59)}…` : s;
+  }
+
+  // Startup: how long it has waited, and on what.
+  private startedAt = signal(Date.now());
+  private tick = signal(Date.now());
+  readonly waited = computed(() => Math.floor((this.tick() - this.startedAt()) / 1000));
+  readonly waitingOn = signal('reading the working directory');
+
+  retry(): void {
+    void this.start();
   }
 
   async migrate(move: boolean): Promise<void> {
@@ -177,7 +202,7 @@ export class App implements OnInit {
   }
 
   // Escape does nothing while the folder or the URL is still empty.
-  private form = inject(FormStore);
+  readonly form = inject(FormStore);
   onCancel(e: Event): void {
     if (!this.form.url().trim() || !this.env.cwd()) e.preventDefault();
     else this.setupOpen.set(false);
@@ -189,22 +214,52 @@ export class App implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
+    await this.start();
+  }
+
+  private starting = 0;
+  async start(): Promise<void> {
+    const n = ++this.starting;
+    this.startedAt.set(Date.now());
+    this.tick.set(Date.now());
+    const ticker = setInterval(() => this.tick.set(Date.now()), 500);
+    try {
+      await this.startIn(n);
+    } finally {
+      clearInterval(ticker);
+    }
+  }
+
+  private async startIn(n: number): Promise<void> {
+    this.waitingOn.set('reading the working directory');
     let e = await this.env.load();
-    // The working directory remembered in this browser, if it still exists; else the setup dialog
-    // (a directory that already holds the tool's files is taken as the choice).
+    if (n !== this.starting) return;
+    if (!e) return; // the error notice and Retry are shown
+    // The folder: the server's memory first (it starts in the folder chosen last time), then this
+    // browser's, if it still exists; else the setup dialog (a folder that already holds the tool's
+    // files is taken as the choice).
     const remembered = rememberedCwd();
+    const serverKnows = !!e.restored || (!!e.last?.cwd && e.last.cwd === e.cwd);
     let needSetup = false;
-    if (e && remembered && remembered !== e.cwd) {
+    if (serverKnows) {
+      rememberCwd(e.cwd);
+    } else if (remembered && remembered !== e.cwd) {
+      this.waitingOn.set(`switching to ${remembered}`);
       try {
         e = await this.env.switchTo(remembered);
       } catch (err: any) {
+        if (err?.status === 0) {
+          this.env.error.set(`Could not switch to ${remembered}: ${err.message}.`);
+          return;
+        }
         if (err?.status !== 409) needSetup = true;
       }
-    } else if (e && !remembered) {
+    } else if (!remembered) {
       const f = e.cwdFacts || ({} as any);
       if (e.report?.exists || f.config || f.ledger || e.session?.exists || (e.pastRuns || 0) > 0) rememberCwd(e.cwd);
       else needSetup = true;
     }
+    if (n !== this.starting) return;
     this.ready.set(true);
     if (e?.run) void this.run.connect();
     if (needSetup) {

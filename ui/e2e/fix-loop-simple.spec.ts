@@ -74,7 +74,7 @@ test('fix loop: in a folder that is not the app\'s repository the line says to c
     await signInWithToken(page, 'http://127.0.0.1:9/');
     await nav(page, 'Fix loop');
     await expect(page.getByTestId('assistant-line')).toContainText('Fixing with Claude Code', { timeout: 60_000 });
-    await expect(page.getByTestId('not-git')).toHaveText(`Choose the app's repository with Change… above; ${dash.cwd} is not a git repository and has no package.json.`);
+    await expect(page.getByTestId('not-git')).toHaveText(`Choose the app's repository on Set up; ${dash.cwd} is not a git repository and has no package.json.`);
     await expect(page.getByRole('button', { name: 'Fix the violations' })).toBeDisabled();
   } finally {
     await dash.stop();

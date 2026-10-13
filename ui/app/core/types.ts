@@ -109,9 +109,15 @@ export interface EnvInfo {
   report: { exists: boolean; finishedAt?: string; baseUrl?: string };
   tokenInEnv: boolean;
   tokenHeld: boolean;
-  shell: { name: string; path: string; kind: string };
+  // Null while the assistants are still being detected (detecting: true).
+  shell: { name: string; path: string; kind: string } | null;
   npmPrefix: string | null;
-  presets: Preset[];
+  presets: Preset[] | null;
+  detecting?: boolean;
+  // The folder and URL remembered server-side (~/.a11y-508/settings.json); restored: the server
+  // started in the remembered folder.
+  last?: { cwd: string | null; url: string | null };
+  restored?: boolean;
   lastTest: Record<string, AgentTest>;
   build: { fresh: boolean | null; reason: string | null };
   run: RunInfo | null;

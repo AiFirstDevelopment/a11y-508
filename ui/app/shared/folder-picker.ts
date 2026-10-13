@@ -26,33 +26,15 @@ function writeRecents(list: string[]): void {
   } catch {}
 }
 
-// The working directory in the header, and the dialog that changes it. A
+// The dialog that chooses the app's repository folder, opened by Browse… on Set up. A
 // browser cannot hand a page a filesystem path, so the local server lists the
 // folders and the dialog browses them.
 @Component({
   selector: 'app-folder-picker',
   template: `
-    <button
-      #trigger
-      type="button"
-      class="secondary small change"
-      aria-haspopup="dialog"
-      [attr.aria-expanded]="isOpen()"
-      aria-label="Change working directory"
-      [disabled]="run.active()"
-      [attr.title]="run.active() ? reason : null"
-      [attr.aria-describedby]="run.active() ? 'change-reason' : null"
-      data-testid="change-cwd"
-      (click)="open()"
-    >
-      Change…
-    </button>
-    @if (run.active()) {
-      <span id="change-reason" class="visually-hidden">{{ reason }}</span>
-    }
     <dialog #dlg class="picker" aria-labelledby="picker-h" data-testid="folder-picker" (close)="closed()">
       @if (isOpen()) {
-        <h2 id="picker-h">Choose a working directory</h2>
+        <h2 id="picker-h">Choose the app's repository folder</h2>
         <p class="hint">Now: <code data-testid="picker-current">{{ env.cwd() }}</code></p>
         <form class="picker-path" (submit)="$event.preventDefault(); go()">
           <label for="picker-path">Path</label>
@@ -152,7 +134,8 @@ export class FolderPicker {
   readonly env = inject(EnvStore);
   readonly run = inject(RunStore);
   private form = inject(FormStore);
-  private trigger = viewChild.required<ElementRef<HTMLButtonElement>>('trigger');
+  // The control that opened the picker (Browse… on Set up): focus goes back to it on close.
+  private returnFocus: HTMLElement | null = null;
   private dlg = viewChild.required<ElementRef<HTMLDialogElement>>('dlg');
   private pathInput = viewChild<ElementRef<HTMLInputElement>>('pathInput');
   private list = viewChild<ElementRef<HTMLUListElement>>('list');
@@ -210,6 +193,7 @@ export class FolderPicker {
 
   async open(): Promise<void> {
     if (this.isOpen() || this.run.active()) return;
+    this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.error.set('');
     this.listing.set(null);
     this.pathText.set(this.env.cwd() || '');
@@ -331,10 +315,10 @@ export class FolderPicker {
     this.dlg().nativeElement.close();
   }
 
-  // Escape, Cancel and Choose all end here: focus goes back to Change….
+  // Escape, Cancel and Choose all end here: focus goes back to Browse….
   closed(): void {
     this.isOpen.set(false);
     this.listing.set(null);
-    this.trigger().nativeElement.focus();
+    this.returnFocus?.focus();
   }
 }
