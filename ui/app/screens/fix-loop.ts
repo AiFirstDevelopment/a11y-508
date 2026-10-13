@@ -137,7 +137,9 @@ const OUTCOMES: Record<string, string> = { committed: 'committed', 'no-change': 
       <p class="hint" data-testid="repo-config">Using the repository's a11y-508.config.json</p>
     }
     <p data-testid="loop-plan">
-      @if (!repoOk()) {
+      @if (!defaults()) {
+        <span class="hint">Reading the repository…</span>
+      } @else if (!repoOk()) {
         @if (defaults() && !defaults()!.repo.git) {
           <span class="wrap" data-testid="not-git">Choose the app's repository with Change… above; {{ env.cwd() }} {{ repoProblem() }}.</span>
         } @else {

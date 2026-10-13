@@ -5,7 +5,7 @@
 // person stops it. State lives in the ledger, so Ctrl+C and resume are safe.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyReport, byStatus, isDone, loadLedger, openFindings, saveLedger, statusCounts } from './ledger.mjs';
@@ -347,6 +347,14 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     let crawl;
     if (fromGiven) {
       log.info(`round ${round}: starting from ${fromReport} (${given.finishedAt}) instead of crawling; round ${round + 1} crawls to verify the fixes`);
+      // The round's report is that report (History lists rounds by their folder): copied, with its screenshots.
+      const out = join(cwd, WORK_DIR, `round-${round}`);
+      try {
+        cpSync(dirname(resolve(cwd, fromReport)), out, { recursive: true });
+      } catch (e) {
+        mkdirSync(out, { recursive: true });
+        writeFileSync(join(out, 'report.json'), JSON.stringify(given, null, 2));
+      }
       crawl = { report: given };
     } else try {
       const first = signInFirst && round === firstCrawl;

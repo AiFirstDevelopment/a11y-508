@@ -282,7 +282,10 @@ test('from the report: after a wizard crawl, Fix the violations starts with tria
     expect((await api(dash, '/api/runs/current')).json.meta.command).toContain('--from-report');
     const ledger = JSON.parse(readFileSync(join(cwd, 'a11y-508-work', 'ledger.json'), 'utf8'));
     expect(ledger.rounds[0].source).toBe('report');
-    expect(existsSync(join(cwd, 'a11y-508-work', 'round-1'))).toBe(false);
+    expect(existsSync(join(cwd, 'a11y-508-work', 'round-1', 'crawl.log'))).toBe(false);
+    // History has the round, as a row of its own.
+    await page.getByRole('link', { name: 'See what changed' }).click();
+    await expect(page.getByTestId('history').locator('tr[data-id="round-1"]')).toHaveCount(1);
   } finally {
     await dash.stop();
     server.close();

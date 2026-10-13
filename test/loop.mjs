@@ -480,7 +480,9 @@ rmSync(repo2, { recursive: true, force: true });
     assert.equal(ledger3.rounds[0].source, 'report', JSON.stringify(ledger3.rounds[0]));
     assert.equal(ledger3.rounds[0].reportFinishedAt, report.finishedAt);
     assert.equal(ledger3.rounds[0].violations, report.summary.violations);
-    assert.ok(!existsSync(join(repo3, 'a11y-508-work', 'round-1')), 'round 1 crawled');
+    // The round's folder holds the report it started from (History lists it), and no crawl log.
+    assert.ok(!existsSync(join(repo3, 'a11y-508-work', 'round-1', 'crawl.log')), 'round 1 crawled');
+    assert.equal(JSON.parse(readFileSync(join(repo3, 'a11y-508-work', 'round-1', 'report.json'), 'utf8')).finishedAt, report.finishedAt);
     assert.ok(!ev3.some((e) => e.type === 'page'), 'page events in round 1');
     assert.ok(ev3.some((e) => e.type === 'step' && e.step === 'report' && e.round === 1));
     assert.ok(!ev3.some((e) => e.type === 'step' && e.step === 'crawl'));
