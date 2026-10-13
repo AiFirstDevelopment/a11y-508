@@ -376,6 +376,15 @@ check('a page the server answers 404 for, but which renders content, is audited 
   assert.ok((report.summary.coverage.warnings || []).some((w) => /soft-404\.html was served with HTTP 404 but rendered a page/.test(w)), `coverage warnings: ${JSON.stringify(report.summary.coverage.warnings)}`);
 });
 
+check('a page reached both through a redirecting start route and by its own link is audited once', () => {
+  const twins = report.pages.filter((p) => /\/twin\.html$/.test(p.finalUrl || p.url));
+  assert.ok(pages['/twin.html'] || pages['/twin-start.html'], 'the twin pages were crawled');
+  assert.ok(twins.length >= 1, 'twin.html was reached');
+  const audited = twins.filter((p) => !p.skipped && !p.error);
+  assert.equal(audited.length, 1, `twin.html audited ${audited.length} times: ${twins.map((p) => `${p.url} -> ${p.finalUrl} ${p.skipped || ''}`).join(' | ')}`);
+  for (const p of twins.filter((p) => p.skipped)) assert.ok(/already audited/.test(p.skipped), p.skipped);
+});
+
 const FOCUS = '/checks-focus.html';
 check('AC1 4.D: hidden checkbox, radio and switch that show focus on the label or box are not reported', () => {
   noneOn(FOCUS, '4.D', ['#cb-styled-label', '#cb-uswds-label', '#rd-styled-label', '#sw-styled-label', '#cb-styled', '#cb-uswds', '#rd-styled', '#sw-styled']);

@@ -177,6 +177,13 @@ export async function startFixtureSite({ port = 0, host = '127.0.0.1', token = T
       res.writeHead(200, { 'content-type': 'text/html' });
       return res.end('<!doctype html><html lang="en"><title>Submitted</title><main><h1>Submitted</h1></main></html>');
     }
+    if (path === '/twin-start.html' || path === '/twin.html') {
+      // Two addresses for one page: the start route sends the browser on to the
+      // page itself, which is also linked directly. The crawler audits it once.
+      res.writeHead(200, { 'content-type': TYPES['.html'] });
+      if (path === '/twin-start.html') return res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Twin start - a11y-508 test site</title><script>location.replace("/twin.html");</script></head><body><p>Redirecting…</p></body></html>');
+      return res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Twin - a11y-508 test site</title></head><body><main><h1>Twin</h1><p>Reached either directly or from the start route.</p><img src="/pixel.png" width="40" height="40"><p><a href="/">Home</a></p></main></body></html>');
+    }
     if (path === '/soft-404.html') {
       // A single-page app's deep link: the server says 404 but serves the app.
       res.writeHead(404, { 'content-type': TYPES['.html'] });

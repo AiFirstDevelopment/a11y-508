@@ -368,7 +368,8 @@ async function run(argv) {
   } else {
     opts.auth = null;
     if (opts.tokenStorageKeys.length) log.warn('--token-storage ignored because TOKEN is not set.');
-    log.warn('TOKEN is not set; crawling without an Authorization header.');
+    // A saved session or cookies are a way in of their own; the warning is for a run with no way in at all.
+    if (!opts.login && !opts.stateFile && !opts.cookies.length) log.warn('TOKEN is not set; crawling without an Authorization header.');
   }
   opts.cookieOrigins = opts.cookies.length ? [...origins] : [];
   if (opts.cookies.length) log.info(`cookies: setting ${opts.cookies.map((c) => c.name).join(', ')} on ${[...origins].join(', ')}`);

@@ -28,6 +28,7 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
   const first = normalizeUrl(startUrl, origin) || startUrl;
   const queue = [{ url: first, depth: 0 }];
   const seen = new Set([first]);
+  const audited = new Set(); // final URLs of pages audited so far, so a redirect target is audited once
   const pages = [];
   let active = 0;
   let pageCounter = 0;
@@ -82,6 +83,21 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
           }
           res.depth = item.depth;
           if (item.via === 'click') res.foundBy = 'click';
+          // A page that lands on another URL (an app's start route that
+          // redirects to its default view) is that URL's page: audit it once.
+          const landedOn = (res.finalUrl && normalizeUrl(res.finalUrl, origin)) || item.url;
+          if (!res.error && !res.skipped) {
+            if (audited.has(landedOn)) {
+              res.skipped = `the same page as ${landedOn}, already audited`;
+              res.findings = [];
+            } else {
+              audited.add(landedOn);
+              if (landedOn !== item.url) {
+                seen.add(landedOn);
+                for (let i = queue.length - 1; i >= 0; i--) if (queue[i].url === landedOn) queue.splice(i, 1);
+              }
+            }
+          }
           pages.push(res);
           log.page(res, pages.length, seen.size);
           if (res.info && item.depth < opts.maxDepth) {
