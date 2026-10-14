@@ -8,6 +8,7 @@ import { crawl } from './crawler.mjs';
 import { interactiveLogin, loadState, saveState, stateSummary } from './login.mjs';
 import { troubleshoot, formatTroubleshoot } from './troubleshoot.mjs';
 import { loadConfig, printStatus, runLoop } from './loop.mjs';
+import { gitDirOf, migrateRepo, migrationLines, reportDir } from './home.mjs';
 import { siteChecks } from './site-checks.mjs';
 import { summarize, shouldFail, writeReports, makeLogger, coverage, eventWriter } from './report.mjs';
 import { BEYOND, CATALOG, IMPACTS, TEST_IDS, WCAG_VERSIONS, beyondIds, beyondHeading } from './checks/catalog.mjs';
@@ -36,7 +37,9 @@ Options
   --exclude <regex>        Skip URLs matching this pattern (repeatable)
   --fail-on <list>         Impacts that fail the run: critical,serious,moderate,minor
                            or "none" (default critical,serious)
-  --out <dir>              Report directory (default ./a11y-508-report)
+  --out <dir>              Report directory (default: inside a git repository, the tool's
+                           own folder for it, ~/.a11y-508/repos/<name>-<hash>/report;
+                           elsewhere ./a11y-508-report)
   --viewport <WxH>         Viewport size (default 1280x800)
   --timeout <ms>           Page load timeout (default 30000)
   --settle <ms>            Extra wait after load for scripts to render (default 500)
@@ -103,7 +106,8 @@ Fix loop
                 assistant, gate each fix with the app's build/test command, commit, push,
                 wait for the deployment, and repeat until nothing is open or Ctrl+C.
                 Reads a11y-508.config.json (--config) in the current directory; state
-                lives in a11y-508-work/ledger.json, so a stopped loop resumes where it was.
+                lives in the ledger in the tool's own folder for the repository
+                (~/.a11y-508/repos/<name>-<hash>/work), so a stopped loop resumes where it was.
     --max-rounds <n>   Rounds to run before stopping (default 20)
     --agent <spec>     claude | gemini | codex | a command with {promptFile} (overrides config)
     --dry-run          Crawl and update the ledger only; no agent, no commits
@@ -114,7 +118,8 @@ Fix loop
                        crawls to verify the fixes
     --resume           Go on with the ledger's last round where it was interrupted: its open
                        findings are fixed with no new crawl; the next round crawls
-  status        Print the ledger: what is open, pending, verified, and needs a person.
+  status        Print the ledger: what is open, pending, verified, and needs a person, and
+                where the tool keeps its files for this repository.
 
 Exit codes
   0  no violations at the --fail-on impacts     1  violations found
@@ -124,7 +129,7 @@ Exit codes
 export function parseArgs(argv) {
   const o = {
     url: null, maxPages: 200, maxDepth: 10, concurrency: 4, include: [], exclude: [], failOn: ['critical', 'serious'],
-    out: 'a11y-508-report', viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
+    out: null, viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
     tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stay: false, connect: null, stateFile: null, troubleshoot: false, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
     maxTabs: 400, maxActivations: 12, maxClicks: 30, followClicks: true, forms: true, searchMonths: 3, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false, events: false,
     listTests: false, help: false, version: false, wcag: '2.0',
@@ -464,7 +469,6 @@ async function run(argv) {
     log.info(`session: loaded ${stateSummary(opts.state)} from ${opts.stateFile}`);
   }
 
-  const outDir = resolve(opts.out);
   let browser = stayBrowser;
   if (!browser) {
     try {
@@ -493,6 +497,14 @@ async function run(argv) {
     return result.ok ? 0 : 2;
   }
 
+  // Inside a repository the report goes to the tool's own folder for it, never into the repository
+  // (an explicit --out is used as given); elsewhere ./a11y-508-report.
+  let outDir = opts.out ? resolve(opts.out) : null;
+  if (!outDir && gitDirOf(process.cwd())) {
+    for (const l of migrationLines(migrateRepo(process.cwd()))) log.info(l);
+    outDir = reportDir(process.cwd());
+  }
+  if (!outDir) outDir = resolve('a11y-508-report');
   log.info(`crawling ${startUrl.href} (max ${opts.maxPages} pages, depth ${opts.maxDepth}, ${opts.concurrency} tabs)`);
 
   const startedAt = new Date().toISOString();

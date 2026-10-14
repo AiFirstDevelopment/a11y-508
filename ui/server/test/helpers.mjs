@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mergeEnv, stopTree } from './platform.mjs';
+import { repoHome } from '../../../src/home.mjs';
 
 export const MAIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'main.mjs');
 // The checkout these tests run from: never removed, whatever a test passes.
@@ -63,7 +64,9 @@ export async function startServer({ cwd: given, env = {}, args = [] } = {}) {
   // The working directory is removed on stop only if these helpers made it (removeTemp refuses anything else).
   const cwd = given || tmp('a11y-508-srv-');
   assertRemovable(cwd);
-  const proc = spawn(process.execPath, [MAIN, '--no-open', '--port', '0', ...args], { cwd, env: mergeEnv(process.env, { TOKEN: '', A11Y_508_HOME: tmp('a11y-508-home-'), ...env }), stdio: ['ignore', 'pipe', 'pipe'] });
+  // The tool's state base for this server (a temp folder unless the test names one).
+  const home = env.A11Y_508_HOME || tmp('a11y-508-home-');
+  const proc = spawn(process.execPath, [MAIN, '--no-open', '--port', '0', ...args], { cwd, env: mergeEnv(process.env, { TOKEN: '', ...env, A11Y_508_HOME: home }), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   proc.stdout.on('data', (d) => (out += d));
   proc.stderr.on('data', (d) => (out += d));
@@ -115,5 +118,7 @@ export async function startServer({ cwd: given, env = {}, args = [] } = {}) {
     await stopTree(proc);
     removeTemp(cwd);
   };
-  return { cwd, port, secret, url, call, waitDone, stop, output: () => out };
+  // The tool's own folders for a repository folder (work, report, history), under this server's base.
+  const dirs = (dir = cwd) => repoHome(dir, { A11Y_508_HOME: home });
+  return { cwd, home, dirs, port, secret, url, call, waitDone, stop, output: () => out };
 }

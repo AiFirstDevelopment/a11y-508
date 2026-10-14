@@ -24,9 +24,9 @@ test('the API needs the session secret, refuses foreign hosts, and confines repo
     assert.notEqual(cookie, s.secret);
     assert.equal((await s.call('GET', '/api/env', { secret: cookie })).status, 401);
     assert.equal((await s.call('GET', '/api/env', { secret: null, headers: { cookie: `a11y508_${s.port}=${cookie}` } })).status, 401);
-    mkdirSync(join(s.cwd, 'a11y-508-report', 'screenshots'), { recursive: true });
-    writeFileSync(join(s.cwd, 'a11y-508-report', 'report.json'), JSON.stringify({ finishedAt: 'x', summary: {}, pages: [] }));
-    writeFileSync(join(s.cwd, 'a11y-508-report', 'screenshots', 'a.png'), 'png');
+    mkdirSync(join(s.dirs().report, 'screenshots'), { recursive: true });
+    writeFileSync(join(s.dirs().report, 'report.json'), JSON.stringify({ finishedAt: 'x', summary: {}, pages: [] }));
+    writeFileSync(join(s.dirs().report, 'screenshots', 'a.png'), 'png');
     writeFileSync(join(s.cwd, 'outside.txt'), 'outside');
     assert.equal((await s.call('GET', '/api/reports/latest/screenshots/a.png')).status, 200);
     for (const p of ['/api/reports/latest/screenshots/..%2F..%2Foutside.txt', '/api/reports/latest/screenshots/%2e%2e/%2e%2e/outside.txt', '/api/reports/latest/screenshots/../../outside.txt', '/api/reports/h-..%2F..%2F/screenshots/a.png']) {

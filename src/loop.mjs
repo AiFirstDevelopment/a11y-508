@@ -6,15 +6,15 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve, relative, dirname } from 'node:path';
+import { join, resolve, relative, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyReport, byStatus, isDone, loadLedger, openFindings, saveLedger, statusCounts } from './ledger.mjs';
 import { PRESET_INFO, QUOTA_DELAYS, agentLog, fixPrompt, resolveAgentCommand, runAgent, triagePrompt, writePrompt } from './agent.mjs';
 import { testInfo } from './checks/catalog.mjs';
+import { migrateRepo, migrationLines, shortenHome, tasksDir, workDir } from './home.mjs';
 import { sleep } from './page.mjs';
 import { killTree } from './chrome.mjs';
 
-export const WORK_DIR = 'a11y-508-work';
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const BIN = join(TOOL_DIR, 'bin', 'a11y-508.mjs');
 
@@ -142,7 +142,7 @@ export function sessionArgs(cfg, passthrough = [], cwd = process.cwd()) {
 const RELAYED = new Set(['page', 'coverage', 'summary', 'login-waiting', 'session-saved', 'progress']);
 
 async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = [] }) {
-  const out = join(cwd, WORK_DIR, `round-${round}`);
+  const out = join(workDir(cwd), `round-${round}`);
   mkdirSync(out, { recursive: true });
   const args = [BIN, cfg.url, ...cfg.args, ...passthrough, ...session, '--out', out, '--json', '--quiet'];
   if (events) args.push('--events');
@@ -236,7 +236,7 @@ function waitForEnter(message, prompt) {
 }
 
 // One line when each assistant call starts and one when it ends (exit code, time, quota, the last
-// lines of its output), in a11y-508-work/agent-calls.log: a call that hangs shows as a start with no
+// lines of its output), in the work folder's agent-calls.log: a call that hangs shows as a start with no
 // end, while the loop is still running and afterwards.
 async function callAgent(work, label, args, onOutput = null, onWait = null) {
   const file = join(work, 'agent-calls.log');
@@ -333,12 +333,19 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     for (const e of errors) log.error(e);
     return 2;
   }
-  const work = join(cwd, WORK_DIR);
-  mkdirSync(work, { recursive: true });
+  // The tool's files for this repository live under the state base (home.mjs); folders an earlier
+  // version left in the repository move there first.
+  for (const l of migrationLines(migrateRepo(cwd))) log.info(l);
+  const work = workDir(cwd);
+  const taskFolder = tasksDir(cwd);
+  mkdirSync(taskFolder, { recursive: true });
   const ledgerFile = join(work, 'ledger.json');
   const ledger = loadLedger(ledgerFile);
   const save = () => saveLedger(ledgerFile, ledger);
-  const protectedDirs = [relative(cwd, TOOL_DIR) || '.', WORK_DIR, 'a11y-508-report'];
+  // The tool's own code, when it is not inside the repository; the prompt names no repository path
+  // for the tool's files (there are none).
+  const toolRel = relative(cwd, TOOL_DIR);
+  const protectedDirs = toolRel.startsWith('..') || isAbsolute(toolRel) ? [TOOL_DIR] : [];
   const agentCommand = resolveAgentCommand(cfg.agent);
   const sourceDirs = cfg.source;
   const stopped = () => stopSignal && stopSignal.stopped;
@@ -401,7 +408,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       timer = null;
       for (const stream of ['stdout', 'stderr']) {
         if (!buf[stream]) continue;
-        ev('agent-output', { round, task, kind, stream, text: buf[stream].slice(-16384) });
+        // The tool's folders are shown as ~/.a11y-508/…, never the full state base.
+        ev('agent-output', { round, task, kind, stream, text: shortenHome(buf[stream].slice(-16384)) });
         buf[stream] = '';
       }
     };
@@ -479,7 +487,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // The report the person just saw stands in for round 1's crawl; the first crawl (and its sign-in) is round 2's.
   const given = resuming ? null : reportForFirstRound(fromReport, cfg, cwd, log);
   const firstCrawl = given || resuming ? startRound + 1 : startRound;
-  log.info(`a11y-508 loop: ${cfg.url}  agent: ${cfg.agent}  ledger: ${relative(cwd, ledgerFile)}${ledger.rounds.length ? `  (resuming after round ${ledger.rounds.length})` : ''}`);
+  log.info(`a11y-508 loop: ${cfg.url}  agent: ${cfg.agent}  ledger: ${shortenHome(ledgerFile)}${ledger.rounds.length ? `  (resuming after round ${ledger.rounds.length})` : ''}`);
 
   for (let round = startRound; round < startRound + maxRounds; round++) {
     if (stopped()) break;
@@ -501,7 +509,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     if (fromGiven) {
       log.info(`round ${round}: starting from ${fromReport} (${given.finishedAt}) instead of crawling; round ${round + 1} crawls to verify the fixes`);
       // The round's report is that report (History lists rounds by their folder): copied, with its screenshots.
-      const out = join(cwd, WORK_DIR, `round-${round}`);
+      const out = join(work, `round-${round}`);
       try {
         cpSync(dirname(resolve(cwd, fromReport)), out, { recursive: true });
       } catch (e) {
@@ -559,10 +567,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         ev('step', { round, step: 'triage', count: review.length, batch: i / cfg.triageBatch + 1, batches, timeoutMs: cfg.agentTimeout, quietMs: cfg.quietAfter });
         const batch = review.slice(i, i + cfg.triageBatch).map((e, k) => ({ id: `r${round}-${i + k}`, entry: e }));
         const items = batch.map(({ id, entry }) => ({ id, test: entry.test, name: entry.name, wcag: entry.wcag, condition: testInfo(entry.test).condition, message: entry.message, selector: entry.selector, html: entry.html, pages: entry.pages }));
-        const promptFile = join(work, `prompt-r${round}-triage-${i}.md`);
-        const resultFile = join(work, `result-r${round}-triage-${i}.json`);
+        const promptFile = join(taskFolder, `prompt-r${round}-triage-${i}.md`);
+        const resultFile = join(taskFolder, `result-r${round}-triage-${i}.json`);
         writePrompt(promptFile, triagePrompt({ items, resultFile }));
-        const res = await withOutput(`r${round}-triage-${i}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout }, round, i / cfg.triageBatch + 1, 'triage', batch.length);
+        const res = await withOutput(`r${round}-triage-${i}`, { command: agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout }, round, i / cfg.triageBatch + 1, 'triage', batch.length);
         calls.push(res);
         writeFileSync(join(work, `agent-r${round}-triage-${i}.log`), agentLog(res));
         const decisions = Array.isArray(res.result) ? res.result : Array.isArray(res.result && res.result.items) ? res.result.items : null;
@@ -627,8 +635,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       const label = `${entry.test} ${entry.impact} "${entry.message.slice(0, 70)}"`;
       log.info(`[${n + 1}/${tasks.length}] ${label}`);
       ev('task', { round, n: n + 1, m: tasks.length, test: entry.test, name: entry.name, impact: entry.impact, message: entry.message, elements: members(entry).length, state: 'start', timeoutMs: cfg.agentTimeout, quietMs: cfg.quietAfter });
-      const promptFile = join(work, `prompt-r${round}-fix-${n}.md`);
-      const resultFile = join(work, `result-r${round}-fix-${n}.json`);
+      const promptFile = join(taskFolder, `prompt-r${round}-fix-${n}.md`);
+      const resultFile = join(taskFolder, `result-r${round}-fix-${n}.json`);
       writePrompt(promptFile, fixPrompt({ finding: entry, group: members(entry), sourceDirs, protectedDirs, resultFile, condition: testInfo(entry.test).condition }));
       // The attempt is on record before the assistant starts: one with no outcome is in progress, so
       // after an interruption its uncommitted changes are known to be the loop's (the dashboard's Continue).
@@ -636,11 +644,11 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       // Every finding of the task gets the attempt (and so the same outcome and commit).
       for (const e of members(entry)) e.attempts.push(attempt);
       save();
-      const res = await withOutput(`r${round}-fix-${n}`, { command: agentCommand, promptFile, resultFile, cwd, timeout: cfg.agentTimeout }, round, n + 1, 'fix');
+      const res = await withOutput(`r${round}-fix-${n}`, { command: agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout }, round, n + 1, 'fix');
       calls.push(res);
       writeFileSync(join(work, `agent-r${round}-fix-${n}.log`), agentLog(res));
       const changed = gitChanged(cwd, sourceDirs);
-      const strayChanges = gitChanged(cwd).filter((f) => !changed.includes(f) && !f.startsWith(WORK_DIR) && !f.startsWith('a11y-508-report'));
+      const strayChanges = gitChanged(cwd).filter((f) => !changed.includes(f));
       if (strayChanges.length) {
         log.warn(`  agent changed files outside ${sourceDirs.join(', ')}; reverting them: ${strayChanges.join(', ')}`);
         git(cwd, ['checkout', '--', ...strayChanges]);
@@ -940,13 +948,15 @@ export function summaryLine(ledger) {
 }
 
 export function printStatus(cwd, out) {
-  const file = join(cwd, WORK_DIR, 'ledger.json');
+  for (const l of migrationLines(migrateRepo(cwd))) out(l);
+  const file = join(workDir(cwd), 'ledger.json');
   if (!existsSync(file)) {
-    out(`no ledger at ${relative(cwd, file)}; run "a11y-508 loop <url>" first`);
+    out(`no ledger at ${file}; run "a11y-508 loop <url>" first`);
     return 0;
   }
   const ledger = loadLedger(file);
   out(`a11y-508 loop status: ${ledger.rounds.length} round(s). ${summaryLine(ledger)}`);
+  out(`  the tool's files for this repository: ${dirname(workDir(cwd))}`);
   for (const r of ledger.rounds.slice(-5)) out(`  round ${r.round} ${r.at || ''}: ${r.audited}/${r.pages} pages audited, ${r.violations} violations, ${r.reviews} review; +${r.diff.new} new, ${r.diff.verified} verified, ${r.diff.failed} did not hold${r.coverage && !r.coverage.complete ? ', coverage incomplete' : ''}`);
   const groups = [['open', 'OPEN'], ['pending', 'FIXED, AWAITING VERIFICATION'], ['review', 'AWAITING TRIAGE'], ['needs-human', 'NEEDS A PERSON']];
   for (const [status, title] of groups) {

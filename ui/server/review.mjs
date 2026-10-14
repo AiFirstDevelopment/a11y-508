@@ -9,12 +9,12 @@ import { join } from 'node:path';
 import { testInfo } from '../../src/checks/catalog.mjs';
 import { decide, fingerprint, loadLedger, saveLedger } from '../../src/ledger.mjs';
 import { locate } from './loop-match.mjs';
-import { confinedFile, listReports, readReport, sameStartUrl, WORK_DIR } from './reports.mjs';
+import { confinedFile, ledgerPath, listReports, readReport, sameStartUrl } from './reports.mjs';
 
 // How many reports, newest first, are looked through for a finding's screenshot.
 const REPORTS_LOOKED_AT = 10;
 
-export const ledgerFile = (cwd) => join(cwd, WORK_DIR, 'ledger.json');
+export const ledgerFile = (cwd) => ledgerPath(cwd);
 
 const reportFileUrl = (id, rel) => `/api/reports/${encodeURIComponent(id)}/${rel.split('/').map(encodeURIComponent).join('/')}`;
 

@@ -20,6 +20,8 @@ if (refuse && !existsSync(refuse)) {
 }
 const quiet = !!process.env.FAKE_AGENT_QUIET;
 if (!quiet) console.log('fake agent: reading the prompt');
+// FAKE_AGENT_SAY_FILES: names the prompt file by its full path, as a real assistant's output does.
+if (process.env.FAKE_AGENT_SAY_FILES) console.log(`fake agent: prompt at ${promptFile}`);
 // The dashboard's test of the live output: the first call takes a while, so its counter visibly runs.
 const slow = process.env.FAKE_AGENT_SLOW_ONCE;
 if (slow && !existsSync(slow)) {

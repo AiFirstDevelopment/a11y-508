@@ -60,12 +60,13 @@ async function loopApp(): Promise<App> {
   }
   // The image is also on a page whose address has a query string, which the card hides.
   ledger.findings[nh[0]].pages.push(`${url}index.html?from=news`);
+  // The ledger and the report where an earlier version left them: the dashboard moves them to its own folder for the repository.
   saveLedger(join(cwd, 'a11y-508-work', 'ledger.json'), ledger);
   const dash = await dashboard({ cwd, keepCwd: true });
   return {
     cwd, url, dash,
     fp: find,
-    ledger: () => JSON.parse(readFileSync(join(cwd, 'a11y-508-work', 'ledger.json'), 'utf8')),
+    ledger: () => JSON.parse(readFileSync(join(dash.dirs().work, 'ledger.json'), 'utf8')),
     close: async () => {
       await dash.stop();
       server.close();
@@ -132,7 +133,7 @@ test('NP AC 2 and 3, guards 2 and 3: each card says what to check and where to l
     expect(src).toMatch(/^\/api\/reports\/latest\/screenshots\/[^/]+\.png$/);
     await expect.poll(() => shot.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth > 0)).toBe(true);
     // Not copied into the dashboard: the file is the report's own.
-    expect(readdirSync(join(app.cwd, 'a11y-508-report', 'screenshots'))).toContain(src!.split('/').pop());
+    expect(readdirSync(join(app.dash.dirs().report, 'screenshots'))).toContain(src!.split('/').pop());
 
     // A page-level finding: Whole page, its pages, no screenshot.
     const titles = card(page, TITLES);
@@ -143,7 +144,7 @@ test('NP AC 2 and 3, guards 2 and 3: each card says what to check and where to l
     await expect(titles.getByTestId('review-reason')).toHaveText('Why it needs a person: a person must judge whether each title names its page');
 
     // A screenshot whose file is gone: "No screenshot", not a broken image.
-    rmSync(join(app.cwd, 'a11y-508-report', src!.replace(/^\/api\/reports\/latest\//, '')));
+    rmSync(join(app.dash.dirs().report, src!.replace(/^\/api\/reports\/latest\//, '')));
     await page.reload();
     await expect(card(page, IMG).getByTestId('no-screenshot')).toHaveText('No screenshot (the file is no longer in the report folder).');
     await expect(card(page, IMG).getByTestId('review-screenshot')).toHaveCount(0);
@@ -188,8 +189,8 @@ test('NP AC 4, 5 and 6, guard 4: a decision is written to the ledger, shown afte
     await expect(page.getByTestId('needs-person-link')).toHaveCount(0);
 
     // The loop follows it: the image is not given to the assistant; the titles are, with the note.
-    const loop = await run(process.execPath, [BIN, 'loop', '--max-rounds', '1'], { cwd: app.cwd, env: { ...process.env, TOKEN: '' }, timeout: 300_000 });
-    const work = join(app.cwd, 'a11y-508-work');
+    const loop = await run(process.execPath, [BIN, 'loop', '--max-rounds', '1'], { cwd: app.cwd, env: { ...process.env, TOKEN: '', A11Y_508_HOME: app.dash.home }, timeout: 300_000 });
+    const work = join(app.dash.dirs().work, 'tasks');
     const prompts = readdirSync(work).filter((f) => /^prompt-r2-fix-\d+\.md$/.test(f)).map((f) => readFileSync(join(work, f), 'utf8'));
     expect(prompts.length, loop.output).toBeGreaterThan(0);
     const block = (p: string) => JSON.parse([...p.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => m[1]).find((b) => b.includes('"kind": "fix"'))!).finding;

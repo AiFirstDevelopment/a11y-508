@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { startServer, tmp } from './helpers.mjs';
 import { argPattern } from './platform.mjs';
 
-const OUTPUTS = new Set(['a11y-508-report', 'a11y-508-history', 'a11y-508-work', '.git']);
+// The tool keeps its outputs outside the repository too (src/home.mjs): only git's own folder is there.
+const OUTPUTS = new Set(['.git']);
 
 test('state dir: the config, the session and the settings go to the per-user directory; runs get --config and --state there', async () => {
   const cwd = tmp('a11y-508-statedir-');
@@ -34,16 +35,17 @@ test('state dir: the config, the session and the settings go to the per-user dir
     // Settings, server-side.
     assert.equal((await s.call('PUT', '/api/settings', { body: { url: 'http://127.0.0.1:9/' } })).status, 200);
     assert.equal((await s.call('GET', '/api/settings')).json.url, 'http://127.0.0.1:9/');
-    // Nothing in the working directory but the outputs.
+    // Nothing in the working directory at all; the dry run's ledger is in the tool's own folder.
     const left = readdirSync(cwd).filter((n) => !OUTPUTS.has(n));
     assert.deepEqual(left, []);
-    // .git/info/exclude names the three outputs, once.
+    assert.ok(existsSync(join(s.dirs().work, 'ledger.json')), 'the ledger under the state base');
+    // .git/info/exclude gains nothing, on launch or on a switch.
     const exclude = () => readFileSync(join(cwd, '.git', 'info', 'exclude'), 'utf8');
-    for (const d of ['a11y-508-report/', 'a11y-508-history/', 'a11y-508-work/']) assert.equal(exclude().split('\n').filter((l) => l === d).length, 1, d);
+    assert.ok(!/a11y-508/.test(exclude()), exclude());
     const other = tmp('a11y-508-other-');
     assert.equal((await s.call('PUT', '/api/cwd', { body: { path: other } })).status, 200);
     assert.equal((await s.call('PUT', '/api/cwd', { body: { path: cwd } })).status, 200);
-    for (const d of ['a11y-508-report/', 'a11y-508-history/', 'a11y-508-work/']) assert.equal(exclude().split('\n').filter((l) => l === d).length, 1, `${d} still once`);
+    assert.ok(!/a11y-508/.test(exclude()), exclude());
     // Not a repository: nothing written there.
     assert.deepEqual(readdirSync(other), []);
   } finally {

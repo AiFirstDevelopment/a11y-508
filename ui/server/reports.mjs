@@ -1,15 +1,14 @@
-// The reports the dashboard can show: the latest crawl (a11y-508-report/), the
-// earlier ones (a11y-508-history/<finishedAt>/), and each loop round
-// (a11y-508-work/round-N/). Every file is served from inside its own report
-// directory and nowhere else.
+// The reports the dashboard can show: the latest crawl (report/), the earlier ones
+// (history/<finishedAt>/), and each loop round (work/round-N/), all in the tool's own folder for
+// the repository under the state base (src/home.mjs), never in the repository. Every file is
+// served from inside its own report directory and nowhere else.
 
-import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
+import { historyDir, migrateRepo, reportDir as latestDir, workDir } from '../../src/home.mjs';
 
-export const REPORT_DIR = 'a11y-508-report';
-export const HISTORY_DIR = 'a11y-508-history';
-export const WORK_DIR = 'a11y-508-work';
+export { historyDir, latestDir, workDir };
+export const ledgerPath = (cwd) => join(workDir(cwd), 'ledger.json');
 
 const readJson = (f) => {
   try {
@@ -39,24 +38,24 @@ function entry(id, source, dir, extra = {}) {
 
 // id -> absolute directory, for the ids listReports hands out; null otherwise.
 export function reportDir(cwd, id) {
-  if (id === 'latest') return join(cwd, REPORT_DIR);
+  if (id === 'latest') return latestDir(cwd);
   let m = /^round-(\d{1,6})$/.exec(id);
-  if (m) return join(cwd, WORK_DIR, `round-${m[1]}`);
+  if (m) return join(workDir(cwd), `round-${m[1]}`);
   m = /^h-([0-9A-Za-z.\-_]{1,80})$/.exec(id);
-  if (m && !m[1].startsWith('.')) return join(cwd, HISTORY_DIR, m[1]);
+  if (m && !m[1].startsWith('.')) return join(historyDir(cwd), m[1]);
   return null;
 }
 
 export function listReports(cwd) {
   const out = [];
-  const latest = entry('latest', 'latest', join(cwd, REPORT_DIR));
+  const latest = entry('latest', 'latest', latestDir(cwd));
   if (latest) out.push(latest);
-  const hist = join(cwd, HISTORY_DIR);
+  const hist = historyDir(cwd);
   if (existsSync(hist)) for (const d of readdirSync(hist)) {
     const e = /^[0-9A-Za-z.\-_]{1,80}$/.test(d) && !d.startsWith('.') ? entry(`h-${d}`, 'history', join(hist, d)) : null;
     if (e) out.push(e);
   }
-  const work = join(cwd, WORK_DIR);
+  const work = workDir(cwd);
   if (existsSync(work)) for (const d of readdirSync(work)) {
     const m = /^round-(\d+)$/.exec(d);
     const e = m ? entry(d, 'round', join(work, d), { round: Number(m[1]) }) : null;
@@ -86,30 +85,30 @@ export function confinedFile(cwd, id, rel) {
   }
 }
 
-// Before a crawl: the previous a11y-508-report/ moves to
-// a11y-508-history/<finishedAt>/, so the latest report stays where the
-// README's runbook says it is.
+// Before a crawl: the previous report/ moves to history/<finishedAt>/, so the
+// latest report stays where the README says it is.
 export function moveLatestToHistory(cwd) {
-  const latest = join(cwd, REPORT_DIR);
+  const latest = latestDir(cwd);
   const r = readJson(join(latest, 'report.json'));
   if (!r) return null;
   const stamp = String(r.finishedAt || new Date(statSync(latest).mtimeMs).toISOString()).replace(/:/g, '-');
-  mkdirSync(join(cwd, HISTORY_DIR), { recursive: true });
+  const hist = historyDir(cwd);
+  mkdirSync(hist, { recursive: true });
   let name = stamp;
-  for (let i = 2; existsSync(join(cwd, HISTORY_DIR, name)); i++) name = `${stamp}-${i}`;
-  renameSync(latest, join(cwd, HISTORY_DIR, name));
+  for (let i = 2; existsSync(join(hist, name)); i++) name = `${stamp}-${i}`;
+  renameSync(latest, join(hist, name));
   return name;
 }
 
-// Deleting from History: only a11y-508-history/<name>/ entries, by their h- id.
+// Deleting from History: only history/<name>/ entries, by their h- id.
 // The latest report and the loop's rounds are never deleted this way.
 // Returns { status, body } for the route.
 export function deleteHistoryEntry(cwd, id) {
   const m = /^h-([0-9A-Za-z.\-_]{1,80})$/.exec(String(id));
-  if (!m || m[1].startsWith('.')) return { status: 400, body: { error: 'only a report from a11y-508-history can be deleted' } };
-  const root = resolve(cwd, HISTORY_DIR);
+  if (!m || m[1].startsWith('.')) return { status: 400, body: { error: 'only an earlier report from History can be deleted' } };
+  const root = resolve(historyDir(cwd));
   const dir = resolve(root, m[1]);
-  if (!dir.startsWith(root + sep) || dir.slice(root.length + 1).includes(sep)) return { status: 400, body: { error: 'only a report from a11y-508-history can be deleted' } };
+  if (!dir.startsWith(root + sep) || dir.slice(root.length + 1).includes(sep)) return { status: 400, body: { error: 'only an earlier report from History can be deleted' } };
   if (!existsSync(dir)) return { status: 404, body: { error: 'no such report' } };
   rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
   return { status: 200, body: { removed: 1 } };
@@ -165,10 +164,10 @@ export function loopTimeline(ledger, counts) {
   return { rounds, total: { rounds: rounds.length, fixed, pending: counts.pending || 0, of: fixed + remaining + (counts.pending || 0) + needsHuman + decided, remaining, needsHuman, decided } };
 }
 
-// Clear the fix loop's history: its rounds (a11y-508-work/round-N/) and the ledger. The prompts
+// Clear the fix loop's history: its rounds (work/round-N/) and the ledger. The prompts
 // and logs stay.
 export function clearLoopHistory(cwd) {
-  const root = resolve(cwd, WORK_DIR);
+  const root = resolve(workDir(cwd));
   if (!existsSync(root)) return { removed: 0 };
   let removed = 0;
   for (const d of readdirSync(root)) {
@@ -179,9 +178,9 @@ export function clearLoopHistory(cwd) {
   return { removed };
 }
 
-// Clear history: every entry directly under a11y-508-history/, and nothing else.
+// Clear history: every entry directly under history/, and nothing else.
 export function clearHistory(cwd) {
-  const root = resolve(cwd, HISTORY_DIR);
+  const root = resolve(historyDir(cwd));
   if (!existsSync(root)) return { removed: 0 };
   let removed = 0;
   for (const d of readdirSync(root)) {
@@ -207,49 +206,48 @@ export function sameStartUrl(a, b) {
 
 // The analysis belongs to the URL, not the folder: when the folder changes and the URL does not,
 // the latest report for that URL, its history entries and the loop's work folder go along to the
-// new folder. Moved when the old folder is not a git repository or git does not track them there
-// (the dashboard wrote them); copied otherwise. Nothing already in the new folder is overwritten:
-// a latest report there for another URL goes to its history first. Returns what was carried.
-export function carryAnalysis(from, to, url, { inGit }) {
+// new folder's own place under the state base. They are the tool's own files, never in either
+// repository, so they move. Nothing already there is overwritten: a latest report there for
+// another URL goes to its history first. Returns what was carried.
+export function carryAnalysis(from, to, url) {
   const out = { report: false, history: 0, work: false, moved: false };
   if (!url || resolve(from) === resolve(to)) return out;
-  const latest = readJson(join(from, REPORT_DIR, 'report.json'));
+  // Either folder may still hold the old in-repository folders.
+  migrateRepo(from);
+  migrateRepo(to);
+  const latest = readJson(join(latestDir(from), 'report.json'));
   if (!latest || !sameStartUrl(latest.baseUrl, url)) return out;
-  const there = readJson(join(to, REPORT_DIR, 'report.json'));
+  const there = readJson(join(latestDir(to), 'report.json'));
   if (there && sameStartUrl(there.baseUrl, url) && String(there.finishedAt) >= String(latest.finishedAt)) return out;
-  const tracked = (rel) => inGit(from) && spawnSync('git', ['ls-files', '--', rel], { cwd: from, encoding: 'utf8', windowsHide: true }).stdout.trim() !== '';
-  const move = !inGit(from) || ![REPORT_DIR, HISTORY_DIR, WORK_DIR].some(tracked);
-  out.moved = move;
+  out.moved = true;
   const put = (src, dst) => {
     mkdirSync(dirname(dst), { recursive: true });
-    if (move) {
-      try {
-        renameSync(src, dst);
-        return;
-      } catch {}
-      cpSync(src, dst, { recursive: true });
-      rmSync(src, { recursive: true, force: true, maxRetries: 5 });
-    } else cpSync(src, dst, { recursive: true });
+    try {
+      renameSync(src, dst);
+      return;
+    } catch {}
+    cpSync(src, dst, { recursive: true });
+    rmSync(src, { recursive: true, force: true, maxRetries: 5 });
   };
   if (there) moveLatestToHistory(to);
-  else rmSync(join(to, REPORT_DIR), { recursive: true, force: true, maxRetries: 5 });
-  put(join(from, REPORT_DIR), join(to, REPORT_DIR));
+  else rmSync(latestDir(to), { recursive: true, force: true, maxRetries: 5 });
+  put(latestDir(from), latestDir(to));
   out.report = true;
-  const hist = join(from, HISTORY_DIR);
+  const hist = historyDir(from);
   if (existsSync(hist)) {
     for (const d of readdirSync(hist)) {
       const r = readJson(join(hist, d, 'report.json'));
-      if (!r || !sameStartUrl(r.baseUrl, url) || existsSync(join(to, HISTORY_DIR, d))) continue;
-      put(join(hist, d), join(to, HISTORY_DIR, d));
+      if (!r || !sameStartUrl(r.baseUrl, url) || existsSync(join(historyDir(to), d))) continue;
+      put(join(hist, d), join(historyDir(to), d));
       out.history++;
     }
   }
   // The loop's work folder: when its rounds are for this URL and the new folder has none.
-  const work = join(from, WORK_DIR);
-  if (existsSync(work) && !existsSync(join(to, WORK_DIR))) {
+  const work = workDir(from);
+  if (existsSync(work) && !existsSync(workDir(to))) {
     const rounds = readdirSync(work).filter((d) => /^round-\d+$/.test(d)).map((d) => readJson(join(work, d, 'report.json'))).filter(Boolean);
     if (rounds.length && rounds.every((r) => sameStartUrl(r.baseUrl, url))) {
-      put(work, join(to, WORK_DIR));
+      put(work, workDir(to));
       out.work = true;
     }
   }

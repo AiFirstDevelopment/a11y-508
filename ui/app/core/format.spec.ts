@@ -1,4 +1,4 @@
-import { cumulative, progressLabel, resultLine, ageText, savedAgo, phaseText, routeParts, localTime, foundText, discoveryOf, CANNOT_GET_IN } from './format';
+import { cumulative, fixedLine, progressLabel, resultLine, ageText, savedAgo, phaseText, routeParts, localTime, foundText, discoveryOf, CANNOT_GET_IN } from './format';
 
 const s = (o: any) => ({ audited: 3, byImpact: { critical: 0, serious: 0, moderate: 1, minor: 0 }, ...o });
 
@@ -54,5 +54,11 @@ describe('format', () => {
     expect(savedAgo(5 * 60_000)).toBe('5 min ago');
     expect(savedAgo(60 * 60_000)).toBe('1 hour ago');
     expect(savedAgo(3 * 24 * 60 * 60_000)).toBe('3 days ago');
+  });
+  it('says how many fixes the round has when grouping makes them fewer than the remaining findings', () => {
+    expect(fixedLine({ open: 20, 'needs-human': 4 }, 8)).toBe('0 fixed · 20 remaining, in 8 fixes this round · 4 need a person');
+    expect(fixedLine({ open: 3 }, 1)).toBe('0 fixed · 3 remaining, in 1 fix this round');
+    expect(fixedLine({ open: 20, 'needs-human': 4 }, 20)).toBe('0 fixed · 20 remaining · 4 need a person');
+    expect(fixedLine({ open: 20, 'needs-human': 4 })).toBe('0 fixed · 20 remaining · 4 need a person');
   });
 });

@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import { moreOptions, loopOptions, dryRun, dashboard, fillRun, gitRepo, open, startFromRun, tempDir, waitFinished, BIN, ROOT, TOKEN, type Dash, nav, api, countsLine } from './harness';
+import { moreOptions, loopOptions, dryRun, dashboard, dirsOf, fillRun, gitRepo, open, startFromRun, tempDir, waitFinished, BIN, ROOT, TOKEN, type Dash, nav, api, countsLine } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -82,7 +82,7 @@ test('AC 11: the settings at /fix-loop/settings save a config a11y-508 loop acce
 
     // a11y-508 loop accepts it: with an agent it passes validation and gets as far as the git check.
     writeFileSync(join(dash.cwd, 'a11y-508.config.json'), JSON.stringify({ ...written, agent: 'claude' }));
-    const r = spawnSync(process.execPath, [BIN, 'loop', '--max-rounds', '1'], { cwd: dash.cwd, encoding: 'utf8', env: { ...process.env, TOKEN: '' } });
+    const r = spawnSync(process.execPath, [BIN, 'loop', '--max-rounds', '1'], { cwd: dash.cwd, encoding: 'utf8', env: { ...process.env, TOKEN: '', A11Y_508_HOME: dash.home } });
     expect(r.stdout + r.stderr).toContain('is not a git repository');
     expect(r.stdout + r.stderr).not.toMatch(/no start URL|no agent|deploy" command|must be command/);
   } finally {
@@ -94,8 +94,7 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
   const cwd = tempDir('a11y-508-loop-');
   const g = gitRepo(cwd);
   const { base, server } = await repoSite(cwd);
-  writeFileSync(join(cwd, '.gitignore'), 'a11y-508-work/\na11y-508-report/\na11y-508-history/\n');
-  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
   writeFileSync(join(cwd, 'a11y-508.config.json'), JSON.stringify({
     url: base,
     args: ['--max-pages', '3', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage', '--concurrency', '1'],
@@ -183,10 +182,10 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     expect(samples.some((s) => /^Round 2: asking the assistant about/.test(s.status) && s.heading === s.status && /— Review items: asking about \d+ review items? —$/.test(s.output)), 'the pane runs before the first output').toBe(true);
 
     // The board equals `a11y-508 status`, and the round chart equals the ledger's rounds.
-    const st = spawnSync(process.execPath, [BIN, 'status'], { cwd, encoding: 'utf8' }).stdout;
+    const st = spawnSync(process.execPath, [BIN, 'status'], { cwd, encoding: 'utf8', env: { ...process.env, A11Y_508_HOME: dash.home } }).stdout;
     const line = st.split('\n')[0].replace(/^a11y-508 loop status: \d+ round\(s\)\. /, '');
     await expect(page.getByTestId('ledger-line')).toHaveText(line);
-    const ledger = JSON.parse(readFileSync(join(cwd, 'a11y-508-work', 'ledger.json'), 'utf8'));
+    const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
     const counts: Record<string, number> = {};
     for (const e of Object.values<any>(ledger.findings)) counts[e.status] = (counts[e.status] || 0) + 1;
     for (const s of ['open', 'review', 'pending', 'verified', 'needs-human', 'adequate', 'gone']) {
@@ -232,7 +231,7 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     await page.getByRole('button', { name: 'Clear fix-loop history' }).click();
     await expect(page.getByTestId('history-status')).toHaveText(new RegExp(`^Removed ${ledger.rounds.length} fix-loop rounds and the ledger\\.$`));
     await expect(page.getByTestId('history').locator('tr[data-source="round"]')).toHaveCount(0);
-    expect(existsSync(join(cwd, 'a11y-508-work', 'ledger.json'))).toBe(false);
+    expect(existsSync(join(dirsOf(cwd).work, 'ledger.json'))).toBe(false);
 
     // Run again: a new crawl from the same set up; the wizard is back on Crawl, and Results, Fix
     // and History are not available until it finishes.
@@ -254,8 +253,7 @@ test('from the report: after a wizard crawl, Fix the violations starts with tria
   const cwd = tempDir('a11y-508-fromrep-');
   const g = gitRepo(cwd);
   const { base, server } = await repoSite(cwd);
-  writeFileSync(join(cwd, '.gitignore'), 'a11y-508-work/\na11y-508-report/\na11y-508-history/\n');
-  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
   writeFileSync(join(cwd, 'a11y-508.config.json'), JSON.stringify({
     url: base,
     args: ['--max-pages', '3', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage', '--concurrency', '1'],
@@ -285,12 +283,49 @@ test('from the report: after a wizard crawl, Fix the violations starts with tria
     expect(said.filter((s) => /^Round 1: re-checking/.test(s)), said.join(' | ')).toEqual([]);
     expect(said.some((s) => /^Round 1: (asking the assistant about .+|fixing \d+ of \d+) from the report you just saw · /.test(s)), said.join(' | ')).toBe(true);
     expect((await api(dash, '/api/runs/current')).json.meta.command).toContain('--from-report');
-    const ledger = JSON.parse(readFileSync(join(cwd, 'a11y-508-work', 'ledger.json'), 'utf8'));
+    const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
     expect(ledger.rounds[0].source).toBe('report');
-    expect(existsSync(join(cwd, 'a11y-508-work', 'round-1', 'crawl.log'))).toBe(false);
+    expect(existsSync(join(dirsOf(cwd).work, 'round-1', 'crawl.log'))).toBe(false);
     // History has the round, as a row of its own.
     await page.getByRole('link', { name: 'See what changed' }).click();
     await expect(page.getByTestId('history').locator('tr[data-id="round-1"]')).toHaveCount(1);
+  } finally {
+    await dash.stop();
+    server.close();
+  }
+});
+
+test('tool-files AC5/guard 5: while a loop runs with grouped findings, the counts say how many fixes the round has; with none running, they do not', async ({ page }) => {
+  const cwd = tempDir('a11y-508-grouped-');
+  const g = gitRepo(cwd);
+  const { base, server } = await repoSite(cwd);
+  // Five images with the same problem (one fix task) and one page-level problem (no lang): 6 remaining, 2 fixes.
+  writeFileSync(join(cwd, 'site', 'index.html'), '<!doctype html><html><head><title>Five images</title></head><body><main><h1>Five images</h1>' + ['a', 'b', 'c', 'd', 'e'].map((n) => `<img src="/img/${n}.png" width="20" height="20">`).join('') + '</main></body></html>\n');
+  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
+  writeFileSync(join(cwd, 'a11y-508.config.json'), JSON.stringify({
+    url: base, args: ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage'],
+    agent: FAKE, source: ['site'], check: `${JSON.stringify(process.execPath)} -e "setTimeout(Boolean,1500)"`, push: false, deployed: 'none', triageBatch: 50,
+  }, null, 2));
+  g('add', '-A');
+  g('commit', '-q', '-m', 'five images');
+  const dash: Dash = await dashboard({ cwd, env: { FAKE_AGENT_DELAY_MS: '1500' } });
+  try {
+    await api(dash, '/api/settings', { method: 'PUT', body: { rounds: 1 } });
+    await open(page, dash, '/fix-loop');
+    await setToken(page);
+    await page.getByTestId('loop-start').click();
+    const status = page.getByTestId('fix-status');
+    await expect(status).toHaveText(/^Round 1: fixing \d+ of \d+/, { timeout: 200_000 });
+    const of = Number(/ of (\d+)/.exec((await status.textContent()) || '')![1]);
+    const counts = page.getByTestId('fix-counts');
+    await expect(counts).toHaveText(new RegExp(`^(0 fixed|\\d+ fixed, awaiting verification) · \\d+ remaining, in ${of} fix${of === 1 ? '' : 'es'} this round`));
+    const remaining = Number(/(\d+) remaining/.exec((await counts.textContent()) || '')![1]);
+    const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
+    const openNow = Object.values<any>(ledger.findings).filter((e) => e.status === 'open').length;
+    expect(of, 'the round has fewer fixes than findings (grouped)').toBeLessThan(openNow + Object.values<any>(ledger.findings).filter((e) => e.status === 'pending').length);
+    expect(remaining).toBeGreaterThan(0);
+    await expect(page.getByTestId('loop-step')).toHaveText(/Loop finished/, { timeout: 200_000 });
+    await expect(counts).not.toContainText('this round');
   } finally {
     await dash.stop();
     server.close();

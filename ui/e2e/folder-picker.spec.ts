@@ -296,8 +296,9 @@ test('AC 6: after a switch a crawl writes its report in the new directory only, 
     await expect(page.getByTestId('command')).toContainText(site.base);
     await startFromRun(page);
     await waitFinished(page);
-    expect(existsSync(join(b, 'a11y-508-report', 'report.json')), 'report.json in the new directory').toBe(true);
-    expect(existsSync(join(launch, 'a11y-508-report')), 'nothing in the old one').toBe(false);
+    expect(existsSync(join(dash.dirs(b).report, 'report.json')), 'report.json in the new directory\'s own folder').toBe(true);
+    expect(existsSync(dash.dirs(launch).report), 'nothing in the old one').toBe(false);
+    for (const d of [b, launch]) expect(existsSync(join(d, 'a11y-508-report')), `nothing of the tool's in ${d}`).toBe(false);
     // The dry run reads the new directory's config and writes its ledger there.
     await nav(page, 'Run');
     await moreOptions(page);
@@ -308,8 +309,9 @@ test('AC 6: after a switch a crawl writes its report in the new directory only, 
     await expect(page.getByLabel('Start URL')).toHaveValue(site.base + 'about.html');
     await dryRun(page);
     await expect(page.getByTestId('loop-step')).toHaveText(/Dry run finished/, { timeout: 200_000 });
-    expect(existsSync(join(b, 'a11y-508-work', 'ledger.json')), 'the ledger in the new directory').toBe(true);
-    expect(existsSync(join(launch, 'a11y-508-work')), 'no ledger in the old one').toBe(false);
+    expect(existsSync(join(dash.dirs(b).work, 'ledger.json')), 'the ledger in the new directory\'s own folder').toBe(true);
+    expect(existsSync(join(dash.dirs(launch).work, 'ledger.json')), 'no ledger in the old one').toBe(false);
+    for (const d of [b, launch]) expect(existsSync(join(d, 'a11y-508-work')), `nothing of the tool's in ${d}`).toBe(false);
     await expect(page.getByTestId('ledger-line')).toBeVisible();
   } finally {
     site.close();

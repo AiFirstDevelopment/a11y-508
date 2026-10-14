@@ -7,8 +7,8 @@ import { delimiter, dirname, join } from 'node:path';
 import { moreOptions, openPicker, dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath, nav, removeTemp } from './harness';
 
 const PRESETS = {
-  claude: 'claude -p --permission-mode acceptEdits --output-format stream-json --verbose "Read the file {promptFile} and do exactly what it says."',
-  gemini: 'gemini --approval-mode auto_edit -p "Do exactly what the instructions above say." --output-format stream-json < "{promptFile}"',
+  claude: 'claude -p --permission-mode acceptEdits --add-dir "{tasksDir}" --output-format stream-json --verbose "Read the file {promptFile} and do exactly what it says."',
+  gemini: 'gemini --approval-mode auto_edit --include-directories "{tasksDir}" -p "Do exactly what the instructions above say." --output-format stream-json < "{promptFile}"',
 };
 
 interface Rig {
@@ -113,7 +113,8 @@ test('AC 12: the picker lists every preset, live or greyed as installed, saves t
     const byHand = entry(page, 'gemini').getByTestId('run-command');
     await expect(byHand).not.toContainText('{');
     await expect(byHand).toContainText(gemini);
-    await expect(byHand).toContainText(join(dash.cwd, 'a11y-508-work', 'prompt.md'));
+    // The prompt file is in the tool's own folder for the repository, never in it.
+    await expect(byHand).toContainText(join(dash.dirs().work, 'tasks', 'prompt.md'));
     await expect(byHand).toContainText('GEMINI_CLI_TRUST_WORKSPACE');
 
     await expect(entry(page, 'codex')).toHaveAttribute('data-found', 'false');
@@ -167,7 +168,6 @@ test('AC 12: a preset found only in npm prefix -g is run by that path when the l
   const site = await fixtureSite();
   const cwd = tempDir('a11y-508-loopcwd-');
   const g = gitRepo(cwd);
-  writeFileSync(join(cwd, '.gitignore'), 'a11y-508-work/\na11y-508-report/\n');
   mkdirSync(join(cwd, 'src'));
   writeFileSync(join(cwd, 'src', 'index.html'), '<!doctype html><title>x</title>');
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
@@ -187,7 +187,7 @@ test('AC 12: a preset found only in npm prefix -g is run by that path when the l
     await page.getByTestId('loop-start').click();
     await expect(page.getByTestId('loop-step')).toHaveText(/Loop finished/, { timeout: 240_000 });
     const calls = readFileSync(join(r.root, 'gemini-calls.txt'), 'utf8');
-    expect(calls.split('\n')[0].startsWith(gemini + ' --approval-mode auto_edit -p')).toBe(true);
+    expect(calls.split('\n')[0].startsWith(gemini + ' --approval-mode auto_edit --include-directories ')).toBe(true);
   } finally {
     await dash.stop();
     site.close();

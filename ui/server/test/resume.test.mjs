@@ -1,5 +1,5 @@
 // Runs outlive the dashboard (docs/plans/resume.md): a run is started detached and recorded under
-// <folder>/a11y-508-work/runs/; a server that dies leaves it running; a new server reattaches to it
+// <the tool's work folder for the repository>/runs/; a server that dies leaves it running; a new server reattaches to it
 // with its whole log, or reports a fix loop whose process is gone as interrupted. One dashboard per
 // port: a second launch opens the running one. An idle dashboard ends after a day.
 import { test } from 'node:test';
@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { MAIN, startServer, tmp } from './helpers.mjs';
 import { WIN, mergeEnv, recordOpen, stopTree } from './platform.mjs';
 import { killTreeWindows } from '../runs.mjs';
+import { workDir } from '../../../src/home.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid) => {
@@ -21,7 +22,9 @@ const alive = (pid) => {
     return e.code === 'EPERM';
   }
 };
-const runsDir = (cwd) => join(cwd, 'a11y-508-work', 'runs');
+// Every server here keeps its files under one state base (src/home.mjs), so the run records are found.
+const HOME = tmp('a11y-508-home-');
+const runsDir = (cwd) => join(workDir(cwd, { A11Y_508_HOME: HOME }), 'runs');
 const records = (cwd) => (existsSync(runsDir(cwd)) ? readdirSync(runsDir(cwd)).filter((n) => n.endsWith('.run.json')).map((n) => JSON.parse(readFileSync(join(runsDir(cwd), n), 'utf8'))) : []);
 async function until(fn, ms = 30000, what = 'condition') {
   const end = Date.now() + ms;
@@ -70,7 +73,7 @@ async function hangingSite() {
 test('resume AC2/AC3, guards 2 and 3: a run outlives a server that dies, and a new server reattaches with its whole log; Stop still works', async () => {
   const site = await hangingSite();
   const cwd = tmp('a11y-508-resume-');
-  const home = tmp('a11y-508-home-');
+  const home = HOME;
   // The dashboard as a terminal starts it: a process group of its own, which closing the terminal
   // ends as a whole (here: SIGKILL to the group). On Windows the server process alone is ended.
   const proc = spawn(process.execPath, [MAIN, '--no-open', '--port', '0'], { cwd, env: mergeEnv(process.env, { TOKEN: '', A11Y_508_HOME: home }), stdio: ['ignore', 'pipe', 'pipe'], detached: !WIN });
@@ -159,7 +162,7 @@ export async function interruptedLoop(cwd, { n = 8, m = 20, at = '2026-10-13T16:
 test('resume AC3: a loop whose process is gone and whose events have no done is interrupted, with where it was', async () => {
   const cwd = tmp('a11y-508-intr-');
   const id = await interruptedLoop(cwd);
-  const s = await startServer({ cwd });
+  const s = await startServer({ cwd, env: { A11Y_508_HOME: HOME } });
   try {
     const cur = (await s.call('GET', '/api/runs/current')).json;
     assert.equal(cur.id, id);
@@ -184,7 +187,7 @@ test('resume AC1: a second launch on the same port opens the running dashboard i
   await new Promise((ok) => probe.listen(0, '127.0.0.1', ok));
   const port = probe.address().port;
   await new Promise((ok) => probe.close(ok));
-  const home = tmp('a11y-508-home-');
+  const home = HOME;
   const bin = tmp('a11y-508-openbin-');
   const opened = join(bin, 'opened.txt');
   const env = mergeEnv(process.env, { TOKEN: '', A11Y_508_HOME: home, A11Y_508_OWN_BROWSER: '0', PATH: `${bin}${WIN ? ';' : ':'}${process.env.PATH}`, ...recordOpen(bin, opened) });
@@ -215,7 +218,7 @@ test('resume AC1: a second launch on the same port opens the running dashboard i
 
 test('resume AC1: Quit ends the dashboard (asking first when a run is active), and an idle dashboard ends by itself', async () => {
   const site = await hangingSite();
-  const s = await startServer();
+  const s = await startServer({ env: { A11Y_508_HOME: HOME } });
   let pid = null;
   try {
     assert.equal((await s.call('POST', '/api/runs', { body: { kind: 'crawl', url: site.url, options: { timeout: '60000' }, auth: { mode: 'none' } } })).status, 202);
@@ -241,7 +244,7 @@ test('resume AC1: Quit ends the dashboard (asking first when a run is active), a
 
 test('resume: cookies and extra headers never reach the run record or its events file, which are owner-only', async () => {
   const site = await hangingSite();
-  const s = await startServer();
+  const s = await startServer({ env: { A11Y_508_HOME: HOME } });
   let pid = null;
   try {
     const r = await s.call('POST', '/api/runs', { body: { kind: 'crawl', url: site.url, options: { timeout: '60000', header: ['X-Api-Key: HEADERSECRET789xyz'] }, auth: { mode: 'cookies', cookies: 'sid=COOKIESECRET123' } } });

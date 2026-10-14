@@ -63,19 +63,19 @@ Settings beyond these (a token or cookies instead of signing in, page limits, in
 
 #### It resumes where you were
 
-A crawl, a sign-in or a fix loop runs detached from the dashboard (its own process group; on Windows a detached, hidden process), so it outlives the dashboard's window, its terminal and its server. As it runs, its events are appended to `a11y-508-work/runs/<id>.events.ndjson` (the same events the page receives) beside a `<id>.run.json` with its kind, arguments, process id, start time, folder and URL. When the dashboard starts it looks for the newest run of the folder: a live one is shown as if the window had never closed (its whole log, counts and status, and Stop still works); a fix loop whose process is gone without finishing is **interrupted**, and the Fix step says so ("The fix loop was interrupted at fix 8 of 20 on 13 Oct 2026, 4:52 PM (the dashboard was closed)") with **Continue** and **Start over**. Continue marks the unfinished attempt `interrupted` in the ledger, reverts its uncommitted changes under the source folders (listed before you choose, and in the output pane after), and runs `a11y-508 loop --resume`: the last round goes on from the ledger with no new crawl. Uncommitted changes when no attempt was in progress are yours, and the loop asks you to commit or stash them, as always.
+A crawl, a sign-in or a fix loop runs detached from the dashboard (its own process group; on Windows a detached, hidden process), so it outlives the dashboard's window, its terminal and its server. As it runs, its events are appended to `runs/<id>.events.ndjson` in the loop's work folder (see [Where the tool keeps its files](#where-the-tool-keeps-its-files)) (the same events the page receives) beside a `<id>.run.json` with its kind, arguments, process id, start time, folder and URL. When the dashboard starts it looks for the newest run of the folder: a live one is shown as if the window had never closed (its whole log, counts and status, and Stop still works); a fix loop whose process is gone without finishing is **interrupted**, and the Fix step says so ("The fix loop was interrupted at fix 8 of 20 on 13 Oct 2026, 4:52 PM (the dashboard was closed)") with **Continue** and **Start over**. Continue marks the unfinished attempt `interrupted` in the ledger, reverts its uncommitted changes under the source folders (listed before you choose, and in the output pane after), and runs `a11y-508 loop --resume`: the last round goes on from the ledger with no new crawl. Uncommitted changes when no attempt was in progress are yours, and the loop asks you to commit or stash them, as always.
 
 The step you were on is kept with your settings (`lastStep`), so opening the dashboard's address lands there: the Fix step with the live or interrupted loop, or Results, Fix or History with the last report and ledger. Set up is shown only when nothing is known yet, when the remembered folder is gone, or after **Start over** (on Set up and on the interrupted notice), which names what it discards ("the report, the ledger with 8 attempts, and the history for this URL") and asks first. A reload, a relaunch or a change of folder never resets anything: the Fix step shows the live loop, or the last loop's outcome ("could not start" with its remedy, "stopped", or "Loop finished") until the next one starts, and a reloaded or restored tab never starts a loop by itself beside it. A click on **Fix the violations** before the step is ready (the assistants still being detected) is kept: the step says "Starting…" and starts once it is ready, or says why it cannot.
 
 #### Where the dashboard keeps its files
 
-The dashboard writes nothing of its own into the app's repository. Its loop config (`config.json`), the sign-in session (`state.json`) and your remembered choices (`settings.json`) are kept per working directory in `~/.a11y-508/<12 hex of the directory's path>/` (`%APPDATA%\a11y-508\…` on Windows), and the dashboard passes `--config` and `--state` with those paths. If the repository has its own `a11y-508.config.json` (a team's, for CI), the dashboard uses it as is and never writes to it. The outputs, `a11y-508-report/`, `a11y-508-history/` and `a11y-508-work/`, stay in the working directory, where the CLI and the runbook expect them, and the dashboard adds them to the repository's `.git/info/exclude` (local to your clone, never committed). Files an earlier version left in the repository are moved out after you confirm. The CLI run by hand keeps its defaults (`a11y-508-state.json`, `a11y-508.config.json` in the current directory).
+The dashboard writes nothing of its own into the app's repository. Its loop config (`config.json`), the sign-in session (`state.json`) and your remembered choices (`settings.json`) are kept per working directory in `~/.a11y-508/<12 hex of the directory's path>/` (`%APPDATA%\a11y-508\…` on Windows), and the dashboard passes `--config` and `--state` with those paths. If the repository has its own `a11y-508.config.json` (a team's, for CI), the dashboard uses it as is and never writes to it. The report, the earlier reports and the loop's work folder are kept outside the repository too, in the tool's own folder for it, the same one the CLI uses (see [Where the tool keeps its files](#where-the-tool-keeps-its-files)). Files an earlier version left in the repository are moved out: the config and session after you confirm, the old `a11y-508-report/`, `a11y-508-history/` and `a11y-508-work/` folders on first use. The CLI run by hand keeps its defaults for the config and the session (`a11y-508.config.json`, `a11y-508-state.json` in the current directory).
 
 Nothing has to be installed: the server uses only Node's own modules, and the built app is committed under `ui/dist/`. It listens on `127.0.0.1` only (port 5508, or the next free one; `--port <n>` to choose) and opens your browser; `--no-open` prints the address instead.
 
 - **The address carries a secret.** Each launch makes a random secret and puts it in the address it opens. The app keeps it for the tab and sends it on every request; anything without it gets 401, and a request for any host other than `127.0.0.1:<port>` or `localhost:<port>` gets 403. The folder picker is behind the same secret and lists folder names only, never files; the recent folders are kept in your browser.
 - **The token stays in memory.** It is passed to the CLI in its environment only, never written to disk, never sent back to the browser, and blanked out of the CLI's output if it ever appears there.
-- **Reports are kept.** Before each crawl the previous `a11y-508-report/` moves to `a11y-508-history/<finished-at>/`, so the latest report stays where the runbook says and History lists the earlier ones. **Clear history** (after a confirmation) and each row's **Delete** remove them; the latest report and the loop's rounds are never removed that way. Add `a11y-508-history/` to `.gitignore`.
+- **Reports are kept.** Before each crawl the previous report moves to `history/<finished-at>/` beside it in the tool's own folder for the repository, so the latest report stays in `report/` and History lists the earlier ones. **Clear history** (after a confirmation) and each row's **Delete** remove them; the latest report and the loop's rounds are never removed that way.
 - **The fix loop's assistant** is found on `PATH`, through your login shell, or in `npm prefix -g`'s bin folder. *Test assistant* calls it once, to show it is installed and signed in before a loop spends a round finding out. On Windows, "your shell" is Git Bash, which comes with Git for Windows (the loop needs git anyway); without it the dashboard falls back to PowerShell or cmd.
 - **Beyond Section 508.** *Also check WCAG 2.2 (beyond Section 508)* under **Advanced** adds `--wcag 2.2` to the run (see [Beyond Section 508](#beyond-section-508)); the Report screen then lists those rules under their own heading and in their own group of the test filter.
 - **Every chart has a data table** with the same numbers, and chart animations are off when you have asked your system for reduced motion.
@@ -104,7 +104,9 @@ a11y-508 <url> [options]
   --exclude <regex>        Skip URLs matching this pattern (repeatable)
   --fail-on <list>         Impacts that fail the run: critical,serious,moderate,minor
                            or "none" (default critical,serious)
-  --out <dir>              Report directory (default ./a11y-508-report)
+  --out <dir>              Report directory (default: inside a git repository, the tool's
+                           own folder for it, ~/.a11y-508/repos/<name>-<hash>/report;
+                           elsewhere ./a11y-508-report)
   --viewport <WxH>         Viewport size (default 1280x800)
   --timeout <ms>           Page load timeout (default 30000)
   --settle <ms>            Extra wait after load for scripts to render (default 500)
@@ -163,7 +165,7 @@ a11y-508 status                          # what is open, pending, verified, need
 
 ### The fix loop
 
-`a11y-508 loop` turns the crawl into an unattended fix cycle driven by an AI coding assistant of your choice. Each round it crawls, diffs the findings against the last round, has the assistant judge the review items and fix the open violations one at a time, gates every fix with your own build or test command, commits and pushes what survives, waits for the deployment, and crawls again. It keeps going until nothing is open or you press Ctrl+C, and a stopped loop resumes where it was because all state is in `a11y-508-work/ledger.json`. [How the cycle works](#the-fix-loops-cycle) is drawn below.
+`a11y-508 loop` turns the crawl into an unattended fix cycle driven by an AI coding assistant of your choice. Each round it crawls, diffs the findings against the last round, has the assistant judge the review items and fix the open violations one at a time, gates every fix with your own build or test command, commits and pushes what survives, waits for the deployment, and crawls again. It keeps going until nothing is open or you press Ctrl+C, and a stopped loop resumes where it was because all state is in its ledger, kept outside the repository (see [Where the tool keeps its files](#where-the-tool-keeps-its-files)). [How the cycle works](#the-fix-loops-cycle) is drawn below.
 
 `--resume` goes on with the ledger's last round where an interruption left it: its open findings are fixed with no new crawl, and the next round crawls. The dashboard's **Continue** uses it.
 
@@ -204,11 +206,11 @@ Put `a11y-508.config.json` in the repository to fix (the dashboard's Fix loop sc
 | `checkTimeout` | How long one run of the check may take before it and everything it started are ended and the fix reverted, in milliseconds (default 20 minutes). |
 | `quietAfter` | How long the assistant may print nothing before the dashboard says it is still being waited on, in milliseconds (default 30000). |
 
-What the assistant gets: one prompt per task (findings with the same test and the same message, its element-specific parts set aside, are one task listing every element; the check and the commit run once for them), written to a file under `a11y-508-work/`, with the finding's test condition, message, pages, selector and rendered HTML, the folders it may edit, the folders it must not touch, and the path of the JSON result file it has to write. It never sees the token, the session file, or the report as a whole, and the token is stripped from its environment. A finding that is still present after `maxAttempts` fixes, or whose fix fails the gate that many times, is marked needs-human and dropped from the loop so one stubborn issue cannot keep it running. Review items the assistant calls "unsure" go to needs-human as well.
+What the assistant gets: one prompt per task (findings with the same test and the same message, its element-specific parts set aside, are one task listing every element; the check and the commit run once for them), written to a file in the work folder's `tasks/`, with the finding's test condition, message, pages, selector and rendered HTML, the folders it may edit, and the path of the JSON result file it has to write (also in `tasks/`, the one folder of the tool's the presets give the assistant access to). The prompt names no path of the tool's inside the repository and says: "Everything you need is in this prompt. Do not read, search or edit anything outside the source folders listed above; in particular leave the tool's own folders alone." The dashboard's output pane shows the state base as `~/.a11y-508/…`. It never sees the token, the session file, or the report as a whole, and the token is stripped from its environment. A finding that is still present after `maxAttempts` fixes, or whose fix fails the gate that many times, is marked needs-human and dropped from the loop so one stubborn issue cannot keep it running. Review items the assistant calls "unsure" go to needs-human as well.
 
-The loop refuses to start on a repository with uncommitted changes under `source`, so its commits only ever contain its own work. Each round's crawl output is kept in `a11y-508-work/round-N/`; add `a11y-508-work/` to `.gitignore`.
+The loop refuses to start on a repository with uncommitted changes under `source`, so its commits only ever contain its own work. Each round's crawl output is kept in the work folder's `round-N/`.
 
-Each assistant call leaves `a11y-508-work/agent-r<round>-<task>.log` beside its prompt and result: a header line (exit code, time-out, quota) and the tail of its output. A call that writes no result and whose output names a quota or rate limit (HTTP 429, `RESOURCE_EXHAUSTED`, "quota", "rate limit") is run again after 30 seconds and then 90 seconds before it counts as a failed attempt; free tiers limit requests per minute. With `"agent": "gemini"` the loop sets `GEMINI_CLI_TRUST_WORKSPACE=true` for the assistant (Gemini CLI will not run headless in a folder it has not been told to trust) and hands it the prompt on stdin, because Gemini CLI's file reader refuses files that `.gitignore` lists, `a11y-508-work/` among them.
+Each assistant call leaves `agent-r<round>-<task>.log` in the work folder: a header line (exit code, time-out, quota) and the tail of its output. A call that writes no result and whose output names a quota or rate limit (HTTP 429, `RESOURCE_EXHAUSTED`, "quota", "rate limit") is run again after 30 seconds and then 90 seconds before it counts as a failed attempt; free tiers limit requests per minute. With `"agent": "gemini"` the loop sets `GEMINI_CLI_TRUST_WORKSPACE=true` for the assistant (Gemini CLI will not run headless in a folder it has not been told to trust) and hands it the prompt on stdin.
 
 ### In CI and other repositories
 
@@ -228,11 +230,13 @@ In the consuming repository's `package.json`:
 }
 ```
 
-Add `a11y-508-report/` to `.gitignore`. Then:
+Then:
 
 ```bash
 TOKEN=<token> npm run e2e:a11y-508 https://staging.example.gov
 ```
+
+Inside a git repository the report goes to the tool's own folder for it, outside the repository; the `report:` line names it. In CI, where the job publishes the report, give it a folder in the workspace with `--out` (and add that folder to `.gitignore`): `npm run e2e:a11y-508 https://staging.example.gov -- --out a11y-508-report`.
 
 npm passes the URL through to the script. Options that start with `--` need the usual npm separator: `npm run e2e:a11y-508 https://site -- --max-pages 50`.
 
@@ -252,18 +256,18 @@ Paste this into Claude Code, Copilot, Cursor, or similar when working in the rep
 >
 > 1. Vendor the tool with `git subtree add --prefix tools/a11y-508 https://github.com/AiFirstDevelopment/a11y-508.git main --squash`. If subtree or network access is unavailable, copy the `bin/` and `src/` directories plus `README.md` and `LICENSE` from that repository into `tools/a11y-508/`. Do not add it as an npm dependency and do not run `npm install` for it; it has no dependencies.
 > 2. Add the script `"e2e:a11y-508": "node tools/a11y-508/bin/a11y-508.mjs"` to `package.json`. If this repository already has an `e2e:` script naming convention, keep this name anyway; it is what the team's CI expects.
-> 3. Add `a11y-508-report/` to `.gitignore`.
+> 3. Add `a11y-508-report/` to `.gitignore` (the CI job below writes there with `--out`; a run without `--out` keeps its report outside the repository).
 > 4. The tool reads the environment variable `TOKEN` and sends it as `Authorization: Bearer <TOKEN>` on same-origin requests only. Do not hard-code a token anywhere. If this project's local dev server needs a different header name, use `--token-header <name>`.
-> 5. Verify by running `npm run e2e:a11y-508 http://localhost:<port>` against the running dev server (set `TOKEN` if the server requires it) and confirm `a11y-508-report/report.html` is produced. The command exits 1 when critical or serious violations exist, which is expected on a first run; do not change `--fail-on` to make it pass.
-> 6. Optionally add a CI job that runs the same command against the deployed preview/staging URL with `TOKEN` supplied from the CI secret store, and publishes `a11y-508-report/` as a build artifact.
+> 5. Verify by running `npm run e2e:a11y-508 http://localhost:<port>` against the running dev server (set `TOKEN` if the server requires it) and confirm the `report:` line it prints names a `report.html` that exists. The command exits 1 when critical or serious violations exist, which is expected on a first run; do not change `--fail-on` to make it pass.
+> 6. Optionally add a CI job that runs the same command with `-- --out a11y-508-report` against the deployed preview/staging URL, with `TOKEN` supplied from the CI secret store, and publishes `a11y-508-report/` as a build artifact.
 >
 > The tool needs Node 18+ and a Chrome, Chromium, or Edge binary on the machine (`CHROME_PATH` if it is not in a standard location). It does not download a browser.
 
 #### The loop, end to end in CI
 
-`.github/workflows/loop-gemini.yml` proves the whole product on Windows: it crawls a small app with planted Section 508 violations, lets the loop repair them with Gemini CLI's free tier (`gemini-flash-lite-latest` by default, through `GEMINI_MODEL`; `gemini-2.5-flash` is no longer offered to new keys, `gemini-3.8-flash`'s free daily quota runs out after a few calls, and a manual run can choose another model), and confirms the repairs with the next crawl. The app is `test/loop-app/`: four pages (a home page with images, a contact form, an opening-hours table, a gallery with a modal viewer) and a stylesheet, with about ten violations marked by HTML comments (missing alt, an unlabelled field, low-contrast CSS, a page without `lang`, the same link text for two destinations, a page with no skip link, main or heading, a fieldset without a legend, an icon-only button, `scope="column"`, `aria-labeledby`). Before the loop, one direct `gemini -p` call with a 90-second limit shows whether Gemini answers at all: a quota refusal there makes the run SKIPPED, anything else fails it at once. The loop's config gives each assistant call three minutes and triages in batches of eight; `a11y-508-work/agent-calls.log` has a line when each call starts and ends. The job makes a throwaway git repository holding the app, runs `a11y-508 loop --max-rounds 2` against it with the gate `node check.mjs` (every page still parses and is still served), then `a11y-508 status`, and `test/loop-app/verify.mjs` asserts that round 1 recorded at least ten findings, that round 2 verified at least one fix, that the loop committed, that no commit touched anything outside `site/`, and that the gate ran for every fix. It does not assert how many fixes the model makes. A run in which every assistant call was refused for quota is reported as SKIPPED, not failed. The work directory (ledger, prompts, results, agent logs, round reports, the git log) is uploaded as the `loop-gemini-work` artifact.
+`.github/workflows/loop-gemini.yml` proves the whole product on Windows: it crawls a small app with planted Section 508 violations, lets the loop repair them with Gemini CLI's free tier (`gemini-flash-lite-latest` by default, through `GEMINI_MODEL`; `gemini-2.5-flash` is no longer offered to new keys, `gemini-3.8-flash`'s free daily quota runs out after a few calls, and a manual run can choose another model), and confirms the repairs with the next crawl. The app is `test/loop-app/`: four pages (a home page with images, a contact form, an opening-hours table, a gallery with a modal viewer) and a stylesheet, with about ten violations marked by HTML comments (missing alt, an unlabelled field, low-contrast CSS, a page without `lang`, the same link text for two destinations, a page with no skip link, main or heading, a fieldset without a legend, an icon-only button, `scope="column"`, `aria-labeledby`). Before the loop, one direct `gemini -p` call with a 90-second limit shows whether Gemini answers at all: a quota refusal there makes the run SKIPPED, anything else fails it at once. The loop's config gives each assistant call three minutes and triages in batches of eight; the work folder's `agent-calls.log` has a line when each call starts and ends. The job makes a throwaway git repository holding the app, runs `a11y-508 loop --max-rounds 2` against it with the gate `node check.mjs` (every page still parses and is still served), then `a11y-508 status`, and `test/loop-app/verify.mjs` asserts that round 1 recorded at least ten findings, that round 2 verified at least one fix, that the loop committed, that no commit touched anything outside `site/`, and that the gate ran for every fix. It does not assert how many fixes the model makes. A run in which every assistant call was refused for quota is reported as SKIPPED, not failed. The job keeps the tool's files under `A11Y_508_HOME` in the runner's temp folder; that folder (the work folder's ledger, prompts, results, agent logs, round reports, the git log) is uploaded as the `loop-gemini-work` artifact.
 
-It needs the repository secret `GEMINI_API_KEY`, a Google AI Studio key (the free tier is enough); without it the job says so and stops green. It runs on pull requests that change `src/loop.mjs`, `src/agent.mjs`, `src/ledger.mjs`, `test/loop-app/` or the workflow, and by hand (`gh workflow run loop-gemini.yml --ref <branch>`); it is not a required check.
+It needs the repository secret `GEMINI_API_KEY`, a Google AI Studio key (the free tier is enough); without it the job says so and stops green. It runs on pull requests that change `src/loop.mjs`, `src/agent.mjs`, `src/ledger.mjs`, `src/home.mjs`, `test/loop-app/` or the workflow, and by hand (`gh workflow run loop-gemini.yml --ref <branch>`); it is not a required check.
 
 To run the same thing by hand, with Gemini CLI or Claude Code installed and signed in:
 
@@ -278,6 +282,10 @@ node ../a11y-508/test/loop-app/verify.mjs .
 ```
 
 ## How it works
+
+### Where the tool keeps its files
+
+Nothing of the tool's lives in the app's repository. For each repository folder it keeps one folder under its state base (`~/.a11y-508`, `%APPDATA%\a11y-508` on Windows, `A11Y_508_HOME` if set): `repos/<folder name>-<6 hex of a hash of the folder's absolute path>/`, for example `~/.a11y-508/repos/cargo-traceability-ui-3f9a2c/`, holding `report/` (the latest crawl), `history/` (the dashboard's earlier crawls) and `work/` (the fix loop's `ledger.json`, its `round-N/` crawls, `tasks/` with the prompts and result files, the agent logs and the dashboard's `runs/` journal). The CLI (`a11y-508 loop`, `a11y-508 status`, and a crawl's default `--out` inside a git repository) and the dashboard use the same mapping (`src/home.mjs`), so both see the same ledger and reports; `a11y-508 status` prints the folder, and a crawl prints its `report:` path. On first use the old `a11y-508-work/`, `a11y-508-report/` and `a11y-508-history/` folders found directly in the repository (not links, not tracked by git) are moved there, with the lines the dashboard had added to `.git/info/exclude`; when the destination already has one, the repository's copy is set aside as `work-old` (or `report-old`, `history-old`) next to it, and the move is reported. An explicit `--out` writes where it says, as before.
 
 ### The crawl
 
@@ -310,7 +318,7 @@ The in-page checks are one JavaScript bundle (`src/checks/browser/*.js`) evaluat
 
 ```mermaid
 flowchart LR
-  A[Crawl the site<br/>a11y-508-work/round-N/] --> B[Ledger diff<br/>new, still open, verified, gone, came back]
+  A[Crawl the site<br/>work/round-N/] --> B[Ledger diff<br/>new, still open, verified, gone, came back]
   B --> C[Triage review items<br/>assistant answers adequate / open / unsure]
   C --> D[Fix one open finding<br/>prompt file: condition, element, HTML,<br/>folders it may edit, result file to write]
   D --> G{Gate: your build<br/>or test command}
@@ -322,7 +330,7 @@ flowchart LR
   W --> A
 ```
 
-Statuses in `a11y-508-work/ledger.json`: `review` (awaiting triage), `adequate` (triage closed it), `open` (to be fixed), `pending` (fixed, waiting for the next crawl to confirm), `verified` (confirmed gone after a fix), `gone` (disappeared without a fix), `needs-human` (the loop gave up: `maxAttempts` reached, the gate kept failing, or triage said unsure), `wont-fix` (set by a person). `a11y-508 status` prints them.
+Statuses in the work folder's `ledger.json`: `review` (awaiting triage), `adequate` (triage closed it), `open` (to be fixed), `pending` (fixed, waiting for the next crawl to confirm), `verified` (confirmed gone after a fix), `gone` (disappeared without a fix), `needs-human` (the loop gave up: `maxAttempts` reached, the gate kept failing, or triage said unsure), `wont-fix` (set by a person). `a11y-508 status` prints them.
 
 ### The dashboard's parts
 
@@ -331,7 +339,7 @@ flowchart LR
   B[Browser<br/>Angular app, ngx-charts] -- "REST + server-sent events<br/>127.0.0.1 only, per-launch secret" --> S[Local server<br/>ui/server, Node's own modules only]
   S -- "spawns node bin/a11y-508.mjs … --events<br/>TOKEN in the child's environment only" --> C[The CLI]
   C -- "one JSON event per line" --> S
-  C --> R[(a11y-508-report/<br/>a11y-508-history/<br/>a11y-508-work/<br/>a11y-508-state.json)]
+  C --> R[(~/.a11y-508/repos/name-hash/<br/>report/ history/ work/)]
   S -- "reads reports, screenshots, ledger, config" --> R
   S -- "detects, installs, tests" --> G[claude / gemini / codex CLIs]
 ```
@@ -527,7 +535,7 @@ The rule set is informed by axe-core (MPL-2.0) and IBM Equal Access (Apache-2.0)
 
 ## Reading the report
 
-`a11y-508-report/` contains:
+The report folder (the `report:` line names it; `--out` sets it) contains:
 
 - `report.html`: everything, filterable by level, impact, page, and text. Each finding shows the test condition, the element's selector and HTML, a screenshot, and any supporting data. The manual checklist and the page table are at the bottom.
 - `report.json`: the same data for tooling. Top-level `summary` has counts by test and by impact; `pages[].findings[]` and `site.findings[]` hold the items. A finding inside a same-origin frame has `frame`; a page with content the checks could not read has `coverageNotes` and `unaudited` (`closedShadow`, `crossOriginFrames`, `deepFrames`), and one with audited frames has `passes.frames`. `passes.keyboardModal` is the keyboard pass inside a modal shown on load, and `passes.axNames` counts the "no name" findings looked up in Chrome's accessibility tree (`candidates`, `checked`, `named`).
@@ -580,11 +588,11 @@ Start with `--max-pages 25` so a first run finishes in a few minutes; drop it on
 - It talks about a network error (VPN, proxy, DNS): stop and report; this is not something to fix in code.
 - It says `Authentication is working` but the crawl still failed: paste both outputs and ask the person.
 
-**Never**: edit files under `<TOOL>`; commit `a11y-508-state.json` or `a11y-508-report/` (add both to `.gitignore` if missing); write a token into any file; change `--fail-on`; retry blindly with guessed flags.
+**Never**: edit files under `<TOOL>`; commit `a11y-508-state.json` or a report folder written with `--out` (add both to `.gitignore` if missing); read, search or edit the tool's own folders under `~/.a11y-508` (the ledger, prompts, logs); write a token into any file; change `--fail-on`; retry blindly with guessed flags.
 
 **When you report back**, include the exact commands you ran, the `pages:` line, any `coverage warning` lines, the exit code, the report path, and the troubleshoot output if you ran it.
 
-**If asked to set up or run the fix loop:** create `a11y-508.config.json` as shown under "The fix loop" with the project's real build/test command in `check`, the folder that holds the app's source in `source`, and `agent` set to the assistant the person names. Ask which branch to commit on and how deployments happen (a command, a push that triggers a pipeline, or by hand) and set `branch` and `deployed` accordingly; do not guess. Run `a11y-508 loop --dry-run` first and report the ledger summary, then `a11y-508 loop` only when the person says to. Never edit `a11y-508-work/ledger.json` by hand.
+**If asked to set up or run the fix loop:** create `a11y-508.config.json` as shown under "The fix loop" with the project's real build/test command in `check`, the folder that holds the app's source in `source`, and `agent` set to the assistant the person names. Ask which branch to commit on and how deployments happen (a command, a push that triggers a pipeline, or by hand) and set `branch` and `deployed` accordingly; do not guess. Run `a11y-508 loop --dry-run` first and report the ledger summary, then `a11y-508 loop` only when the person says to. Never edit the ledger by hand; `a11y-508 status` reads it and prints where the tool keeps its files.
 
 ## Development
 

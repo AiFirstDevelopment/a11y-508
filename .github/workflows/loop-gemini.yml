@@ -103,6 +103,8 @@ jobs:
         working-directory: ${{ runner.temp }}\loop-repo
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # The tool keeps its files (the ledger, prompts, logs) outside the repository, under this base.
+          A11Y_508_HOME: ${{ runner.temp }}\a11y-508-home
         run: |
           unset TOKEN
           node server.mjs --port 4321 --stoppable > "$RUNNER_TEMP/server.log" 2>&1 &
@@ -113,18 +115,23 @@ jobs:
           echo "loop exit code $?"
           echo
           node "$GITHUB_WORKSPACE/bin/a11y-508.mjs" status
-          git log --stat --format='--- %h %s' > a11y-508-work/git-log.txt
-          cp a11y-508-gate.log a11y-508-work/ 2>/dev/null
-          cp "$RUNNER_TEMP/preflight.txt" a11y-508-work/ 2>/dev/null
+          work=$(ls -d "$A11Y_508_HOME"/repos/*/work 2>/dev/null | head -1)
+          if [ -n "$work" ]; then
+            git log --stat --format='--- %h %s' > "$work/git-log.txt"
+            cp a11y-508-gate.log "$work/" 2>/dev/null
+            cp "$RUNNER_TEMP/preflight.txt" "$work/" 2>/dev/null
+          fi
           curl -s http://127.0.0.1:4321/__stop > /dev/null
           exit 0
       - name: Check the outcome
         if: steps.preflight.outputs.state == 'ok'
+        env:
+          A11Y_508_HOME: ${{ runner.temp }}\a11y-508-home
         run: node test/loop-app/verify.mjs "$RUNNER_TEMP/loop-repo" --rounds 2
       - name: Upload the loop's work directory
         if: always() && steps.preflight.outputs.state == 'ok'
         uses: actions/upload-artifact@v4
         with:
           name: loop-gemini-work
-          path: ${{ runner.temp }}\loop-repo\a11y-508-work
+          path: ${{ runner.temp }}\a11y-508-home
           if-no-files-found: warn

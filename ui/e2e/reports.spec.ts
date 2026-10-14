@@ -16,6 +16,20 @@ test.afterEach(async () => {
   site.close();
 });
 
+test('tool-files AC1/guard 4: a crawl from the dashboard: the Report screen shows it, and the repository folder holds nothing of the tool\'s', async ({ page }) => {
+  await open(page, dash, '/run');
+  await fillRun(page, { url: site.base + 'about.html', token: TOKEN, maxPages: 1, advanced: { 'no-interact': true, 'no-zoom': true, 'no-screenshots': true } });
+  await startFromRun(page);
+  await waitFinished(page);
+  // The Report screen shows the crawl that just finished.
+  await nav(page, 'Report');
+  await expect(page.getByTestId('result-line')).toBeVisible();
+  await expect(page.getByText(site.base + 'about.html', { exact: false }).first()).toBeVisible();
+  // ... while the repository folder holds nothing of the tool's: the report is in the tool's own folder.
+  for (const d of ['a11y-508-report', 'a11y-508-history', 'a11y-508-work']) expect(existsSync(join(dash.cwd, d)), `${d} in the repository folder`).toBe(false);
+  expect(readReport(dash.cwd).baseUrl).toBe(site.base + 'about.html');
+});
+
 test('AC 6: a pass with coverage warnings reads "PASS on N pages, but coverage is incomplete", never a plain PASS', async ({ page }) => {
   await open(page, dash, '/run');
   await fillRun(page, { url: site.base + 'submit', token: TOKEN, advanced: { 'no-interact': true, 'no-zoom': true, 'no-screenshots': true } });
@@ -35,7 +49,7 @@ test('AC 6: a pass with coverage warnings reads "PASS on N pages, but coverage i
   await expect(page.locator('#crawl-progress-label')).toHaveText(/PASS, coverage incomplete$/);
 });
 
-test('AC 15: History lists both crawls and the loop rounds; each opens on the Report screen; a11y-508-report holds only the latest', async ({ page }) => {
+test('AC 15: History lists both crawls and the loop rounds; each opens on the Report screen; the report folder holds only the latest', async ({ page }) => {
   // A dry-run loop first, so there is a round to list beside the crawls.
   writeFileSync(join(dash.cwd, 'a11y-508.config.json'), JSON.stringify({ url: site.base + 'about.html', args: ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots'] }));
   await open(page, dash, '/run');
@@ -51,7 +65,7 @@ test('AC 15: History lists both crawls and the loop rounds; each opens on the Re
     await fillRun(page, { url: site.base + path, token: TOKEN, maxPages: 1, advanced: { 'no-interact': true, 'no-zoom': true, 'no-screenshots': true } });
     await startFromRun(page);
     await waitFinished(page);
-    expect(existsSync(join(dash.cwd, 'a11y-508-report', 'report.json')), `a11y-508-report holds the crawl of ${path} that just finished`).toBe(true);
+    expect(existsSync(join(dash.dirs().report, 'report.json')), `the report folder holds the crawl of ${path} that just finished`).toBe(true);
     return readReport(dash.cwd);
   };
   const first = await crawl('about.html');
@@ -59,9 +73,9 @@ test('AC 15: History lists both crawls and the loop rounds; each opens on the Re
   // The latest stays where the runbook says; the earlier one moved to history.
   expect(readReport(dash.cwd).finishedAt).toBe(second.finishedAt);
   expect(readReport(dash.cwd).baseUrl).toBe(site.base + 'tables.html');
-  const hist = readdirSync(join(dash.cwd, 'a11y-508-history'));
+  const hist = readdirSync(dash.dirs().history);
   expect(hist).toEqual([first.finishedAt.replace(/:/g, '-')]);
-  expect(existsSync(join(dash.cwd, 'a11y-508-history', hist[0], 'report.json'))).toBe(true);
+  expect(existsSync(join(dash.dirs().history, hist[0], 'report.json'))).toBe(true);
 
   await nav(page, 'History');
   const rows = page.getByTestId('history').locator('tbody tr');
@@ -94,8 +108,8 @@ test('AC 15: History lists both crawls and the loop rounds; each opens on the Re
     // A history report's heading names its time in local time, not ISO.
     if (i === 1) {
       await expect(page.locator('h1')).not.toHaveText(/\d{4}-\d\d-\d\dT/);
-      const hist = readdirSync(join(dash.cwd, 'a11y-508-history'));
-      const fin = JSON.parse(readFileSync(join(dash.cwd, 'a11y-508-history', hist[0], 'report.json'), 'utf8')).finishedAt;
+      const hist = readdirSync(dash.dirs().history);
+      const fin = JSON.parse(readFileSync(join(dash.dirs().history, hist[0], 'report.json'), 'utf8')).finishedAt;
       const local = await page.evaluate((a) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(a)), fin);
       await expect(page.locator('h1')).toHaveText(`Report from ${local}`);
     }
@@ -115,9 +129,9 @@ test('AC 15: History lists both crawls and the loop rounds; each opens on the Re
   });
   await page.getByRole('button', { name: 'Clear history' }).click();
   await expect(page.getByTestId('history-status')).toHaveText('Removed 1 earlier report.');
-  expect(asked).toContain('Remove 1 earlier report from a11y-508-history');
+  expect(asked).toContain('Remove 1 earlier report from History?');
   await expect(rows.and(page.locator('[data-source="history"]'))).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Clear history' })).toHaveCount(0);
-  expect(readdirSync(join(dash.cwd, 'a11y-508-history'))).toEqual([]);
-  expect(existsSync(join(dash.cwd, 'a11y-508-report', 'report.json'))).toBe(true);
+  expect(readdirSync(dash.dirs().history)).toEqual([]);
+  expect(existsSync(join(dash.dirs().report, 'report.json'))).toBe(true);
 });

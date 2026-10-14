@@ -35,7 +35,7 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     await wait('dry-run');
     // The Needs a person screen with cards on it: the dry run's first finding needs a person, and a
     // page-level one a person has decided (docs/plans/needs-a-person.md AC 7).
-    const ledgerFile = join(dash.cwd, 'a11y-508-work', 'ledger.json');
+    const ledgerFile = join(dash.dirs().work, 'ledger.json');
     const ledger = JSON.parse(readFileSync(ledgerFile, 'utf8'));
     const first = Object.values<any>(ledger.findings)[0];
     first.status = 'needs-human';

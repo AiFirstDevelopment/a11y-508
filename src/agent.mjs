@@ -5,16 +5,18 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { streamDecoder } from './agent-stream.mjs';
 import { personNote } from './ledger.mjs';
 
-// Gemini CLI gets the prompt on stdin rather than by path: its read_file tool refuses files that
-// .gitignore lists, and a11y-508-work/ (where the prompts are) belongs in .gitignore. It joins
-// stdin and -p into one prompt.
+// The prompt and result files are in the tool's tasks folder under the state base, outside the
+// repository the assistant works in: each preset is given that one folder ({tasksDir}) besides the
+// repository, so it can read the prompt and write the result, and nothing else of the tool's.
+// Gemini CLI gets the prompt on stdin rather than by path; it joins stdin and -p into one prompt.
 export const PRESETS = {
-  claude: 'claude -p --permission-mode acceptEdits --output-format stream-json --verbose "Read the file {promptFile} and do exactly what it says."',
-  gemini: 'gemini --approval-mode auto_edit -p "Do exactly what the instructions above say." --output-format stream-json < "{promptFile}"',
-  codex: 'codex exec --full-auto "Read the file {promptFile} and do exactly what it says."',
+  claude: 'claude -p --permission-mode acceptEdits --add-dir "{tasksDir}" --output-format stream-json --verbose "Read the file {promptFile} and do exactly what it says."',
+  gemini: 'gemini --approval-mode auto_edit --include-directories "{tasksDir}" -p "Do exactly what the instructions above say." --output-format stream-json < "{promptFile}"',
+  codex: 'codex exec --full-auto --add-dir "{tasksDir}" "Read the file {promptFile} and do exactly what it says."',
 };
 
 // What each preset is called on screen and the executable it runs.
@@ -62,7 +64,7 @@ export function runnableCommand({ name, exePath = null, promptFile, shell = 'sh'
     stdin = promptFile;
     rest = rest.slice(0, m.index);
   }
-  rest = rest.split('{promptFile}').join(promptFile);
+  rest = rest.split('{promptFile}').join(promptFile).split('{tasksDir}').join(dirname(promptFile));
   const env = agentEnvFor(`"${exe}"`, {}).GEMINI_CLI_TRUST_WORKSPACE ? [['GEMINI_CLI_TRUST_WORKSPACE', 'true']] : [];
   if (k === 'powershell') {
     const call = `${/[\s'"]/.test(exe) ? `& ${quote(exe)}` : exe}${rest}`;
@@ -240,11 +242,11 @@ export function agentEnvFor(command, env = agentEnv()) {
 // onOutput(stream, text), when given, sees the assistant's output as it arrives.
 // onWait({ delayMs, attempt, attempts }), when given, is told before each wait for a quota retry.
 // doneLine words a streaming assistant's closing line (see streamDecoder).
-export async function runAgent({ command, promptFile, resultFile, cwd, timeout = 15 * 60 * 1000, env = agentEnvFor(command), quotaDelays = QUOTA_DELAYS, onOutput = null, onWait = null, doneLine = null }) {
+export async function runAgent({ command, promptFile, resultFile, cwd, tasksDir = dirname(promptFile), timeout = 15 * 60 * 1000, env = agentEnvFor(command), quotaDelays = QUOTA_DELAYS, onOutput = null, onWait = null, doneLine = null }) {
   const t0 = Date.now();
   let quotaRetries = 0;
   for (;;) {
-    const r = await runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env, onOutput, doneLine });
+    const r = await runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, timeout, env, onOutput, doneLine });
     // A call that ran out its time while the assistant backed off on its own counts as refused for
     // quota too, but is not run again: it has already spent its time.
     // The refusal may arrive inside a stream's JSON events: their decoded words are searched too.
@@ -260,8 +262,8 @@ export async function runAgent({ command, promptFile, resultFile, cwd, timeout =
   }
 }
 
-async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env, onOutput, doneLine }) {
-  const cmd = command.split('{promptFile}').join(promptFile).split('{resultFile}').join(resultFile);
+async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, timeout, env, onOutput, doneLine }) {
+  const cmd = command.split('{promptFile}').join(promptFile).split('{resultFile}').join(resultFile).split('{tasksDir}').join(tasksDir);
   if (existsSync(resultFile)) rmSync(resultFile, { force: true });
   const child = spawn(cmd, { cwd, shell: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
@@ -310,7 +312,7 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, timeout, env
   return { code, timedOut, result, stdout, stderr, text: decoder.text };
 }
 
-// What one agent call left behind, for a11y-508-work/: a JSON header line, then the tail of its
+// What one agent call left behind, for the work folder: a JSON header line, then the tail of its
 // output. Never the environment or the token (the prompt and the agent never had it).
 export function agentLog(res) {
   const head = { code: res.code, timedOut: !!res.timedOut, quota: !!res.quota, quotaRetries: res.quotaRetries || 0, result: !!res.result, durationMs: res.durationMs };
@@ -320,6 +322,9 @@ export function agentLog(res) {
 const block = (obj) => '```json\n' + JSON.stringify(obj, null, 2) + '\n```';
 
 // group: the findings that are the same problem on different elements (finding among them), fixed as one task.
+// What keeps the assistant on the app's source and off the tool's own bookkeeping.
+export const FOCUS = "Everything you need is in this prompt. Do not read, search or edit anything outside the source folders listed above; in particular leave the tool's own folders alone.";
+
 export function fixPrompt({ finding, group = null, sourceDirs, protectedDirs, resultFile, condition }) {
   const prior = finding.attempts.filter((a) => a.outcome && a.outcome !== 'pending');
   const many = Array.isArray(group) && group.length > 1 ? group : null;
@@ -329,7 +334,8 @@ export function fixPrompt({ finding, group = null, sourceDirs, protectedDirs, re
 You are working in this repository. Fix the finding below by editing the application's source files. Rules:
 
 - Edit only files under: ${sourceDirs.join(', ')}.
-- Never edit anything under: ${protectedDirs.join(', ')}. Do not edit tests to make them pass, do not add or remove dependencies, do not commit, and do not run the accessibility crawler.
+- ${protectedDirs && protectedDirs.length ? `Never edit anything under: ${protectedDirs.join(', ')}. ` : ''}Do not edit tests to make them pass, do not add or remove dependencies, do not commit, and do not run the accessibility crawler.
+- ${FOCUS}
 - Make the smallest change that resolves this finding everywhere it appears. The same element is often rendered by one component or template used on many pages.
 - Do not change the page's behavior or visual design beyond what the fix requires.
 - If you cannot locate the element, or the fix needs a decision only a person can make (for example what an image depicts), make no change and say so in the result.
@@ -370,6 +376,8 @@ export function triagePrompt({ items, resultFile }) {
   return `# Judge accessibility review items
 
 An automated Section 508 crawl escalated the items below because it could not decide them on its own. For each one, decide whether the current content is adequate for people using assistive technology. Do not edit any file.
+
+Everything you need is in this prompt. Do not read, search or edit anything other than the result file named below; in particular leave the tool's own folders alone.
 
 - "adequate": the content meets the test condition as it is.
 - "inadequate": it does not; it needs a fix.

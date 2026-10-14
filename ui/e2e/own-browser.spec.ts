@@ -6,7 +6,7 @@ import { test, expect, chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { MAIN, fixtureSite, stopTree, tempDir, removeTemp } from './harness';
+import { MAIN, dirsOf, fixtureSite, stopTree, tempDir, removeTemp } from './harness';
 
 test('own browser: the dashboard opens in Chrome of its own, and a crawl runs as a tab in that window', async () => {
   const site = await fixtureSite({ autoLogin: true });
@@ -51,7 +51,7 @@ test('own browser: the dashboard opens in Chrome of its own, and a crawl runs as
     // Done: the tab is closed, the dashboard's stays and moves on to Results.
     await expect(dash).toHaveURL(/\/report$/, { timeout: 180_000 });
     await expect.poll(() => context.pages().length, { timeout: 30_000 }).toBe(pagesBefore);
-    const report = JSON.parse(readFileSync(join(cwd, 'a11y-508-report', 'report.json'), 'utf8'));
+    const report = JSON.parse(readFileSync(join(dirsOf(cwd, home).report, 'report.json'), 'utf8'));
     expect(report.options.connected).toBe(true);
     expect(report.pages[0].finalUrl).toBe(site.base + 'app.html');
     expect(report.pages[0].error).toBeNull();

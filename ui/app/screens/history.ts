@@ -22,7 +22,7 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
   imports: [RouterLink, ChartPanel, BarChartModule, NeedsPersonLink, ChangesTable],
   template: `
     <h1>History</h1>
-    <p>Every crawl and every round of the fix loop, newest first. The latest crawl stays in a11y-508-report/; earlier ones move to a11y-508-history/; the loop's rounds are in a11y-508-work/.</p>
+    <p>Every crawl and every round of the fix loop, newest first. They are kept outside the app's repository, in the tool's own folder for it (~/.a11y-508/repos/…: report/, history/, work/; <code>a11y-508 status</code> prints where).</p>
     @if (error()) {
       <div class="notice error" role="alert">{{ error() }}</div>
     }
@@ -130,7 +130,7 @@ export class HistoryScreen {
   private loads = 0;
   readonly error = signal('');
   readonly status = signal('');
-  // The reports in a11y-508-history/, which Clear history and Delete remove.
+  // The earlier reports (history/), which Clear history and Delete remove.
   readonly earlier = computed(() => this.list().filter((r) => r.source === 'history'));
   // The start URL for Run again: the latest crawl's, else the loop config's.
   private configUrl = signal('');
@@ -174,13 +174,13 @@ export class HistoryScreen {
 
   async clear(): Promise<void> {
     const n = this.earlier().length;
-    if (!confirm(`Remove ${n} earlier report${n === 1 ? '' : 's'} from a11y-508-history? The latest report and the loop's rounds stay. This cannot be undone.`)) return;
+    if (!confirm(`Remove ${n} earlier report${n === 1 ? '' : 's'} from History? The latest report and the loop's rounds stay. This cannot be undone.`)) return;
     await this.del('/api/reports/history', (r) => `Removed ${r.removed} earlier report${r.removed === 1 ? '' : 's'}.`);
   }
 
   async clearLoop(): Promise<void> {
     const n = this.timeline()?.total.rounds || 0;
-    if (!confirm(`Remove the fix loop's ${n} round${n === 1 ? '' : 's'} and its ledger from a11y-508-work? The next loop starts from round 1. This cannot be undone.`)) return;
+    if (!confirm(`Remove the fix loop's ${n} round${n === 1 ? '' : 's'} and its ledger? The next loop starts from round 1. This cannot be undone.`)) return;
     await this.del('/api/loop/history', (r) => `Removed ${r.removed} fix-loop round${r.removed === 1 ? '' : 's'} and the ledger.`);
   }
 

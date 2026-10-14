@@ -8,8 +8,24 @@ import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { BadRequest } from './args.mjs';
+import { repoHome } from '../../src/home.mjs';
 
 export const CONFIG_FILE = 'a11y-508.config.json';
+
+const home = (dir) => {
+  try {
+    return repoHome(dir);
+  } catch {
+    return { report: '', work: '' };
+  }
+};
+const exists = (...p) => {
+  try {
+    return !!p[0] && existsSync(join(...p));
+  } catch {
+    return false;
+  }
+};
 
 // What a directory holds, as five booleans.
 export function factsOf(dir) {
@@ -23,8 +39,9 @@ export function factsOf(dir) {
   return {
     git: has('.git'),
     config: has(CONFIG_FILE),
-    report: has('a11y-508-report', 'report.json'),
-    ledger: has('a11y-508-work', 'ledger.json'),
+    // The tool's own folder for it (or, before it was migrated, the old folders in it).
+    report: exists(home(dir).report, 'report.json') || has('a11y-508-report', 'report.json'),
+    ledger: exists(home(dir).work, 'ledger.json') || has('a11y-508-work', 'ledger.json'),
     session: has('a11y-508-state.json'),
     package: has('package.json'),
   };

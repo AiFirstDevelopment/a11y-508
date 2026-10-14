@@ -31,8 +31,9 @@ test('carry: a new folder with the same URL keeps the report and goes back to Re
     await start.click();
     await expect(page).toHaveURL(/\/report$/);
     expect((await api(dash, '/api/env')).json.cwd).toBe(b);
-    expect(readReport(b).finishedAt).toBe(finishedAt);
-    expect(existsSync(join(a, 'a11y-508-report')), 'moved, not copied: the old folder is a repository that does not track it').toBe(false);
+    expect(readReport(b, dash.home).finishedAt).toBe(finishedAt);
+    expect(existsSync(dash.dirs(a).report), 'moved, not copied').toBe(false);
+    for (const d of [a, b]) expect(existsSync(join(d, 'a11y-508-report')), `nothing of the tool's in ${d}`).toBe(false);
     await expect(page.getByTestId('result-line')).toBeVisible();
     // No run started.
     expect((await api(dash, '/api/runs/current')).json?.id ?? runId).toBe(runId);

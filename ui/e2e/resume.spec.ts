@@ -6,7 +6,7 @@ import { test, expect, chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { api, dashboard, fillRun, fixtureSite, gitRepo, open, removeTemp, run, startFromRun, stopTree, tempDir, BIN, MAIN, ROOT, TOKEN, type Dash, type Site } from './harness';
+import { api, dashboard, dirsOf, fillRun, fixtureSite, gitRepo, open, removeTemp, run, startFromRun, stopTree, tempDir, BIN, MAIN, ROOT, TOKEN, type Dash, type Site } from './harness';
 
 // "13 Oct 2026, 4:52 PM" is 20:52 UTC in New York.
 test.use({ timezoneId: 'America/New_York' });
@@ -124,7 +124,7 @@ test('resume AC1: Quit asks first while a run is active, then ends the dashboard
     const dialog = page.getByRole('dialog', { name: 'Quit while the crawl runs?' });
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText('Quitting ends the dashboard and stops the crawl.');
-    const runs = join(dash.cwd, 'a11y-508-work', 'runs');
+    const runs = join(dash.dirs().work, 'runs');
     const { readdirSync } = await import('node:fs');
     pid = JSON.parse(readFileSync(join(runs, readdirSync(runs).find((n) => n.endsWith('.run.json'))!), 'utf8')).pid;
     expect(alive(pid)).toBe(true);
@@ -202,7 +202,9 @@ test('resume AC5 / guards 5 and 6: an interrupted fix loop says where it stopped
     expect(readFileSync(join(cwd, 'site', 'index.html'), 'utf8')).not.toContain('half a fix');
     expect(existsSync(join(cwd, 'site', 'added.html'))).toBe(false);
     expect(readFileSync(join(cwd, 'NOTES.md'), 'utf8')).toBe('notes\nmy own edit\n');
-    const ledger = JSON.parse(readFileSync(join(cwd, 'a11y-508-work', 'ledger.json'), 'utf8'));
+    // The interrupted loop's ledger and run journal moved out of the repository when the dashboard started; Continue used them.
+    expect(existsSync(join(cwd, 'a11y-508-work'))).toBe(false);
+    const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
     expect(Object.values<any>(ledger.findings).flatMap((e) => e.attempts).find((a) => a.startedAt === '2026-10-13T20:52:00.000Z').outcome).toBe('interrupted');
     // The loop goes on from the ledger: round 1 again, with no crawl.
     await expect.poll(async () => (await api(dash, '/api/runs/current/events')).text, { timeout: 60_000 }).toContain('"resumed":true');
@@ -232,7 +234,11 @@ test('resume AC6 / guard 7: Start over names what it discards and asks first; a 
   f.attempts = [...Array.from({ length: 7 }, () => ({ round: 1, files: [], note: 'x', outcome: 'no-change' })), ...f.attempts];
   writeFileSync(lf, JSON.stringify(l));
   const home = tempDir('a11y-508-overhome-');
+  // Where the ledger is once the dashboard has moved the old-style folders out of the repository.
+  const seeded = lf;
+  const lfNow = join(dirsOf(cwd, home).work, 'ledger.json');
   let dash: Dash = await dashboard({ cwd, env: { A11Y_508_HOME: home } });
+  expect(existsSync(seeded)).toBe(false);
   try {
     await page.goto(`${dash.origin}/#secret=${dash.secret}`);
     await expect(page).toHaveURL(/\/fix-loop$/);
@@ -246,8 +252,8 @@ test('resume AC6 / guard 7: Start over names what it discards and asks first; a 
     await p2.goto(`${dash.origin}/#secret=${dash.secret}`);
     await expect(p2.getByTestId('interrupted-text')).toBeVisible();
     await fresh.close();
-    expect(existsSync(lf)).toBe(true);
-    expect(Object.values<any>(JSON.parse(readFileSync(lf, 'utf8')).findings).flatMap((e) => e.attempts).length).toBe(8);
+    expect(existsSync(lfNow)).toBe(true);
+    expect(Object.values<any>(JSON.parse(readFileSync(lfNow, 'utf8')).findings).flatMap((e) => e.attempts).length).toBe(8);
 
     // Start over, on Set up: the confirmation names what it discards.
     await open(page, dash, '/run');
@@ -257,13 +263,13 @@ test('resume AC6 / guard 7: Start over names what it discards and asks first; a 
     await expect(dialog.getByTestId('start-over-text')).toHaveText('This discards the report, the ledger with 8 attempts, and the history for this URL. The dashboard starts again at Set up.');
     // Cancel discards nothing.
     await dialog.getByRole('button', { name: 'Cancel' }).click();
-    expect(existsSync(lf)).toBe(true);
+    expect(existsSync(lfNow)).toBe(true);
     await page.getByTestId('start-over-line').getByRole('button', { name: 'Start over' }).click();
     await dialog.getByTestId('start-over-yes').click();
     await expect(dialog).toBeHidden();
-    await expect.poll(() => existsSync(lf)).toBe(false);
-    expect(existsSync(join(cwd, 'a11y-508-report', 'report.json'))).toBe(false);
-    expect(existsSync(join(cwd, 'a11y-508-history', '2026-10-12T10-00-00'))).toBe(false);
+    await expect.poll(() => existsSync(lfNow)).toBe(false);
+    expect(existsSync(join(dirsOf(cwd, home).report, 'report.json'))).toBe(false);
+    expect(existsSync(join(dirsOf(cwd, home).history, '2026-10-12T10-00-00'))).toBe(false);
     expect((await api(dash, '/api/settings')).json.lastStep ?? '/run').toBe('/run');
     // Opened again at its address: Set up.
     await page.goto(`${dash.origin}/#secret=${dash.secret}`);

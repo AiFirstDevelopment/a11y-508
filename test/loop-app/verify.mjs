@@ -18,11 +18,13 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { workDir } from '../../src/home.mjs';
 
 const dir = resolve(process.argv[2] || '.');
 const at = process.argv.indexOf('--rounds');
 const rounds = at > 0 ? Number(process.argv[at + 1]) : 2;
-const work = join(dir, 'a11y-508-work');
+// The loop's work folder: the tool's own folder for the repository, under the state base.
+const work = workDir(dir);
 const ledgerFile = join(work, 'ledger.json');
 const git = (...args) => (spawnSync('git', args, { cwd: dir, encoding: 'utf8' }).stdout || '').trim();
 

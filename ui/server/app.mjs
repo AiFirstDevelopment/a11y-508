@@ -10,7 +10,8 @@ import { tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import { findChrome } from '../../src/chrome.mjs';
 import { PRESETS, installRemedies, runAgent, agentEnv, agentEnvFor, runnableCommand } from '../../src/agent.mjs';
-import { loadConfig, normalizeConfig, summaryLine, WORK_DIR } from '../../src/loop.mjs';
+import { loadConfig, normalizeConfig, summaryLine } from '../../src/loop.mjs';
+import { migrateRepo, migrationLines, tasksDir } from '../../src/home.mjs';
 import { readable } from '../../src/agent-stream.mjs';
 import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine } from './args.mjs';
@@ -18,10 +19,10 @@ import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
 import { JOURNALED, LOOP_KINDS, discardInterrupted, interruptedDetails, latestRun, resolveRun, runsDir, startJournaled } from './run-journal.mjs';
 import { loopDefaults } from './loop-defaults.mjs';
-import { readGlobal, writeGlobal, paths as statePaths, excludeOutputs, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
+import { readGlobal, writeGlobal, paths as statePaths, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { matchSource } from './loop-match.mjs';
 import { recordDecision, reviewList } from './review.mjs';
-import { carryAnalysis, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, sameStartUrl, REPORT_DIR } from './reports.mjs';
+import { carryAnalysis, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, sameStartUrl, latestDir, ledgerPath } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
 
@@ -86,10 +87,14 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const r = spawnSync('git', ['ls-files', '--error-unmatch', REPO_CONFIG], { cwd, encoding: 'utf8', windowsHide: true });
     return r.status === 0;
   };
-  // On launch and on each switch: keep the outputs out of git, and move the dashboard's own
-  // marked files out of the repository.
+  // On launch and on each switch: move the tool's old in-repository folders to its own folder for
+  // the repository (src/home.mjs), and the dashboard's own marked files out of the repository.
   const settle = () => {
-    excludeOutputs(state.cwd);
+    try {
+      for (const l of migrationLines(migrateRepo(state.cwd))) console.log(`a11y-508: ${l}`);
+    } catch (e) {
+      console.error(`a11y-508: could not move the tool's old folders out of ${state.cwd}: ${e.message}`);
+    }
     const ours = legacyFiles(state.cwd).filter((f) => f.ours).map((f) => f.name);
     if (ours.length) moveLegacy(state.cwd, sp(), ours);
   };
@@ -276,7 +281,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
           return false;
         }
       };
-      const fromReport = latest && loopUrl && sameUrl(latest.baseUrl, loopUrl) ? join(cwd, REPORT_DIR, 'report.json') : null;
+      const fromReport = latest && loopUrl && sameUrl(latest.baseUrl, loopUrl) ? join(latestDir(cwd), 'report.json') : null;
       built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null, connect: signIn ? state.browserPort : null, fromReport, resume: body.resume === true });
       meta = { agent: resolved };
     } else {
@@ -294,7 +299,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const request = { ...asked, auth: asked.auth && typeof asked.auth === 'object' ? { ...asked.auth, token: undefined, cookies: undefined } : asked.auth };
     if (request.options && typeof request.options === 'object') request.options = { ...request.options, header: undefined, 'token-header': undefined };
     const spec = {
-      kind, file: process.execPath, args: [BIN, ...built.args, '--events'], env: runEnv, cwd, events: true, secrets: [...tokens(), ...credentialsIn(body)],
+      // A crawl's report goes to the tool's own folder for the repository, never into it.
+      kind, file: process.execPath, args: [BIN, ...built.args, ...(kind === 'crawl' ? ['--out', latestDir(cwd)] : []), '--events'], env: runEnv, cwd, events: true, secrets: [...tokens(), ...credentialsIn(body)],
       meta: { ...meta, command: commandLine({ cwd, args: built.args, token: built.token, shell: shellKind() }), url: body.url || null, movedToHistory: moved },
       request, preface: Array.isArray(preface) ? preface : [],
     };
@@ -387,8 +393,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       detecting: !d, last: { cwd: global().lastCwd || null, url: global().lastUrl || null }, restored: state.restored,
       shell: d ? d.shell : null, npmPrefix: d ? d.npmPrefix : null, detectedAt: d ? d.detectedAt : null,
       // runCommand: what a person can paste into their shell to run the assistant by hand, on the
-      // prompt file the loop writes (a11y-508-work/prompt.md stands for the next task's file).
-      presets: !d ? null : d.presets.map((p) => ({ ...p, runCommand: p.found ? runnableCommand({ name: p.name, exePath: p.path, promptFile: join(cwd, WORK_DIR, 'prompt.md'), shell: d.shell.kind === 'powershell' || d.shell.kind === 'cmd' ? d.shell.kind : d.shell.path, platform }) : null })),
+      // prompt file the loop writes (<tasks folder>/prompt.md stands for the next task's file).
+      presets: !d ? null : d.presets.map((p) => ({ ...p, runCommand: p.found ? runnableCommand({ name: p.name, exePath: p.path, promptFile: join(tasksDir(cwd), 'prompt.md'), shell: d.shell.kind === 'powershell' || d.shell.kind === 'cmd' ? d.shell.kind : d.shell.path, platform }) : null })),
       lastTest: state.lastTest,
       build: { fresh: build.fresh, reason: build.reason },
       run: runs.current ? runSummary(runs.current) : null,
@@ -399,7 +405,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   const runSummary = (r) => ({ id: r.id, kind: r.kind, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt || null, code: r.code, meta: r.meta });
 
   function ledgerInfo() {
-    const file = join(state.cwd, WORK_DIR, 'ledger.json');
+    const file = ledgerPath(state.cwd);
     if (!existsSync(file)) return { exists: false };
     const ledger = loadLedger(file);
     const pick = (status) => byStatus(ledger, status).map((e) => ({ test: e.test, impact: e.impact, message: e.message, pages: e.pages.length, attempts: e.attempts.length, reason: e.reason || null, selector: e.selector }));
@@ -495,7 +501,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
 
   // Start over: what it discards, named in its confirmation.
   function startOverInfo() {
-    const file = join(state.cwd, WORK_DIR, 'ledger.json');
+    const file = ledgerPath(state.cwd);
     let attempts = 0;
     let rounds = 0;
     if (existsSync(file)) {
@@ -522,7 +528,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     for (const x of listReports(state.cwd)) {
       if (x.source === 'history' && (!info.url || !x.baseUrl || sameStartUrl(x.baseUrl, info.url))) deleteHistoryEntry(state.cwd, x.id);
     }
-    rmSync(join(state.cwd, REPORT_DIR), { recursive: true, force: true, maxRetries: 5 });
+    rmSync(latestDir(state.cwd), { recursive: true, force: true, maxRetries: 5 });
     rmSync(runsDir(state.cwd), { recursive: true, force: true, maxRetries: 5 });
     const { lastStep, ...rest } = readSettings(sp().settings);
     writeJson(sp().settings, rest);
@@ -607,7 +613,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (m === 'POST' && path === '/api/start-over') return send(res, 200, startOver(await readBody(req)));
     if (m === 'GET' && path === '/api/reports') return send(res, 200, listReports(state.cwd));
     if (m === 'GET' && path === '/api/loop/timeline') {
-      const file = join(state.cwd, WORK_DIR, 'ledger.json');
+      const file = ledgerPath(state.cwd);
       if (!existsSync(file)) return send(res, 200, null);
       const ledger = loadLedger(file);
       return send(res, 200, loopTimeline(ledger, statusCounts(ledger)));
@@ -778,4 +784,3 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   return { server, secret, listen, close, runs, build, detect, useBrowser, activity, get cwd() { return state.cwd; }, get port() { return state.port; }, get url() { return `http://127.0.0.1:${state.port}/#secret=${secret}`; } };
 }
 
-export { REPORT_DIR };

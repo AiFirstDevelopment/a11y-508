@@ -14,7 +14,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { uptime } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WORK_DIR } from '../../src/loop.mjs';
+import { workDir } from '../../src/home.mjs';
 import { loadLedger, saveLedger } from '../../src/ledger.mjs';
 import { BadRequest } from './args.mjs';
 import { killTreeWindows } from './runs.mjs';
@@ -25,7 +25,7 @@ export const RUNS_DIR = 'runs';
 export const JOURNALED = new Set(['crawl', 'troubleshoot', 'login', 'loop', 'dry-run']);
 const LOOP_KINDS = new Set(['loop', 'dry-run']);
 
-export const runsDir = (cwd) => join(cwd, WORK_DIR, RUNS_DIR);
+export const runsDir = (cwd) => join(workDir(cwd), RUNS_DIR);
 const filesOf = (cwd, id) => ({
   run: join(runsDir(cwd), `${id}.run.json`),
   events: join(runsDir(cwd), `${id}.events.ndjson`),
@@ -340,7 +340,7 @@ const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8', windo
 
 // The attempt the loop had begun when it was interrupted: a ledger attempt with no outcome.
 export function attemptsInProgress(cwd) {
-  const file = join(cwd, WORK_DIR, 'ledger.json');
+  const file = join(workDir(cwd), 'ledger.json');
   if (!existsSync(file)) return [];
   const ledger = loadLedger(file);
   const out = [];
@@ -389,7 +389,7 @@ export function interruptedDetails(cwd, run, sourceDirs) {
 // Marks the attempts in progress `interrupted` and reverts their uncommitted changes under the
 // source folders (tracked files restored, new files removed). Returns the paths discarded.
 export function discardInterrupted(cwd, sourceDirs) {
-  const file = join(cwd, WORK_DIR, 'ledger.json');
+  const file = join(workDir(cwd), 'ledger.json');
   const inProgress = attemptsInProgress(cwd);
   if (!inProgress.length) return [];
   const { top, files } = changesUnder(cwd, sourceDirs);

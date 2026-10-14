@@ -97,9 +97,9 @@ test('AC 17: 401 without the secret, 403 for a foreign Host, 404 for a screensho
     const port = Number(new URL(dash.origin).port);
     const host = `127.0.0.1:${port}`;
     // A report with one screenshot, so the confinement is tested against a real file.
-    mkdirSync(join(dash.cwd, 'a11y-508-report', 'screenshots'), { recursive: true });
-    writeFileSync(join(dash.cwd, 'a11y-508-report', 'report.json'), JSON.stringify({ baseUrl: 'http://x/', finishedAt: '2026-01-01T00:00:00.000Z', passed: true, summary: { audited: 1 }, pages: [] }));
-    writeFileSync(join(dash.cwd, 'a11y-508-report', 'screenshots', 'p1-1.png'), 'png');
+    mkdirSync(join(dash.dirs().report, 'screenshots'), { recursive: true });
+    writeFileSync(join(dash.dirs().report, 'report.json'), JSON.stringify({ baseUrl: 'http://x/', finishedAt: '2026-01-01T00:00:00.000Z', passed: true, summary: { audited: 1 }, pages: [] }));
+    writeFileSync(join(dash.dirs().report, 'screenshots', 'p1-1.png'), 'png');
     writeFileSync(join(dash.cwd, 'secret.txt'), 'outside the report');
     const ok = { host, [SECRET_HEADER.toLowerCase()]: dash.secret };
 

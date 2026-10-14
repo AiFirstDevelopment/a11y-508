@@ -180,10 +180,12 @@ test('PUT /api/cwd switches every handler and a spawned run to the new directory
     const r = await s.call('POST', '/api/runs', { body: { kind: 'crawl', url: 'http://127.0.0.1:9/', options: { 'max-pages': '1', 'no-interact': true, 'no-zoom': true }, auth: { mode: 'none' } } });
     assert.equal(r.status, 202, r.text);
     await s.waitDone();
-    assert.ok(existsSync(join(other, 'a11y-508-history', '2026-02-03T04-05-06.000Z', 'report.json')), 'the earlier report moved to history in the new directory');
-    assert.ok(existsSync(join(other, 'a11y-508-report', 'report.json')), 'the crawl wrote its report in the new directory');
-    assert.ok(!existsSync(join(s.cwd, 'a11y-508-report')), 'and nothing in the old one');
-    assert.ok(!existsSync(join(s.cwd, 'a11y-508-history')));
+    assert.ok(existsSync(join(s.dirs(other).history, '2026-02-03T04-05-06.000Z', 'report.json')), 'the earlier report moved to history in the new directory\'s own folder');
+    assert.ok(existsSync(join(s.dirs(other).report, 'report.json')), 'the crawl wrote its report in the new directory\'s own folder');
+    assert.ok(!existsSync(s.dirs(s.cwd).report), 'and nothing in the old one');
+    assert.ok(!existsSync(s.dirs(s.cwd).history));
+    // Nothing of the tool's in either folder: the switch moved the old-style folders out.
+    for (const d of ['a11y-508-report', 'a11y-508-work', 'a11y-508-history']) assert.ok(!existsSync(join(other, d)) && !existsSync(join(s.cwd, d)), d);
 
     // A finished run belongs to its directory: switching back forgets it.
     assert.notEqual((await s.call('GET', '/api/runs/current')).json, null);

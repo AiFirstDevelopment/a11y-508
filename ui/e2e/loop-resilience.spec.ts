@@ -5,7 +5,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { api, countsLine, dashboard, fixtureSite, gitRepo, moreOptions, nav, open, removeTemp, run, tempDir, BIN, ROOT, TOKEN, type Dash, type Site } from './harness';
+import { api, countsLine, dashboard, dirsOf, fixtureSite, gitRepo, moreOptions, nav, open, removeTemp, run, tempDir, BIN, ROOT, TOKEN, type Dash, type Site } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const QUICK = ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage'];
@@ -72,12 +72,14 @@ test('loop-resilience: a set-up error shows "The fix loop could not start" with 
     // While it runs the screen is the normal running view.
     await expect(page.getByTestId('loop-problem')).toHaveCount(0);
     await expect(page.getByTestId('loop-step')).toHaveText(/Loop finished/, { timeout: 200_000 });
-    const ledger = JSON.parse(readFileSync(join(cwd, 'a11y-508-work', 'ledger.json'), 'utf8'));
+    const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
     expect(ledger.rounds[0].source).toBe('report');
     expect(ledger.rounds[0].reportFinishedAt).toBe(report.finishedAt);
     // No crawl ran: the report is the one the person saw, and nothing moved to history.
-    expect(JSON.parse(readFileSync(join(cwd, 'a11y-508-report', 'report.json'), 'utf8')).finishedAt).toBe(report.finishedAt);
-    expect(existsSync(join(cwd, 'a11y-508-history'))).toBe(false);
+    expect(JSON.parse(readFileSync(join(dirsOf(cwd).report, 'report.json'), 'utf8')).finishedAt).toBe(report.finishedAt);
+    expect(existsSync(dirsOf(cwd).history)).toBe(false);
+    // The crawl's old-style folder moved out of the repository when the dashboard started.
+    for (const d of ['a11y-508-report', 'a11y-508-work', 'a11y-508-history']) expect(existsSync(join(cwd, d)), d).toBe(false);
     expect((await api(dash, '/api/runs/current')).json.id).toBe(runNow.id);
   } finally {
     await dash.stop();
@@ -103,7 +105,7 @@ test('loop-resilience: with a11y-508/fixes in the repository the Fix step and th
     await expect(problem.getByRole('heading', { name: 'The fix loop stopped' })).toBeVisible({ timeout: 200_000 });
     await expect(page.getByTestId('problem-message')).toHaveText(/^push failed: /);
     // The real ledger counts.
-    const ledger = JSON.parse(readFileSync(join(cwd, 'a11y-508-work', 'ledger.json'), 'utf8'));
+    const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
     const n = (s: string) => Object.values<any>(ledger.findings).filter((e) => e.status === s).length;
     expect(n('pending')).toBeGreaterThan(0);
     await expect(page.getByTestId('fix-counts')).toHaveText(countsLine({ verified: n('verified'), pending: n('pending'), open: n('open'), 'needs-human': n('needs-human') }));

@@ -77,8 +77,11 @@ test('startup: /api/env answers at once while the assistants are detected, and h
   }
 });
 
-test('carry: the analysis for the URL moves to the new folder, or is copied when git tracks it in the old one; another URL stays', async () => {
+test('carry: the analysis for the URL moves to the new folder\'s own place (old-style folders first move out of the repository); a tracked folder stays; another URL stays', async () => {
+  // In this process: the tool's files under a temporary state base.
+  process.env.A11Y_508_HOME = tmp('a11y-508-home-');
   const { carryAnalysis } = await import('../reports.mjs');
+  const { repoHome } = await import('../../../src/home.mjs');
   const { inGitRepo } = await import('../dirs.mjs');
   const { spawnSync } = await import('node:child_process');
   const { existsSync } = await import('node:fs');
@@ -94,13 +97,16 @@ test('carry: the analysis for the URL moves to the new folder, or is copied when
   assert.deepEqual(carryAnalysis(a, b, 'http://other.example/', { inGit: inGitRepo }).report, false, 'another URL');
   const moved = carryAnalysis(a, b, 'http://app.example/x?q=1', { inGit: inGitRepo });
   assert.deepEqual([moved.report, moved.history, moved.moved], [true, 1, true]);
-  assert.ok(!existsSync(join(a, 'a11y-508-report')) && existsSync(join(b, 'a11y-508-report', 'report.json')));
-  // Tracked by git in the old folder: copied.
+  assert.ok(!existsSync(join(a, 'a11y-508-report')) && !existsSync(repoHome(a).report) && existsSync(join(repoHome(b).report, 'report.json')));
+  assert.ok(!existsSync(join(b, 'a11y-508-report')), 'nothing in the new repository folder');
+  assert.ok(existsSync(join(repoHome(b).history, 'old', 'report.json')));
+  // Tracked by git in the old folder: the team's, left where it is and not carried.
   const c = tmp('a11y-508-carry-c-');
   const d = tmp('a11y-508-carry-d-');
   report(c, 'http://app.example/', '2026-02-01T00:00:00.000Z');
   for (const args of [['init', '-q'], ['add', '-A'], ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-q', '-m', 'r']]) spawnSync('git', args, { cwd: c });
-  const copied = carryAnalysis(c, d, 'http://app.example/', { inGit: inGitRepo });
-  assert.deepEqual([copied.report, copied.moved], [true, false]);
-  assert.ok(existsSync(join(c, 'a11y-508-report', 'report.json')) && existsSync(join(d, 'a11y-508-report', 'report.json')));
+  const kept = carryAnalysis(c, d, 'http://app.example/', { inGit: inGitRepo });
+  assert.deepEqual([kept.report, kept.moved], [false, false]);
+  assert.ok(existsSync(join(c, 'a11y-508-report', 'report.json')) && !existsSync(repoHome(d).report));
+  delete process.env.A11Y_508_HOME;
 });

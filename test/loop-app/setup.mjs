@@ -33,7 +33,7 @@ const port = Number(opt('--port', '4321'));
 mkdirSync(target, { recursive: true });
 cpSync(join(here, 'site'), join(target, 'site'), { recursive: true });
 for (const f of ['server.mjs', 'check.mjs']) cpSync(join(here, f), join(target, f));
-writeFileSync(join(target, '.gitignore'), 'a11y-508-work/\na11y-508-report/\na11y-508-history/\na11y-508-gate.log\nnode_modules/\n');
+writeFileSync(join(target, '.gitignore'), 'a11y-508-gate.log\nnode_modules/\n');
 writeFileSync(join(target, 'a11y-508.config.json'), JSON.stringify({
   url: `http://127.0.0.1:${port}/`,
   args: ['--max-pages', '10', '--no-screenshots'],

@@ -5,7 +5,7 @@
 
 import { createServer } from 'node:http';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, dirname, extname } from 'node:path';
+import { join, dirname, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
@@ -14,7 +14,17 @@ import { agentEnv, fixPrompt, triagePrompt } from '../src/agent.mjs';
 import { normalizeConfig, sessionArgs, splitCheck } from '../src/loop.mjs';
 import { splitLoopArgs } from '../src/cli.mjs';
 import { statusCounts } from '../src/ledger.mjs';
+import { reportDir, workDir } from '../src/home.mjs';
 import { parseEvents } from './event-schema.mjs';
+import { mkdtempSync as mkdtempHome, realpathSync as realHome } from 'node:fs';
+import { tmpdir as tmpHome } from 'node:os';
+
+// The tool keeps its files under the state base (src/home.mjs); every loop and crawl here uses a
+// temporary one, created by this file under the OS temp directory and removed at the end.
+const HOME = realHome(mkdtempHome(join(tmpHome(), 'a11y-508-home-')));
+process.env.A11Y_508_HOME = HOME;
+// The task folder: the prompts and the result files.
+const tasksOf = (repo) => join(workDir(repo), 'tasks');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -169,7 +179,7 @@ g('init', '-q', '-b', 'main');
 g('config', 'user.email', 'loop-test@example.test');
 g('config', 'user.name', 'loop test');
 g('config', 'commit.gpgsign', 'false');
-writeFileSync(join(repo, '.gitignore'), 'a11y-508-work/\na11y-508-report/\n');
+writeFileSync(join(repo, '.gitignore'), '');
 const checkScript = join(repo, 'check.mjs');
 writeFileSync(checkScript, "import { readFileSync } from 'node:fs'; process.exit(readFileSync('site/index.html', 'utf8').includes('BREAK-THE-BUILD') ? 1 : 0);\n");
 writeFileSync(join(repo, 'a11y-508.config.json'), JSON.stringify({
@@ -204,7 +214,7 @@ console.log(`loop finished in ${((Date.now() - t0) / 1000).toFixed(1)}s with exi
 if (process.env.SHOW_LOOP) console.log(run.out);
 if (run.status === null) throw new Error('loop was killed after 300s');
 
-const ledger = loadLedger(join(repo, 'a11y-508-work', 'ledger.json'));
+const ledger = loadLedger(join(workDir(repo), 'ledger.json'));
 const entries = Object.values(ledger.findings);
 const commits = g('log', '--format=%s', `${headBefore}..HEAD`).split('\n').filter(Boolean);
 const byTest = (t) => entries.filter((e) => e.test === t);
@@ -247,13 +257,13 @@ check('triage closed review items as adequate and reopened the inadequate one', 
 check('the token never reached the agent', () => {
   const results = entries.flatMap((e) => e.attempts);
   assert.ok(results.length > 0);
-  const resultFiles = readFileSync(join(repo, 'a11y-508-work', 'result-r1-fix-0.json'), 'utf8');
+  const resultFiles = readFileSync(join(tasksOf(repo), 'result-r1-fix-0.json'), 'utf8');
   assert.ok(!/"leaked": true/.test(resultFiles), resultFiles);
 });
-check('loop-gemini-ci AC5: each agent call leaves a log under a11y-508-work, with its header line', () => {
-  const work = join(repo, 'a11y-508-work');
+check('loop-gemini-ci AC5: each agent call leaves a log in the work folder, with its header line', () => {
+  const work = workDir(repo);
   const logs = readdirSync(work).filter((f) => /^agent-r\d+-(fix|triage)-\d+\.log$/.test(f));
-  const prompts = readdirSync(work).filter((f) => /^prompt-r\d+-(fix|triage)-\d+\.md$/.test(f));
+  const prompts = readdirSync(tasksOf(repo)).filter((f) => /^prompt-r\d+-(fix|triage)-\d+\.md$/.test(f));
   assert.equal(logs.length, prompts.length, `${logs.join(', ')} for ${prompts.join(', ')}`);
   assert.ok(logs.includes('agent-r1-fix-0.log') && logs.includes('agent-r1-triage-0.log'), logs.join(', '));
   const head = JSON.parse(readFileSync(join(work, 'agent-r1-fix-0.log'), 'utf8').split('\n')[0]);
@@ -264,6 +274,30 @@ check('loop-gemini-ci AC5: each agent call leaves a log under a11y-508-work, wit
   assert.match(calls[0], /^\S+ start r1-triage-0$/);
   assert.match(calls[1], /^\S+ end   r1-triage-0 exit 0 result yes \d+s$/);
 });
+check('tool-files AC1/guard 1: after a loop the repository holds nothing of the tool\'s; the ledger is under the state base', () => {
+  for (const d of ['a11y-508-work', 'a11y-508-report', 'a11y-508-history']) assert.ok(!existsSync(join(repo, d)), `${d} in the repository`);
+  const file = join(workDir(repo), 'ledger.json');
+  assert.ok(file.startsWith(join(HOME, 'repos') + sep), file);
+  assert.ok(existsSync(file), file);
+  assert.equal(g('status', '--porcelain', '--ignored'), '', 'the repository is clean, with nothing ignored either');
+  let exclude = '';
+  try {
+    exclude = readFileSync(join(repo, '.git', 'info', 'exclude'), 'utf8');
+  } catch {}
+  assert.ok(!/a11y-508/.test(exclude), exclude);
+});
+check('tool-files AC3/guard 3: the prompt names no repository path for the tool\'s files and tells the assistant to leave them alone', () => {
+  const prompt = readFileSync(join(tasksOf(repo), 'prompt-r1-fix-0.md'), 'utf8');
+  assert.ok(!/a11y-508-work|a11y-508-report|a11y-508-history/.test(prompt), prompt);
+  assert.ok(prompt.includes("Everything you need is in this prompt. Do not read, search or edit anything outside the source folders listed above; in particular leave the tool's own folders alone."), prompt);
+  // The result file it is to write is under the state base, outside the repository.
+  const block = [...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1])).find((o) => o.kind === 'fix');
+  assert.ok(block.resultFile.startsWith(join(HOME, 'repos') + sep), block.resultFile);
+  assert.ok(!block.resultFile.startsWith(repo + sep), block.resultFile);
+  const triage = readFileSync(join(tasksOf(repo), 'prompt-r1-triage-0.md'), 'utf8');
+  assert.ok(!/a11y-508-work|a11y-508-report/.test(triage), triage);
+  assert.match(triage, /leave the tool's own folders alone/);
+});
 check('status prints the ledger', () => {
   const r = spawnSync(process.execPath, [join(root, 'bin/a11y-508.mjs'), 'status'], { cwd: repo, encoding: 'utf8' });
   assert.equal(r.status, 0);
@@ -271,6 +305,70 @@ check('status prints the ledger', () => {
 });
 
 rmSync(repo, { recursive: true, force: true });
+
+// ---- e2e: folders an earlier version left in the repository move to the tool's own folder, once
+{
+  const { mkdtempSync, symlinkSync } = await import('node:fs');
+  const made = [];
+  const mk = (prefix) => {
+    const d = realHome(mkdtempSync(join(tmpHome(), prefix)));
+    made.push(d);
+    return d;
+  };
+  const old = mk('a11y-508-migrate-');
+  const outside = mk('a11y-508-migrate-outside-');
+  const gm = (...args) => spawnSync('git', args, { cwd: old, encoding: 'utf8' });
+  gm('init', '-q', '-b', 'main');
+  // The ledger as an earlier loop left it: one finding still open after 3 attempts.
+  const seeded = { version: 1, rounds: [{ round: 1, at: '2026-10-01T00:00:00.000Z', pages: 1, audited: 1, violations: 1, reviews: 0, diff: { new: 1, verified: 0, failed: 0 } }], findings: {
+    '7.A|img|no alt': { fingerprint: '7.A|img|no alt', test: '7.A', name: 'Images', wcag: '1.1.1', impact: 'critical', level: 'violation', message: 'Image has no alt attribute', selector: 'img', html: '<img>', pages: ['http://x/'], status: 'open', firstSeenRound: 1, lastSeenRound: 1,
+      attempts: [1, 2, 3].map((round) => ({ round, files: ['site/index.html'], note: 'tried', outcome: 'still-present' })) },
+  } };
+  mkdirSync(join(old, 'a11y-508-work', 'round-1'), { recursive: true });
+  writeFileSync(join(old, 'a11y-508-work', 'ledger.json'), JSON.stringify(seeded));
+  writeFileSync(join(old, 'a11y-508-work', 'round-1', 'report.json'), '{}');
+  mkdirSync(join(old, 'a11y-508-history', '2026-10-01'), { recursive: true });
+  writeFileSync(join(old, 'a11y-508-history', '2026-10-01', 'report.json'), '{}');
+  // Not the tool's: a link named like its report folder, and a folder with another name.
+  writeFileSync(join(outside, 'keep.txt'), 'keep');
+  symlinkSync(outside, join(old, 'a11y-508-report'), process.platform === 'win32' ? 'junction' : 'dir');
+  mkdirSync(join(old, 'a11y-508-work-mine'));
+  writeFileSync(join(old, 'a11y-508-work-mine', 'x.txt'), 'x');
+  writeFileSync(join(old, '.git', 'info', 'exclude'), '# git ls-files --others --exclude-from=.git/info/exclude\n*.log\n# a11y-508 dashboard outputs\na11y-508-report/\na11y-508-history/\na11y-508-work/\n');
+  const status = spawnSync(process.execPath, [join(root, 'bin/a11y-508.mjs'), 'status'], { cwd: old, encoding: 'utf8' });
+  check('tool-files AC2/guard 2: status after the move reports the migrated ledger from the tool\'s own folder', () => {
+    assert.equal(status.status, 0, status.stdout + status.stderr);
+    assert.match(status.stdout, /1 round\(s\)/);
+    assert.match(status.stdout, /Image has no alt attribute.*\[1 page\(s\), 3 attempt\(s\)\]/);
+    assert.ok(!existsSync(join(old, 'a11y-508-work')) && !existsSync(join(old, 'a11y-508-history')), 'the old folders are gone from the repository');
+    assert.ok(existsSync(join(workDir(old), 'ledger.json')) && existsSync(join(workDir(old), 'round-1', 'report.json')));
+    assert.ok(existsSync(join(workDir(old), '..', 'history', '2026-10-01', 'report.json')));
+    assert.match(status.stdout, /moved .*a11y-508-work to /);
+    assert.ok(status.stdout.includes(dirname(workDir(old))), status.stdout);
+  });
+  check('tool-files AC2: the .git/info/exclude lines the tool added are removed, the person\'s stay', () => {
+    const ex = readFileSync(join(old, '.git', 'info', 'exclude'), 'utf8');
+    assert.ok(!/a11y-508/.test(ex), ex);
+    assert.match(ex, /^\*\.log$/m);
+  });
+  check('tool-files guard 6: the move touches only the named folders, never a link or a folder by another name', () => {
+    assert.ok(existsSync(join(old, 'a11y-508-report', 'keep.txt')), 'the link stays');
+    assert.equal(readFileSync(join(outside, 'keep.txt'), 'utf8'), 'keep');
+    assert.ok(!existsSync(join(workDir(old), '..', 'report')), 'a linked folder was moved');
+    assert.equal(readFileSync(join(old, 'a11y-508-work-mine', 'x.txt'), 'utf8'), 'x');
+  });
+  // A second old folder, when the tool's folder already has one: set aside next to it, and said so.
+  mkdirSync(join(old, 'a11y-508-work'), { recursive: true });
+  writeFileSync(join(old, 'a11y-508-work', 'ledger.json'), JSON.stringify({ version: 1, rounds: [], findings: {} }));
+  const again = spawnSync(process.execPath, [join(root, 'bin/a11y-508.mjs'), 'status'], { cwd: old, encoding: 'utf8' });
+  check('tool-files AC2: an old folder whose destination exists is moved aside as work-old and reported; the ledger there stays', () => {
+    assert.ok(!existsSync(join(old, 'a11y-508-work')));
+    assert.ok(existsSync(join(workDir(old) + '-old', 'ledger.json')));
+    assert.match(again.stdout, /aside to .*work-old/);
+    assert.match(again.stdout, /3 attempt\(s\)/);
+  });
+  for (const d of made) rmSync(d, { recursive: true, force: true, maxRetries: 10 });
+}
 
 // ---- e2e: the same loop with --events and "deployed": "enter", answered on stdin
 check('"deployed": "enter" is accepted when someone can answer it (a terminal, or the dashboard)', () => {
@@ -311,7 +409,7 @@ g2('init', '-q', '-b', 'main');
 g2('config', 'user.email', 'loop-test@example.test');
 g2('config', 'user.name', 'loop test');
 g2('config', 'commit.gpgsign', 'false');
-writeFileSync(join(repo2, '.gitignore'), 'a11y-508-work/\na11y-508-report/\n');
+writeFileSync(join(repo2, '.gitignore'), '');
 writeFileSync(join(repo2, 'a11y-508.config.json'), JSON.stringify({
   url: `http://127.0.0.1:${site2.address().port}/`,
   args: ['--max-pages', '2', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage'],
@@ -324,11 +422,11 @@ writeFileSync(join(repo2, 'a11y-508.config.json'), JSON.stringify({
 g2('add', '-A');
 g2('commit', '-q', '-m', 'fixture site');
 // A saved session in the working directory (ignored by git, as the README says): every round's crawl uses it.
-writeFileSync(join(repo2, '.gitignore'), 'a11y-508-work/\na11y-508-report/\na11y-508-state.json\n');
+writeFileSync(join(repo2, '.gitignore'), 'a11y-508-state.json\n');
 g2('commit', '-qam', 'ignore the session file');
 writeFileSync(join(repo2, 'a11y-508-state.json'), JSON.stringify({ version: 1, origins: [], cookies: [], storage: {} }));
 const evLoop = await new Promise((resolve) => {
-  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), 'loop', '--max-rounds', '2', '--events'], { cwd: repo2, env: { ...process.env, TOKEN, NO_COLOR: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [join(root, 'bin/a11y-508.mjs'), 'loop', '--max-rounds', '2', '--events'], { cwd: repo2, env: { ...process.env, TOKEN, NO_COLOR: '1', FAKE_AGENT_SAY_FILES: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
   let out = '';
   let err = '';
   let presses = 0;
@@ -350,7 +448,7 @@ const evLoop = await new Promise((resolve) => {
 site2.close();
 {
   const { events, problems } = parseEvents(evLoop.out);
-  const ledger2 = loadLedger(join(repo2, 'a11y-508-work', 'ledger.json'));
+  const ledger2 = loadLedger(join(workDir(repo2), 'ledger.json'));
   const ofType = (t) => events.filter((e) => e.type === t);
   check('loop --events: every line on stdout is an event that fits the schema', () => {
     assert.ok(events.length > 0, evLoop.out + evLoop.err);
@@ -363,7 +461,7 @@ site2.close();
   check('loop --events: a round event per round, and each round\'s crawl relays its page events tagged with the round', () => {
     assert.deepEqual(ofType('round').map((e) => e.round), [1, 2]);
     for (const r of [1, 2]) {
-      const rep = JSON.parse(readFileSync(join(repo2, 'a11y-508-work', `round-${r}`, 'report.json'), 'utf8'));
+      const rep = JSON.parse(readFileSync(join(workDir(repo2), `round-${r}`, 'report.json'), 'utf8'));
       const pages = ofType('page').filter((e) => e.round === r);
       assert.equal(pages.length, rep.pages.length, `round ${r} page events`);
       assert.deepEqual(ofType('summary').find((e) => e.round === r).summary, rep.summary);
@@ -389,7 +487,7 @@ site2.close();
     const said = events.filter((e) => e.type === 'info' && /crawling with the saved session a11y-508-state\.json/.test(e.message));
     assert.equal(said.length, 1, JSON.stringify(events.filter((e) => e.type === 'info').map((e) => e.message)));
     for (const r of [1, 2]) {
-      const rep = JSON.parse(readFileSync(join(repo2, 'a11y-508-work', `round-${r}`, 'report.json'), 'utf8'));
+      const rep = JSON.parse(readFileSync(join(workDir(repo2), `round-${r}`, 'report.json'), 'utf8'));
       assert.ok(rep.options.session, `round ${r} crawled with the session`);
     }
   });
@@ -403,6 +501,11 @@ site2.close();
     const done = events.findIndex((e) => e.type === 'task' && e.round === 1 && e.n === 1 && e.state === 'done');
     const at = events.indexOf(fix1[0]);
     assert.ok(start < at && at < done, `${start} < ${at} < ${done}`);
+  });
+  check('tool-files guard 7: the assistant\'s output shows the state base as ~/.a11y-508/…, never in full', () => {
+    const text = ofType('agent-output').map((e) => e.text).join('');
+    assert.match(text, /fake agent: prompt at ~\/\.a11y-508\/repos\/[^/]+\/work\/tasks\/prompt-r1-/);
+    assert.ok(!text.includes(HOME), `the pane shows ${HOME}`);
   });
   check('loop --events: the last ledger event equals the ledger on disk', () => {
     const last = ofType('ledger').at(-1);
@@ -449,7 +552,7 @@ rmSync(repo2, { recursive: true, force: true });
   g3('config', 'user.email', 'loop-test@example.test');
   g3('config', 'user.name', 'loop test');
   g3('config', 'commit.gpgsign', 'false');
-  writeFileSync(join(repo3, '.gitignore'), 'a11y-508-work/\na11y-508-report/\n');
+  writeFileSync(join(repo3, '.gitignore'), '');
   const crawlArgs = ['--max-pages', '3', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage'];
   writeFileSync(join(repo3, 'a11y-508.config.json'), JSON.stringify({
     url: base3, args: crawlArgs,
@@ -473,11 +576,17 @@ rmSync(repo2, { recursive: true, force: true });
       resolve({ status: code, out, stdout });
     });
   });
-  const crawl = await runIn([base3, ...crawlArgs, '--out', 'a11y-508-report', '--quiet', '--fail-on', 'none']);
-  const reportFile = join('a11y-508-report', 'report.json');
-  const report = JSON.parse(readFileSync(join(repo3, reportFile), 'utf8'));
+  // No --out: inside a repository the report goes to the tool's own folder for it.
+  const crawl = await runIn([base3, ...crawlArgs, '--quiet', '--fail-on', 'none']);
+  const reportFile = join(reportDir(repo3), 'report.json');
+  const report = JSON.parse(readFileSync(reportFile, 'utf8'));
+  check('tool-files AC1: a crawl inside a repository writes its report to the tool\'s own folder, not the repository', () => {
+    assert.equal(crawl.status, 0, crawl.out);
+    assert.ok(existsSync(reportFile), crawl.out);
+    assert.ok(!existsSync(join(repo3, 'a11y-508-report')), 'a11y-508-report in the repository');
+  });
   const loop1 = await runIn(['loop', '--max-rounds', '1', '--from-report', reportFile, '--events']);
-  const ledger3 = loadLedger(join(repo3, 'a11y-508-work', 'ledger.json'));
+  const ledger3 = loadLedger(join(workDir(repo3), 'ledger.json'));
   const { events: ev3 } = parseEvents(loop1.stdout);
   check('--from-report: round 1 folds the report into the ledger without crawling', () => {
     assert.equal(crawl.status, 0, crawl.out);
@@ -486,8 +595,8 @@ rmSync(repo2, { recursive: true, force: true });
     assert.equal(ledger3.rounds[0].reportFinishedAt, report.finishedAt);
     assert.equal(ledger3.rounds[0].violations, report.summary.violations);
     // The round's folder holds the report it started from (History lists it), and no crawl log.
-    assert.ok(!existsSync(join(repo3, 'a11y-508-work', 'round-1', 'crawl.log')), 'round 1 crawled');
-    assert.equal(JSON.parse(readFileSync(join(repo3, 'a11y-508-work', 'round-1', 'report.json'), 'utf8')).finishedAt, report.finishedAt);
+    assert.ok(!existsSync(join(workDir(repo3), 'round-1', 'crawl.log')), 'round 1 crawled');
+    assert.equal(JSON.parse(readFileSync(join(workDir(repo3), 'round-1', 'report.json'), 'utf8')).finishedAt, report.finishedAt);
     assert.ok(!ev3.some((e) => e.type === 'page'), 'page events in round 1');
     assert.ok(ev3.some((e) => e.type === 'step' && e.step === 'report' && e.round === 1));
     assert.ok(!ev3.some((e) => e.type === 'step' && e.step === 'crawl'));
@@ -497,23 +606,23 @@ rmSync(repo2, { recursive: true, force: true });
     const fixes = ev3.filter((e) => e.type === 'task' && e.state === 'start');
     assert.ok(fixes.length > 0, loop1.out);
     for (const t of fixes) assert.ok(msgs.has(t.message), t.message);
-    assert.ok(existsSync(join(repo3, 'a11y-508-work', 'prompt-r1-fix-0.md')));
+    assert.ok(existsSync(join(tasksOf(repo3), 'prompt-r1-fix-0.md')));
     assert.match(g3('log', '--format=%s'), /^a11y-508: /m);
   });
   // The same report again: older than the loop's commit, so the loop says so and crawls.
   const loop2 = await runIn(['loop', '--max-rounds', '1', '--from-report', reportFile]);
   check('--from-report: a report older than the loop\'s last commit is refused with the reason, and the round crawls', () => {
     assert.match(loop2.out, /not starting from .*report\.json: it is older than the loop's last commit/);
-    assert.ok(existsSync(join(repo3, 'a11y-508-work', 'round-2')), loop2.out);
-    assert.equal(loadLedger(join(repo3, 'a11y-508-work', 'ledger.json')).rounds[1].source, undefined);
+    assert.ok(existsSync(join(workDir(repo3), 'round-2')), loop2.out);
+    assert.equal(loadLedger(join(workDir(repo3), 'ledger.json')).rounds[1].source, undefined);
   });
   // A report for another URL: refused, and the round crawls.
   const other = { ...report, baseUrl: 'http://127.0.0.1:9/elsewhere/', finishedAt: new Date(Date.now() + 60000).toISOString() };
-  writeFileSync(join(repo3, 'a11y-508-work', 'other.json'), JSON.stringify(other));
-  const loop3 = await runIn(['loop', '--max-rounds', '1', '--from-report', join('a11y-508-work', 'other.json')]);
+  writeFileSync(join(workDir(repo3), 'other.json'), JSON.stringify(other));
+  const loop3 = await runIn(['loop', '--max-rounds', '1', '--from-report', join(workDir(repo3), 'other.json')]);
   check('--from-report: a report for another URL is refused with the reason, and the round crawls', () => {
     assert.match(loop3.out, /it is for http:\/\/127\.0\.0\.1:9\/elsewhere\/, not /);
-    assert.ok(existsSync(join(repo3, 'a11y-508-work', 'round-3')), loop3.out);
+    assert.ok(existsSync(join(workDir(repo3), 'round-3')), loop3.out);
   });
   site3.close();
   rmSync(repo3, { recursive: true, force: true });
@@ -546,7 +655,8 @@ rmSync(repo2, { recursive: true, force: true });
     const dir = mkTemp(prefix);
     mkdirSync(join(dir, 'site'), { recursive: true });
     cpSync(join(here, 'fixtures', 'index.html'), join(dir, 'site', 'index.html'));
-    writeFileSync(join(dir, '.gitignore'), 'a11y-508-work/\na11y-508-report/\n');
+    writeFileSync(join(dir, '.gitignore'), 'check-logs/\n');
+    mkdirSync(join(dir, 'check-logs'));
     writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', maxAttempts: 3, ...config }, null, 2));
     const g = (...args) => {
       const env = args[0] && typeof args[0] === 'object' ? args.shift() : {};
@@ -741,10 +851,10 @@ rmSync(repo2, { recursive: true, force: true });
     const url = `http://127.0.0.1:${site.address().port}/`;
     writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(dir, 'a11y-508.config.json'), 'utf8')), url }, null, 2));
     g('commit', '-qam', 'the config names the site');
-    const crawl = await cli(dir, [url, ...quick, '--out', 'a11y-508-report', '--quiet', '--fail-on', 'none']);
-    const fromReport = ['--max-rounds', '1', '--from-report', join('a11y-508-report', 'report.json'), '--events'];
+    const crawl = await cli(dir, [url, ...quick, '--quiet', '--fail-on', 'none']);
+    const fromReport = ['--max-rounds', '1', '--from-report', join(reportDir(dir), 'report.json'), '--events'];
     const first = await loopIn(dir, fromReport);
-    const ledgerFile = join(dir, 'a11y-508-work', 'ledger.json');
+    const ledgerFile = join(workDir(dir), 'ledger.json');
     const afterFirst = loadLedger(ledgerFile);
     const fixedFirst = Object.values(afterFirst.findings).filter((e) => e.status === 'pending').map((e) => e.message);
     // Someone edits the source: the next run stops before its first round.
@@ -820,7 +930,7 @@ rmSync(repo2, { recursive: true, force: true });
       const bad = attempts.find((a) => a.outcome === 'failed-gate');
       assert.ok(bad && bad.gateCode === 1 && /error: the build is broken/.test(bad.gateTail), JSON.stringify(bad));
       assert.ok(events.some((e) => e.type === 'changes' && e.files.includes('site/index.html')));
-      const ledger = loadLedger(join(dir, 'a11y-508-work', 'ledger.json'));
+      const ledger = loadLedger(join(workDir(dir), 'ledger.json'));
       const gated = Object.values(ledger.findings).flatMap((e) => e.attempts).filter((x) => x.outcome === 'failed-gate' || x.commit);
       assert.ok(gated.length >= 3 && gated.every((x) => typeof x.gateMs === 'number' && typeof x.gateCode === 'number' && typeof x.agentMs === 'number'), JSON.stringify(gated));
     });
@@ -841,7 +951,7 @@ rmSync(repo2, { recursive: true, force: true });
     const site = await serve(dir);
     const url = `http://127.0.0.1:${site.address().port}/`;
     // The check starts a process of its own that never ends either: the whole tree must go.
-    writeFileSync(join(dir, 'slow-check.mjs'), "import { spawn } from 'node:child_process';\nimport { appendFileSync } from 'node:fs';\nconst c = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 120000)'], { stdio: 'ignore' });\nappendFileSync('a11y-508-work/check-pids.log', `${process.pid} ${c.pid}\\n`);\nsetTimeout(() => {}, 120000);\n");
+    writeFileSync(join(dir, 'slow-check.mjs'), "import { spawn } from 'node:child_process';\nimport { appendFileSync } from 'node:fs';\nconst c = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 120000)'], { stdio: 'ignore' });\nappendFileSync('check-logs/check-pids.log', `${process.pid} ${c.pid}\\n`);\nsetTimeout(() => {}, 120000);\n");
     writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', url, checkTimeout: 2000, check: `${JSON.stringify(process.execPath)} slow-check.mjs && ${JSON.stringify(process.execPath)} -e 0` }, null, 2));
     g('add', '-A');
     g('commit', '-qm', 'a check that never ends');
@@ -857,7 +967,7 @@ rmSync(repo2, { recursive: true, force: true });
       assert.equal(events.filter((e) => e.type === 'commit').length, 0);
       assert.equal(g('status', '--porcelain', '--', 'site'), '');
       // Every process the check started is gone.
-      const pids = readFileSync(join(dir, 'a11y-508-work', 'check-pids.log'), 'utf8').split(/\s+/).filter(Boolean).map(Number);
+      const pids = readFileSync(join(dir, 'check-logs', 'check-pids.log'), 'utf8').split(/\s+/).filter(Boolean).map(Number);
       assert.ok(pids.length >= 4, pids.join(' '));
       const alive = pids.filter((pid) => { try { process.kill(pid, 0); return true; } catch { return false; } });
       assert.deepEqual(alive, []);
@@ -868,9 +978,9 @@ rmSync(repo2, { recursive: true, force: true });
   // AC 20: each fix is built; the tests run once for the round; a fix that breaks them is found and reverted.
   for (const breaking of [false, true]) {
     const { dir, g } = appRepo(breaking ? 'a11y-508-bisect-' : 'a11y-508-testsonce-', {});
-    writeFileSync(join(dir, 'build.mjs'), "import { appendFileSync, readFileSync } from 'node:fs';\nappendFileSync('a11y-508-work/build-runs.log', 'build\\n');\nif (readFileSync('site/index.html', 'utf8').includes('BREAK-THE-BUILD')) { console.error('error: the build is broken'); process.exit(1); }\n");
+    writeFileSync(join(dir, 'build.mjs'), "import { appendFileSync, readFileSync } from 'node:fs';\nappendFileSync('check-logs/build-runs.log', 'build\\n');\nif (readFileSync('site/index.html', 'utf8').includes('BREAK-THE-BUILD')) { console.error('error: the build is broken'); process.exit(1); }\n");
     // The tests fail on the iframe fix only where tests-break exists (the bisect case).
-    writeFileSync(join(dir, 'test.mjs'), "import { appendFileSync, existsSync, readFileSync } from 'node:fs';\nappendFileSync('a11y-508-work/test-runs.log', 'test\\n');\nif (existsSync('tests-break') && readFileSync('site/index.html', 'utf8').includes('title=\"About us\"')) { console.error('FAIL the iframe test'); process.exit(1); }\nconsole.log('tests passed');\n");
+    writeFileSync(join(dir, 'test.mjs'), "import { appendFileSync, existsSync, readFileSync } from 'node:fs';\nappendFileSync('check-logs/test-runs.log', 'test\\n');\nif (existsSync('tests-break') && readFileSync('site/index.html', 'utf8').includes('title=\"About us\"')) { console.error('FAIL the iframe test'); process.exit(1); }\nconsole.log('tests passed');\n");
     if (breaking) writeFileSync(join(dir, 'tests-break'), 'yes\n');
     const site = await serve(dir);
     const url = `http://127.0.0.1:${site.address().port}/`;
@@ -881,7 +991,7 @@ rmSync(repo2, { recursive: true, force: true });
     const r = await loopIn(dir, ['--max-rounds', '1', '--events'], { FAKE_AGENT_FIX_IFRAME: '1' });
     site.close();
     const { events, problems } = parseEvents(r.stdout);
-    const runs = (f) => (existsSync(join(dir, 'a11y-508-work', f)) ? readFileSync(join(dir, 'a11y-508-work', f), 'utf8').split('\n').filter(Boolean).length : 0);
+    const runs = (f) => (existsSync(join(dir, 'check-logs', f)) ? readFileSync(join(dir, 'check-logs', f), 'utf8').split('\n').filter(Boolean).length : 0);
     // Each fix's last word (a later event for the same fix replaces an earlier one), for the fixes that changed files.
     const byN = new Map();
     for (const e of events) if (e.type === 'attempt' && e.files.length) byN.set(e.n, e);
@@ -910,7 +1020,7 @@ rmSync(repo2, { recursive: true, force: true });
         assert.ok(!subjects.some((x) => /^a11y-508: 12\.D /.test(x)), subjects.join('\n'));
         assert.ok(!readFileSync(join(dir, 'site', 'index.html'), 'utf8').includes('title="About us"'));
         assert.equal(g('status', '--porcelain', '--', 'site'), '');
-        const ledger = loadLedger(join(dir, 'a11y-508-work', 'ledger.json'));
+        const ledger = loadLedger(join(workDir(dir), 'ledger.json'));
         const iframe = Object.values(ledger.findings).find((e) => e.test === '12.D' && e.attempts.length);
         assert.equal(iframe.status, 'open');
         assert.equal(iframe.attempts.at(-1).outcome, 'failed-gate');
@@ -977,13 +1087,13 @@ rmSync(repo2, { recursive: true, force: true });
       const starts = events.filter((e) => e.type === 'task' && e.state === 'start' && e.test === '7.A' && /no alt attribute/.test(e.message));
       assert.equal(starts.length, 1, r.out);
       assert.equal(starts[0].elements, 4);
-      const prompt = readFileSync(join(dir, 'a11y-508-work', `prompt-r1-fix-${starts[0].n - 1}.md`), 'utf8');
+      const prompt = readFileSync(join(tasksOf(dir), `prompt-r1-fix-${starts[0].n - 1}.md`), 'utf8');
       assert.match(prompt, /These 4 findings are the same problem on different elements; fix the cause once if there is one, otherwise fix each\./);
       assert.equal(events.filter((e) => e.type === 'gate' && e.state === 'start' && e.n === starts[0].n).length, 1);
       const attempts = events.filter((e) => e.type === 'attempt' && e.n === starts[0].n);
       assert.equal(attempts.length, 1);
       assert.deepEqual([attempts[0].outcome, attempts[0].elements], ['committed', 4]);
-      const ledger = loadLedger(join(dir, 'a11y-508-work', 'ledger.json'));
+      const ledger = loadLedger(join(workDir(dir), 'ledger.json'));
       const imgs = Object.values(ledger.findings).filter((e) => e.test === '7.A' && /no alt attribute/.test(e.message));
       assert.equal(imgs.length, 4);
       assert.deepEqual(new Set(imgs.map((e) => e.attempts.at(-1).commit)), new Set([attempts[0].commit]));
@@ -1050,10 +1160,10 @@ rmSync(repo2, { recursive: true, force: true });
     const url = `http://127.0.0.1:${site.address().port}/`;
     writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(dir, 'a11y-508.config.json'), 'utf8')), url }, null, 2));
     g('commit', '-qam', 'the config names the site');
-    const crawl = await cli(dir, [url, ...quick, '--out', 'a11y-508-report', '--quiet', '--fail-on', 'none']);
-    const report = JSON.parse(readFileSync(join(dir, 'a11y-508-report', 'report.json'), 'utf8'));
+    const crawl = await cli(dir, [url, ...quick, '--quiet', '--fail-on', 'none']);
+    const report = JSON.parse(readFileSync(join(reportDir(dir), 'report.json'), 'utf8'));
     // Round 1 from that report, then three violations the loop gave up on, each decided by a person.
-    const ledgerFile = join(dir, 'a11y-508-work', 'ledger.json');
+    const ledgerFile = join(workDir(dir), 'ledger.json');
     const ledger = loadLedger(ledgerFile);
     applyReport(ledger, report, 1);
     const violations = Object.values(ledger.findings).filter((e) => e.level === 'violation');
@@ -1070,9 +1180,9 @@ rmSync(repo2, { recursive: true, force: true });
     saveLedger(ledgerFile, ledger);
     const loop = await loopIn(dir, ['--max-rounds', '1', '--events']);
     site.close();
-    const work = join(dir, 'a11y-508-work');
+    const work = workDir(dir);
     // Every fix prompt the round wrote, by the fingerprint of the finding in its machine-readable block.
-    const prompts = readdirSync(work).filter((f) => /^prompt-r2-fix-\d+\.md$/.test(f)).map((f) => readFileSync(join(work, f), 'utf8'));
+    const prompts = readdirSync(tasksOf(dir)).filter((f) => /^prompt-r2-fix-\d+\.md$/.test(f)).map((f) => readFileSync(join(tasksOf(dir), f), 'utf8'));
     const fpOf = (p) => {
       const b = [...p.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1])).find((o) => o.kind === 'fix');
       return `${b.finding.test}|${b.finding.selector || ''}|${b.finding.message}`;
@@ -1105,5 +1215,6 @@ rmSync(repo2, { recursive: true, force: true });
     removeOwn(dir);
   }
 }
+rmSync(HOME, { recursive: true, force: true, maxRetries: 10 });
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
 process.exitCode = failures ? 1 : 0;

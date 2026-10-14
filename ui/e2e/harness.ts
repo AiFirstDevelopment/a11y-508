@@ -13,6 +13,8 @@ import { mergeEnv, processList, stopTree } from '../server/test/platform.mjs';
 import { assertRemovable, removeTemp, tmp } from '../server/test/helpers.mjs';
 // @ts-ignore
 export { assertRemovable, removeTemp, REPO_ROOT } from '../server/test/helpers.mjs';
+// @ts-ignore -- the core's one mapping from a repository folder to the tool's own folders for it
+import { repoHome } from '../../src/home.mjs';
 // @ts-ignore
 export { WIN, argPattern, exePath, gitBash, loginShell, msysPath, npmBin, processList, quote, recordOpen, shellLine, shPath, stopTree, stub, stubScript, systemPath } from '../server/test/platform.mjs';
 
@@ -38,11 +40,26 @@ export async function fixtureSite(opts: { autoLogin?: boolean; dropForms?: numbe
 // A temporary directory these helpers created, the only kind removeTemp removes.
 export const tempDir = (prefix: string): string => tmp(prefix);
 
+// The tool's state base for anything a spec runs directly (the CLI's loop, status, a crawl inside a
+// repository): a temporary one, never the person's ~/.a11y-508. A dashboard gets its own (below).
+if (!process.env.A11Y_508_HOME) process.env.A11Y_508_HOME = tempDir('a11y-508-home-specs-');
+
+// The state base each dashboard's working directory was started with, so a spec can find the
+// tool's own folders for it (the report, the history, the loop's work folder).
+const homes = new Map<string, string>();
+export interface ToolDirs { dir: string; work: string; report: string; history: string }
+export function dirsOf(cwd: string, home: string | undefined = homes.get(cwd)): ToolDirs {
+  if (!home) throw new Error(`no dashboard was started in ${cwd}, so its state base is not known`);
+  return repoHome(cwd, { A11Y_508_HOME: home });
+}
+
 export interface Dash {
   origin: string;
   url: string;
   secret: string;
   cwd: string;
+  home: string;
+  dirs(dir?: string): ToolDirs;
   proc: ChildProcess;
   output(): string;
   stop(): Promise<void>;
@@ -52,10 +69,13 @@ export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; a
   const cwd = opts.cwd || tempDir('a11y-508-dash-');
   // A dashboard's working directory is always a disposable one of the tests', never the checkout.
   assertRemovable(cwd);
+  // The dashboard's own files (config, session, settings, reports, the loop's work folder) go to a
+  // home of the test's, never ~/.a11y-508.
+  const home = (opts.env && opts.env.A11Y_508_HOME) || tempDir('a11y-508-home-');
+  homes.set(cwd, home);
   const proc = spawn(process.execPath, [opts.main || MAIN, '--no-open', '--port', '0', ...(opts.args || [])], {
     cwd,
-    // The dashboard's own files (config, session, settings) go to a home of the test's, never ~/.a11y-508.
-    env: mergeEnv(process.env, { TOKEN: '', A11Y_508_HOME: tempDir('a11y-508-home-'), ...opts.env }),
+    env: mergeEnv(process.env, { TOKEN: '', ...opts.env, A11Y_508_HOME: home }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';
@@ -76,7 +96,8 @@ export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; a
   const u = new URL(url);
   const secret = /secret=([0-9a-f]+)/.exec(u.hash)![1];
   return {
-    origin: u.origin, url, secret, cwd, proc,
+    origin: u.origin, url, secret, cwd, proc, home,
+    dirs: (dir = cwd) => dirsOf(dir, home),
     output: () => out,
     stop: async () => {
       await stopTree(proc);
@@ -262,7 +283,8 @@ export async function details(page: Page): Promise<void> {
   await expect(d).toHaveJSProperty('open', true);
 }
 
-export const readReport = (cwd: string, dir = 'a11y-508-report') => JSON.parse(readFileSync(join(cwd, dir, 'report.json'), 'utf8'));
+// The latest report for a dashboard's working directory, from the tool's own folder for it.
+export const readReport = (cwd: string, home?: string) => JSON.parse(readFileSync(join(dirsOf(cwd, home).report, 'report.json'), 'utf8'));
 
 // Chrome processes started by the CLI: their profile is a11y-508-* in the temp directory.
 export function cliChromePids(): number[] {

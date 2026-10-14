@@ -11,11 +11,14 @@ import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { runAgent, agentEnvFor, agentLog } from '../src/agent.mjs';
+import { workDir } from '../src/home.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const APP = join(here, 'loop-app');
 const tmp = mkdtempSync(join(tmpdir(), 'a11y-508-loop-app-'));
+// The tool's state base, for this file and verify.mjs (a child): inside the temp folder it removes.
+process.env.A11Y_508_HOME = join(tmp, 'a11y-508-home');
 
 // node test/loop-app.mjs --only "AC4" runs only the checks whose name contains that text.
 const onlyAt = process.argv.indexOf('--only');
@@ -129,7 +132,7 @@ const fakeRun = (dir, { outside = false, skipGate = false, quotaAll = false, new
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'a11y-508: 7.A meaningful image name: Image has no alt attribute');
   const commit = git(dir, 'rev-parse', '--short', 'HEAD');
-  const work = join(dir, 'a11y-508-work');
+  const work = workDir(dir);
   mkdirSync(work, { recursive: true });
   const findings = {};
   for (let i = 0; i < 12; i++) {

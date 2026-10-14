@@ -2,24 +2,19 @@
 // directory per working directory (~/.a11y-508/<12 hex of sha1(path)>/, or %APPDATA%\a11y-508\…
 // on Windows; A11Y_508_HOME overrides the base, for tests). It holds config.json (the loop's
 // config, unless the repository has its own), state.json (the sign-in session) and settings.json
-// (the remembered start URL and assistant). The outputs (a11y-508-report/, -history/, -work/)
-// stay in the working directory, kept out of git through .git/info/exclude.
+// (the remembered start URL and assistant). The outputs (the report, the history, the loop's work
+// folder) are under the same base too, per repository (src/home.mjs: repos/<name>-<hash>/).
 
 import { createHash } from 'node:crypto';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { gitDirOf, stateBase } from '../../src/home.mjs';
+
+export { gitDirOf, stateBase };
 
 export const WRITTEN_BY = 'a11y-508-dashboard';
-export const OUTPUT_DIRS = ['a11y-508-report/', 'a11y-508-history/', 'a11y-508-work/'];
 export const REPO_CONFIG = 'a11y-508.config.json';
 export const REPO_STATE = 'a11y-508-state.json';
-
-export function stateBase(env = process.env, platform = process.platform) {
-  if (env.A11Y_508_HOME) return env.A11Y_508_HOME;
-  if (platform === 'win32') return join(env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'a11y-508');
-  return join(homedir(), '.a11y-508');
-}
 
 export function stateDirFor(cwd, env = process.env, platform = process.platform) {
   const id = createHash('sha1').update(resolve(cwd)).digest('hex').slice(0, 12);
@@ -84,49 +79,6 @@ export function rememberedStart(lastCwd, launchDir, realDir) {
 export function readSettings(file) {
   const s = readJson(file);
   return s && typeof s === 'object' && !Array.isArray(s) ? s : {};
-}
-
-// The repository's .git directory for a working directory (it or an ancestor), or null. A .git
-// file (a worktree, a submodule) points at the real one.
-export function gitDirOf(cwd) {
-  for (let d = resolve(cwd); ; ) {
-    const g = join(d, '.git');
-    try {
-      if (existsSync(g)) {
-        if (statSync(g).isDirectory()) return g;
-        const m = /^gitdir:\s*(.+)\s*$/m.exec(readFileSync(g, 'utf8'));
-        if (m) return resolve(d, m[1].trim());
-        return null;
-      }
-    } catch {
-      return null;
-    }
-    const parent = dirname(d);
-    if (parent === d) return null;
-    d = parent;
-  }
-}
-
-// Adds the output directories to .git/info/exclude (local to this clone, never committed), once.
-// Returns the names added; nothing is written outside a git repository.
-export function excludeOutputs(cwd) {
-  const git = gitDirOf(cwd);
-  if (!git) return [];
-  const file = join(git, 'info', 'exclude');
-  let text = '';
-  try {
-    text = readFileSync(file, 'utf8');
-  } catch {}
-  const have = new Set(text.split(/\r?\n/).map((l) => l.trim()));
-  const missing = OUTPUT_DIRS.filter((d) => !have.has(d) && !have.has(d.replace(/\/$/, '')) && !have.has('/' + d));
-  if (!missing.length) return [];
-  try {
-    mkdirSync(join(git, 'info'), { recursive: true });
-    appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}# a11y-508 dashboard outputs\n${missing.join('\n')}\n`);
-  } catch {
-    return [];
-  }
-  return missing;
 }
 
 // Files in the working directory the dashboard may have written before it kept them elsewhere:
