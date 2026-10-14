@@ -11,7 +11,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { applyReport, decide, loadLedger, saveLedger } from '../src/ledger.mjs';
 import { agentEnv, fixPrompt, triagePrompt } from '../src/agent.mjs';
-import { normalizeConfig, sessionArgs } from '../src/loop.mjs';
+import { normalizeConfig, sessionArgs, splitCheck } from '../src/loop.mjs';
 import { splitLoopArgs } from '../src/cli.mjs';
 import { statusCounts } from '../src/ledger.mjs';
 import { parseEvents } from './event-schema.mjs';
@@ -114,6 +114,11 @@ check('a saved session is used for each round\'s crawl unless the options name a
   writeFileSync(join(dir, 'mine.json'), '{}');
   assert.deepEqual(sessionArgs({ args: [], state: 'mine.json' }, [], dir), ['--state', 'mine.json']);
   rmSync(dir, { recursive: true, force: true });
+});
+check('loop-resilience AC20: only a plain "<build> && <test>" check is split; one whose first part sets up the second runs whole', () => {
+  assert.deepEqual(splitCheck('npm run build && npm test -- --watch=false'), { build: 'npm run build', test: 'npm test -- --watch=false' });
+  assert.deepEqual(splitCheck('"/opt/my node/node" build.mjs && "/opt/my node/node" test.mjs'), { build: '"/opt/my node/node" build.mjs', test: '"/opt/my node/node" test.mjs' });
+  for (const whole of ['cd app && node t.mjs', 'export CI=1 && npm test', 'nvm use && npm test', 'node -e "a && b"', 'npm run lint && npm run build && npm test', 'npm test']) assert.deepEqual(splitCheck(whole), { build: whole, test: null }, whole);
 });
 check('loop flags are split from crawl options', () => {
   const s = splitLoopArgs(['loop', 'http://x', '--max-rounds', '3', '--max-pages', '10', '--agent=gemini', '--dry-run']);
@@ -835,8 +840,11 @@ rmSync(repo2, { recursive: true, force: true });
     const { dir, g } = appRepo('a11y-508-slowcheck-', {});
     const site = await serve(dir);
     const url = `http://127.0.0.1:${site.address().port}/`;
-    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', url, checkTimeout: 2000, check: `${JSON.stringify(process.execPath)} -e "setTimeout(() => {}, 120000)"` }, null, 2));
-    g('commit', '-qam', 'a check that never ends');
+    // The check starts a process of its own that never ends either: the whole tree must go.
+    writeFileSync(join(dir, 'slow-check.mjs'), "import { spawn } from 'node:child_process';\nimport { appendFileSync } from 'node:fs';\nconst c = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 120000)'], { stdio: 'ignore' });\nappendFileSync('a11y-508-work/check-pids.log', `${process.pid} ${c.pid}\\n`);\nsetTimeout(() => {}, 120000);\n");
+    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', url, checkTimeout: 2000, check: `${JSON.stringify(process.execPath)} slow-check.mjs && ${JSON.stringify(process.execPath)} -e 0` }, null, 2));
+    g('add', '-A');
+    g('commit', '-qm', 'a check that never ends');
     const t0 = Date.now();
     const r = await loopIn(dir, ['--max-rounds', '1', '--events']);
     site.close();
@@ -848,6 +856,11 @@ rmSync(repo2, { recursive: true, force: true });
       for (const a of failed) assert.equal(a.reason, 'the check did not finish within 2 s');
       assert.equal(events.filter((e) => e.type === 'commit').length, 0);
       assert.equal(g('status', '--porcelain', '--', 'site'), '');
+      // Every process the check started is gone.
+      const pids = readFileSync(join(dir, 'a11y-508-work', 'check-pids.log'), 'utf8').split(/\s+/).filter(Boolean).map(Number);
+      assert.ok(pids.length >= 4, pids.join(' '));
+      const alive = pids.filter((pid) => { try { process.kill(pid, 0); return true; } catch { return false; } });
+      assert.deepEqual(alive, []);
     });
     removeOwn(dir);
   }
@@ -903,6 +916,48 @@ rmSync(repo2, { recursive: true, force: true });
         assert.equal(iframe.attempts.at(-1).outcome, 'failed-gate');
       });
     }
+    removeOwn(dir);
+  }
+
+  // AC 20 with Stop: a stop while the round's tests run blames no fix and loses no commit, even when the
+  // process is killed 3 s later (as the dashboard's Stop does).
+  if (process.platform !== 'win32') {
+    const { dir, g } = appRepo('a11y-508-stoptests-', {});
+    writeFileSync(join(dir, 'build.mjs'), "process.exit(0);\n");
+    writeFileSync(join(dir, 'test.mjs'), "console.log('testing');\nawait new Promise((r) => setTimeout(r, 8000));\nconsole.log('tests passed');\n");
+    const site = await serve(dir);
+    const url = `http://127.0.0.1:${site.address().port}/`;
+    const node = JSON.stringify(process.execPath);
+    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', url, check: `${node} build.mjs && ${node} test.mjs` }, null, 2));
+    g('add', '-A');
+    g('commit', '-qm', 'slow tests');
+    const out = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [bin, 'loop', '--max-rounds', '1', '--events'], { cwd: dir, env: { ...process.env, TOKEN, NO_COLOR: '1' }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      let stdout = '';
+      let signalled = false;
+      child.stdout.on('data', (d) => {
+        stdout += d;
+        if (!signalled && /"part":"test"/.test(stdout)) {
+          signalled = true;
+          setTimeout(() => {
+            try { process.kill(-child.pid, 'SIGINT'); } catch {}
+            setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 3000);
+          }, 500);
+        }
+      });
+      child.stderr.on('data', () => {});
+      const timer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 240000);
+      child.on('exit', () => { clearTimeout(timer); resolve(stdout); });
+    });
+    site.close();
+    const { events } = parseEvents(out);
+    check('loop-resilience AC20: Stop during the round\'s tests keeps every commit and blames no fix', () => {
+      const committedFixes = events.filter((e) => e.type === 'commit').length;
+      assert.ok(committedFixes >= 2, out);
+      assert.equal(g('log', '--format=%s', '--grep=^a11y-508: ').split('\n').filter(Boolean).length, committedFixes);
+      assert.ok(!events.some((e) => e.type === 'bisect'), 'a bisect ran');
+      assert.ok(!events.some((e) => e.type === 'attempt' && e.outcome === 'failed-gate' && /broke the tests|round's tests failed/.test(e.gateTail || '')), 'a fix was blamed');
+    });
     removeOwn(dir);
   }
 

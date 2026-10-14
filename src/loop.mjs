@@ -121,7 +121,11 @@ export function splitCheck(check) {
   const i = t.indexOf('&&');
   const build = i > 0 ? t.slice(0, i).trim() : '';
   const test = i > 0 ? t.slice(i + 2).trim() : '';
-  return build && test ? { build, test } : { build: t, test: null };
+  // Only two commands joined once: not a quoted "&&", not a second one, and not a first part that
+  // sets up the second (cd, export, nvm use, …), whose meaning a split would change.
+  const quoted = (str) => ((str.match(/"/g) || []).length % 2 === 1) || ((str.match(/'/g) || []).length % 2 === 1);
+  const plain = build && test && !quoted(t.slice(0, i)) && !test.includes('&&') && !/^(cd|pushd|export|set|source|\.|nvm|env|call)\b/i.test(build);
+  return plain ? { build, test } : { build: t, test: null };
 }
 
 // For an app behind a sign-in portal: when the working directory holds the session file and
@@ -598,7 +602,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       }
     }
     const members = (e) => groupOf.get(e) || [e];
-    log.info(`=== round ${round}: fix ${tasks.length} open finding(s)${tasks.length < tasks.length ? ` as ${tasks.length} task(s)` : ''} ===`);
+    log.info(`=== round ${round}: fix ${tasks.length} open finding(s)${tasks.length < open.length ? ` as ${tasks.length} task(s)` : ''} ===`);
     ev('step', { round, step: 'fix', count: tasks.length });
     // One row of the run's changes: the finding, the files the working tree shows changed, what
     // became of them, and how long the assistant and the check took.
@@ -728,39 +732,61 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         ev('step', { round, step: 'gate', check: parts.test });
         return runGate(round, null, null, parts.test, 'test');
       };
+      // The tests run against the source folders as they were at a commit (git restore), never by
+      // moving the branch: a stop, or a kill, mid-way leaves every commit in place.
+      const at = (sha) => git(cwd, ['restore', `--source=${sha}`, '--worktree', '--', ...sourceDirs]);
+      const atTip = () => {
+        git(cwd, ['restore', '--source=HEAD', '--worktree', '--', ...sourceDirs]);
+        git(cwd, ['clean', '-fdq', '--', ...sourceDirs]);
+      };
+      // Stopped while the tests ran: their result says nothing about the fixes, which stay committed.
+      let halted = false;
+      const halt = () => {
+        atTip();
+        halted = true;
+        log.warn("stopped while the tests ran; the round's fixes stay committed, not yet tested");
+      };
       log.info(`running the tests once for the round's ${committed} fix(es)`);
       let tests = await testsAt('');
       let reverts = 0;
-      if (tests.code !== 0) {
+      if (stopped()) halt();
+      else if (tests.code !== 0) {
         // Tests that fail without any of this round's fixes are not theirs to answer for.
-        const tip = git(cwd, ['rev-parse', 'HEAD']).out;
-        git(cwd, ['reset', '-q', '--hard', roundBase]);
+        at(roundBase);
         const before = await testsAt('without this round\'s fixes');
-        git(cwd, ['reset', '-q', '--hard', tip]);
-        if (before.code !== 0) {
-          log.warn('the tests also fail without this round\'s fixes; keeping the fixes, which each passed the build');
+        atTip();
+        if (stopped()) halt();
+        else if (before.code !== 0) {
+          log.warn(tests.timedOut && before.timedOut
+            ? `the tests did not finish within ${duration(cfg.checkTimeout)}, with or without this round's fixes; the fixes are kept, not tested`
+            : 'the tests also fail without this round\'s fixes; the fixes are kept, not tested (each passed the build)');
           tests = { code: 0 };
         }
       }
-      while (tests.code !== 0 && reverts < 3 && live().length) {
+      while (!halted && tests.code !== 0 && reverts < 3 && live().length) {
         const list = live();
-        const tip = git(cwd, ['rev-parse', 'HEAD']).out;
         ev('bisect', { round, state: 'start', count: list.length });
         // The first commit whose state fails the tests: a binary search over the round's commits.
         let lo = 0;
         let hi = list.length - 1;
         while (lo < hi) {
           const mid = (lo + hi) >> 1;
-          git(cwd, ['reset', '-q', '--hard', list[mid].attempts[list[mid].attempts.length - 1].commitFull]);
+          at(list[mid].attempts[list[mid].attempts.length - 1].commitFull);
           const t = await testsAt(`with fixes up to ${list[mid].attempts[list[mid].attempts.length - 1].n}`);
+          if (stopped()) break;
           if (t.code !== 0) hi = mid;
           else lo = mid + 1;
+        }
+        atTip();
+        if (stopped()) {
+          halt();
+          break;
         }
         const culprit = list[lo];
         const ca = culprit.attempts[culprit.attempts.length - 1];
         ev('bisect', { round, state: 'found', n: ca.n ?? 0, test: culprit.test, message: culprit.message, commit: ca.commit });
         log.warn(`  fix ${ca.n} (${culprit.test} "${culprit.message.slice(0, 60)}") breaks the tests; reverting it`);
-        // Back to the commit before it, and the later fixes applied again on top.
+        // Back to the commit before it, and the later fixes applied again on top (no test runs in between).
         const base = lo > 0 ? list[lo - 1].attempts[list[lo - 1].attempts.length - 1].commitFull : roundBase;
         git(cwd, ['reset', '-q', '--hard', base]);
         failAttempt(culprit, tests, `fix ${ca.n} broke the tests`);
@@ -778,13 +804,13 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           a.commit = git(cwd, ['rev-parse', '--short', 'HEAD']).out;
           attemptEvent(a.n ?? 0, e, a, 'committed');
         }
-        void tip;
         reverts++;
         save();
         ledgerEvent();
         tests = live().length ? await testsAt('after the revert') : { code: 0 };
+        if (stopped()) halt();
       }
-      if (tests.code !== 0) {
+      if (!halted && tests.code !== 0) {
         log.warn(`the tests still fail after ${reverts} revert(s); rolling back this round's fixes`);
         git(cwd, ['reset', '-q', '--hard', roundBase]);
         for (const e of live()) failAttempt(e, tests, 'the round\'s tests failed');

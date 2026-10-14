@@ -120,8 +120,16 @@ export function deleteHistoryEntry(cwd, id) {
 // (for the last round, the ledger's open count; before that, found less committed).
 export function loopTimeline(ledger, counts) {
   if (!ledger || !Array.isArray(ledger.rounds) || !ledger.rounds.length) return null;
+  // Per round: the commits made (one per fix task: a group of findings shares one) and the findings they covered.
   const commits = {};
-  for (const e of Object.values(ledger.findings || {})) for (const a of e.attempts || []) if (a.commit) commits[a.round] = (commits[a.round] || 0) + 1;
+  const covered = {};
+  for (const e of Object.values(ledger.findings || {})) {
+    for (const a of e.attempts || []) {
+      if (!a.commit) continue;
+      (commits[a.round] = commits[a.round] || new Set()).add(a.commit);
+      covered[a.round] = (covered[a.round] || 0) + 1;
+    }
+  }
   const last = ledger.rounds[ledger.rounds.length - 1].round;
   // Each round's fix attempts, as the Fix step's "Changes this run" list shows them.
   const changes = {};
@@ -129,7 +137,14 @@ export function loopTimeline(ledger, counts) {
     for (const a of e.attempts || []) {
       if (!a || typeof a.round !== 'number') continue;
       const outcome = a.commit ? 'committed' : a.outcome === 'failed-gate' ? 'failed-gate' : a.note === 'agent timed out' ? 'timed-out' : a.outcome === 'still-present' ? 'committed' : 'no-change';
-      (changes[a.round] = changes[a.round] || []).push({
+      // The findings of one fix task share its attempt: one row, with how many elements it covered.
+      const list = (changes[a.round] = changes[a.round] || []);
+      const same = typeof a.n === 'number' ? list.find((x) => x.n === a.n) : null;
+      if (same) {
+        same.elements = (same.elements || 1) + 1;
+        continue;
+      }
+      list.push({ elements: 1,
         n: a.n ?? null, test: e.test, message: e.message, files: Array.isArray(a.files) ? a.files : [], outcome, commit: a.commit || null,
         agentMs: a.agentMs ?? null, gateMs: a.gateMs ?? null, gateCode: a.gateCode ?? null,
         gateTail: a.gateOutput ? String(a.gateOutput).split('\n').filter((l) => l.trim()).slice(-15).join('\n') : null,
@@ -138,9 +153,9 @@ export function loopTimeline(ledger, counts) {
   }
   for (const list of Object.values(changes)) list.sort((x, y) => (x.n ?? 0) - (y.n ?? 0));
   const rounds = ledger.rounds.map((r) => {
-    const made = commits[r.round] || 0;
+    const made = covered[r.round] || 0;
     const fixed = (r.diff && r.diff.verified) || 0;
-    return { round: r.round, at: r.at || null, found: r.violations, fixed, commits: made, changes: changes[r.round] || [], remaining: r.round === last ? counts.open || 0 : Math.max(0, r.violations - made), needsHuman: r.round === last ? counts['needs-human'] || 0 : 0 };
+    return { round: r.round, at: r.at || null, found: r.violations, fixed, commits: commits[r.round] ? commits[r.round].size : 0, changes: changes[r.round] || [], remaining: r.round === last ? counts.open || 0 : Math.max(0, r.violations - made), needsHuman: r.round === last ? counts['needs-human'] || 0 : 0 };
   });
   const fixed = counts.verified || 0;
   const remaining = counts.open || 0;

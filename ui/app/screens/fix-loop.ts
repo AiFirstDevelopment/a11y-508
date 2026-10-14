@@ -157,7 +157,7 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
       }
     </p>
     @if (plan(); as pl) {
-      @if (repoOk() && pl.check && pl.check.includes('&&')) { <p class="hint" data-testid="check-hint">Each fix is built; the tests run once per round.</p> }
+      @if (repoOk() && splitsCheck(pl.check) && cfg()['checkEvery'] !== 'round') { <p class="hint" data-testid="check-hint">Each fix is built; the tests run once per round.</p> }
       @if (repoOk() && defaults()?.package?.testHint && pl.check === defaults()?.effective?.check) { <p class="hint" data-testid="test-hint">{{ defaults()!.package.testHint }}.</p> }
     }
     @if (!loopUrl()) {
@@ -477,6 +477,17 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     return `Round ${r}: re-checking the site${pages}`;
   });
   // The assistant by the name a person knows it by ("Gemini CLI"); a custom command is "the assistant".
+  // The loop's own rule (src/loop.mjs splitCheck): a plain "<build> && <test>" is split, so the
+  // build runs on every fix and the tests once per round.
+  splitsCheck(check: string | null | undefined): boolean {
+    const t = String(check || '').trim();
+    const i = t.indexOf('&&');
+    if (i <= 0) return false;
+    const build = t.slice(0, i).trim();
+    const test = t.slice(i + 2).trim();
+    const quoted = (str: string) => (str.match(/"/g) || []).length % 2 === 1 || (str.match(/'/g) || []).length % 2 === 1;
+    return !!build && !!test && !quoted(t.slice(0, i)) && !test.includes('&&') && !/^(cd|pushd|export|set|source|\.|nvm|env|call)\b/i.test(build);
+  }
   readonly assistantName = computed(() => (this.choice() !== 'custom' && this.chosenPreset()?.found ? this.chosenPreset()!.label : 'the assistant'));
   // One line under the status while the assistant works: it is still being waited on (after a
   // silence), or what triage is.

@@ -104,6 +104,13 @@ clone): the loop checks it out tracking origin. AC 6's "assistant failed to star
     run once and every finding in the group gets the attempt (same commit). The status reads "fixing 1 of 6 (8
     elements)", the Changes list shows "(8 elements)". Triage stays per item.
 
+Verification of 13–21 (fix round): the round's tests and the bisect run against the source folders as they were
+at a commit (`git restore --source`), never by moving the branch, and a Stop while they run keeps every commit and
+blames no fix; only a plain "<build> && <test>" is split (not `cd x && …`, a quoted `&&`, or three commands);
+tests that fail or time out with and without the round's fixes leave the fixes kept and say they are untested;
+History lists a group's attempt once with its element count and counts its one commit once; the check's whole
+process tree is asserted gone after checkTimeout.
+
 ## How this fails silently
 
 1. The nested-branch fallback picks a branch but does not switch to it; commits land on the previous branch.
