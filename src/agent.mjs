@@ -335,6 +335,7 @@ You are working in this repository. Fix the finding below by editing the applica
 - Edit only files under: ${sourceDirs.join(', ')}.
 - ${protectedDirs && protectedDirs.length ? `Never edit anything under: ${protectedDirs.join(', ')}. ` : ''}Do not edit tests to make them pass, do not add or remove dependencies, do not commit, and do not run the accessibility crawler.
 - ${FOCUS}
+- Do not search or read node_modules or other installed dependencies: the fix belongs in the application's own source, and reading packages only costs time.
 - Make the smallest change that resolves this finding everywhere it appears. The same element is often rendered by one component or template used on many pages.
 - Do not change the page's behavior or visual design beyond what the fix requires.
 - If you cannot locate the element, or the fix needs a decision only a person can make (for example what an image depicts), make no change and say so in the result.
