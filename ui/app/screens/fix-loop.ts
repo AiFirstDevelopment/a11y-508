@@ -539,6 +539,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
 
   // Why Fix the violations cannot start, once the screen is ready (a notice, never silence).
   private whyNot(): string {
+    if (this.pending()) return 'The dashboard could not finish reading the folder and the assistants; reload the page and try again.';
     if (!this.agentReady()) return 'Choose an installed assistant first.';
     if (!this.repoOk()) return `${this.env.cwd()} ${this.repoProblem()}.`;
     if (!this.loopUrl()) return 'There is no start URL: run a crawl from Set up first.';
