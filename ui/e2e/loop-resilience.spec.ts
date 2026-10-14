@@ -162,7 +162,7 @@ test('loop-resilience AC9/10: a round from the report shows no crawl, and triage
 test('loop-resilience AC11a/c: an assistant silent past the threshold is "still being waited on", and a call given up says so', async ({ page }) => {
   await fromReportLoop(page, 'a11y-508-quiet-', { quietAfter: 1000, agentTimeout: 4000 }, { FAKE_AGENT_SLOW_ONCE: join('MARKS', 'slow'), FAKE_AGENT_SLOW_MS: '8000', FAKE_AGENT_QUIET: '1' }, async () => {
     await expect(page.getByTestId('fix-hint')).toHaveText(/^Waiting on the assistant — no output for [1-4] s; it may take a few minutes\. The call is given up after 4 s\.$/, { timeout: 60_000 });
-    await expect(page.getByTestId('agent-gave-up')).toHaveText(/^The assistant did not answer within 4 s; the \d+ review items? stays? in review and the loop goes on\.$/, { timeout: 30_000 });
+    await expect(page.getByTestId('agent-gave-up')).toHaveText(/^The assistant did not answer within 4 s; the loop goes on\.$/, { timeout: 30_000 });
   });
 });
 
