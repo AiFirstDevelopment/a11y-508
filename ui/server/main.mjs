@@ -12,6 +12,9 @@ import { readGlobal, readSettings, rememberedStart, stateBase, writeGlobal, writ
 import { resolve } from 'node:path';
 import { SECRET_HEADER, createDashboard } from './app.mjs';
 import { realDir } from './dirs.mjs';
+import { writeDiary } from '../../src/diary.mjs';
+import { lastKill, protectPid, recordKill, unprotectPid } from '../../src/kills.mjs';
+import { browserCommand, ownExitMessage, spawnOwnBrowser } from './diagnostics.mjs';
 
 const argv = process.argv.slice(2);
 const opt = { port: 5508, open: true, dir: null };
@@ -107,9 +110,27 @@ process.stdout.write(`a11y-508 dashboard for ${cwd}${restored ? ' (the folder ch
 process.stdout.write(`open: ${dash.url}\n`);
 process.stdout.write('This address carries a one-time secret for this launch; keep it to yourself. Press Ctrl+C to stop, or Quit in the dashboard.\n');
 const myServerFile = serverFile(dash.port);
-try {
-  writeJson(myServerFile, { pid: process.pid, port: dash.port, secret: dash.secret, cwd, startedAt: new Date().toISOString() });
-} catch {}
+const serverRecord = { pid: process.pid, port: dash.port, secret: dash.secret, cwd, startedAt: new Date().toISOString(), ownBrowserPid: null };
+// The record also names the dashboard's own browser, so no a11y-508 process ever kills it (src/kills.mjs).
+const saveServerRecord = (patch = {}) => {
+  Object.assign(serverRecord, patch);
+  try {
+    writeJson(myServerFile, serverRecord);
+  } catch {}
+};
+saveServerRecord();
+writeDiary({ type: 'server-start', cwd, port: dash.port }, { source: 'server' });
+
+// A crash is written to the diagnostics diary before the process ends.
+const crashed = (what) => (e) => {
+  const error = String((e && e.stack) || e).slice(0, 4000);
+  writeDiary({ type: 'server-stop', reason: 'crash', error: `${what}: ${error}` }, { source: 'server' });
+  process.stderr.write(`a11y-508 dashboard crashed (${what}): ${error}\n`);
+  forgetServerFile();
+  process.exit(1);
+};
+process.on('uncaughtException', crashed('uncaught exception'));
+process.on('unhandledRejection', crashed('unhandled rejection'));
 const forgetServerFile = () => {
   try {
     if (readSettings(myServerFile).pid === process.pid) rmSync(myServerFile, { force: true });
@@ -137,17 +158,20 @@ function openBrowser(url) {
 // A11Y_508_OWN_BROWSER=0, the system's browser opens the address as before, and sign-in opens a
 // separate window.
 async function launchOwnBrowser(url) {
-  let exe;
-  try {
-    exe = findChrome();
-  } catch {
-    return null;
+  let exe = process.env.A11Y_508_OWN_BROWSER_PATH || null;
+  if (!exe) {
+    try {
+      exe = findChrome();
+    } catch {
+      return null;
+    }
   }
   const profile = join(stateBase(), 'browser-profile');
   mkdirSync(profile, { recursive: true });
   const portFile = join(profile, 'DevToolsActivePort');
   rmSync(portFile, { force: true });
-  const proc = spawn(exe, ['--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--window-name=a11y-508', '--new-window', url], { stdio: 'ignore' });
+  // Its stderr is kept (the last 50 lines), so an exit can be explained (diagnostics.mjs).
+  const { proc, tail, drained } = spawnOwnBrowser(exe, ['--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--window-name=a11y-508', '--new-window', url]);
   let exited = false;
   proc.on('exit', () => (exited = true));
   proc.on('error', () => (exited = true));
@@ -156,7 +180,7 @@ async function launchOwnBrowser(url) {
       const port = readFileSync(portFile, 'utf8').split('\n')[0].trim();
       try {
         const res = await fetch(`http://127.0.0.1:${port}/json/version`);
-        if (res.ok) return { proc, port: Number(port), shared: exited, exe, profile };
+        if (res.ok) return { proc, port: Number(port), shared: exited, exe, profile, tail, drained };
       } catch {}
     }
     if (exited && i > 20) break;
@@ -171,14 +195,37 @@ const ownAlive = () => !!(own && !own.shared && own.proc.exitCode === null && ow
 
 // Closing the dashboard's window does not end the dashboard, nor any run: the server keeps serving,
 // sign-in opens a window of its own from then on, and launching the dashboard again opens it.
+// Every exit is written to the diagnostics diary with its cause: exit code and signal, Chrome's last
+// stderr lines, what the dashboard was doing, and an a11y-508 kill in the 5 seconds before. The
+// dashboard shows the same sentence the terminal prints, with a way to reopen the window.
 function watchOwn() {
   if (!own || own.shared) return;
   const mine = own;
-  mine.proc.on('exit', () => {
+  const pid = mine.proc.pid;
+  protectPid(pid, "the dashboard's own browser");
+  saveServerRecord({ ownBrowserPid: pid });
+  dash.ownBrowser.opened(pid);
+  writeDiary({ type: 'own-browser-start', browserPid: pid }, { source: 'server' });
+  mine.proc.on('exit', async (code, signal) => {
+    const at = new Date().toISOString();
+    // What the dashboard was doing and the kill that came before, read at the moment it went away.
+    const doing = dash.doing();
+    const kill = closing ? { kill: 'quit' } : lastKill({ withinMs: 5000 });
+    await mine.drained();
+    unprotectPid(pid);
+    if (serverRecord.ownBrowserPid === pid) saveServerRecord({ ownBrowserPid: null });
+    const entry = {
+      type: 'own-browser-exit', at, browserPid: pid, code, signal, stderr: mine.tail(), expected: closing,
+      doing: doing ? doing.words : null, run: doing ? { kind: doing.kind, round: doing.round, step: doing.step, n: doing.n, lastEvent: doing.lastEvent } : null,
+      kill: kill ? kill.kill : null, killTarget: kill && kill.target ? kill.target : null,
+    };
+    entry.message = ownExitMessage(entry);
+    const written = writeDiary(entry, { source: 'server' }) || entry;
     if (own !== mine || closing) return;
     own = null;
     dash.useBrowser(null, { separate: true });
-    process.stdout.write(`the dashboard's window was closed; the dashboard keeps running${dash.runs.active ? ', and so does the run' : ''}. Run the same command again to reopen it; Ctrl+C here, or Quit in the dashboard, ends it.\n`);
+    dash.ownBrowser.exited(written);
+    process.stdout.write(`${entry.message} The dashboard keeps running${dash.runs.active ? ', and so does the run' : ''}; Reopen the window in the dashboard, or run the same command again. Ctrl+C here, or Quit in the dashboard, ends it.\n`);
   });
 }
 
@@ -202,7 +249,8 @@ async function openOwnOrSystem() {
 async function reopen() {
   if (ownAlive()) {
     try {
-      spawn(own.exe, [`--user-data-dir=${own.profile}`, '--new-window', dash.url], { stdio: 'ignore', detached: true }).unref();
+      const [cmd, args] = browserCommand(own.exe, [`--user-data-dir=${own.profile}`, '--new-window', dash.url]);
+      spawn(cmd, args, { stdio: 'ignore', detached: true }).unref();
       return;
     } catch {}
   }
@@ -212,25 +260,31 @@ async function reopen() {
 if (opt.open) await openOwnOrSystem();
 
 
-const shutdown = async () => {
+// reason: why it ends, for the diagnostics diary ('ctrl-c', 'sigterm', 'quit', 'idle').
+const shutdown = async (reason) => {
   if (closing) process.exit(130);
   closing = true;
+  writeDiary({ type: 'server-stop', reason }, { source: 'server' });
   forgetServerFile();
   // Ctrl+C closes the dashboard's own browser too.
   if (ownAlive()) {
+    recordKill('quit', { target: own.proc.pid, what: "the dashboard's own browser" });
+    const gone = new Promise((r) => own.proc.once('exit', () => setTimeout(r, 600)));
     try {
       own.proc.kill();
     } catch {}
+    // Long enough for its exit to be written to the diary.
+    await Promise.race([gone, new Promise((r) => setTimeout(r, 2000))]);
   }
   await dash.close();
   process.exit(0);
 };
 function quit() {
   process.stdout.write('Quit from the dashboard; ending it\n');
-  void shutdown();
+  void shutdown('quit');
 }
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => shutdown('ctrl-c'));
+process.on('SIGTERM', () => shutdown('sigterm'));
 
 // Idle for a day (A11Y_508_IDLE_MS): no run, no page asking anything or holding a run's stream
 // open (an open page asks every minute), and no window of its own: the dashboard ends.
@@ -241,6 +295,6 @@ const idle = setInterval(() => {
   if (Date.now() - a.lastSeen < IDLE_MS) return;
   const h = IDLE_MS / 3600000;
   process.stdout.write(`no run and no open dashboard for ${h >= 1 ? `${Math.round(h)} hours` : `${Math.round(IDLE_MS / 1000)} seconds`}; ending\n`);
-  void shutdown();
+  void shutdown('idle');
 }, Math.min(60000, Math.max(250, Math.floor(IDLE_MS / 4))));
 if (idle.unref) idle.unref();

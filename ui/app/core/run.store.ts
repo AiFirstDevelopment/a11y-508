@@ -386,7 +386,8 @@ export class RunStore {
         this.awaitingDeploy.set(false);
         this.agentCall.update((c) => (c && !c.endedAt ? { ...c, endedAt: Date.parse(String(ev['at'])) || Date.now(), outcome: ev['outcome'] === 'stopped' ? 'stopped' : 'ended' } : c));
         this.progress.update((p) => ({ ...p, finished: true }));
-        if (ev['outcome'] === 'error') this.notices.update((n) => [...n, { level: 'error', message: `The run failed (exit code ${ev['code']}).` }]);
+        // The CLI's own reason, when it gave one (a browser that went away).
+        if (ev['outcome'] === 'error') this.notices.update((n) => [...n, { level: 'error', message: ev['reason'] ? `The run failed: ${ev['reason']} (exit code ${ev['code']}).` : `The run failed (exit code ${ev['code']}).` }]);
         break;
       default:
         if (!KNOWN_EVENTS.has(ev.type)) this.unknown.update((u) => [...u, ev.type]);

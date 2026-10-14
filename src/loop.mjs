@@ -94,7 +94,7 @@ const sh = (cwd, command, env, onData = null, timeoutMs = 0) =>
     child.stderr.on('data', keep);
     const timer = timeoutMs > 0 ? setTimeout(() => {
       timedOut = true;
-      killTree(child.pid);
+      killTree(child.pid, 'check-time-limit');
     }, timeoutMs) : null;
     child.on('exit', (code) => {
       if (timer) clearTimeout(timer);

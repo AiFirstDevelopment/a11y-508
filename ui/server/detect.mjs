@@ -9,6 +9,7 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, extname, join } from 'node:path';
 import { killTreeWindows } from './runs.mjs';
+import { recordKill, refuseKill } from '../../src/kills.mjs';
 import { PRESETS, PRESET_INFO, installCommand, npmBinDir, presetCommandAt } from '../../src/agent.mjs';
 
 // Git for Windows' bash, or null. SHELL naming a bash.exe wins (Git Bash
@@ -95,8 +96,11 @@ export function run(file, args, { env, timeout = 10000, cwd = homedir(), shell =
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
     const timer = setTimeout(() => {
-      if (process.platform === 'win32') killTreeWindows(child.pid).catch(() => {});
-      else child.kill('SIGKILL');
+      if (process.platform === 'win32') killTreeWindows(child.pid, 'detection-timeout').catch(() => {});
+      else if (!refuseKill(child.pid, 'detection-timeout')) {
+        recordKill('detection-timeout', { target: child.pid });
+        child.kill('SIGKILL');
+      }
       setTimeout(() => resolve({ code: null, out, err: err + 'timed out' }), 2000).unref();
     }, timeout);
     child.on('error', (e) => {

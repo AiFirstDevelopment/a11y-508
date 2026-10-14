@@ -5,6 +5,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { BadRequest } from './args.mjs';
+import { protectedPids, recordKill, refuseKill } from '../../src/kills.mjs';
 
 // What an exit code means to a person. Exit 1 from a crawl is a finding
 // (violations found), not a failure of the tool.
@@ -51,7 +52,14 @@ const taskkill = (args) =>
 // moment, so a process started while it runs (Chrome spawning its helpers,
 // a shell forking) can escape and keep the working directory open; a second
 // sweep finds those by the parent ids of the processes already ended.
-export async function killTreeWindows(pid) {
+// kind names the kill path for the diary ('stop', 'quit', 'detection-timeout'). The dashboard's own
+// browser and server, this process and its parent are never killed (src/kills.mjs): the call
+// returns { refused: true } and the refusal is written to the diary. The sweep never adds one.
+export async function killTreeWindows(pid, kind = 'stop') {
+  const refused = refuseKill(pid, kind);
+  if (refused) return refused;
+  recordKill(kind, { target: pid });
+  const keep = protectedPids();
   await taskkill(['/PID', String(pid), '/T', '/F']);
   const ended = new Set([pid]);
   for (let round = 0; round < 3; round++) {
@@ -61,16 +69,17 @@ export async function killTreeWindows(pid) {
     while (grew) {
       grew = false;
       for (const [p, parent] of procs) {
-        if ((ended.has(parent) || alive.has(parent)) && !ended.has(p) && !alive.has(p)) {
+        if ((ended.has(parent) || alive.has(parent)) && !ended.has(p) && !alive.has(p) && !keep.has(p)) {
           alive.add(p);
           grew = true;
         }
       }
     }
-    if (!alive.size) return;
+    if (!alive.size) return { killed: true };
     for (const p of alive) ended.add(p);
     await taskkill([...[...alive].flatMap((p) => ['/PID', String(p)]), '/T', '/F']);
   }
+  return { killed: true };
 }
 
 export class Runs {
@@ -171,7 +180,8 @@ export class Runs {
     run.code = exit;
     run.status = 'done';
     run.finishedAt = new Date().toISOString();
-    this.push(run, { type: 'done', code: exit, signal: signal || null, stopped, outcome: outcomeOf({ kind: run.kind, code: exit, signal, stopped }), ...extra });
+    const reason = run.childDone && typeof run.childDone.reason === 'string' ? { reason: run.childDone.reason } : {};
+    this.push(run, { type: 'done', code: exit, signal: signal || null, stopped, outcome: outcomeOf({ kind: run.kind, code: exit, signal, stopped }), ...reason, ...extra });
     for (const l of run.listeners) l(null);
     run.listeners.clear();
     if (this.onExit) this.onExit(run);
@@ -184,8 +194,8 @@ export class Runs {
       // Windows has no signals to send: child.kill ends only the CLI and
       // leaves its Chrome running. taskkill /T ends the whole tree, the way
       // the process group does elsewhere; it is never a clean shutdown.
-      if (process.platform === 'win32') killTreeWindows(run.child.pid).catch(() => run.child.kill(sig));
-      else process.kill(-run.child.pid, sig);
+      if (process.platform === 'win32') killTreeWindows(run.child.pid, sig === 'SIGKILL' ? 'quit' : 'stop').catch(() => run.child.kill(sig));
+      else if (!refuseKill(run.child.pid, sig === 'SIGKILL' ? 'quit' : 'stop')) process.kill(-run.child.pid, sig);
     } catch {
       try {
         run.child.kill(sig);
@@ -202,14 +212,15 @@ export class Runs {
     run.stopRequests++;
     const sig = run.stopRequests === 1 ? 'SIGINT' : 'SIGTERM';
     this.push(run, { type: 'stopping', signal: sig });
+    recordKill('stop', { run: run.kind, signal: sig, target: run.child ? run.child.pid : null });
     this.signal(sig);
     // If the CLI has not ended 3 seconds after Stop, end it and everything under it (its browser
     // included): Stop must not wait on a slow shutdown.
     if (run.stopRequests === 1) {
       const t = setTimeout(() => {
         if (run.status !== 'running' || !run.child) return;
-        if (process.platform === 'win32') killTreeWindows(run.child.pid).catch(() => {});
-        else {
+        if (process.platform === 'win32') killTreeWindows(run.child.pid, 'stop').catch(() => {});
+        else if (!refuseKill(run.child.pid, 'stop')) {
           try {
             process.kill(-run.child.pid, 'SIGKILL');
           } catch {}
@@ -247,6 +258,9 @@ export class Runs {
 
   killAll() {
     if (this.active && this.current.journal) return this.current.kill();
-    if (this.active) this.signal('SIGKILL');
+    if (this.active) {
+      recordKill('quit', { run: this.current.kind, target: this.current.child ? this.current.child.pid : null });
+      this.signal('SIGKILL');
+    }
   }
 }

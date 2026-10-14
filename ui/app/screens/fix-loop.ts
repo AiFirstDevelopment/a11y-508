@@ -447,7 +447,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     if (!this.loopEnded() || !d || d['outcome'] === 'stopped' || d['outcome'] === 'interrupted') return null;
     const pre = this.store.precondition();
     if (pre) return { kind: 'start', message: String(pre['message'] || ''), remedy: String(pre['remedy'] || '') || null };
-    const errors = this.store.notices().filter((n) => n.level === 'error' && !/^The run failed \(exit code/.test(n.message)).map((n) => n.message);
+    const errors = this.store.notices().filter((n) => n.level === 'error' && !/^The run failed( \(exit code|: )/.test(n.message)).map((n) => n.message);
     if (d['outcome'] !== 'error' && !errors.length) return null;
     const message = errors[errors.length - 1] || `The loop ended with exit code ${d['code']}.`;
     return { kind: this.store.round() === null ? 'start' : 'stopped', message, remedy: null };

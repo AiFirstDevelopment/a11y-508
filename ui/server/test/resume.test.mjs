@@ -38,7 +38,7 @@ async function until(fn, ms = 30000, what = 'condition') {
 // The run's whole process tree, whatever the test's outcome.
 async function endRun(pid) {
   if (!pid || !alive(pid)) return;
-  if (WIN) await killTreeWindows(pid);
+  if (WIN) await killTreeWindows(pid, 'test');
   else {
     try {
       process.kill(-pid, 'SIGKILL');

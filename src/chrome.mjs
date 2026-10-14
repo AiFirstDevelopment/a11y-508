@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Cdp, Session } from './cdp.mjs';
 import { WebSocketClient, cdpStreams } from './ws.mjs';
+import { stderrRing } from './diary.mjs';
+import { recordKill, refuseKill } from './kills.mjs';
 
 const CANDIDATES = {
   darwin: [
@@ -61,12 +63,17 @@ export function browserField(browser) {
 const delay = (ms) => new Promise((r) => setTimeout(r, ms).unref());
 
 // Kills a process and everything under it: taskkill /T on Windows; elsewhere the descendants
-// from ps, deepest first, then the process itself.
-export function killTree(pid) {
-  if (!pid) return;
+// from ps, deepest first, then the process itself. kind names the kill path for the diary
+// ('crawl-close', 'check-time-limit'). Never the dashboard's browser or server, nor this process or
+// its ancestors (src/kills.mjs): those are refused, and the refusal is returned and written down.
+export function killTree(pid, kind = 'crawl-close') {
+  if (!pid) return { killed: false };
+  const refused = refuseKill(pid, kind);
+  if (refused) return refused;
+  recordKill(kind, { target: pid });
   if (process.platform === 'win32') {
     spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-    return;
+    return { killed: true };
   }
   const kids = new Map();
   try {
@@ -85,10 +92,13 @@ export function killTree(pid) {
   };
   walk(pid);
   for (const p of all) {
+    // A descendant that is protected (it cannot be, today) is left alone.
+    if (p !== pid && refuseKill(p, kind)) continue;
     try {
       process.kill(p, 'SIGKILL');
     } catch {}
   }
+  return { killed: true };
 }
 
 // Chrome's child processes can keep files in the profile directory open for a
@@ -165,15 +175,18 @@ async function startBrowser({ exe, viewport, noSandbox, headless, launchTimeout 
   const proc = spawn(script ? process.execPath : exe, script ? [exe, ...args] : args, {
     stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
     env: { ...process.env },
+    windowsHide: true,
   });
-  const stderr = [];
-  proc.stderr.on('data', (d) => {
-    stderr.push(String(d));
-    if (stderr.length > 50) stderr.shift();
-  });
+  // The last 50 lines of the browser's stderr, always drained; read when it dies.
+  const stderrTail = stderrRing(proc.stderr, 50);
+  const stderr = { join: () => stderrTail().join('\n') };
 
   const cdp = new Cdp(proc.stdio[3], proc.stdio[4]);
-  const exited = new Promise((resolve) => proc.once('exit', resolve));
+  // { code, signal } once the browser process has exited.
+  let exit = null;
+  let closing = false;
+  const exitedWith = new Promise((resolve) => proc.once('exit', (code, signal) => resolve((exit = { code, signal, at: new Date().toISOString() }))));
+  const exited = exitedWith.then((e) => e.code);
 
   // Sanity check the connection.
   let timer;
@@ -236,6 +249,7 @@ async function startBrowser({ exe, viewport, noSandbox, headless, launchTimeout 
   // fast: the Stop path (Ctrl+C, the dashboard's Stop). Ask the browser to close, give it 2
   // seconds, then kill it and every process under it. The end of a crawl closes gracefully.
   async function close({ fast = false } = {}) {
+    closing = true;
     if (fast) {
       cdp.send('Browser.close').catch(() => {});
       const exitedInTime = await Promise.race([exited.then(() => true), delay(2000).then(() => false)]);
@@ -247,6 +261,7 @@ async function startBrowser({ exe, viewport, noSandbox, headless, launchTimeout 
       } catch {}
       const exitedCleanly = await Promise.race([exited.then(() => true), delay(5000).then(() => false)]);
       if (!exitedCleanly) {
+        recordKill('crawl-close', { target: proc.pid });
         try {
           proc.kill('SIGKILL');
         } catch {}
@@ -264,7 +279,14 @@ async function startBrowser({ exe, viewport, noSandbox, headless, launchTimeout 
     return { userDataDir, removed };
   }
 
-  return { exe, proc, cdp, version, userDataDir, newPage, closePage, close };
+  // The browser went away without close() asking it to: its exit code, signal and last stderr
+  // lines (null while it runs, or when it was closed on purpose).
+  function death() {
+    if (closing || (!exit && !cdp.closed)) return null;
+    return { code: exit ? exit.code : null, signal: exit ? exit.signal : null, at: exit ? exit.at : new Date().toISOString(), stderr: stderrTail(), pid: proc.pid, how: exit ? 'exited' : 'the DevTools pipe closed' };
+  }
+
+  return { exe, proc, cdp, version, userDataDir, newPage, closePage, close, death, exited: exitedWith, alive: () => !exit && !cdp.closed };
 }
 
 // Attaches to a browser that is already running (--connect <port | ws://…>): the dashboard's own
@@ -283,6 +305,11 @@ export async function connectChrome(target, { returnUrl = process.env.A11Y_508_R
   const ws = await WebSocketClient.connect(wsUrl);
   const { reader, writer } = cdpStreams(ws);
   const cdp = new Cdp(writer, reader);
+  let closing = false;
+  let lost = null;
+  cdp.on('close', () => {
+    if (!closing) lost = { at: new Date().toISOString() };
+  });
   const version = await cdp.send('Browser.getVersion');
   const opened = new Set();
   // A tab handed over by the sign-in (it keeps its page; the crawl continues in it).
@@ -309,7 +336,10 @@ export async function connectChrome(target, { returnUrl = process.env.A11Y_508_R
     } catch {}
   }
 
+  // Never Browser.close: this is a person's browser (the dashboard's own window). Only the tabs this
+  // run opened are closed.
   async function close() {
+    closing = true;
     for (const targetId of [...opened]) {
       try {
         await Promise.race([cdp.send('Target.closeTarget', { targetId }), delay(2000)]);
@@ -329,6 +359,9 @@ export async function connectChrome(target, { returnUrl = process.env.A11Y_508_R
 
   return {
     exe: version.product, proc: null, cdp, version, userDataDir: null, connected: true, newPage, closePage, close,
+    alive: () => !cdp.closed,
+    // The browser's connection went away without close() (the browser exited or was killed).
+    death: () => (closing || !cdp.closed ? null : { code: null, signal: null, at: (lost && lost.at) || new Date().toISOString(), stderr: [], how: 'its DevTools connection closed' }),
     // The sign-in's tab, kept for the crawl (see login.mjs keepOpen).
     handOver(session) {
       handoff = session;

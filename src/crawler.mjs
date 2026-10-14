@@ -3,6 +3,27 @@
 import { Page, sleep } from './page.mjs';
 import { progressReporter } from './progress.mjs';
 import { auditPage } from './audit.mjs';
+import { codeText, exitCause, writeDiary } from './diary.mjs';
+
+// The crawl's browser went away and the crawl cannot go on: message is what a person reads.
+export class BrowserGone extends Error {
+  constructor(message, death) {
+    super(message);
+    this.browserGone = true;
+    this.death = death || null;
+  }
+}
+
+// A browser's death in words: "Chrome exited with code 1, signal none" (or the connection lost).
+export function deathText(d) {
+  if (!d) return 'it stopped answering';
+  if (d.how && d.how !== 'exited') return d.how;
+  return `Chrome ${exitCause(d.code, d.signal)} (exit code ${codeText(d.code)}, signal ${d.signal || 'none'})${d.stderr && d.stderr.length ? `; its last output: ${d.stderr[d.stderr.length - 1]}` : ''}`;
+}
+
+// A11Y_508_TEST_KILL_BROWSER_AFTER=2[,3]: tests only. Kills the crawl's launched browser once the
+// crawl has recorded that many pages, as a browser that dies mid-crawl.
+const KILL_AFTER = String(process.env.A11Y_508_TEST_KILL_BROWSER_AFTER || '').split(',').map(Number).filter((n) => n > 0);
 
 const BINARY = /\.(pdf|zip|gz|tgz|tar|rar|7z|exe|dmg|pkg|msi|png|jpe?g|gif|svg|webp|bmp|ico|mp3|mp4|m4a|m4v|mov|avi|wmv|webm|ogg|wav|flac|doc|docx|xls|xlsx|ppt|pptx|csv|xml|json|rss|atom|woff2?|ttf|eot|css|js|mjs)(\?.*)?$/i;
 
@@ -35,7 +56,15 @@ export function routeKey(url) {
 }
 const VARIANTS_PER_ROUTE = 2;
 
-export async function crawl({ browser, startUrl, opts, log, outDir }) {
+// relaunch: a function that launches a new browser (the crawl's own, headless one), or null for a
+// browser the crawl must not replace (--connect, --login --stay). When the browser dies mid-crawl it
+// is launched once more and the crawl goes on from the next page; a second death, or a death with
+// no relaunch, ends the crawl with BrowserGone. onBrowser(b) is told of each new browser.
+export async function crawl({ browser: firstBrowser, startUrl, opts, log, outDir, relaunch = null, onBrowser = null }) {
+  let browser = firstBrowser;
+  const relaunches = [];
+  let recovering = null;
+  let fatal = null;
   const origin = new URL(startUrl).origin;
   const first = normalizeUrl(startUrl, origin) || startUrl;
   const queue = [{ url: first, depth: 0 }];
@@ -71,28 +100,72 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
     return true;
   };
 
-  // Close popups opened by pages and refuse downloads.
-  await browser.cdp.send('Browser.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
-  await browser.cdp.send('Target.setDiscoverTargets', { discover: true }).catch(() => {});
   const workerTargets = new Set();
-  browser.cdp.on('Target.targetCreated', ({ targetInfo }) => {
-    if (targetInfo.type === 'page' && targetInfo.openerId && !workerTargets.has(targetInfo.targetId)) {
-      browser.cdp.send('Target.closeTarget', { targetId: targetInfo.targetId }).catch(() => {});
-    }
-  });
+  // Close popups opened by pages and refuse downloads.
+  async function prepare(b) {
+    await b.cdp.send('Browser.setDownloadBehavior', { behavior: 'deny' }).catch(() => {});
+    await b.cdp.send('Target.setDiscoverTargets', { discover: true }).catch(() => {});
+    b.cdp.on('Target.targetCreated', ({ targetInfo }) => {
+      if (targetInfo.type === 'page' && targetInfo.openerId && !workerTargets.has(targetInfo.targetId)) {
+        b.cdp.send('Target.closeTarget', { targetId: targetInfo.targetId }).catch(() => {});
+      }
+    });
+  }
+  await prepare(browser);
+
+  const dead = (b = browser) => (b.alive ? !b.alive() : b.cdp.closed);
+  // The browser died: launch it again once (all workers wait on the same relaunch), or end the crawl.
+  function recover() {
+    if (fatal) return Promise.reject(fatal);
+    if (!dead()) return Promise.resolve();
+    if (recovering) return recovering;
+    const old = browser;
+    recovering = (async () => {
+      const d = old.death ? old.death() : null;
+      const cause = deathText(d);
+      const connected = !!old.connected;
+      writeDiary({ type: 'crawl-browser-died', connected, url: startUrl, pagesDone: pages.length, code: d ? d.code : null, signal: d ? d.signal : null, stderr: d ? d.stderr : [], cause, relaunching: !!relaunch && relaunches.length === 0 }, { source: 'cli' });
+      if (!relaunch) throw (fatal = new BrowserGone(`the browser the crawl was using closed: ${cause}`, d));
+      if (relaunches.length >= 1) throw (fatal = new BrowserGone(`the browser the crawl was using closed again: ${cause}`, d));
+      log.warn(`the crawl's browser closed after ${pages.length} page(s) (${cause}); starting it again and going on from the next page`);
+      await old.close().catch(() => {});
+      let next;
+      try {
+        next = await relaunch();
+      } catch (e) {
+        throw (fatal = new BrowserGone(`the browser the crawl was using closed (${cause}), and could not be started again: ${e.message}`, d));
+      }
+      relaunches.push({ afterPages: pages.length, cause });
+      browser = next;
+      if (onBrowser) onBrowser(next);
+      await prepare(next);
+      writeDiary({ type: 'crawl-browser-relaunched', url: startUrl, afterPages: pages.length, cause }, { source: 'cli' });
+    })().finally(() => {
+      recovering = null;
+    });
+    return recovering;
+  }
 
   async function newWorkerPage() {
-    const session = await browser.newPage();
+    if (dead()) await recover();
+    const b = browser;
+    const session = await b.newPage();
     workerTargets.add(session.targetId);
     const page = new Page(session, opts);
     await page.init();
-    return { session, page };
+    return { session, page, b };
   }
 
   async function worker(id) {
-    let { session, page } = await newWorkerPage();
+    let { session, page, b } = await newWorkerPage();
     try {
       while (true) {
+        if (fatal) throw fatal;
+        // This worker's tab belongs to a browser that died (or was replaced): a new tab first.
+        if (b !== browser || dead(b)) {
+          await recover();
+          ({ session, page, b } = await newWorkerPage());
+        }
         const item = queue.shift();
         if (!item) {
           if (active === 0) break;
@@ -107,9 +180,16 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
           } catch (e) {
             res = { url: item.url, error: e.message, findings: [], passes: {}, errors: [] };
           }
-          if (page.closed || /closed|crashed|detached/i.test(res.error || '')) {
-            await browser.closePage(session).catch(() => {});
-            ({ session, page } = await newWorkerPage());
+          if (dead(b)) {
+            // The browser died while this page was audited: the page is recorded with the error
+            // and the crawl goes on from the next one, in a browser started again.
+            const d = b.death ? b.death() : null;
+            res = { url: item.url, error: `the browser closed while this page was audited (${deathText(d)})`, findings: [], passes: {}, errors: [] };
+            await recover();
+            ({ session, page, b } = await newWorkerPage());
+          } else if (page.closed || /closed|crashed|detached/i.test(res.error || '')) {
+            await b.closePage(session).catch(() => {});
+            ({ session, page, b } = await newWorkerPage());
           }
           res.depth = item.depth;
           if (item.via === 'click') res.foundBy = 'click';
@@ -134,6 +214,12 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
           }
           pages.push(res);
           log.page(res, pages.length, seen.size);
+          if (KILL_AFTER.includes(pages.length) && browser.proc && !dead()) {
+            try {
+              process.kill(browser.proc.pid, 'SIGKILL');
+            } catch {}
+            await Promise.race([browser.exited, sleep(5000)]);
+          }
           if (res.info && item.depth < opts.maxDepth) {
             const viaClick = (res.discovery && res.discovery.urls) || [];
             for (const link of [...res.info.links, ...viaClick]) {
@@ -178,12 +264,15 @@ export async function crawl({ browser, startUrl, opts, log, outDir }) {
         }
       }
     } finally {
-      await browser.closePage(session).catch(() => {});
+      if (!dead(b)) await b.closePage(session).catch(() => {});
     }
   }
 
   const n = Math.max(1, Math.min(opts.concurrency, opts.maxPages));
-  await Promise.all(Array.from({ length: n }, (_, i) => worker(i)));
-  if (progress) progress.stop();
-  return { pages, discovered: seen.size, overflow, clickOnly: clickOnly.size, origin, variantOverflow, variantRoutes: [...variantRoutes], variantsPerRoute: VARIANTS_PER_ROUTE };
+  try {
+    await Promise.all(Array.from({ length: n }, (_, i) => worker(i)));
+  } finally {
+    if (progress) progress.stop();
+  }
+  return { pages, discovered: seen.size, overflow, clickOnly: clickOnly.size, origin, variantOverflow, variantRoutes: [...variantRoutes], variantsPerRoute: VARIANTS_PER_ROUTE, browser, relaunches };
 }

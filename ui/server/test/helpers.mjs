@@ -8,6 +8,8 @@ import { mergeEnv, stopTree } from './platform.mjs';
 import { repoHome } from '../../../src/home.mjs';
 
 export const MAIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'main.mjs');
+// The dashboard's own browser, played by a Node script (fake-own-browser.mjs).
+export const FAKE_OWN_BROWSER = join(dirname(fileURLToPath(import.meta.url)), 'fake-own-browser.mjs');
 // The checkout these tests run from: never removed, whatever a test passes.
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -60,13 +62,16 @@ export function removeTemp(path, opts = {}) {
 export { stub } from './platform.mjs';
 
 // The real server, as a person starts it, in its own working directory.
-export async function startServer({ cwd: given, env = {}, args = [] } = {}) {
+// open: true starts it as a person does, with a browser of its own (give A11Y_508_OWN_BROWSER_PATH
+// the fake one, test/fake-own-browser.mjs, so no real window opens).
+export async function startServer({ cwd: given, env = {}, args = [], open = false } = {}) {
+  if (open && !env.A11Y_508_OWN_BROWSER_PATH) throw new Error('open: true needs A11Y_508_OWN_BROWSER_PATH (the fake own browser)');
   // The working directory is removed on stop only if these helpers made it (removeTemp refuses anything else).
   const cwd = given || tmp('a11y-508-srv-');
   assertRemovable(cwd);
   // The tool's state base for this server (a temp folder unless the test names one).
   const home = env.A11Y_508_HOME || tmp('a11y-508-home-');
-  const proc = spawn(process.execPath, [MAIN, '--no-open', '--port', '0', ...args], { cwd, env: mergeEnv(process.env, { TOKEN: '', ...env, A11Y_508_HOME: home }), stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(process.execPath, [MAIN, ...(open ? [] : ['--no-open']), '--port', '0', ...args], { cwd, env: mergeEnv(process.env, { TOKEN: '', ...env, A11Y_508_HOME: home }), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   proc.stdout.on('data', (d) => (out += d));
   proc.stderr.on('data', (d) => (out += d));
@@ -120,5 +125,5 @@ export async function startServer({ cwd: given, env = {}, args = [] } = {}) {
   };
   // The tool's own folders for a repository folder (work, report, history), under this server's base.
   const dirs = (dir = cwd) => repoHome(dir, { A11Y_508_HOME: home });
-  return { cwd, home, dirs, port, secret, url, call, waitDone, stop, output: () => out };
+  return { cwd, home, dirs, port, secret, url, call, waitDone, stop, output: () => out, proc };
 }

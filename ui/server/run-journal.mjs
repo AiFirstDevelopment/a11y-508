@@ -18,6 +18,7 @@ import { workDir } from '../../src/home.mjs';
 import { loadLedger, saveLedger } from '../../src/ledger.mjs';
 import { BadRequest } from './args.mjs';
 import { killTreeWindows } from './runs.mjs';
+import { recordKill, refuseKill } from '../../src/kills.mjs';
 
 export const RUN_CHILD = join(dirname(fileURLToPath(import.meta.url)), 'run-child.mjs');
 export const RUNS_DIR = 'runs';
@@ -62,8 +63,9 @@ export function pidAlive(pid, startedAt) {
 
 // Ends the run's process and everything under it: its process group (it leads one), or on Windows
 // the process tree. Never a bare child.kill, which leaves the CLI's browser running.
-function signalTree(pid, sig) {
-  if (process.platform === 'win32') return killTreeWindows(pid).catch(() => {});
+function signalTree(pid, sig, kind = 'stop') {
+  if (process.platform === 'win32') return killTreeWindows(pid, kind).catch(() => {});
+  if (refuseKill(pid, kind)) return Promise.resolve();
   try {
     process.kill(-pid, sig);
   } catch {
@@ -203,6 +205,7 @@ export class JournalRun {
       appendFileSync(this.files.events, line({ type: 'stopping', signal: sig, at: new Date().toISOString() }));
     } catch {}
     this.read();
+    recordKill('stop', { run: this.kind, signal: sig, target: this.pid });
     signalTree(this.pid, sig);
     if (this.stopRequests === 1) {
       const t = setTimeout(() => {
@@ -225,7 +228,8 @@ export class JournalRun {
   async kill() {
     if (this.status !== 'running') return;
     this.stopRequests++;
-    await signalTree(this.pid, 'SIGKILL');
+    recordKill('quit', { run: this.kind, target: this.pid });
+    await signalTree(this.pid, 'SIGKILL', 'quit');
     this.gone();
   }
 }
@@ -324,6 +328,15 @@ export function latestRun(cwd) {
   }
   run.gone();
   return run;
+}
+
+// Adds fields to a run's record (diaryNoted: its interruption is in the diagnostics diary).
+export function annotateRun(run, patch) {
+  try {
+    const r = readJson(run.files.run);
+    if (r) writeJsonFile(run.files.run, { ...r, ...patch });
+    if (run.record) Object.assign(run.record, patch);
+  } catch {}
 }
 
 // Marks a run's record as dealt with (Continue, Start over), so a restart does not offer it again.

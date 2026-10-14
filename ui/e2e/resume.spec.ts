@@ -98,7 +98,8 @@ test('resume AC1 / guard 1: closing the dashboard\'s own browser window leaves t
     // The person closes the window: the whole browser ends.
     const cdp = await browser.newBrowserCDPSession();
     await cdp.send('Browser.close').catch(() => {});
-    await expect.poll(() => out, { timeout: 30_000 }).toContain("the dashboard's window was closed; the dashboard keeps running");
+    // The terminal says why it went away (docs/plans/browser-diary.md), and that the dashboard goes on.
+    await expect.poll(() => out, { timeout: 30_000 }).toMatch(/The dashboard's browser window closed at \d{1,2}:\d{2} [AP]M \(Chrome closed normally — exit code 0, signal none\)\. The dashboard keeps running/);
     await sleep(1000);
     const res = await fetch(`${u.origin}/api/env`, { headers: { 'X-A11y-508-Secret': secret } });
     expect(res.status).toBe(200);

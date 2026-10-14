@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchChrome, browserField, connectChrome } from './chrome.mjs';
-import { crawl } from './crawler.mjs';
+import { crawl, deathText } from './crawler.mjs';
+import { addDiarySecrets, writeDiary } from './diary.mjs';
 import { interactiveLogin, loadState, saveState, stateSummary } from './login.mjs';
 import { troubleshoot, formatTroubleshoot } from './troubleshoot.mjs';
 import { loadConfig, printStatus, runLoop } from './loop.mjs';
@@ -326,6 +327,9 @@ async function loopMain(split) {
   }
 }
 
+// Why the run failed, when a person should read it on the run's outcome (the done event's reason).
+const runReason = { message: null };
+
 // With --events the last line on stdout is always {"type":"done","code":N}.
 export async function main(argv) {
   if (!argv.includes('--events') || argv[0] === 'status') return run(argv);
@@ -338,7 +342,7 @@ export async function main(argv) {
     emit('done', { code: 2 });
     throw e;
   }
-  emit('done', { code });
+  emit('done', { code, ...(runReason.message && code !== 0 ? { reason: runReason.message } : {}) });
   return code;
 }
 
@@ -404,6 +408,8 @@ async function run(argv) {
     // A saved session or cookies are a way in of their own; the warning is for a run with no way in at all.
     if (!opts.login && !opts.stateFile && !opts.cookies.length) log.warn('TOKEN is not set; crawling without an Authorization header.');
   }
+  // Nothing the run was given as a credential reaches the diagnostics diary.
+  addDiarySecrets([token, ...opts.cookies.map((c) => c.value), ...opts.extraHeaders.map((h) => h.value)]);
   opts.cookieOrigins = opts.cookies.length ? [...origins] : [];
   if (opts.cookies.length) log.info(`cookies: setting ${opts.cookies.map((c) => c.name).join(', ')} on ${[...origins].join(', ')}`);
 
@@ -438,7 +444,14 @@ async function run(argv) {
     try {
       opts.state = await interactiveLogin({ browser: headed, startUrl: startUrl.href, origins: [...origins], timeout: opts.timeout, log, keepOpen: opts.stay });
     } catch (e) {
-      log.error(`login failed: ${e.message}`);
+      // The sign-in's browser went away under it (closed, killed or crashed): said plainly, and recorded.
+      const d = headed.death ? headed.death() : null;
+      if (d) {
+        const message = opts.connect ? `the browser the crawl was using closed: ${deathText(d)}` : `the sign-in browser closed: ${deathText(d)}`;
+        writeDiary({ type: 'sign-in-browser-died', connected: !!opts.connect, url: startUrl.href, code: d.code, signal: d.signal, stderr: d.stderr, cause: deathText(d) }, { source: 'cli' });
+        log.error(message);
+        runReason.message = message;
+      } else log.error(`login failed: ${e.message}`);
       await closeBrowser(headed);
       return 2;
     } finally {
@@ -517,11 +530,24 @@ async function run(argv) {
   };
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
+  // The crawl's own browser is launched again once if it dies (never a --connect or --stay one).
+  const relaunch = opts.connect || stayBrowser ? null : () => launch(true);
   try {
-    crawlResult = await crawl({ browser, startUrl: startUrl.href, opts, log, outDir });
+    crawlResult = await crawl({ browser, startUrl: startUrl.href, opts, log, outDir, relaunch, onBrowser: (b) => (browser = b) });
   } catch (e) {
-    log.error(`crawl failed: ${e.message}`);
-    await closeBrowser(browser);
+    // A browser that went away (in --connect mode, or a second time) ends the crawl with that cause.
+    if (e && e.browserGone) {
+      log.error(e.message);
+      runReason.message = e.message;
+    } else if (opts.connect && browser.death && browser.death()) {
+      const message = `the browser the crawl was using closed: ${deathText(browser.death())}`;
+      writeDiary({ type: 'crawl-browser-died', connected: true, url: startUrl.href, cause: deathText(browser.death()) }, { source: 'cli' });
+      log.error(message);
+      runReason.message = message;
+    } else log.error(`crawl failed: ${e.message}`);
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+    await closeBrowser(browser).catch(() => {});
     return 2;
   }
   process.off('SIGINT', onSignal);

@@ -65,7 +65,11 @@ export interface Dash {
   stop(): Promise<void>;
 }
 
-export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; args?: string[]; main?: string; keepCwd?: boolean } = {}): Promise<Dash> {
+// The dashboard's own browser, played by a Node script (it never opens a real window).
+export const FAKE_OWN_BROWSER = join(UI, 'server', 'test', 'fake-own-browser.mjs');
+
+// ownBrowser: started as a person starts it (no --no-open), with the fake own browser.
+export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; args?: string[]; main?: string; keepCwd?: boolean; ownBrowser?: boolean } = {}): Promise<Dash> {
   const cwd = opts.cwd || tempDir('a11y-508-dash-');
   // A dashboard's working directory is always a disposable one of the tests', never the checkout.
   assertRemovable(cwd);
@@ -73,9 +77,9 @@ export async function dashboard(opts: { cwd?: string; env?: NodeJS.ProcessEnv; a
   // home of the test's, never ~/.a11y-508.
   const home = (opts.env && opts.env.A11Y_508_HOME) || tempDir('a11y-508-home-');
   homes.set(cwd, home);
-  const proc = spawn(process.execPath, [opts.main || MAIN, '--no-open', '--port', '0', ...(opts.args || [])], {
+  const proc = spawn(process.execPath, [opts.main || MAIN, ...(opts.ownBrowser ? [] : ['--no-open']), '--port', '0', ...(opts.args || [])], {
     cwd,
-    env: mergeEnv(process.env, { TOKEN: '', ...opts.env, A11Y_508_HOME: home }),
+    env: mergeEnv(process.env, { TOKEN: '', ...opts.env, ...(opts.ownBrowser ? { A11Y_508_OWN_BROWSER_PATH: FAKE_OWN_BROWSER } : {}), A11Y_508_HOME: home }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';

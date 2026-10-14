@@ -112,7 +112,7 @@ export function stopTree(proc, signal = 'SIGINT', { group = false } = {}) {
     const timer = setTimeout(() => send('SIGKILL'), 10000);
     return exited.then(() => clearTimeout(timer));
   }
-  return Promise.all([exited, killTreeWindows(proc.pid)]);
+  return Promise.all([exited, killTreeWindows(proc.pid, 'test')]);
 }
 
 // What the server runs to open the browser, recorded to file instead:

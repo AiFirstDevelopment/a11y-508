@@ -21,7 +21,7 @@ export class SignInFlow {
   readonly failed = computed(() => this.isSignIn() && !!this.run.done() && !this.run.sessionSaved());
   readonly error = computed(() => {
     if (!this.failed()) return '';
-    const errors = this.run.notices().filter((n) => n.level === 'error' && !/^The run failed \(exit code/.test(n.message));
+    const errors = this.run.notices().filter((n) => n.level === 'error' && !/^The run failed( \(exit code|: )/.test(n.message));
     const d = this.run.done();
     if (d?.['outcome'] === 'stopped') return 'Sign-in was stopped before a session was saved.';
     return errors.length ? errors.map((n) => n.message).join(' ') : `Sign-in did not finish (exit code ${d?.['code']}).`;

@@ -17,14 +17,16 @@ import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine } from './args.mjs';
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
-import { JOURNALED, LOOP_KINDS, discardInterrupted, interruptedDetails, latestRun, resolveRun, runsDir, startJournaled } from './run-journal.mjs';
+import { JOURNALED, LOOP_KINDS, annotateRun, discardInterrupted, interruptedDetails, latestRun, resolveRun, runsDir, startJournaled } from './run-journal.mjs';
 import { loopDefaults } from './loop-defaults.mjs';
-import { readGlobal, writeGlobal, paths as statePaths, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
+import { stateBase as stateBaseOf, readGlobal, writeGlobal, paths as statePaths, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { matchSource } from './loop-match.mjs';
 import { recordDecision, reviewList } from './review.mjs';
 import { carryAnalysis, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, sameStartUrl, latestDir, ledgerPath } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
+import { readDiary, writeDiary } from '../../src/diary.mjs';
+import { describeEntry, doingOf } from './diagnostics.mjs';
 
 // The wizard's steps, as lastStep stores them.
 const STEPS = ['/run', '/live', '/report', '/fix-loop', '/review', '/history'];
@@ -63,7 +65,18 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   const state = { browserPort: null, separateSignIn: false, cwd: resolve(startDir), launchDir: resolve(launchDir), restored, token: null, port: null, presets: null, detecting: null, lastTest: {}, shell: null, lastSeen: Date.now(), streams: 0 };
   // The shell the shown command line is written for; looked up once.
   const shellKind = () => (state.shell ||= detectShell(env, platform)).kind;
-  const runs = new Runs({ onExit: () => {} });
+  // A run that ends with an error or is interrupted goes in the diagnostics diary.
+  const doing = () => doingOf(runs.current);
+  const noteRunEnd = (run) => {
+    const done = [...(run.events || [])].reverse().find((e) => e.type === 'done');
+    const outcome = (done && done.outcome) || (run.status === 'interrupted' ? 'interrupted' : null);
+    if (outcome !== 'error' && outcome !== 'interrupted') return;
+    const lastError = [...(run.events || [])].reverse().find((e) => e.type === 'error');
+    // What it was doing, from its events (the run has ended, so read them as if it had not).
+    const was = doingOf({ ...run, status: 'running' });
+    writeDiary({ type: 'run-ended', kind: run.kind, outcome, code: done ? done.code ?? null : null, signal: done ? done.signal ?? null : null, reason: (done && done.reason) || (lastError && lastError.message) || null, doing: was ? was.words : null, run: was ? { kind: was.kind, round: was.round, step: was.step, lastEvent: was.lastEvent } : null, cwd: state.cwd }, { env });
+  };
+  const runs = new Runs({ onExit: (run) => noteRunEnd(run) });
   const build = freshness(uiDir);
   // The dashboard's own files for the working directory (state-dir.mjs).
   const sp = () => statePaths(state.cwd, env, platform);
@@ -111,6 +124,11 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       run = latestRun(state.cwd);
     } catch {}
     if (!run) return;
+    // Interrupted while no dashboard was watching: written to the diary once.
+    if (run.status === 'interrupted' && run.record && !run.record.diaryNoted) {
+      noteRunEnd(run);
+      annotateRun(run, { diaryNoted: true });
+    }
     if (run.status === 'running' || LOOP_KINDS.has(run.kind)) runs.adopt(run);
   };
   reattach();
@@ -594,6 +612,14 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     }
     if (m === 'POST' && path === '/api/runs/resume') return send(res, 202, runSummary(await resume()));
     if (m === 'GET' && path === '/api/ping') return send(res, 200, { ok: true, pid: process.pid, cwd: state.cwd });
+    // The diagnostics diary, newest first, in plain words.
+    if (m === 'GET' && path === '/api/diagnostics') return send(res, 200, { file: diaryFile(), entries: readDiary({ env, limit: 200 }).map(describeEntry), ownBrowser: ownBrowserInfo() });
+    // The dashboard's own browser: open, closed (and why), or none; and whether its notice was dismissed.
+    if (m === 'GET' && path === '/api/own-browser') return send(res, 200, ownBrowserInfo());
+    if (m === 'POST' && path === '/api/own-browser/dismiss') {
+      own.dismissed = true;
+      return send(res, 200, ownBrowserInfo());
+    }
     // The dashboard's Quit: with a run active, only once the person confirmed stopping it.
     if (m === 'POST' && path === '/api/quit') {
       const body = await readBody(req);
@@ -774,6 +800,25 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   // open, and whether a run is active.
   const activity = () => ({ lastSeen: state.lastSeen, streams: state.streams, running: runs.active });
 
+  // The dashboard's own browser as the notice shows it: 'open', 'closed' or 'none', and the last
+  // time it went away (the diary entry, with its sentence).
+  const own = { status: 'none', pid: null, lastExit: null, dismissed: false };
+  const ownBrowserInfo = () => ({ status: own.status, pid: own.pid, lastExit: own.lastExit ? describeOwnExit(own.lastExit) : null, dismissed: own.dismissed, canReopen: !!onOpen });
+  const describeOwnExit = (e) => ({ ...describeEntry(e), code: e.code ?? null, signal: e.signal ?? null, kill: e.kill || null, doing: e.doing || null });
+  const ownBrowser = {
+    opened(pid) {
+      own.status = 'open';
+      own.pid = pid;
+    },
+    exited(entry) {
+      own.status = 'closed';
+      own.pid = null;
+      own.lastExit = entry;
+      own.dismissed = false;
+    },
+  };
+  const diaryFile = () => join(stateBaseOf(env), 'diary.ndjson');
+
   // The dashboard's own browser (main.mjs): its DevTools port, for --connect; or none, with
   // { separate: true } when it was looked for and not found.
   function useBrowser(port, { separate = false } = {}) {
@@ -781,6 +826,6 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     state.separateSignIn = !port && separate;
   }
 
-  return { server, secret, listen, close, runs, build, detect, useBrowser, activity, get cwd() { return state.cwd; }, get port() { return state.port; }, get url() { return `http://127.0.0.1:${state.port}/#secret=${secret}`; } };
+  return { server, secret, listen, close, runs, build, detect, useBrowser, activity, doing, ownBrowser, get cwd() { return state.cwd; }, get port() { return state.port; }, get url() { return `http://127.0.0.1:${state.port}/#secret=${secret}`; } };
 }
 

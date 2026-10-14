@@ -60,6 +60,8 @@ export function coverage(pages, crawl, opts) {
   // reduced; one note for the run (a deployment setting, not something to fix page by page).
   const soft = pages.filter((p) => p.servedWith && !p.error && !p.skipped).map((p) => short(p.finalUrl || p.url));
   if (soft.length) notes.push(softNotFoundNote(soft));
+  // The crawl's browser died and was started again (src/crawler.mjs): the page in flight has the error.
+  for (const r of crawl.relaunches || []) notes.push(`The crawl's browser closed after ${r.afterPages} page(s) (${r.cause}); it was started again and the crawl went on from the next page. A page being audited at that moment is listed with the error.`);
   if (crawl.overflow) warnings.push(`Stopped at --max-pages ${opts.maxPages}: ${crawl.overflow} more link(s) were found but not audited.`);
   if (crawl.variantOverflow) {
     const routes = crawl.variantRoutes || [];

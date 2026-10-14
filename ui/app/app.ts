@@ -10,6 +10,7 @@ import { Starter } from './core/starter';
 import { FolderPicker } from './shared/folder-picker';
 import { SetupForm } from './shared/setup-form';
 import { QuitButton } from './shared/quit-button';
+import { BrowserNotice } from './shared/browser-notice';
 import { INITIAL_PATH, Resume, landing, stepPath } from './core/resume';
 
 interface Step {
@@ -39,6 +40,8 @@ function stayOnCrawl(): boolean {
 // The step a route belongs to (troubleshooting is part of the crawl; the sign-in route of set up).
 export function stepOf(url: string): number {
   const p = url.split(/[?#]/)[0];
+  // Not a step of the wizard.
+  if (p.startsWith('/diagnostics')) return 0;
   if (p.startsWith('/live') || p.startsWith('/troubleshoot')) return 2;
   if (p.startsWith('/report')) return 3;
   if (p.startsWith('/fix-loop') || p.startsWith('/review')) return 4;
@@ -48,11 +51,11 @@ export function stepOf(url: string): number {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, FolderPicker, SetupForm, QuitButton],
+  imports: [RouterOutlet, RouterLink, FolderPicker, SetupForm, QuitButton, BrowserNotice],
   template: `
     <a class="skip" href="#main">Skip to main content</a>
     <header class="top">
-      <p class="brand">a11y-508 <span>dashboard</span></p>
+      <p class="brand">a11y-508 <span>dashboard</span> <a class="small-link" routerLink="/diagnostics" data-testid="diagnostics-link">Diagnostics</a></p>
       <nav aria-label="Steps" data-testid="steps">
         <ol class="steps">
           @for (s of steps; track s.n) {
@@ -82,6 +85,7 @@ export function stepOf(url: string): number {
     <app-quit />
     <app-folder-picker />
     <main id="main" tabindex="-1">
+      <app-browser-notice />
       @if (env.error()) {
         <div class="notice error" role="alert">{{ env.error() }}</div>
       }

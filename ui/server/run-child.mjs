@@ -88,6 +88,8 @@ child.on('error', (e) => {
 child.on('close', (code, signal) => {
   clearInterval(control);
   const exit = childDone && typeof childDone.code === 'number' && code !== null && !signal ? childDone.code : errored && code === null ? 2 : code;
-  write({ type: 'done', code: exit, signal: signal || null, stopped, outcome: outcomeOf({ kind: spec.kind, code: exit, signal, stopped }) });
+  // The CLI's own reason for failing (a browser that went away), carried on the outcome.
+  const reason = childDone && typeof childDone.reason === 'string' ? { reason: childDone.reason } : {};
+  write({ type: 'done', code: exit, signal: signal || null, stopped, outcome: outcomeOf({ kind: spec.kind, code: exit, signal, stopped }), ...reason });
   process.exit(0);
 });
