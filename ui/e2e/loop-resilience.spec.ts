@@ -102,8 +102,13 @@ test('loop-resilience: with a11y-508/fixes in the repository the Fix step and th
     await page.getByRole('button', { name: 'Fix the violations' }).click();
 
     const problem = page.getByTestId('loop-problem');
-    await expect(problem.getByRole('heading', { name: 'The fix loop stopped' })).toBeVisible({ timeout: 200_000 });
+    // One plain sentence, the raw error under Details, Try again the one big button.
+    await expect(page.getByTestId('fix-status')).toHaveText('The fix loop stopped: push failed.', { timeout: 200_000 });
+    await expect(problem).toHaveCount(0);
+    await expect(page.getByTestId('why')).toBeVisible();
     await expect(page.getByTestId('problem-message')).toHaveText(/^push failed: /);
+    await expect(page.locator('main button.big:visible, main a.button.big:visible')).toHaveCount(1);
+    await expect(page.getByTestId('try-again')).toHaveClass(/\bbig\b/);
     // The real ledger counts.
     const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
     const n = (s: string) => Object.values<any>(ledger.findings).filter((e) => e.status === s).length;
@@ -170,7 +175,8 @@ test('loop-resilience AC11b: an assistant refused for rate limit shows the count
   await fromReportLoop(page, 'a11y-508-ratelimit-', { quotaDelays: [6000] }, { FAKE_AGENT_429_ONCE: join('MARKS', 'refused') }, async () => {
     await expect(page.getByTestId('fix-status')).toHaveText(/^The assistant is rate-limited; trying again in [1-6] s \(retry 1 of 1\)$/, { timeout: 60_000 });
     // The retry answers and the loop goes on to the end.
-    await expect(page.getByTestId('fix-status')).toHaveText('Loop finished.', { timeout: 60_000 });
+    await expect(page.getByTestId('fix-status')).toHaveText(/^Done: (nothing left to fix|\d+ fixed(, \d+ left)?)\.$/, { timeout: 60_000 });
+    await expect(page.getByTestId('loop-step')).toHaveText('Loop finished.');
   });
 });
 
@@ -251,8 +257,10 @@ test('loop-resilience AC13-18: one pane log for the run, the gate and the commit
     // The fix that broke the build: said, with the gate's own error.
     await expect(pane).toContainText(/Build or tests failed after \d+ s\nReverted — the check failed \(exit 1\):\n[^]*error: the build is broken/);
     // AC 17: Changes this run, in the main view: a row per attempt with its files and outcome.
+    // Its own disclosure (open here: the harness opens every section), named with what it holds.
     const changes = page.getByTestId('changes');
-    expect(await changes.evaluate((el) => !!el.closest('details'))).toBe(false);
+    expect(await changes.evaluate((el) => el.closest('details')?.getAttribute('data-testid'))).toBe('changes-details');
+    await expect(page.getByTestId('changes-summary')).toHaveText(/^Changes this run \(\d+ fix(es)? in 1 file\)$/);
     await expect(changes.locator('tr[data-outcome="committed"]').first().getByTestId('change-files')).toHaveText('site/index.html');
     await expect(changes.locator('tr[data-outcome="committed"]').first().getByTestId('change-outcome')).toHaveText(/^\s*committed [0-9a-f]{7,}\s*$/);
     // docs/plans/deploy-wait.md criterion 9 / guard j: only what the assistant changed and committed

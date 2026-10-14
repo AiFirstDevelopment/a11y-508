@@ -19,6 +19,7 @@ import { StartOver } from '../shared/start-over';
 import { ChangesTable } from '../shared/changes-table';
 import { InterruptedNotice } from '../shared/interrupted-notice';
 import { INITIAL_PATH, INITIAL_SEARCH } from '../core/resume';
+import { SIGN_IN_HEADLINE, plainReason, signInFailed } from '../core/outcome';
 
 // The ledger's tiles: status, label, and the tooltip that says what the label means.
 const STATUSES: [string, string, string][] = [
@@ -195,14 +196,24 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
       <!-- Clicked: waiting for the screen to be ready, saving the settings, starting the run. -->
       <p class="big-status" role="status" data-testid="fix-status">Starting…</p>
     } @else if (isLoop() && store.kind() === 'loop') {
-      @if (problem(); as pr) {
-        <!-- It ended for a reason: what happened and what to do, in the main view. -->
-        <section class="notice error" role="alert" aria-labelledby="loop-problem-h" data-testid="loop-problem" [attr.data-kind]="pr.kind">
-          <h2 id="loop-problem-h">{{ pr.kind === 'start' ? 'The fix loop could not start' : 'The fix loop stopped' }}</h2>
-          <p class="wrap" data-testid="problem-message">{{ pr.message }}</p>
-          @if (pr.remedy) { <p class="wrap" data-testid="problem-remedy">{{ pr.remedy }}</p> }
-        </section>
-        @if (pr.kind === 'stopped') { <p data-testid="fix-counts">{{ fixCounts() }}</p> }
+      @if (ending(); as en) {
+        <!-- It ended: one sentence for what happened; the one next step is the big button below. -->
+        @if (en.kind === 'start') {
+          <section class="notice error" role="alert" aria-labelledby="loop-problem-h" data-testid="loop-problem" data-kind="start">
+            <h2 id="loop-problem-h">The fix loop could not start</h2>
+            <p class="wrap" data-testid="problem-message">{{ en.raw }}</p>
+            @if (en.remedy) { <p class="wrap" data-testid="problem-remedy">{{ en.remedy }}</p> }
+          </section>
+        } @else {
+          <p class="big-status" [attr.role]="en.kind === 'done' || en.kind === 'stopped' ? 'status' : 'alert'" data-testid="fix-status" [attr.data-ending]="en.kind">{{ en.headline }}</p>
+          @if (en.kind !== 'signin') { <p data-testid="fix-counts">{{ fixCounts() }}</p> }
+          @if (en.raw) {
+            <details class="details" data-testid="why" [open]="open()['why']" (toggle)="remember('why', $event)">
+              <summary>Details<span class="visually-hidden"> of what went wrong</span></summary>
+              <p class="wrap" data-testid="problem-message">{{ en.raw }}</p>
+            </details>
+          }
+        }
       } @else {
       <!-- While it runs: one line, a bar, counts, and the assistant's last line. -->
       <p class="big-status" role="status" data-testid="fix-status">{{ fixStatus() }}</p>
@@ -221,10 +232,13 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
     }
     @if (roundHeadline(); as h) { <p class="round-headline" data-testid="round-headline">{{ h }}</p> }
     @if (isLoop() && committedChanges().length) {
-      <section aria-labelledby="changes-h" data-testid="changes" id="changes">
-        <h2 id="changes-h">Changes this run</h2>
-        <app-changes-table [rows]="committedChanges()" label="Changes this run" />
-      </section>
+      <!-- What was changed, file by file: the round headline already says what was done. -->
+      <details class="details" data-testid="changes-details" id="changes" [open]="open()['changes']" (toggle)="remember('changes', $event)">
+        <summary data-testid="changes-summary">{{ changesSummary() }}</summary>
+        <section aria-label="Changes this run" data-testid="changes">
+          <app-changes-table [rows]="committedChanges()" label="Changes this run" />
+        </section>
+      </details>
     }
     @if (waitingForBuild() && deployWait(); as w) {
       <!-- Fixes committed; the site is deployed by someone else (deployed: bundle-change). -->
@@ -271,7 +285,7 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
       </section>
     }
     @if (paneShown()) {
-      @if (lastLine(); as ll) { <p class="hint last-line" data-testid="agent-last-line">{{ ll }}</p> }
+      @if (!ending() && lastLine(); as ll) { <p class="hint last-line" data-testid="agent-last-line">{{ ll }}</p> }
       <details class="details" data-testid="show-output" [open]="showOutput()" (toggle)="outputToggled($event)">
         <summary>Show output</summary>
       <section class="agent-pane" aria-labelledby="pane-h" data-testid="agent-pane">
@@ -285,20 +299,36 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
     }
     <div class="actions">
       @if (isLoop() && store.active()) {
-        <button type="button" class="big" (click)="store.stop()" data-testid="loop-stop">Stop</button>
+        <!-- While it waits for a deployment, the notice's "verify now" is the next step and Stop is not. -->
+        <button type="button" [class]="waitingForBuild() ? 'secondary' : 'big'" (click)="store.stop()" data-testid="loop-stop">Stop</button>
       } @else if (fresh()) {
         <button type="button" class="big" disabled data-testid="loop-start">Fix the violations</button>
-      } @else if (problem(); as pr) {
-        <button type="button" class="big" (click)="tryAgain()" [disabled]="store.active()" data-testid="try-again">Try again</button>
-        @if (pr.kind === 'stopped') {
-          <button type="button" class="secondary" (click)="runAgain()" [disabled]="store.active()" data-testid="run-again">Run again</button>
-          <a class="button secondary" routerLink="/history" data-testid="see-changes">See what changed</a>
+      } @else if (ending(); as en) {
+        <!-- Exactly one big button: the next step. -->
+        @switch (en.kind) {
+          @case ('signin') {
+            <button type="button" class="big" (click)="signInAndContinue()" [disabled]="store.active() || starting()" data-testid="sign-in-continue">Sign in and continue</button>
+          }
+          @case ('start') {
+            <button type="button" class="big" (click)="tryAgain()" [disabled]="store.active()" data-testid="try-again">Try again</button>
+          }
+          @case ('failed') {
+            <button type="button" class="big" (click)="tryAgain()" [disabled]="store.active()" data-testid="try-again">Try again</button>
+            <button type="button" class="secondary" (click)="runAgain()" [disabled]="store.active()" data-testid="run-again">Run again</button>
+            <a class="button secondary" routerLink="/history" data-testid="see-changes">See what changed</a>
+          }
+          @default {
+            @if (en.next === 'see-changes') {
+              <a class="button big" routerLink="/history" data-testid="see-changes">See what changed</a>
+            } @else {
+              <button type="button" class="big" (click)="fix(true, en.next === 'verify' ? 'verify' : null)" [disabled]="store.active() || starting()" data-testid="loop-continue-next">{{ en.next === 'verify' ? 'Run again to verify' : 'Continue' }}</button>
+              <a class="button secondary" routerLink="/history" data-testid="see-changes">See what changed</a>
+            }
+            <button type="button" class="secondary" (click)="runAgain()" [disabled]="store.active()" data-testid="run-again">Run again</button>
+          }
         }
       } @else if (interrupted() || awaitingEnd()) {
         <!-- Continue and Start over are on the interrupted notice; the deployment's actions on its notice. -->
-      } @else if (loopEnded()) {
-        <a class="button big" routerLink="/history" data-testid="see-changes">See what changed</a>
-        <button type="button" class="secondary" (click)="runAgain()" [disabled]="store.active()" data-testid="run-again">Run again</button>
       } @else {
         <button type="button" class="big" (click)="fix()" [disabled]="!startable()" data-testid="loop-start">Fix the violations</button>
       }
@@ -319,15 +349,21 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
         <app-sign-in-wait testId="loop-login-waiting" />
       }
       <!-- The crawl's view only once a round has begun re-checking the site (a round from the report has no crawl). -->
-      @if (store.kind() === 'dry-run' || store.crawlRound() !== null) {
+      @if (crawlShown()) {
         @if (store.crawlRound(); as cr) { <p data-testid="crawl-round">Round {{ cr }}: re-checking the site</p> }
         <app-run-view [showChart]="false" [links]="false" />
       }
     }
+    @if (!ledger()?.exists && ledger()) {
+      <p class="hint">No ledger yet. A dry run records what the crawl finds without changing anything.</p>
+    }
+    </details>
 
     @if (ledger()?.exists) {
-      <section aria-labelledby="ledger-h">
-        <h2 id="ledger-h">Ledger</h2>
+      <!-- Every finding's state: there when wanted, closed until then. -->
+      <details class="details" data-testid="ledger" [open]="open()['ledger']" (toggle)="remember('ledger', $event)">
+      <summary data-testid="ledger-summary">{{ ledgerSummary() }}</summary>
+      <section aria-label="Ledger">
         <p data-testid="ledger-line">{{ ledger()?.line }}</p>
         <dl class="tiles" data-testid="ledger-counts">
           @for (s of statuses; track s[0]) {
@@ -353,11 +389,8 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
           </app-chart-panel>
         }
       </section>
-    } @else if (ledger()) {
-      <p class="hint">No ledger yet. A dry run records what the crawl finds without changing anything.</p>
+      </details>
     }
-
-    </details>
 
     <!-- Every loop setting lives at /fix-loop/settings, which nothing links to. -->
     @if (settings()) {
@@ -411,6 +444,14 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     }
   }
   readonly showOutput = signal(detailsOpen('output'));
+  // The disclosures that are closed until the person opens one (remembered per section).
+  readonly open = signal<Record<'ledger' | 'changes' | 'why', boolean>>({ ledger: detailsOpen('ledger'), changes: detailsOpen('changes'), why: detailsOpen('why') });
+  remember(key: 'ledger' | 'changes' | 'why', e: Event): void {
+    const isOpen = (e.target as HTMLDetailsElement).open;
+    if (this.open()[key] === isOpen) return;
+    this.open.update((o) => ({ ...o, [key]: isOpen }));
+    setDetailsOpen(key, isOpen);
+  }
   toggled(e: Event): void {
     const open = (e.target as HTMLDetailsElement).open;
     this.showDetails.set(open);
@@ -510,6 +551,56 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     const message = errors[errors.length - 1] || `The loop ended with exit code ${d['code']}.`;
     return { kind: this.store.round() === null ? 'start' : 'stopped', message, remedy: null };
   });
+  // How the loop ended, for the person: one sentence (headline), the raw text for a closed Details,
+  // and the one next step. Null while it runs, and when it ended interrupted or waiting for a
+  // deployment (their notices say what to do).
+  readonly ending = computed<{ kind: 'start' | 'signin' | 'failed' | 'stopped' | 'done'; headline: string; raw: string; remedy: string | null; next: 'continue' | 'verify' | 'see-changes' | null } | null>(() => {
+    const d = this.store.done();
+    if (!this.loopEnded() || !d || this.interrupted() || this.awaitingEnd()) return null;
+    const pre = this.store.precondition();
+    if (pre) return { kind: 'start', headline: 'The fix loop could not start', raw: String(pre['message'] || ''), remedy: String(pre['remedy'] || '') || null, next: null };
+    const errors = this.store.notices().filter((n) => n.level === 'error' && !/^The run failed( \(exit code|: )/.test(n.message)).map((n) => n.message);
+    const reason = d['reason'] ? String(d['reason']) : '';
+    const last = errors[errors.length - 1] || '';
+    const raw = [last, ...(reason && !last.includes(reason) ? [reason] : [])].filter(Boolean).join('\n');
+    if (signInFailed([...errors, reason]) || (this.store.cannotGetIn() && !this.store.pages().some((p) => !p.error))) {
+      return { kind: 'signin', headline: SIGN_IN_HEADLINE, raw, remedy: null, next: null };
+    }
+    const fixes = this.committedChanges().length;
+    if (d['outcome'] === 'stopped') {
+      return { kind: 'stopped', headline: fixes ? `Stopped. Your ${fixes} fix${fixes === 1 ? ' is' : 'es are'} committed.` : 'Stopped. Nothing was changed.', raw, remedy: null, next: 'continue' };
+    }
+    if (d['outcome'] === 'error' || errors.length) {
+      const said = plainReason(errors[errors.length - 1] || reason || `the loop ended with exit code ${d['code']}`);
+      const headline = /^The site could not be checked/.test(said) ? said : `The fix loop stopped: ${said.charAt(0).toLowerCase()}${said.slice(1)}`;
+      return { kind: 'failed', headline, raw: raw || `The loop ended with exit code ${d['code']}.`, remedy: null, next: null };
+    }
+    const fixed = this.committedChanges().reduce((n, c) => n + (c.elements || 1), 0);
+    const left = this.openCount();
+    const pending = this.counts()['pending'] || 0;
+    const headline = !fixed && !left ? 'Done: nothing left to fix.' : `Done: ${fixed} fixed${left ? `, ${left} left` : ''}.`;
+    return { kind: 'done', headline, raw: '', remedy: null, next: pending ? 'verify' : left ? 'continue' : 'see-changes' };
+  });
+  // The crawl's view (progress, pages) only while a crawl runs or once it has checked pages: never
+  // an empty "0 of 0 pages" for a crawl that did not run.
+  readonly crawlShown = computed(() => (this.store.kind() === 'dry-run' || this.store.crawlRound() !== null) && (this.store.active() || this.store.pages().length > 0));
+  readonly changesSummary = computed(() => {
+    const rows = this.committedChanges();
+    const files = new Set(rows.flatMap((c) => c.files)).size;
+    return `Changes this run (${rows.length} fix${rows.length === 1 ? '' : 'es'} in ${files} file${files === 1 ? '' : 's'})`;
+  });
+  readonly ledgerSummary = computed(() => {
+    const c = this.counts();
+    const parts = [['open', 'open'], ['pending', 'awaiting verification'], ['review', 'undecided'], ['verified', 'verified']].filter(([k]) => c[k]).map(([k, w]) => `${c[k]} ${w}`);
+    return parts.length ? `Ledger (${parts.join(', ')})` : 'Ledger';
+  });
+  // Sign in and continue: the same loop again, with the same choice about waiting fixes; its first
+  // round signs in.
+  async signInAndContinue(): Promise<void> {
+    const cmd = String(this.store.run()?.['command'] || '');
+    const deploy: DeployAction | null = / --verify-anyway\b/.test(cmd) ? 'verify-anyway' : / --verify\b/.test(cmd) ? 'verify' : / --wait\b/.test(cmd) ? 'wait' : null;
+    await this.fix(true, deploy);
+  }
   // The status line, in words that explain what the loop is doing and why.
   readonly fixStatus = computed(() => {
     const r = this.store.round();
@@ -759,6 +850,10 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   ]);
 
   constructor() {
+    // A link to Changes this run (Where you are) opens it.
+    this.fragmentSub = this.route.fragment.subscribe((f) => {
+      if (f === 'changes') this.open.update((o) => ({ ...o, changes: true }));
+    });
     effect(() => {
       this.store.ledger();
       this.store.done();
@@ -833,7 +928,9 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     await this.fix();
   }
 
+  private fragmentSub: { unsubscribe(): void } | null = null;
   ngOnDestroy(): void {
+    this.fragmentSub?.unsubscribe();
     this.destroyed = true;
     clearInterval(this.ticker);
     clearTimeout(this.detectPoll);

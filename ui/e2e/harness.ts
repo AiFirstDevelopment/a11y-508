@@ -148,7 +148,7 @@ export async function open(page: Page, dash: Dash, path = '/run', opts: { fresh?
         // A returning viewer who looks at the Crawl step after a crawl: it stays there when the
         // crawl finishes (the wizard's own move to Results is tested with details: false).
         if (details && localStorage.getItem('a11y508.stayOnCrawl') === null) localStorage.setItem('a11y508.stayOnCrawl', '1');
-        for (const k of ['crawl', 'results', 'fix', 'output', 'history']) if (localStorage.getItem(`a11y508.details.${k}`) === null) localStorage.setItem(`a11y508.details.${k}`, details ? '1' : '0');
+        for (const k of ['crawl', 'results', 'fix', 'output', 'history', 'ledger', 'changes', 'why']) if (localStorage.getItem(`a11y508.details.${k}`) === null) localStorage.setItem(`a11y508.details.${k}`, details ? '1' : '0');
       } catch {}
     }, [cwd, details, dash.origin] as [string, boolean, string]);
   }

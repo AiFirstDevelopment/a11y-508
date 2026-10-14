@@ -188,7 +188,10 @@ test('fix-click AC9 / guard 9b: after a finished loop, a reload with start=1 sho
     const id = await runId(dash);
     await restore(page, dash);
     await expect(page.getByTestId('loop-step')).toHaveText('Loop finished (stopped).', { timeout: 30_000 });
-    await expect(page.getByTestId('fix-status')).toHaveText('Loop finished (stopped).');
+    // The headline says what happened in a person's words, with Continue as the one next step.
+    await expect(page.getByTestId('fix-status')).toHaveText('Stopped. Nothing was changed.');
+    await expect(page.getByTestId('loop-continue-next')).toHaveText('Continue');
+    await expect(page.locator('main button.big:visible, main a.button.big:visible')).toHaveCount(1);
     await expect(page.getByTestId('see-changes')).toBeVisible();
     await expect(page.getByTestId('loop-start')).toHaveCount(0);
     await sleep(3000);

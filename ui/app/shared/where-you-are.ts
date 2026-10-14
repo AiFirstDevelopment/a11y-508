@@ -76,7 +76,7 @@ export class WhereYouAre implements OnDestroy {
       waiting: s.awaitingDeploy() && w && w['until'] ? { branch: String(w['branch'] || ''), intervalMs: Number(w['intervalMs']) || 30_000, until: Date.parse(String(w['until'])) || Date.now() } : null,
       deployment: dep ? String(dep['state']) : null, verifying: dep && typeof dep['pending'] === 'number' ? dep['pending'] : null,
       loginWaiting: s.loginWaiting(),
-      reason: done && done['reason'] ? String(done['reason']) : s.notices().filter((n) => n.level === 'error').map((n) => n.message).pop() || null,
+      reason: done && done['reason'] ? String(done['reason']) : s.notices().filter((n) => n.level === 'error' && !/^The run failed( \(exit code|: )/.test(n.message)).map((n) => n.message).pop() || s.notices().filter((n) => n.level === 'error').map((n) => n.message).pop() || null,
     };
   });
 

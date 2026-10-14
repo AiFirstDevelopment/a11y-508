@@ -37,6 +37,8 @@ import { ChartPanel } from './chart-panel';
         }
       </div>
     }
+    <!-- A run that ended before any page was found shows no empty "0 of 0 pages" and no empty table. -->
+    @if (crawled()) {
     <div class="progress-block">
       <label for="crawl-progress" id="crawl-progress-label">{{ label() }}</label>
       @if (phaseLine(); as pl) {
@@ -110,6 +112,7 @@ import { ChartPanel } from './chart-panel';
         }
       </tbody>
     </table>
+    }
     <details class="raw" (toggle)="rawOpen.set($any($event.target).open)">
       <summary>Show raw output</summary>
       @if (rawOpen()) {
@@ -144,6 +147,7 @@ export class RunView implements OnDestroy {
   readonly now = signal(Date.now());
   private ticker = setInterval(() => this.now.set(Date.now()), 1000);
   readonly flight = computed(() => Object.values(this.store.inFlight()));
+  readonly crawled = computed(() => !this.store.done() || this.store.pages().length > 0 || this.store.progress().discovered > 0 || this.flight().length > 0);
   readonly secs = (f: { elapsedMs: number; receivedAt: number }) => `${Math.round((f.elapsedMs + Math.max(0, this.now() - f.receivedAt)) / 1000)} s`;
   readonly phase = (f: Parameters<typeof phaseText>[0]) => phaseText(f);
   // The second line under the bar: the sign-in wait, or what the newest page in flight is doing.

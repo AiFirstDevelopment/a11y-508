@@ -1,5 +1,6 @@
 import { localTime } from './format';
 import type { LoopTimeline } from './types';
+import { plainReason, signInFailed } from './outcome';
 
 // "Where you are" (docs/plans/deploy-wait.md criteria 6 and 8): what has happened for this URL and
 // what comes next, as a short checklist. One function, shared by the Fix step and History. The done
@@ -88,7 +89,9 @@ export function whereYouAre(input: WhereInput): WhereLine[] {
   if (now_) lines.push({ kind: 'now', text: `Now: ${now_}`, link: null });
   const pending = counts['pending'] || 0;
   const open = counts['open'] || 0;
-  const next = pending
+  const signIn = !!live && !live.active && (live.kind === 'loop' || live.kind === 'dry-run') && (live.outcome === 'stopped' || live.outcome === 'error') && signInFailed([live.reason]);
+  const next = signIn ? 'sign in, and the loop goes on from where it was'
+    : pending
     ? `verify the ${plural(pending, 'fix', 'fixes')} against the new build${open ? `, then fix the ${open} remaining` : ''}`
     : open ? `fix the ${open} remaining`
     : counts['review'] ? `ask the assistant about the ${plural(counts['review'], 'review item')}`
@@ -120,8 +123,12 @@ function nowLine(live: WhereLive | null, timeline: LoopTimeline | null, counts: 
   if (live && loop && live.outcome) {
     if (live.outcome === 'awaiting-deploy') return live.deployment === 'still-old' ? 'your deployment has not arrived yet — the site still serves the old build' : live.deployment === 'unreachable' ? "could not check the site's build" : 'your deployment has not arrived yet';
     if (live.outcome === 'interrupted') return 'the fix loop was interrupted';
+    if ((live.outcome === 'stopped' || live.outcome === 'error') && signInFailed([live.reason])) return 'nobody signed in, so the site was not checked';
     if (live.outcome === 'stopped') return 'stopped';
-    if (live.outcome === 'error') return `stopped: ${live.reason || 'the fix loop ended with an error'}`;
+    if (live.outcome === 'error') {
+      const said = plainReason(live.reason || 'the fix loop ended with an error').replace(/\.$/, '');
+      return `stopped: ${said.charAt(0).toLowerCase()}${said.slice(1)}`;
+    }
     return 'finished';
   }
   if (timeline?.deploy && counts['pending']) return `your fixes wait for a deployment of ${timeline.deploy.branch}`;

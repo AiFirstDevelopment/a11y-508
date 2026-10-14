@@ -8,6 +8,8 @@ import { RunView } from '../shared/run-view';
 import { SignInWait } from '../shared/sign-in-wait';
 import { SignInFlow } from '../core/sign-in';
 import { EnvStore } from '../core/env.store';
+import { Starter } from '../core/starter';
+import { SIGN_IN_HEADLINE, plainReason, signInFailed } from '../core/outcome';
 
 @Component({
   selector: 'app-live-screen',
@@ -22,11 +24,14 @@ import { EnvStore } from '../core/env.store';
       @if (store.loginWaiting() && store.active()) {
         <app-sign-in-wait testId="crawl-login-waiting" />
       }
-      <div class="thin-progress">
-        <progress aria-labelledby="crawl-pages" [value]="store.progress().done" [max]="store.progress().discovered || 1"></progress>
-        <span id="crawl-pages" data-testid="crawl-pages">{{ store.progress().done }} of {{ store.progress().discovered }} pages</span>
-      </div>
-      <p data-testid="crawl-counts">{{ counts() }}</p>
+      <!-- No "0 of 0 pages" for a crawl that ended before it found any page. -->
+      @if (crawled()) {
+        <div class="thin-progress">
+          <progress aria-labelledby="crawl-pages" [value]="store.progress().done" [max]="store.progress().discovered || 1"></progress>
+          <span id="crawl-pages" data-testid="crawl-pages">{{ store.progress().done }} of {{ store.progress().discovered }} pages</span>
+        </div>
+        <p data-testid="crawl-counts">{{ counts() }}</p>
+      }
       <p class="hint" data-testid="crawl-elapsed">{{ elapsed() }}</p>
       @if (env.env()?.signIn === 'separate-window' && store.loginWaiting() && store.active()) {
         <p class="hint" data-testid="separate-window">The sign-in is in a separate browser window (Chrome was not found for the dashboard's own window).</p>
@@ -34,8 +39,17 @@ import { EnvStore } from '../core/env.store';
       @if (signInError()) {
         <div class="notice error" role="alert">{{ signInError() }}</div>
       }
+      <!-- One big button: Stop while it runs; afterwards the next step. -->
       <div class="actions">
-        <button type="button" class="big" (click)="stop()" [disabled]="!store.active()">Stop</button>
+        @if (store.active()) {
+          <button type="button" class="big" (click)="stop()">Stop</button>
+        } @else if (store.done()) {
+          @switch (next()) {
+            @case ('results') { <a class="button" [class.big]="!store.cannotGetIn()" [class.secondary]="store.cannotGetIn()" routerLink="/report" data-testid="see-results">See the results</a> }
+            @case ('signin') { <button type="button" class="big" (click)="signIn()" data-testid="sign-in-continue">Sign in and continue</button> }
+            @case ('again') { <button type="button" class="big" (click)="again()" data-testid="crawl-try-again">{{ store.done()?.['outcome'] === 'stopped' ? 'Crawl again' : 'Try again' }}</button> }
+          }
+        }
       </div>
       @if (store.cannotGetIn()) {
         <div class="notice error" role="alert" data-notice="cannot-get-in">
@@ -57,9 +71,6 @@ import { EnvStore } from '../core/env.store';
         @if (store.run()?.['command']; as cmd) {
           <p class="hint">Running <code data-testid="run-command">{{ cmd }}</code></p>
         }
-        @if (store.done() && store.summary()) {
-          <p><a class="button secondary" routerLink="/report">Open the report</a></p>
-        }
         <app-run-view />
       </details>
     }
@@ -70,6 +81,7 @@ export class LiveScreen implements OnDestroy {
   private form = inject(FormStore);
   private router = inject(Router);
   private flow = inject(SignInFlow);
+  private starter = inject(Starter);
   readonly env = inject(EnvStore);
   readonly signInError = signal('');
   // Details (the command, the chart, the pages table, notices, raw output): closed by default.
@@ -119,7 +131,9 @@ export class LiveScreen implements OnDestroy {
         const sum = s['summary'] || {};
         return `Done: ${sum.audited ?? st.pages().length} pages · ${this.counts()}`;
       }
-      return d['outcome'] === 'error' ? `Failed (exit code ${d['code']})` : 'Done';
+      if (signInFailed([...this.errors(), d['reason'] as string])) return SIGN_IN_HEADLINE;
+      if (d['outcome'] === 'error') return this.errors().length || d['reason'] ? plainReason(this.errors().at(-1) || String(d['reason'])) : `The crawl failed (exit code ${d['code']}).`;
+      return 'Done';
     }
     if (st.stopping()) return 'Stopping…';
     const since = st.loginWaitingSince();
@@ -146,6 +160,28 @@ export class LiveScreen implements OnDestroy {
       default: return `Analyzing ${path} · ${phaseText(f).replace(/^./, (c) => c.toLowerCase())}`;
     }
   });
+
+  readonly crawled = computed(() => !this.store.done() || this.store.pages().length > 0 || this.store.progress().discovered > 0);
+  // The errors the CLI said, without the dashboard's own "The run failed" wrapper.
+  private readonly errors = computed(() => this.store.notices().filter((n) => n.level === 'error' && !/^The run failed( \(exit code|: )/.test(n.message)).map((n) => n.message));
+  // The next step once the crawl has ended: its results, a sign-in, or another go (the cannot-get-in
+  // notice has its own buttons).
+  readonly next = computed<'results' | 'signin' | 'again' | null>(() => {
+    const d = this.store.done();
+    if (!d) return null;
+    if (this.store.summary()) return 'results';
+    if (this.store.cannotGetIn()) return null;
+    if (signInFailed([...this.errors(), d['reason'] as string])) return 'signin';
+    return 'again';
+  });
+  async again(): Promise<void> {
+    this.signInError.set('');
+    try {
+      await this.starter.startCrawl();
+    } catch (e: any) {
+      this.signInError.set(e.message);
+    }
+  }
 
   readonly status = computed(() => {
     const d = this.store.done();
