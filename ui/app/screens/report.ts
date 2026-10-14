@@ -6,7 +6,7 @@ import { BarChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
-import { SOFT_404_TITLE, localTime, skippedText, discoveryOf, foundText, resultLine, shortUrl } from '../core/format';
+import { localTime, skippedText, discoveryOf, foundText, resultLine, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { Finding, IMPACTS, Report } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
@@ -197,7 +197,7 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
         <thead><tr><th scope="col">Page</th><th scope="col">Title</th><th scope="col">Status</th><th scope="col">Violations</th><th scope="col">Review</th><th scope="col">Found</th></tr></thead>
         <tbody>
           @for (p of r.pages; track $index) {
-            <tr [attr.data-url]="p.finalUrl || p.url"><th scope="row">{{ short(p.finalUrl || p.url) }}</th><td>{{ p.title }}</td><td>@if (!p.error && !p.skipped && p.servedWith) {<span data-testid="soft-404" [attr.title]="soft404">{{ p.servedWith }} · app rendered</span>} @else { {{ p.error || p.skipped || p.status }} }</td><td>{{ count(p.findings, 'violation') }}</td><td>{{ count(p.findings, 'review') }}</td>
+            <tr [attr.data-url]="p.finalUrl || p.url"><th scope="row">{{ short(p.finalUrl || p.url) }}</th><td>{{ p.title }}</td><td>{{ p.error || p.skipped || (p.servedWith ? 'ok' : p.status) }}</td><td>{{ count(p.findings, 'violation') }}</td><td>{{ count(p.findings, 'review') }}</td>
               <td data-testid="found">
                 @let d = discovery(p);
                 {{ found(d) }}
@@ -214,7 +214,6 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
 })
 export class ReportScreen {
   readonly found = foundText;
-  readonly soft404 = SOFT_404_TITLE;
   readonly local = localTime;
   readonly discovery = discoveryOf;
   readonly quoted = skippedText;

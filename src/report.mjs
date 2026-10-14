@@ -56,10 +56,8 @@ export function coverage(pages, crawl, opts) {
   for (const p of pages.filter((x) => x.modalOnLoad && x.modalOnLoad.dismissed === false)) {
     warnings.push(`A modal dialog (${p.modalOnLoad.name || p.modalOnLoad.selector}) was open when ${short(p.finalUrl || p.url)} loaded and did not close with Escape; the page behind it was not audited. Dismiss it with --cookie or a saved session, or audit the dialog's close control.`);
   }
-  // Routes the server answers 404 for and the app renders anyway: audited, so coverage is not
-  // reduced; one note for the run (a deployment setting, not something to fix page by page).
-  const soft = pages.filter((p) => p.servedWith && !p.error && !p.skipped).map((p) => short(p.finalUrl || p.url));
-  if (soft.length) notes.push(softNotFoundNote(soft));
+  // Routes the server answers 404 for and the app renders anyway are audited like any other page
+  // (servedWith records the status in the JSON); nothing is said about them, by request.
   // The crawl's browser died and was started again (src/crawler.mjs): the page in flight has the error.
   for (const r of crawl.relaunches || []) notes.push(`The crawl's browser closed after ${r.afterPages} page(s) (${r.cause}); it was started again and the crawl went on from the next page. A page being audited at that moment is listed with the error.`);
   if (crawl.overflow) warnings.push(`Stopped at --max-pages ${opts.maxPages}: ${crawl.overflow} more link(s) were found but not audited.`);
@@ -345,12 +343,6 @@ export const resultOf = (report) => {
   if (!report.passed) return 'fail';
   return s.coverage && !s.coverage.complete ? 'incomplete' : 'pass';
 };
-
-// The coverage note for routes served with 404 that the app rendered anyway.
-export function softNotFoundNote(paths) {
-  const shown = paths.slice(0, 5).join(', ') + (paths.length > 5 ? ` and ${paths.length - 5} more` : '');
-  return `The server answers 404 for ${paths.length} of the app's routes, which the app rendered anyway, so they were audited: ${shown}. Refreshing the browser on those routes shows the same; serve the app with a 200 for unknown routes (a deployment setting) to fix it.`;
-}
 
 // What discovery did on a page: links found, controls clicked and the new URLs
 // those clicks led to, and the controls left alone because they look like actions.

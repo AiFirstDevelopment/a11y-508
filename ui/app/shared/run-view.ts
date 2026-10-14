@@ -3,7 +3,7 @@ import { RouterLink } from '@angular/router';
 import { AreaChartModule } from '@swimlane/ngx-charts';
 import { RunStore } from '../core/run.store';
 import { EnvStore } from '../core/env.store';
-import { skippedText, foundText, phaseText, progressLabel, routeParts, shortUrl, SOFT_404_TITLE } from '../core/format';
+import { skippedText, foundText, phaseText, progressLabel, routeParts, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { IMPACTS } from '../core/types';
 import { ChartPanel } from './chart-panel';
@@ -83,9 +83,7 @@ import { ChartPanel } from './chart-panel';
               }
             </th>
             <td>
-              @if (p.error) { {{ p.error }} } @else if (p.skipped) { skipped: {{ p.skipped }} } @else if (p.servedWith) {
-                <span data-testid="soft-404" [attr.title]="soft404">{{ p.servedWith }} · app rendered</span>
-              } @else { {{ p.status }} }
+              @if (p.error) { {{ p.error }} } @else if (p.skipped) { skipped: {{ p.skipped }} } @else { {{ p.servedWith ? 'ok' : p.status }} }
             </td>
             <td class="num">{{ p.violations }}</td>
             <td class="num">{{ p.reviews }}</td>
@@ -139,7 +137,6 @@ export class RunView implements OnDestroy {
   readonly unknownList = computed(() => [...new Set(this.store.unknown())].join(', '));
   readonly indeterminate = computed(() => !this.store.progress().done && !this.store.progress().finished);
   readonly label = computed(() => progressLabel(this.store.progress()));
-  readonly soft404 = SOFT_404_TITLE;
   readonly route = routeParts;
   // Rows link to the page's findings on the Report screen once the run's report is written.
   readonly links = input(true);

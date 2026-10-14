@@ -173,8 +173,6 @@ export function phaseText(e: PhaseEvent): string {
   }
 }
 
-// The Status cell of a page the server answered 404 for and the app rendered anyway.
-export const SOFT_404_TITLE = "The server answers 404 for this route, which the app rendered anyway, so it was audited. Refreshing the browser on it shows the same; serve the app with a 200 for unknown routes (a deployment setting) to fix it.";
 
 // An off-origin redirect: the app sent the crawler to a sign-in portal.
 export const OFF_ORIGIN = /redirected off-origin to/;

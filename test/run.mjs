@@ -369,17 +369,15 @@ const noneOn = (path, test, selectors, level) => {
   assert.equal(hits.length, 0, `${path}: unexpected ${test || 'findings'} on ${selectors.join(', ')}\n  got: ${listed(hits)}`);
 };
 
-check('a page the server answers 404 for, but which renders content, is audited and the coverage section says so', () => {
+check('a page the server answers 404 for, but which renders content, is audited like any other page and nothing is said about it', () => {
   const p = pages['/soft-404.html'];
   assert.ok(p, '/soft-404.html was crawled');
   assert.equal(p.error, null, `audited despite the status: ${p.error}`);
   assert.equal(p.servedWith, 404);
   has('/soft-404.html', '7.A', 'violation');
-  // One note for the run, not a warning: coverage is not reduced by it.
-  const note = (report.summary.coverage.notes || []).find((n) => /^The server answers 404 for \d+ of the app's routes, which the app rendered anyway, so they were audited: .*\/soft-404\.html/.test(n));
-  assert.ok(note, `coverage notes: ${JSON.stringify(report.summary.coverage.notes)}`);
-  assert.match(note, /serve the app with a 200 for unknown routes \(a deployment setting\) to fix it\.$/);
-  assert.ok(!(report.summary.coverage.warnings || []).some((w) => /soft-404/.test(w)), `no warning for it: ${JSON.stringify(report.summary.coverage.warnings)}`);
+  // The status is recorded in the JSON, but no note and no warning mention it (confusing, by request).
+  const said = [...(report.summary.coverage.notes || []), ...(report.summary.coverage.warnings || [])].filter((n) => /404|soft-404/.test(n));
+  assert.deepEqual(said, [], `nothing said about the 404: ${JSON.stringify(said)}`);
 });
 
 check('a page reached both through a redirecting start route and by its own link is audited once', () => {

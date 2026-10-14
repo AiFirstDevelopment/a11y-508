@@ -48,16 +48,15 @@ test('live progress: a phase line says what the page in flight is doing; the pro
   expect(await selected.innerText()).not.toContain('?from=');
 });
 
-test('soft 404: a page the server answers 404 for and the app renders reads "404 · app rendered", with the reason as its title', async ({ page }) => {
+test('soft 404: a page the server answers 404 for and the app renders is listed as ok, and nothing says 404', async ({ page }) => {
   await open(page, dash, '/run');
   await fillRun(page, { url: site.base + 'soft-404.html', token: TOKEN, maxPages: 1, advanced: { 'no-zoom': true, 'no-screenshots': true } });
   await startFromRun(page);
   await waitFinished(page);
-  const cell = page.getByTestId('page-list').getByTestId('soft-404');
-  await expect(cell).toHaveText('404 · app rendered');
-  await expect(cell).toHaveAttribute('title', /serve the app with a 200 for unknown routes/);
+  const status = page.getByTestId('page-list').locator('tbody tr').first().locator('td').first();
+  await expect(status).toHaveText(/^\s*ok\s*$/);
   const report = readReport(dash.cwd);
-  expect(report.summary.coverage.notes.some((n: string) => /^The server answers 404 for 1 of the app's routes/.test(n))).toBe(true);
-  // A note, not a warning (with --max-pages 1 other warnings may make coverage incomplete).
-  expect(report.summary.coverage.warnings.some((w: string) => /404/.test(w))).toBe(false);
+  // The status is in the JSON; no note and no warning mention it (confusing, by request).
+  expect(report.pages[0].servedWith).toBe(404);
+  expect([...report.summary.coverage.notes, ...report.summary.coverage.warnings].some((n: string) => /404/.test(n))).toBe(false);
 });
