@@ -126,7 +126,7 @@ Fix loop
     --wait             Go on waiting for the deployment (deployTimeout), then verify
     --resume           Go on with the ledger's last round where it was interrupted: its open
                        findings are fixed with no new crawl; the next round crawls
-  status        Print the ledger: what is open, pending, verified, and needs a person, and
+  status        Print the ledger: what is open, pending, verified, and skipped, and
                 where the tool keeps its files for this repository.
 
 Exit codes
@@ -274,8 +274,8 @@ export function splitLoopArgs(argv) {
     else if (key === '--agent') loop.agent = val();
     else if (key === '--dry-run') loop.dryRun = true;
     else if (key === '--sign-in-first') loop.signInFirst = true;
-    // --from-report alone (or followed by something that is not a .json file): from the ledger.
-    else if (key === '--from-report') loop.fromReport = eq > 0 ? a.slice(eq + 1) : rest[i + 1] !== undefined && /\.json$/i.test(rest[i + 1]) ? rest[++i] : true;
+    // --from-report alone (last, or followed by another option or a start URL): from the ledger.
+    else if (key === '--from-report') loop.fromReport = eq > 0 ? a.slice(eq + 1) : rest[i + 1] !== undefined && !rest[i + 1].startsWith('-') && !/^https?:\/\//i.test(rest[i + 1]) ? rest[++i] : true;
     else if (key === '--resume') loop.resume = true;
     else if (key === '--verify') loop.verify = true;
     else if (key === '--verify-anyway') loop.verifyAnyway = true;

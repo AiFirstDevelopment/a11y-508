@@ -23,7 +23,7 @@ const STATUSES: [string, string][] = [
   ['open', 'Open'], ['review', 'Awaiting triage'], ['pending', 'Fixed, awaiting verification'], ['verified', 'Verified fixed'],
   ['adequate', 'Adequate'], ['gone', 'Gone'], ['wont-fix', "Won't fix"],
 ];
-// Findings that need a person are not listed here: the Needs a person screen (/review) shows them.
+// What the assistant could not fix (skipped) is not shown anywhere on the dashboard.
 const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Fixed, awaiting verification'], ['review', 'Awaiting triage']];
 // The installed assistant chosen when the config names none.
 const PREFERENCE = ['claude', 'gemini', 'codex'];

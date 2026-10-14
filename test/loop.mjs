@@ -130,6 +130,16 @@ check('loop-resilience AC20: only a plain "<build> && <test>" check is split; on
   assert.deepEqual(splitCheck('"/opt/my node/node" build.mjs && "/opt/my node/node" test.mjs'), { build: '"/opt/my node/node" build.mjs', test: '"/opt/my node/node" test.mjs' });
   for (const whole of ['cd app && node t.mjs', 'export CI=1 && npm test', 'nvm use && npm test', 'node -e "a && b"', 'npm run lint && npm run build && npm test', 'npm test']) assert.deepEqual(splitCheck(whole), { build: whole, test: null }, whole);
 });
+check('deploy-wait: --from-report takes a file, or alone means from the ledger; --verify, --verify-anyway and --wait are loop flags', () => {
+  assert.equal(splitLoopArgs(['loop', '--from-report', 'out/report']).loop.fromReport, 'out/report');
+  assert.equal(splitLoopArgs(['loop', '--from-report', 'a/report.json']).loop.fromReport, 'a/report.json');
+  assert.equal(splitLoopArgs(['loop', '--from-report']).loop.fromReport, true);
+  assert.equal(splitLoopArgs(['loop', '--from-report', '--max-rounds', '1']).loop.fromReport, true);
+  const u = splitLoopArgs(['loop', '--from-report', 'http://x/']);
+  assert.deepEqual([u.loop.fromReport, u.remaining], [true, ['http://x/']]);
+  const v = splitLoopArgs(['loop', '--verify', '--verify-anyway', '--wait', '--max-pages', '2']);
+  assert.deepEqual([v.loop.verify, v.loop.verifyAnyway, v.loop.wait, v.remaining], [true, true, true, ['--max-pages', '2']]);
+});
 check('loop flags are split from crawl options', () => {
   const s = splitLoopArgs(['loop', 'http://x', '--max-rounds', '3', '--max-pages', '10', '--agent=gemini', '--dry-run']);
   assert.equal(s.loop.maxRounds, 3);

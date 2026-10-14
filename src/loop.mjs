@@ -577,6 +577,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // Fixes waiting for a deployment: a report given for round 1 cannot tell whether it shows them.
   const waiting = !dryRun && !resuming && awaitingDeploy();
   const given = resuming || fromLedger || waiting || fromReport === true ? null : reportForFirstRound(fromReport, cfg, cwd, log);
+  if (waiting && typeof fromReport === 'string') log.info(`not starting from ${fromReport}: fixes wait for a deployment, so the site's bundles are checked first and the round crawls`);
   log.info(`a11y-508 loop: ${cfg.url}  agent: ${cfg.agent}  ledger: ${shortenHome(ledgerFile)}${ledger.rounds.length ? `  (resuming after round ${ledger.rounds.length})` : ''}`);
 
   // The next round fixes from the ledger with no crawl (fix the remaining without waiting).
@@ -594,7 +595,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         return 1;
       }
       if (w === 'fix-remaining') noCrawlNext = true;
-      else if (w === 'live') log.info('new build is live');
+      else if (w === 'live') {
+        log.info('new build is live; giving it 10 seconds to settle');
+        await sleep(10000);
+      }
     } else if (verifyAnyway) {
       log.warn(`verifying anyway: the ${byStatus(ledger, 'pending').length} fixes waiting for a deployment count as not holding wherever the site still shows the finding`);
       ev('deployment', { state: 'verify-anyway', round: ledger.rounds.length, ...deployFacts() });
