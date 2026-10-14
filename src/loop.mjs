@@ -192,8 +192,9 @@ async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = 
 // A visible sign-in on the start page (--login-only): the session is saved to stateFile and nothing
 // is crawled. Its sign-in events reach the dashboard with --events. true when a session was saved;
 // false when no sign-in happened within the usual wait (or the window could not open).
-async function signInOnly({ cfg, cwd, log, events, stateFile, passthrough = [] }) {
-  const args = [BIN, cfg.url, ...cfg.args.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state'), ...passthrough, '--login-only', '--state', stateFile, '--quiet'];
+// connectArgs (the dashboard's own browser): the sign-in is a tab in that window, not a window of its own.
+async function signInOnly({ cfg, cwd, log, events, stateFile, passthrough = [], connectArgs = [] }) {
+  const args = [BIN, cfg.url, ...cfg.args.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state'), ...passthrough, ...connectArgs, '--login-only', '--state', stateFile, '--quiet'];
   if (events) args.push('--events');
   const child = spawn(process.execPath, args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
   let partial = '';
@@ -437,8 +438,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // The session file: the one the crawl options name (the dashboard passes its own), else the config's.
   const named = passthrough.indexOf('--state');
   const stateFile = named >= 0 && passthrough[named + 1] ? passthrough[named + 1] : cfg.state;
-  // --connect (the dashboard's own browser): round 1 signs in and crawls in a tab of that window;
-  // no later round uses it.
+  // --connect (the dashboard's own browser): round 1 signs in and crawls in a tab of that window, and
+  // a later sign-in (an expired session before verifying) is a tab there too; no other crawl uses it.
   const ci = passthrough.indexOf('--connect');
   const connectArgs = ci >= 0 && passthrough[ci + 1] ? ['--connect', passthrough[ci + 1]] : [];
   if (ci >= 0) passthrough = passthrough.filter((a, i) => i !== ci && i !== ci + 1);
@@ -462,8 +463,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   const buildForVerify = async () => {
     const r = await checkBuild(cfg.url);
     if (!r.portal) return r.signature;
-    log.info('the start page sends the browser to its sign-in: opening a window to sign in');
-    const ok = await signInOnly({ cfg, cwd, log, events, stateFile, passthrough: passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') });
+    log.info(`the start page sends the browser to its sign-in: opening ${connectArgs.length ? 'a tab in the dashboard\'s window' : 'a window'} to sign in`);
+    const ok = await signInOnly({ cfg, cwd, log, events, stateFile, connectArgs, passthrough: passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') });
     if (!ok) return null;
     session = sessionArgs(cfg, passthrough, cwd);
     return bundleSignature(cfg.url);

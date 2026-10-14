@@ -121,7 +121,7 @@ export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = 
   const crawl = [...optionArgs(options), ...a.args];
   // The session file (the dashboard's own): every round's crawl uses it, and --sign-in-first saves it.
   if (stateFile && !crawl.some((x) => /^--(state|login|login-only|cookie)$/.test(x))) crawl.push('--state', stateFile);
-  // The first round's sign-in in the dashboard's own browser (the loop uses it for round 1 only).
+  // Sign-ins in the dashboard's own browser, as tabs of its window (round 1's, and one an expired session needs).
   if (connect) crawl.push('--connect', String(connect));
   args.push(...crawl);
   try {

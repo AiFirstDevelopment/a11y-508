@@ -1388,6 +1388,42 @@ rmSync(repo2, { recursive: true, force: true });
     site.srv.close();
     removeOwn(dir);
   }
+  {
+    // The dashboard's own browser (--connect): the expired session's sign-in is a tab in that window,
+    // not a window of its own, and the browser stays up after it.
+    const { findChrome } = await import('../src/chrome.mjs');
+    const { dir, site, ledgerFile } = await ssoRepo('a11y-508-deploy-relogin-tab-', { deployed: 'bundle-change', deployTimeout: 3000, deployPoll: 400 });
+    await loopIn(dir, [site.url, '--max-rounds', '1']);
+    site.session = 'renewed-in-tab';
+    site.build = 2;
+    const profile = mkdtempHome(join(tmpHome(), 'a11y-508-tab-profile-'));
+    // Visible (the fake portal signs in only a visible Chrome), like the dashboard's window.
+    const proc = spawn(findChrome(), ['--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'ignore' });
+    const portFile = join(profile, 'DevToolsActivePort');
+    for (let i = 0; i < 300 && !existsSync(portFile); i++) await new Promise((r) => setTimeout(r, 100));
+    let port = '';
+    for (let i = 0; i < 50 && !port; i++) {
+      port = existsSync(portFile) ? (readFileSync(portFile, 'utf8').split('\n')[0] || '').trim() : '';
+      if (!port) await new Promise((r) => setTimeout(r, 100));
+    }
+    const verify = await loopIn(dir, [site.url, '--verify', '--events', '--max-rounds', '1', '--connect', port]);
+    const vEvents = parseEvents(verify.stdout);
+    const alive = await fetch(`http://127.0.0.1:${port}/json/version`).then((x) => x.ok, () => false);
+    const l2 = loadLedger(ledgerFile);
+    proc.kill();
+    await new Promise((r) => setTimeout(r, 500));
+    rmSync(profile, { recursive: true, force: true, maxRetries: 10 });
+    check('deploy check: with the dashboard\'s browser, the expired session\'s sign-in is a tab in that window, which stays up', () => {
+      assert.ok(port, 'the test browser has a DevTools port');
+      assert.ok(vEvents.events.some((e) => e.type === 'info' && e.message === "the start page sends the browser to its sign-in: opening a tab in the dashboard's window to sign in"), verify.stdout);
+      assert.ok(vEvents.events.some((e) => e.type === 'session-saved'), verify.stdout);
+      assert.ok(readFileSync(join(dir, 'a11y-508-state.json'), 'utf8').includes('renewed-in-tab'));
+      assert.ok(alive, 'the dashboard\'s browser is still up');
+      assert.ok(Object.values(l2.findings).some((e) => e.status === 'verified'), verify.out);
+    });
+    site.srv.close();
+    removeOwn(dir);
+  }
 }
 rmSync(HOME, { recursive: true, force: true, maxRetries: 10 });
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
