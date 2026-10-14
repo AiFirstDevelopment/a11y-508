@@ -9,6 +9,8 @@ import { EnvInfo } from './types';
 // The path the page was opened at, before the router sends '' to Set up. The address the server
 // prints (and opens) is '/', which is where the stored step applies; a deep link is kept.
 export const INITIAL_PATH = typeof location !== 'undefined' ? location.pathname : '/';
+// Its query: /fix-loop?start=1 at load is a reload or a tab Chrome restored, never a fresh click.
+export const INITIAL_SEARCH = typeof location !== 'undefined' ? location.search : '';
 
 // The step a route belongs to, as lastStep stores it.
 export function stepPath(url: string): string | null {

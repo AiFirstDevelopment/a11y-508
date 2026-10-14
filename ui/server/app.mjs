@@ -96,7 +96,9 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   settle();
 
   // The newest run recorded for the folder: a live one is reattached (its whole log, then the rest
-  // as it comes); a fix loop whose process is gone without finishing is offered as interrupted.
+  // as it comes); a fix loop whose process is gone without finishing is offered as interrupted; and
+  // a fix loop that ended stays the current run, so after a relaunch the Fix step shows its outcome
+  // ("could not start", "stopped", "Loop finished") exactly as before.
   const reattach = () => {
     if (runs.active) return;
     let run = null;
@@ -104,7 +106,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       run = latestRun(state.cwd);
     } catch {}
     if (!run) return;
-    if (run.status === 'running' || (run.status === 'interrupted' && LOOP_KINDS.has(run.kind))) runs.adopt(run);
+    if (run.status === 'running' || LOOP_KINDS.has(run.kind)) runs.adopt(run);
   };
   reattach();
 

@@ -1,6 +1,6 @@
 import { Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
 import { LineChartModule } from '@swimlane/ngx-charts';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Api } from '../core/api';
 import { detailsOpen, setDetailsOpen } from '../core/details';
 import { Starter } from '../core/starter';
@@ -15,6 +15,7 @@ import { RunView } from '../shared/run-view';
 import { NeedsPersonLink } from '../shared/needs-person-link';
 import { ChangesTable } from '../shared/changes-table';
 import { InterruptedNotice } from '../shared/interrupted-notice';
+import { INITIAL_PATH, INITIAL_SEARCH } from '../core/resume';
 
 const STATUSES: [string, string][] = [
   ['open', 'Open'], ['review', 'Awaiting triage'], ['pending', 'Fixed, awaiting verification'], ['verified', 'Verified fixed'],
@@ -26,6 +27,11 @@ const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Fixed, awaitin
 const PREFERENCE = ['claude', 'gemini', 'codex'];
 
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const LOOP_KINDS = ['loop', 'dry-run'];
+// The page was loaded (a reload, or a tab Chrome restored after a crash) at /fix-loop?start=1: the
+// click that put start=1 there has already been acted on, so it starts nothing by itself when a run
+// is live or this folder's last fix loop has an outcome to show. Consumed by the first screen.
+let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParams(INITIAL_SEARCH).get('start') === '1';
 
 // The Fix loop: it works out what it can (the assistant, the folders, the gate, the branch)
 // and shows it, with one button; everything it inferred is editable at /fix-loop/settings.
@@ -174,7 +180,10 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
     }
     <app-interrupted-notice />
-    @if (isLoop() && store.kind() === 'loop') {
+    @if (fresh()) {
+      <!-- Clicked: waiting for the screen to be ready, saving the settings, starting the run. -->
+      <p class="big-status" role="status" data-testid="fix-status">Starting…</p>
+    } @else if (isLoop() && store.kind() === 'loop') {
       @if (problem(); as pr) {
         <!-- It ended for a reason: what happened and what to do, in the main view. -->
         <section class="notice error" role="alert" aria-labelledby="loop-problem-h" data-testid="loop-problem" [attr.data-kind]="pr.kind">
@@ -221,6 +230,8 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
     <div class="actions">
       @if (isLoop() && store.active()) {
         <button type="button" class="big" (click)="store.stop()" data-testid="loop-stop">Stop</button>
+      } @else if (fresh()) {
+        <button type="button" class="big" disabled data-testid="loop-start">Fix the violations</button>
       } @else if (problem(); as pr) {
         <button type="button" class="big" (click)="tryAgain()" [disabled]="store.active()" data-testid="try-again">Try again</button>
         @if (pr.kind === 'stopped') {
@@ -233,11 +244,11 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
         <a class="button big" routerLink="/history" data-testid="see-changes">See what changed</a>
         <button type="button" class="secondary" (click)="runAgain()" [disabled]="store.active()" data-testid="run-again">Run again</button>
       } @else {
-        <button type="button" class="big" (click)="fix()" [disabled]="!canStart()" data-testid="loop-start">Fix the violations</button>
+        <button type="button" class="big" (click)="fix()" [disabled]="!startable()" data-testid="loop-start">Fix the violations</button>
       }
       @if (startWarning()) { <span class="hint warn-text" data-testid="start-warning">{{ startWarning() }}</span> }
     </div>
-    @if (runError()) { <div class="notice error" role="alert">{{ runError() }}</div> }
+    @if (runError()) { <div class="notice error" role="alert" data-testid="run-error">{{ runError() }}</div> }
     @if (waitingForBuild()) {
       <div class="notice warn" role="status" data-testid="awaiting-deploy">
         <p>Fixes are committed and pushed. Waiting for the new build on {{ host() }}…</p>
@@ -353,6 +364,8 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     setDetailsOpen('output', open);
   }
   private api = inject(Api);
+  private router = inject(Router);
+  private route = inject(ActivatedRoute);
   readonly env = inject(EnvStore);
   readonly store = inject(RunStore);
   private form = inject(FormStore);
@@ -521,16 +534,16 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   // Try again: the same loop as Fix the violations, from the same latest report (no new crawl);
   // the loop continues from its ledger. The repository is read again first: the remedy may have changed it.
   async tryAgain(): Promise<void> {
-    this.runError.set('');
-    const anyway = this.startAnyway();
-    await this.loadDefaults();
-    this.startAnyway.set(anyway);
-    if (!this.canStart()) {
-      const why = this.startWarning() || (!this.repoOk() ? `${this.env.cwd()} ${this.repoProblem()}.` : !this.loopUrl() ? 'There is no start URL: run a crawl from Set up first.' : 'The loop cannot start yet.');
-      this.runError.set(why);
-      return;
-    }
-    await this.fix();
+    await this.fix(true);
+  }
+
+  // Why Fix the violations cannot start, once the screen is ready (a notice, never silence).
+  private whyNot(): string {
+    if (!this.agentReady()) return 'Choose an installed assistant first.';
+    if (!this.repoOk()) return `${this.env.cwd()} ${this.repoProblem()}.`;
+    if (!this.loopUrl()) return 'There is no start URL: run a crawl from Set up first.';
+    if (this.wrongRepo() && !this.startAnyway()) return "This repository does not seem to contain the app's code: choose Start anyway to fix it here, or choose the app's repository on Set up.";
+    return 'The loop cannot start yet.';
   }
 
   // The latest report's markup is nowhere in the folders the loop edits: probably the wrong repository.
@@ -541,6 +554,18 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     return !!m && m.report && m.checked > 0 && m.found === 0;
   });
   readonly canStart = computed(() => this.agentReady() && this.repoOk() && !!this.loopUrl() && !this.store.active() && (!this.wrongRepo() || this.startAnyway()));
+  // A start in flight: from the click until the server has the run (or says why not).
+  readonly starting = signal(false);
+  // The screen is still finding out what it needs to start: the assistants, the repository, the config.
+  readonly defaultsLoading = signal(true);
+  readonly configLoading = signal(true);
+  readonly pending = computed(() => !this.env.env() || !!this.env.env()!.detecting || this.defaultsLoading() || this.configLoading());
+  // Clicked, and the new run is not known yet: "Starting…", and no button to press again.
+  readonly fresh = computed(() => this.starting() && !this.store.active());
+  // The button takes a click while the screen is still getting ready (the start waits for it), and
+  // never while a start is in flight or a run is active.
+  readonly startable = computed(() => !this.starting() && !this.store.active() && (this.pending() || this.canStart()));
+  private destroyed = false;
   readonly host = computed(() => {
     try {
       return new URL(this.loopUrl()).host;
@@ -557,6 +582,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     return 'not signed in or failed';
   });
   readonly startWarning = computed(() => {
+    if (this.pending() || this.starting()) return '';
     if (!this.agentReady()) return 'Choose an installed assistant first.';
     const t = this.testResult();
     if (t && t.status !== 'ready') return 'The last test of this assistant did not pass.';
@@ -626,7 +652,12 @@ export class FixLoopScreen implements OnInit, OnDestroy {
       const cwd = this.env.cwd();
       untracked(() => {
         if (!cwd) return;
-        if (seen && seen !== cwd) void Promise.all([this.loadConfig(), this.loadDefaults()]);
+        if (seen && seen !== cwd) {
+          void Promise.all([this.loadConfig(), this.loadDefaults()]);
+          // The new folder's last fix loop, as it was.
+          const r = this.env.env()?.run;
+          if (r && LOOP_KINDS.includes(r.kind) && this.store.run()?.['id'] !== r.id) void this.store.connect();
+        }
         seen = cwd;
       });
     });
@@ -661,15 +692,29 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   }
 
   async ngOnInit(): Promise<void> {
+    const asked = this.startParam() === '1';
+    const reloaded = asked && loadedWithStart;
+    loadedWithStart = false;
+    // start=1 is acted on once: the address keeps no request to start, so a reload or a restored
+    // tab cannot repeat it.
+    if (asked) void this.router.navigate([], { relativeTo: this.route, queryParams: { start: null }, queryParamsHandling: 'merge', replaceUrl: true });
     // In parallel: the first /api/env can take seconds (assistant detection),
     // and the config must not arrive after the developer has started editing.
-    await Promise.all([this.env.load(), this.loadConfig(), this.loadDefaults()]);
+    const [e] = await Promise.all([this.env.load(), this.loadConfig(), this.loadDefaults()]);
     const spec = this.agentSpec();
     if (!this.testResult() && spec && this.env.env()?.lastTest?.[spec]) this.testResult.set(this.env.env()!.lastTest[spec]);
-    if (this.startParam() === '1' && this.canStart()) await this.fix();
+    // This folder's current or last fix loop, as it was: followed when this page does not have it yet.
+    const last = e?.run || null;
+    if (last && LOOP_KINDS.includes(last.kind) && this.store.run()?.['id'] !== last.id && !this.store.connected()) void this.store.connect();
+    if (!asked || this.destroyed) return;
+    // Never a second run beside a live one; and after a reload, the last fix loop's outcome stays
+    // on screen until the person starts the next one.
+    if (last && (last.status === 'running' || (reloaded && LOOP_KINDS.includes(last.kind)))) return;
+    await this.fix();
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
     clearInterval(this.ticker);
     clearTimeout(this.detectPoll);
   }
@@ -679,10 +724,13 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     const n = ++this.configLoads;
     let c: { exists: boolean; repository?: boolean; config: Record<string, any> } | null = null;
     let settings: Record<string, any> = {};
+    this.configLoading.set(true);
     try {
       [c, settings] = await Promise.all([this.api.get<{ exists: boolean; repository?: boolean; config: Record<string, any> }>('/api/config'), this.api.get<Record<string, any>>('/api/settings').catch(() => ({}))]);
     } catch {}
-    if (n !== this.configLoads || !c) return;
+    if (n !== this.configLoads) return;
+    this.configLoading.set(false);
+    if (!c) return;
     this.cfg.set(c.config || {});
     this.configExists.set(!!c.exists);
     this.repoConfig.set(!!c.repository);
@@ -710,13 +758,17 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   private defaultsLoads = 0;
   async loadDefaults(): Promise<void> {
     const n = ++this.defaultsLoads;
+    this.defaultsLoading.set(true);
     try {
       const [d, m] = await Promise.all([this.api.get<LoopDefaults>('/api/loop/defaults'), this.api.get<LoopMatch>('/api/loop/match').catch(() => null)]);
       if (n !== this.defaultsLoads) return;
       this.defaults.set(d);
       this.match.set(m);
       this.startAnyway.set(false);
-    } catch {}
+    } catch {
+    } finally {
+      if (n === this.defaultsLoads) this.defaultsLoading.set(false);
+    }
   }
 
   private ledgerLoads = 0;
@@ -847,15 +899,44 @@ export class FixLoopScreen implements OnInit, OnDestroy {
 
   // Fix the violations: the config from what was inferred (written if there is none, or if the
   // assistant changed), then the loop with its default number of rounds.
-  async fix(): Promise<void> {
-    if (!this.canStart()) return;
+  // A click is never lost: one that comes while the screen is still getting ready (the assistants
+  // being detected, the repository being read) waits for it, with "Starting…" meanwhile, and then
+  // starts the loop or says why it cannot. reread: Try again reads the repository again first (the
+  // remedy may have changed it).
+  async fix(reread = false): Promise<void> {
+    if (this.starting() || this.store.active()) return;
+    this.starting.set(true);
     this.runError.set('');
-    if (!this.repoConfig() && (!this.configExists() || this.cfg()['agent'] !== this.agentSpec())) {
-      this.set('agent', this.agentSpec());
-      if (!(await this.saveConfig())) return;
+    try {
+      if (reread) {
+        const anyway = this.startAnyway();
+        await this.loadDefaults();
+        this.startAnyway.set(anyway);
+      }
+      await this.ready();
+      if (this.destroyed || this.store.active()) return;
+      if (!this.canStart()) {
+        this.runError.set(this.whyNot());
+        return;
+      }
+      if (!this.repoConfig() && (!this.configExists() || this.cfg()['agent'] !== this.agentSpec())) {
+        this.set('agent', this.agentSpec());
+        if (!(await this.saveConfig())) {
+          this.runError.set(`The loop's settings could not be saved, so it did not start: ${this.configErrors().join('; ') || 'unknown error'}.`);
+          return;
+        }
+      }
+      await this.api.put('/api/settings', { agent: this.agentSpec() }).catch(() => {});
+      await this.startLoop('loop');
+    } finally {
+      this.starting.set(false);
     }
-    await this.api.put('/api/settings', { agent: this.agentSpec() }).catch(() => {});
-    await this.startLoop('loop');
+  }
+
+  // Until the screen knows what it needs to start (or five minutes, or the screen is left).
+  private async ready(): Promise<void> {
+    const until = Date.now() + 5 * 60_000;
+    while (this.pending() && !this.destroyed && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
   }
 
   async startLoop(kind: 'loop' | 'dry-run'): Promise<void> {

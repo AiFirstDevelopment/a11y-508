@@ -43,6 +43,25 @@ deliberate act with a confirmation, never a side effect.
    relaunch, not changing the folder (the folder-carry behaviour stays).
 7. Everything above works on Windows (detached process with Git Bash CI; `path.win32`-safe; no POSIX-only
    signals — use the existing process-tree kill).
+8. A click on **Fix the violations** always leads, within the same page, to the running view (status line +
+   Stop) or to a visible notice saying why it did not start; the button is never shown enabled while a start is
+   in flight or while a loop is active. If the click arrives before the screen is ready (assistants still being
+   detected, repo match pending), the start waits for readiness and proceeds, with "Starting…" shown meanwhile.
+9. After a reload or a crash restore, the Fix step shows the live run when one is active, and otherwise the
+   outcome of the last run for this folder (from the run journal) exactly as it looked before the reload — "The
+   fix loop could not start…" with its remedy and Try again, "The fix loop stopped…", or "Loop finished" with
+   See what changed — until a new run starts. `start=1` never auto-starts a second run when one is live or when
+   the last run's outcome is shown.
+
+   Seen on a Windows laptop: on /fix-loop?start=1 (from Results) one click on Fix the violations, then Chrome
+   crashed and restored the tab, which showed the button again with no status, no notice and no run. Causes in
+   the code: the restored tab's `start=1` re-ran the auto-start, which either silently did nothing (it required
+   `canStart()` at that instant, false while assistants are detected or the repository is read) or started a
+   second run beside the last one's outcome (`store.active()` cannot see a run before the page has replayed it);
+   a click before the screen was ready was swallowed (`fix()` returned when `!canStart()`, the button disabled
+   without a word); from the click to the run's first event the button stayed enabled with nothing on screen;
+   and after a relaunch the server forgot a finished fix loop (only a live or interrupted one was reattached), so
+   its outcome was gone.
 
 ## How this fails silently
 
@@ -65,6 +84,13 @@ deliberate act with a confirmation, never a side effect.
 7. Start over resets without confirmation, or something else resets. Mutation: skip the confirm — the test
    asserting the dialog text must fail; mutation: clear the ledger on reload — the test asserting the ledger
    survives a reload must fail.
+8. A click is lost when the screen is not ready. Mutation: swallow the click when not ready (`fix()` returns
+   while detection or the repository read is pending) — the e2e that clicks during pending detection and expects
+   "Starting…" and then the running view must fail.
+9. A reload loses the last run's outcome, or repeats the start. Mutation: make `/api/env` omit finished runs —
+   the e2e that starts a loop that fails at a precondition, reloads, and expects the "could not start" notice
+   must fail; mutation: re-enable auto-start on restore — the e2e that reloads with start=1 after a finished run
+   and expects no new run must fail.
 
 ## Non-goals
 

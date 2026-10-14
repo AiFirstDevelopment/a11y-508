@@ -418,8 +418,15 @@ export class RunStore {
     this.run.set(null);
   }
 
+  // The run is this page's from the moment the server accepts it: until its own events arrive the
+  // store holds it as started (active, of its kind), so no screen offers to start another meanwhile.
   async start(body: unknown): Promise<void> {
-    await this.api.post('/api/runs', body);
+    const r = await this.api.post<{ id?: string; kind?: string; status?: string } | null>('/api/runs', body);
+    if (r && r.id && r.status === 'running' && this.run()?.['id'] !== r.id) {
+      this.reset();
+      this.run.set({ type: 'run', seq: -1, id: r.id, kind: r.kind });
+      this.startedAt.set(Date.now());
+    }
     void this.connect();
   }
 
