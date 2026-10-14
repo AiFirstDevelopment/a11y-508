@@ -19,12 +19,17 @@ import { ChangesTable } from '../shared/changes-table';
 import { InterruptedNotice } from '../shared/interrupted-notice';
 import { INITIAL_PATH, INITIAL_SEARCH } from '../core/resume';
 
-const STATUSES: [string, string][] = [
-  ['open', 'Open'], ['review', 'Awaiting triage'], ['pending', 'Fixed, awaiting verification'], ['verified', 'Verified fixed'],
-  ['adequate', 'Adequate'], ['gone', 'Gone'], ['wont-fix', "Won't fix"],
+// The ledger's tiles: status, label, and the tooltip that says what the label means.
+const STATUSES: [string, string, string][] = [
+  ['open', 'Open', 'Found on the site and not fixed yet. The assistant works through these, a round at a time.'],
+  ['review', 'Undecided', 'The checks could not tell on their own whether these are problems (for example whether an image\'s text describes it). The assistant judges them at the start of each round: fine as they are, or a problem to fix.'],
+  ['pending', 'Fixed, awaiting verification', 'The assistant changed and committed a fix. The next crawl of the updated site confirms it.'],
+  ['verified', 'Verified fixed', 'A fix the next crawl confirmed: the problem is no longer on the site.'],
+  ['adequate', 'Judged fine', 'The assistant judged these fine as they are. Nothing to fix.'],
+  ['gone', 'Gone', 'No longer found on the site, with no fix of ours on record: the page or the element changed some other way.'],
 ];
 // What the assistant could not fix (skipped) is not shown anywhere on the dashboard.
-const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Fixed, awaiting verification'], ['review', 'Awaiting triage']];
+const LISTS: [string, string][] = [['open', 'Open'], ['pending', 'Fixed, awaiting verification'], ['review', 'Undecided']];
 // The installed assistant chosen when the config names none.
 const PREFERENCE = ['claude', 'gemini', 'codex'];
 
@@ -321,7 +326,10 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
         <p data-testid="ledger-line">{{ ledger()?.line }}</p>
         <dl class="tiles" data-testid="ledger-counts">
           @for (s of statuses; track s[0]) {
-            <div class="tile" [attr.data-status]="s[0]"><dt>{{ s[1] }}</dt><dd>{{ ledger()?.counts?.[s[0]] || 0 }}</dd></div>
+            <div class="tile" role="group" tabindex="0" [attr.data-status]="s[0]" [attr.aria-labelledby]="'tile-' + s[0]" [attr.aria-describedby]="'tip-' + s[0]">
+              <dt><span [id]="'tile-' + s[0]">{{ s[1] }}</span><span class="tip" role="tooltip" [id]="'tip-' + s[0]">{{ s[2] }}</span></dt>
+              <dd>{{ ledger()?.counts?.[s[0]] || 0 }}</dd>
+            </div>
           }
         </dl>
         @for (l of lists; track l[0]) {

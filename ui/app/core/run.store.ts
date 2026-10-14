@@ -302,7 +302,6 @@ export class RunStore {
           this.pane(`— Fix ${ev['n']} of ${ev['m']}${els}: ${ev['test']} ${String(ev['message'] || '')} —`, true);
           this.agentCall.set({ round: ev['round'], task: ev['n'], kind: 'fix', n: ev['n'], m: ev['m'], label: `${ev['test']} ${String(ev['message'] || '').slice(0, 80)}`, startedAt: at, endedAt: null, outcome: null, text: '', lastOutputAt: Date.now(), timeoutMs: ev['timeoutMs'] ?? null, quietMs: ev['quietMs'] ?? null, wait: null, elements: Number(ev['elements']) || 1 });
         } else {
-          if (ev['outcome'] === 'no-change') this.pane('No change was made; the finding stays open', true);
           this.agentCall.update((c) => (c && c.kind === 'fix' && c.task === ev['n'] ? { ...c, endedAt: at, outcome: ev['outcome'] || null } : c));
         }
         break;

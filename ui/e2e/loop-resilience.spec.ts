@@ -162,7 +162,7 @@ test('loop-resilience AC9/10: a round from the report shows no crawl, and triage
 test('loop-resilience AC11a/c: an assistant silent past the threshold is "still being waited on", and a call given up says so', async ({ page }) => {
   await fromReportLoop(page, 'a11y-508-quiet-', { quietAfter: 1000, agentTimeout: 4000 }, { FAKE_AGENT_SLOW_ONCE: join('MARKS', 'slow'), FAKE_AGENT_SLOW_MS: '8000', FAKE_AGENT_QUIET: '1' }, async () => {
     await expect(page.getByTestId('fix-hint')).toHaveText(/^Waiting on the assistant — no output for [1-4] s; it may take a few minutes\. The call is given up after 4 s\.$/, { timeout: 60_000 });
-    await expect(page.getByTestId('agent-gave-up')).toHaveText(/^The assistant did not answer within 4 s; the \d+ review items? stays? in review and the loop goes on\.$/, { timeout: 30_000 });
+    await expect(page.getByTestId('agent-gave-up')).toHaveText(/^The assistant did not answer within 4 s; the loop goes on\.$/, { timeout: 30_000 });
   });
 });
 
@@ -282,8 +282,10 @@ test('loop-resilience AC21: the same problem on four elements is one fix task, "
   await fromReportLoop(page, 'a11y-508-grouped-', {}, { FAKE_AGENT_DELAY_MS: '1500' }, async () => {
     await expect(page.getByTestId('fix-status')).toHaveText(/^Round 1: fixing \d+ of \d+ \(4 elements\) from the report you just saw · 13\.A /, { timeout: 120_000 });
     await expect(page.getByTestId('agent-output')).toContainText(/— Fix \d+ of \d+ \(4 elements\): 13\.A /);
-    // The assistant changes nothing for it, so Changes this run does not list it (docs/plans/deploy-wait.md criterion 9).
-    await expect(page.getByTestId('agent-output')).toContainText('No change was made; the finding stays open', { timeout: 30_000 });
+    // The assistant changes nothing for it, so Changes this run does not list it (docs/plans/deploy-wait.md criterion 9);
+    // and nothing says it was left open: that is not the person's to deal with.
+    await expect(page.getByTestId('fix-status')).not.toHaveText(/\(4 elements\)/, { timeout: 30_000 });
+    await expect(page.getByTestId('agent-output')).not.toContainText(/stays open/);
     await expect(page.locator('[data-testid="changes"] tr', { hasText: '13.A' })).toHaveCount(0);
   });
 });

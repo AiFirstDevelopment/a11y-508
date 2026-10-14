@@ -4,7 +4,7 @@
 // For display only: the result file the assistant writes stays the source of truth. A line that is
 // not an event either understands is passed on as it is.
 
-import { isAbsolute, relative } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 const str = (v) => (typeof v === 'string' ? v : '');
 const oneLine = (s, max = 200) => {
@@ -31,7 +31,8 @@ const CHANGES = /^(write_file|replace|edit|Write|Edit|MultiEdit|NotebookEdit)$/;
 // A decoder for one call: push(text) as stdout arrives, end() when it has ended. onLine(line) gets
 // each readable line. recognized: whether any event was understood (the output is a stream).
 // doneLine(changed, failed, message), when given, words the closing line (the loop says what comes next).
-export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null } = {}) {
+// ignore: folders whose files do not count as changed (the loop's own task folder, where the result file goes).
+export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null, ignore = [] } = {}) {
   let partial = '';
   let said = ''; // the assistant's words not yet ended by a newline
   const changed = new Set();
@@ -51,7 +52,13 @@ export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null } =
   const endWords = () => words('', true);
   const tool = (name, params) => {
     const p = params && typeof params === 'object' ? params : {};
-    if (CHANGES.test(name) && (p.file_path || p.path || p.notebook_path)) changed.add(path(p.file_path || p.path || p.notebook_path));
+    if (CHANGES.test(name) && (p.file_path || p.path || p.notebook_path)) {
+      const s = str(p.file_path || p.path || p.notebook_path);
+      // Only the repository's own files count: not the result file in the loop's task folder, nor anything outside the checkout.
+      const abs = isAbsolute(s) ? s : resolve(cwd, s);
+      const under = (d) => abs === d || abs.startsWith(d.endsWith(sep) ? d : d + sep);
+      if (!s.startsWith('~') && under(cwd) && !ignore.some(under)) changed.add(path(s));
+    }
     const row = TOOLS.find(([re]) => re.test(name));
     return row ? row[1](p, path) : `Using ${name}`;
   };

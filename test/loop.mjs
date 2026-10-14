@@ -92,6 +92,7 @@ check('prompts contain the finding and the result path, and no token', () => {
   const finding = { test: '7.A', name: 'n', wcag: '1.1.1', impact: 'serious', message: 'no alt', selector: 'img', html: '<img>', pages: ['/a'], attempts: [{ round: 1, outcome: 'still-present', note: 'tried alt=""', files: ['x'] }] };
   const p = fixPrompt({ finding, sourceDirs: ['src'], protectedDirs: ['tools/a11y-508'], resultFile: '/r.json', condition: 'c' });
   assert.ok(p.includes('/r.json') && p.includes('tools/a11y-508') && p.includes('Earlier attempts') && p.includes('tried alt=""'));
+  assert.ok(p.includes('Do not search or read node_modules'), 'the fix prompt keeps the assistant out of installed packages');
   const t = triagePrompt({ items: [{ id: 'r1-0', test: '6.A', name: 'n', wcag: 'w', condition: 'c', message: 'm', selector: 'a', html: '<a>', pages: ['/a'] }], resultFile: '/t.json' });
   assert.ok(t.includes('r1-0') && t.includes('/t.json'));
 });
@@ -1162,7 +1163,7 @@ rmSync(repo2, { recursive: true, force: true });
       const given = t.events.filter((e) => e.type === 'agent-result' && !e.ok);
       assert.equal(given.length, 1, timedOut.out);
       assert.equal(given[0].timedOut, true);
-      assert.match(given[0].message, /^The assistant did not answer within 2 s; (this finding stays open|the \d+ review items? stays? in review) and the loop goes on$/);
+      assert.match(given[0].message, /^The assistant did not answer within 2 s; the loop goes on$/);
     });
     removeOwn(dirname(refusedOnce));
     removeOwn(dirname(slow));
