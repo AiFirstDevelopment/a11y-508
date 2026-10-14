@@ -28,7 +28,8 @@ export function stepPath(url: string): string | null {
 export function landing(e: Pick<EnvInfo, 'run' | 'lastStep'>): string | null {
   const r = e.run;
   if (r && (r.status === 'running' || r.status === 'interrupted') && r.kind !== 'install') return ['loop', 'dry-run'].includes(r.kind) ? '/fix-loop' : '/live';
-  return e.lastStep || null;
+  // A step stored by an older build for a screen that no longer exists (e.g. /review) is ignored.
+  return e.lastStep && stepPath(e.lastStep) === e.lastStep ? e.lastStep : null;
 }
 
 export interface Interrupted {

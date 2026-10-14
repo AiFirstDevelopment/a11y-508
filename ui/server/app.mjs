@@ -424,7 +424,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       build: { fresh: build.fresh, reason: build.reason },
       run: runs.current ? runSummary(runs.current) : null,
       // The wizard step the person was on, for the next time the dashboard opens.
-      lastStep: readSettings(sp().settings).lastStep || null,
+      lastStep: STEPS.includes(readSettings(sp().settings).lastStep) ? readSettings(sp().settings).lastStep : null,
     };
   }
   const runSummary = (r) => ({ id: r.id, kind: r.kind, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt || null, code: r.code, meta: r.meta });
