@@ -515,8 +515,10 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   });
   readonly fixCounts = computed(() => {
     // While the loop runs, the round's fix tasks (grouped findings make them fewer than the remaining).
+    // Said only when the round started with fewer fix tasks than findings, not as the remaining count drops.
     const t = this.store.active() ? this.store.task() : null;
-    return fixedLine(this.store.ledger()?.['counts'] || this.ledger()?.counts || {}, t ? t.m : null);
+    const f = this.store.fixFindings();
+    return fixedLine(this.store.ledger()?.['counts'] || this.ledger()?.counts || {}, t && f !== null && t.m < f ? t.m : null);
   });
   readonly lastLine = computed(() => {
     const t = this.paneText().split('\n').map((l) => l.trim()).filter(Boolean);

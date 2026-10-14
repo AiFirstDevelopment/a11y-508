@@ -334,7 +334,7 @@ rmSync(repo, { recursive: true, force: true });
   symlinkSync(outside, join(old, 'a11y-508-report'), process.platform === 'win32' ? 'junction' : 'dir');
   mkdirSync(join(old, 'a11y-508-work-mine'));
   writeFileSync(join(old, 'a11y-508-work-mine', 'x.txt'), 'x');
-  writeFileSync(join(old, '.git', 'info', 'exclude'), '# git ls-files --others --exclude-from=.git/info/exclude\n*.log\n# a11y-508 dashboard outputs\na11y-508-report/\na11y-508-history/\na11y-508-work/\n');
+  writeFileSync(join(old, '.git', 'info', 'exclude'), '# git ls-files --others --exclude-from=.git/info/exclude\n*.log\n/a11y-508-history\n# a11y-508 dashboard outputs\na11y-508-report/\na11y-508-history/\na11y-508-work/\n');
   const status = spawnSync(process.execPath, [join(root, 'bin/a11y-508.mjs'), 'status'], { cwd: old, encoding: 'utf8' });
   check('tool-files AC2/guard 2: status after the move reports the migrated ledger from the tool\'s own folder', () => {
     assert.equal(status.status, 0, status.stdout + status.stderr);
@@ -348,8 +348,9 @@ rmSync(repo, { recursive: true, force: true });
   });
   check('tool-files AC2: the .git/info/exclude lines the tool added are removed, the person\'s stay', () => {
     const ex = readFileSync(join(old, '.git', 'info', 'exclude'), 'utf8');
-    assert.ok(!/a11y-508/.test(ex), ex);
+    assert.ok(!/a11y-508 dashboard outputs|^a11y-508-(report|history|work)\/$/m.test(ex), ex);
     assert.match(ex, /^\*\.log$/m);
+    assert.match(ex, /^\/a11y-508-history$/m, 'a line the person wrote stays');
   });
   check('tool-files guard 6: the move touches only the named folders, never a link or a folder by another name', () => {
     assert.ok(existsSync(join(old, 'a11y-508-report', 'keep.txt')), 'the link stays');
@@ -357,9 +358,17 @@ rmSync(repo, { recursive: true, force: true });
     assert.ok(!existsSync(join(workDir(old), '..', 'report')), 'a linked folder was moved');
     assert.equal(readFileSync(join(old, 'a11y-508-work-mine', 'x.txt'), 'utf8'), 'x');
   });
-  // A second old folder, when the tool's folder already has one: set aside next to it, and said so.
+  // The move happens once: a folder of that name made afterwards (say with --out) stays the person's.
   mkdirSync(join(old, 'a11y-508-work'), { recursive: true });
   writeFileSync(join(old, 'a11y-508-work', 'ledger.json'), JSON.stringify({ version: 1, rounds: [], findings: {} }));
+  const later = spawnSync(process.execPath, [join(root, 'bin/a11y-508.mjs'), 'status'], { cwd: old, encoding: 'utf8' });
+  check('tool-files AC2: the move happens once; a folder made there later is left alone', () => {
+    assert.ok(existsSync(join(old, 'a11y-508-work', 'ledger.json')), later.stdout);
+    assert.doesNotMatch(later.stdout, /moved /);
+  });
+  // A first use when the tool's folder already has one (another copy of the tool got there first):
+  // the repository's copy is set aside next to it, and said so.
+  rmSync(join(workDir(old), '..', 'migrated.json'));
   const again = spawnSync(process.execPath, [join(root, 'bin/a11y-508.mjs'), 'status'], { cwd: old, encoding: 'utf8' });
   check('tool-files AC2: an old folder whose destination exists is moved aside as work-old and reported; the ledger there stays', () => {
     assert.ok(!existsSync(join(old, 'a11y-508-work')));

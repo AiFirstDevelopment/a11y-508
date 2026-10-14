@@ -345,7 +345,9 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // The tool's own code, when it is not inside the repository; the prompt names no repository path
   // for the tool's files (there are none).
   const toolRel = relative(cwd, TOOL_DIR);
-  const protectedDirs = toolRel.startsWith('..') || isAbsolute(toolRel) ? [TOOL_DIR] : [];
+  // The tool's code is protected wherever it is installed (inside the repository, e.g.
+  // node_modules/a11y-508 or tools/a11y-508, by its relative path).
+  const protectedDirs = toolRel.startsWith('..') || isAbsolute(toolRel) ? [TOOL_DIR] : toolRel ? [toolRel] : [];
   const agentCommand = resolveAgentCommand(cfg.agent);
   const sourceDirs = cfg.source;
   const stopped = () => stopSignal && stopSignal.stopped;
@@ -611,7 +613,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     }
     const members = (e) => groupOf.get(e) || [e];
     log.info(`=== round ${round}: fix ${tasks.length} open finding(s)${tasks.length < open.length ? ` as ${tasks.length} task(s)` : ''} ===`);
-    ev('step', { round, step: 'fix', count: tasks.length });
+    // findings: how many open findings the tasks cover (more than the tasks when some are grouped).
+    ev('step', { round, step: 'fix', count: tasks.length, findings: open.length });
     // One row of the run's changes: the finding, the files the working tree shows changed, what
     // became of them, and how long the assistant and the check took.
     const attemptEvent = (n, entry, a, outcome) => ev('attempt', {

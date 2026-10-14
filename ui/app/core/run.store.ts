@@ -90,6 +90,8 @@ export class RunStore {
   readonly round = signal<number | null>(null);
   readonly step = signal<RunEvent | null>(null);
   readonly task = signal<{ n: number; m: number; state: string } | null>(null);
+  // The open findings the round's fix tasks cover, from its fix step (more than the tasks when grouped).
+  readonly fixFindings = signal<number | null>(null);
   readonly ledger = signal<RunEvent | null>(null);
   readonly awaitingDeploy = signal(false);
   // The loop could not start: a set-up error before its first round, with its remedy.
@@ -279,7 +281,10 @@ export class RunStore {
         if (ev['step'] === 'deploy' || ev['step'] === 'await-deploy') this.pane('Waiting for the new build to go live', true);
         if (typeof ev['committed'] === 'number') this.committed.set(ev['committed']);
         if (ev['step'] === 'report') this.reportRound.set(ev['round']);
-        if (ev['step'] === 'fix') this.task.set({ n: 0, m: ev['count'], state: 'start' });
+        if (ev['step'] === 'fix') {
+          this.task.set({ n: 0, m: ev['count'], state: 'start' });
+          this.fixFindings.set(typeof ev['findings'] === 'number' ? ev['findings'] : null);
+        }
         break;
       }
       case 'task': {

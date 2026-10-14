@@ -111,11 +111,17 @@ export function removeExcludeLines(cwd) {
   } catch {
     return [];
   }
+  // Only the dashboard's block: its marker line and the folder lines right after it. A line a person
+  // wrote elsewhere stays.
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = text.split(/\r?\n/);
-  const removed = lines.filter((l) => EXCLUDE_LINES.has(l.trim()));
-  if (!removed.length) return [];
+  const at = lines.findIndex((l) => l.trim() === '# a11y-508 dashboard outputs');
+  if (at < 0) return [];
+  let end = at + 1;
+  while (end < lines.length && EXCLUDE_LINES.has(lines[end].trim()) && !lines[end].trim().startsWith('#')) end++;
+  const removed = lines.slice(at, end);
   try {
-    writeFileSync(file, lines.filter((l) => !EXCLUDE_LINES.has(l.trim())).join('\n'));
+    writeFileSync(file, [...lines.slice(0, at), ...lines.slice(end)].join(eol));
   } catch {
     return [];
   }
@@ -138,6 +144,9 @@ export function migrateRepo(cwd, env = process.env, platform = process.platform)
   const out = { moved: [], aside: [], kept: [], excluded: [] };
   const root = resolve(cwd);
   const home = repoHome(root, env, platform);
+  // Once per folder: after that an a11y-508-report the person writes there with --out is theirs.
+  const marker = join(home.dir, 'migrated.json');
+  if (existsSync(marker)) return out;
   for (const [legacy, kind] of Object.entries(LEGACY_DIRS)) {
     const from = join(root, legacy);
     let st;
@@ -162,6 +171,10 @@ export function migrateRepo(cwd, env = process.env, platform = process.platform)
     }
   }
   out.excluded = removeExcludeLines(root);
+  try {
+    mkdirSync(home.dir, { recursive: true, mode: 0o700 });
+    writeFileSync(marker, JSON.stringify({ from: root, at: new Date().toISOString(), moved: out.moved.length, aside: out.aside.length }) + '\n');
+  } catch {}
   return out;
 }
 
