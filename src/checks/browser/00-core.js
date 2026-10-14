@@ -342,6 +342,15 @@
     return pathIn(el, document);
   };
 
+  // For each selector, whether its element is rendered by a UI library (false when it is gone).
+  A.libraryAt = (sels) => sels.map((s) => {
+    try {
+      return !!(A.isLibraryElement && A.isLibraryElement(A.query(s)));
+    } catch {
+      return false;
+    }
+  });
+
   A.html = (el, max = 300) => {
     if (!el || el.nodeType !== 1) return '';
     let s;
@@ -684,6 +693,8 @@
       details: f.details || undefined,
     };
     if (f.beyond508) out.beyond508 = true;
+    // Rendered by a UI library (A.isLibraryElement, from src/library-dom.mjs): dropped from the page's findings.
+    if (el && A.isLibraryElement && A.isLibraryElement(el)) out.library = true;
     A.findings.push(out);
     return out;
   };

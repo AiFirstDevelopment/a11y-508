@@ -3,6 +3,7 @@
 import { BEYOND, testInfo } from './checks/catalog.mjs';
 import { listenerProbe, keyboardPass, disclosurePass, zoomPass, spacingPass, reflowPass, routeDiscoveryPass, modalOnLoadPass, redismissModal, searchPass, applyRanges } from './passes.mjs';
 import { discoverFrames, inFrame, MAX_FRAME_DEPTH, BETWEEN_IMAGES } from './frames.mjs';
+import { fromLibrary } from './library-dom.mjs';
 
 // What a document that the server called an error actually rendered: enough
 // text, or scripts with a real element tree, means an application page.
@@ -70,11 +71,38 @@ async function auditPageIn(page, url, ctx) {
       state: f.state,
       // Only findings inside a same-origin frame carry the frame's selector.
       frame: f.frame,
+      // Set by the in-page checks on an element rendered by a UI library; read and removed by dropLibrary.
+      library: f.library || undefined,
       // Only beyond-508 findings carry the key, so a default report.json keeps its shape.
       beyond508: f.beyond508 || BEYOND[f.test] ? true : undefined,
     });
   };
   const beyond = !!opts.wcag && opts.wcag !== '2.0';
+  // Findings on elements rendered by a UI library (src/library-dom.mjs) are dropped: their authors
+  // tested them and the assistant cannot edit node_modules. Only the count is kept. The passes
+  // interact with those elements as before; this runs on the page's findings once they are in.
+  // inPage: also resolve the remaining top-document selectors in the page (the ancestor rule).
+  const dropLibrary = async (inPage) => {
+    let flags = [];
+    if (inPage) {
+      const open = result.findings.filter((f) => !f.library && !f.frame && f.selector && f.selector !== BETWEEN_IMAGES);
+      try {
+        const got = open.length ? await page.evaluate(`window.__a11y508.libraryAt(${JSON.stringify(open.map((f) => f.selector))})`) : [];
+        flags = open.filter((f, i) => got && got[i]);
+      } catch {}
+    }
+    const drop = new Set(flags);
+    const kept = result.findings.filter((f) => {
+      const lib = f.library || drop.has(f) || fromLibrary(f);
+      delete f.library;
+      return !lib;
+    });
+    const n = result.findings.length - kept.length;
+    if (n) {
+      result.findings = kept;
+      result.dropped = { library: ((result.dropped && result.dropped.library) || 0) + n };
+    }
+  };
 
   let nav;
   try {
@@ -284,6 +312,7 @@ async function auditPageIn(page, url, ctx) {
       }
     }
 
+    await dropLibrary(true);
     // Searches and filters, filled with a date range and submitted: the results they reveal are
     // re-checked here and the pages behind them queued. The page's own audit is what it was before.
     if (opts.forms) {
@@ -294,6 +323,7 @@ async function auditPageIn(page, url, ctx) {
       } catch (e) {
         result.errors.push(`search forms: ${e.message}`);
       }
+      await dropLibrary(true);
     }
     // Last, because it clicks around and reloads: find pages reachable only
     // through click handlers so the crawler can queue them.
@@ -309,6 +339,7 @@ async function auditPageIn(page, url, ctx) {
   } catch (e) {
     result.error = `audit failed: ${e.message}`;
   }
+  await dropLibrary(false);
 
   result.durationMs = Date.now() - t0;
   return result;

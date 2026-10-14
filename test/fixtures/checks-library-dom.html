@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UI library markup - a11y-508 test site</title>
+<!--
+  Elements rendered by a UI library from npm (here fake Angular Material and PrimeNG markup) are
+  not reported: their authors tested them and the assistant cannot edit node_modules. The crawler
+  still operates them: the library's select trigger opens a panel whose unlabelled field (app markup)
+  is reported after the disclosure pass activates it. A Tailwind-style "p-4" and a "card" are app
+  markup and are still reported.
+-->
+<style>
+  body { font-family: sans-serif; margin: 0; color: #222; background: #fff; }
+  header { background: #223; color: #fff; padding: 12px 20px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { padding: 20px; max-width: 800px; }
+  a:focus, button:focus, [tabindex]:focus, input:focus { outline: 3px solid #f90; }
+  .mat-mdc-text-field-wrapper, .p-dropdown-trigger, .card { cursor: pointer; }
+  .card { border: 1px solid #888; padding: 8px; margin: 12px 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/forms.html">Forms</a>
+    <a href="/tables.html">Tables</a>
+    <a href="/media.html">Media</a>
+    <a href="/about.html">About</a>
+  </nav>
+</header>
+<main>
+  <h1>UI library markup</h1>
+  <mat-form-field class="mat-mdc-form-field" id="lib-field">
+    <div class="mat-mdc-text-field-wrapper" id="lib-wrapper">
+      <input class="mat-mdc-input-element" id="lib-input">
+    </div>
+  </mat-form-field>
+  <div class="mat-mdc-select-arrow-wrapper" id="lib-arrow" aria-label="x">v</div>
+  <div class="mat-mdc-select-trigger" id="lib-trigger" role="button" tabindex="0" aria-expanded="false" aria-controls="lib-panel">Choose a color</div>
+  <div id="lib-panel" hidden>
+    <input type="text" id="lib-revealed-input">
+  </div>
+  <p-dropdown class="p-component p-dropdown" id="lib-dropdown">
+    <div class="p-dropdown-trigger" id="lib-p-trigger" aria-label="Open">v</div>
+  </p-dropdown>
+  <div class="p-4" id="app-p4" aria-label="app thing">An app thing</div>
+  <div class="card" id="app-card" onclick="this.dataset.opened = '1'">Open the card</div>
+</main>
+<script>
+  document.getElementById('lib-wrapper').addEventListener('click', () => document.getElementById('lib-input').focus());
+  document.getElementById('lib-p-trigger').addEventListener('click', () => {});
+  const trigger = document.getElementById('lib-trigger');
+  const toggle = () => {
+    const open = trigger.getAttribute('aria-expanded') !== 'true';
+    trigger.setAttribute('aria-expanded', String(open));
+    document.getElementById('lib-panel').hidden = !open;
+  };
+  trigger.addEventListener('click', toggle);
+  trigger.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggle();
+    }
+  });
+</script>
+</body>
+</html>

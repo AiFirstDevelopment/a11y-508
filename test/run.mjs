@@ -1188,6 +1188,26 @@ check('without --events the human output is unchanged from origin/main', () => {
   assert.equal(human, golden, `first difference at line ${i + 1}:\n  origin/main: ${a[i]}\n  this tree:   ${b[i]}`);
 });
 
+// Elements rendered by a UI library (src/library-dom.mjs): findings on them are dropped, only counted;
+// the crawler still operates them, and app markup beside them is still reported.
+const LIB = '/checks-library-dom.html';
+const LIB_IDS = ['#lib-field', '#lib-wrapper', '#lib-input', '#lib-arrow', '#lib-trigger', '#lib-dropdown', '#lib-p-trigger'];
+const LIB_HTML = /mat-mdc-|p-dropdown|p-component|<mat-form-field|<p-dropdown/;
+check('UI library: no finding on Angular Material or PrimeNG markup, from the checks or the passes', () => {
+  assert.equal(pages[LIB]?.error, null, `${LIB} crawled without error`);
+  const hits = findingsOn(LIB).filter((f) => LIB_IDS.some((s) => f.selector === s || f.selector.startsWith(s + ' ')) || LIB_HTML.test(f.html || ''));
+  assert.equal(hits.length, 0, listed(hits));
+});
+check('UI library: dropped findings are counted on the page', () => assert.ok(pages[LIB].dropped && pages[LIB].dropped.library > 0, JSON.stringify(pages[LIB].dropped)));
+check('UI library: a Tailwind-style "p-4" and an app "card" are still reported', () => {
+  on(LIB, '5.C', '#app-p4', 'violation', /aria-label is not allowed on/);
+  on(LIB, '4.A', '#app-card', 'violation', /not keyboard focusable/);
+});
+check('UI library: the library\'s select trigger is still operated; the field it reveals is reported', () => {
+  const f = on(LIB, '5.A', '#lib-revealed-input', 'violation');
+  assert.match(f.state || '', /after activating "Choose a color"/, f.state);
+});
+
 // The navigation retry loop, with the single navigation stubbed out: Chrome
 // absorbs plain socket drops itself, so this is the only way to drive it.
 const stubbed = (outcomes) => {

@@ -5,6 +5,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { libraryPrelude } from './library-dom.mjs';
 
 const CHECKS_DIR = fileURLToPath(new URL('./checks/browser/', import.meta.url));
 let bundle = null;
@@ -12,7 +13,8 @@ let bundle = null;
 export function checksBundle() {
   if (bundle) return bundle;
   const files = readdirSync(CHECKS_DIR).filter((f) => f.endsWith('.js')).sort();
-  bundle = files.map((f) => `/* ${f} */\n` + readFileSync(join(CHECKS_DIR, f), 'utf8')).join('\n;\n');
+  // The UI-library table (src/library-dom.mjs) first, as window.__a11y508.isLibraryElement.
+  bundle = libraryPrelude() + files.map((f) => `/* ${f} */\n` + readFileSync(join(CHECKS_DIR, f), 'utf8')).join('\n;\n');
   return bundle;
 }
 
