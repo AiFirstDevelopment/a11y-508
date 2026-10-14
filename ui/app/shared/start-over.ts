@@ -15,8 +15,8 @@ import { Resume, StartOverInfo, startOverText } from '../core/resume';
       <p id="start-over-d" data-testid="start-over-text">This discards {{ text() }}. The dashboard starts again at Set up.</p>
       @if (error()) { <p class="notice error" role="alert">{{ error() }}</p> }
       <div class="actions">
-        <button type="button" (click)="confirm()" data-testid="start-over-yes">Start over</button>
-        <button type="button" class="secondary" (click)="dlg.close()">Cancel</button>
+        <button type="button" (click)="confirm()" [disabled]="busy()" [attr.aria-busy]="busy() || null" data-testid="start-over-yes">@if (busy()) { <span class="spinner" aria-hidden="true" data-testid="start-over-spinner"></span> }Start over</button>
+        <button type="button" class="secondary" (click)="dlg.close()" [disabled]="busy()">Cancel</button>
       </div>
     </dialog>
   `,
@@ -30,6 +30,7 @@ export class StartOver {
   private dialog = viewChild.required<ElementRef<HTMLDialogElement>>('dlg');
   readonly text = signal('');
   readonly error = signal('');
+  readonly busy = signal(false);
 
   async ask(): Promise<void> {
     this.error.set('');
@@ -45,15 +46,21 @@ export class StartOver {
   }
 
   async confirm(): Promise<void> {
+    if (this.busy()) return;
+    this.busy.set(true);
     try {
-      await this.resume.startOver();
-    } catch (e: any) {
-      this.error.set(e.message);
-      return;
+      try {
+        await this.resume.startOver();
+      } catch (e: any) {
+        this.error.set(e.message);
+        return;
+      }
+      this.run.forget();
+      await this.env.load();
+      this.dialog().nativeElement.close();
+      await this.router.navigateByUrl('/run');
+    } finally {
+      this.busy.set(false);
     }
-    this.dialog().nativeElement.close();
-    this.run.forget();
-    await this.env.load();
-    await this.router.navigateByUrl('/run');
   }
 }

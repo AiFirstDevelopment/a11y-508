@@ -266,8 +266,20 @@ test('resume AC6 / guard 7: Start over names what it discards and asks first; a 
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     expect(existsSync(lfNow)).toBe(true);
     await page.getByTestId('start-over-line').getByRole('button', { name: 'Start over' }).click();
-    await dialog.getByTestId('start-over-yes').click();
+    // Held while it works: the button shows a spinner and is disabled.
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route('**/api/start-over', async (route) => {
+      if (route.request().method() === 'POST') await held;
+      await route.continue();
+    });
+    const yes = dialog.getByTestId('start-over-yes');
+    await yes.click();
+    await expect(yes).toBeDisabled();
+    await expect(yes.getByTestId('start-over-spinner')).toBeVisible();
+    release();
     await expect(dialog).toBeHidden();
+    await page.unroute('**/api/start-over');
     await expect.poll(() => existsSync(lfNow)).toBe(false);
     expect(existsSync(join(dirsOf(cwd, home).report, 'report.json'))).toBe(false);
     expect(existsSync(join(dirsOf(cwd, home).history, '2026-10-12T10-00-00'))).toBe(false);
