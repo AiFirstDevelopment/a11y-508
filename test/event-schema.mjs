@@ -16,7 +16,7 @@ export const EVENT_SCHEMA = {
   warn: { message: str },
   error: { message: str },
   page: { url: str, finalUrl: str, title: str, status: opt(num), error: opt(str), skipped: opt(str), violations: num, reviews: num, byImpact: obj, durationMs: num, foundBy: str, modalOnLoad: opt(obj), servedWith: opt(num), links: num, clicked: opt(num), clickedNew: opt(num), skippedActions: arr, skippedActionsCount: num, done: num, discovered: num, limit: opt(num), round: opt(num) },
-  progress: { url: str, phase: oneOf('loading', 'checks', 'keyboard', 'disclosures', 'frames', 'zoom', 'names', 'screenshots', 'discovery', 'search'), detail: opt(obj), elapsedMs: num, round: opt(num) },
+  progress: { url: str, phase: oneOf('loading', 'checks', 'keyboard', 'disclosures', 'frames', 'zoom', 'names', 'discovery', 'search'), detail: opt(obj), elapsedMs: num, round: opt(num) },
   coverage: { complete: bool, warnings: arr, notes: arr, round: opt(num) },
   summary: { result: oneOf('pass', 'fail', 'incomplete', 'nothing-audited'), passed: bool, baseUrl: str, failOn: arr, summary: obj, files: obj, round: opt(num) },
   troubleshoot: { result: obj },

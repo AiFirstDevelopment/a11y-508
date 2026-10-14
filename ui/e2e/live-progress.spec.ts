@@ -17,7 +17,7 @@ test.afterEach(async () => {
 
 test('live progress: a phase line says what the page in flight is doing; the progress events are in the raw stream; rows show the route and open its findings', async ({ page }) => {
   await open(page, dash, '/run');
-  await fillRun(page, { url: site.base + 'variants.html', token: TOKEN, maxPages: 3, advanced: { 'no-zoom': true, 'no-screenshots': true } });
+  await fillRun(page, { url: site.base + 'variants.html', token: TOKEN, maxPages: 3, advanced: { 'no-zoom': true } });
   // Record every phase line drawn during the run.
   await page.evaluate(() => {
     const w = window as any;
@@ -50,7 +50,7 @@ test('live progress: a phase line says what the page in flight is doing; the pro
 
 test('soft 404: a page the server answers 404 for and the app renders is listed as ok, and nothing says 404', async ({ page }) => {
   await open(page, dash, '/run');
-  await fillRun(page, { url: site.base + 'soft-404.html', token: TOKEN, maxPages: 1, advanced: { 'no-zoom': true, 'no-screenshots': true } });
+  await fillRun(page, { url: site.base + 'soft-404.html', token: TOKEN, maxPages: 1, advanced: { 'no-zoom': true } });
   await startFromRun(page);
   await waitFinished(page);
   const status = page.getByTestId('page-list').locator('tbody tr').first().locator('td').first();

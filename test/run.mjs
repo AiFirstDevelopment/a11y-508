@@ -308,7 +308,11 @@ check('disclosure pass reveals hidden image violation', () => {
   assert.ok(revealed, 'finding tagged with disclosure state');
   assert.ok(f);
 });
-check('screenshots captured', () => assert.ok(pages['/'].findings.some((f) => f.screenshot && existsSync(join(out, f.screenshot)))));
+check('no screenshots: no screenshots dir, no screenshot field, --max-screenshots accepted as a no-op', () => {
+  assert.ok(!existsSync(join(out, 'screenshots')));
+  assert.ok(mainReport.pages.every((p) => p.findings.every((f) => !('screenshot' in f))));
+  assert.ok(!('screenshots' in mainReport.options));
+});
 
 check('11.A missing lang', () => has('/forms.html', '11.A', 'violation', /no lang attribute/));
 check('5.A unlabelled input', () => has('/forms.html', '5.A', 'violation', /no label or accessible name/));

@@ -43,7 +43,7 @@ test('AC 16: the token is in no file, API response, event, or part of the page a
   });
   try {
     await open(page, dash, '/run');
-    await fillRun(page, { url: site.base, token: TOKEN, maxPages: 3, advanced: { 'no-zoom': true, 'max-screenshots': '2' } });
+    await fillRun(page, { url: site.base, token: TOKEN, maxPages: 3, advanced: { 'no-zoom': true } });
     await startFromRun(page);
     // After submission the token is nowhere in the page, including field values.
     const pageText = () => page.evaluate(() => document.documentElement.outerHTML + [...document.querySelectorAll('input,textarea')].map((e: any) => e.value).join('\n'));
@@ -91,19 +91,20 @@ const raw = (port: number, path: string, headers: Record<string, string>) =>
     req.end();
   });
 
-test('AC 17: 401 without the secret, 403 for a foreign Host, 404 for a screenshot path that escapes its report', async ({ page }) => {
+test('AC 17: 401 without the secret, 403 for a foreign Host, 404 for a report path that escapes its report', async ({ page }) => {
   const dash: Dash = await dashboard();
   try {
     const port = Number(new URL(dash.origin).port);
     const host = `127.0.0.1:${port}`;
-    // A report with one screenshot, so the confinement is tested against a real file.
-    mkdirSync(join(dash.dirs().report, 'screenshots'), { recursive: true });
+    // A report with its report.html, so the confinement is tested against a real file.
+    mkdirSync(dash.dirs().report, { recursive: true });
     writeFileSync(join(dash.dirs().report, 'report.json'), JSON.stringify({ baseUrl: 'http://x/', finishedAt: '2026-01-01T00:00:00.000Z', passed: true, summary: { audited: 1 }, pages: [] }));
-    writeFileSync(join(dash.dirs().report, 'screenshots', 'p1-1.png'), 'png');
+    writeFileSync(join(dash.dirs().report, 'report.html'), '<p>report</p>');
+    writeFileSync(join(dash.cwd, 'report.html'), 'outside the report');
     writeFileSync(join(dash.cwd, 'secret.txt'), 'outside the report');
     const ok = { host, [SECRET_HEADER.toLowerCase()]: dash.secret };
 
-    for (const p of ['/api/env', '/api/reports', '/api/ledger', '/api/config', '/api/reports/latest/screenshots/p1-1.png']) {
+    for (const p of ['/api/env', '/api/reports', '/api/ledger', '/api/config', '/api/reports/latest/report.html']) {
       expect(await raw(port, p, { host }), p).toBe(401);
       expect(await raw(port, p, { host, [SECRET_HEADER.toLowerCase()]: 'not-the-secret' }), p).toBe(401);
     }
@@ -114,13 +115,15 @@ test('AC 17: 401 without the secret, 403 for a foreign Host, 404 for a screensho
       expect(await raw(port, '/api/env', { ...ok, host: evil }), evil).toBe(403);
       expect(await raw(port, '/', { host: evil }), evil).toBe(403);
     }
-    expect(await raw(port, '/api/reports/latest/screenshots/p1-1.png', ok)).toBe(200);
+    expect(await raw(port, '/api/reports/latest/report.html', ok)).toBe(200);
     for (const p of [
-      '/api/reports/latest/screenshots/../../secret.txt',
-      '/api/reports/latest/screenshots/..%2F..%2Fsecret.txt',
-      '/api/reports/latest/screenshots/../../../package.json',
-      '/api/reports/latest/screenshots/%2e%2e/%2e%2e/secret.txt',
-      '/api/reports/..%2F..%2F/screenshots/x.png',
+      '/api/reports/latest/../../secret.txt',
+      '/api/reports/latest/..%2F..%2Fsecret.txt',
+      '/api/reports/latest/..%2F..%2F..%2Fpackage.json',
+      '/api/reports/..%2F..%2F/report.html',
+      '/api/reports/%2e%2e/report.html',
+      '/api/reports/h-..%2F..%2F..%2F/report.html',
+      '/api/reports/latest/screenshots/p1-1.png',
     ]) expect(await raw(port, p, ok), p).toBe(404);
     // The app itself works with the secret it was opened with.
     await open(page, dash, '/run');

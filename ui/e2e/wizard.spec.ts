@@ -60,7 +60,6 @@ test('stepper: while a crawl runs only Set up and Crawl are reachable; when it f
     await page.getByLabel('Maximum pages').fill('3');
     await page.locator('details.advanced > summary').click();
     await page.locator('#adv-no-zoom').check();
-    await page.locator('#adv-max-screenshots').fill('2');
     await page.getByRole('button', { name: 'Start', exact: true }).click();
     await expect(page).toHaveURL(/\/live$/);
     await expect(stepLink(page, 'Crawl')).toHaveAttribute('aria-current', 'step');
@@ -115,7 +114,6 @@ test('a sign-in crawl leaves the repository clean (git status --porcelain is emp
     await page.getByLabel('Maximum pages').fill('1');
     await page.locator('details.advanced > summary').click();
     await page.locator('#adv-no-zoom').check();
-    await page.locator('#adv-no-screenshots').check();
     await page.getByRole('button', { name: 'Start', exact: true }).click();
     await expect(page).toHaveURL(/\/live$/);
     await waitFinished(page);

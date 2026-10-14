@@ -21,8 +21,6 @@ export const ADVANCED: [string, string, 'value' | 'list' | 'switch' | 'profile']
   ['no-token-storage', 'Do not seed the token into web storage', 'switch'],
   ['no-interact', 'Skip the keyboard and disclosure passes', 'switch'],
   ['no-zoom', 'Skip the 200% zoom pass', 'switch'],
-  ['no-screenshots', 'Do not capture element screenshots', 'switch'],
-  ['max-screenshots', 'Screenshots per page', 'value'],
   ['max-tabs', 'Maximum Tab presses per page', 'value'],
   ['max-activations', 'Disclosure controls activated per page', 'value'],
   ['max-clicks', 'Navigation controls clicked per page', 'value'],

@@ -10,7 +10,7 @@ test('checks-beyond-508 AC 13: the Advanced checkbox adds --wcag 2.2 to the comm
   const dash = await dashboard();
   try {
     await open(page, dash, '/run');
-    await fillRun(page, { url: site.base + 'checks-beyond-index.html', token: TOKEN, maxPages: 3, advanced: { wcag: true, 'no-zoom': true, 'no-screenshots': true } });
+    await fillRun(page, { url: site.base + 'checks-beyond-index.html', token: TOKEN, maxPages: 3, advanced: { wcag: true, 'no-zoom': true } });
     await page.getByLabel('Only audit URLs matching (one pattern per line)').fill('checks-beyond-');
     await expect(page.getByLabel(/^Also check WCAG 2\.2 \(beyond Section 508\)/)).toBeChecked();
     const command = page.getByTestId('command');

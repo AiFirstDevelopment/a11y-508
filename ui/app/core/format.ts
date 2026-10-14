@@ -166,7 +166,6 @@ export function phaseText(e: PhaseEvent): string {
     case 'frames': return `Frames: ${n(d['done'])} of ${n(d['of'])}`;
     case 'zoom': return 'Checking at 200% zoom';
     case 'names': return 'Confirming names with the accessibility tree';
-    case 'screenshots': return `Screenshots: ${n(d['done'])} of ${n(d['of'])}`;
     case 'discovery': return `Looking for pages behind controls: ${n(d['clicked'])} of ${n(d['of'])}`;
     case 'search': return `Searching the last ${n(d['months'])} month${d['months'] === 1 ? '' : 's'} · ${n(d['forms'])} form${d['forms'] === 1 ? '' : 's'}`;
     default: return e.phase;

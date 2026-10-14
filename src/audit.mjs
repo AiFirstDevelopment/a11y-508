@@ -1,7 +1,5 @@
-// Audit one page: navigate, run in-page checks, interactive passes, screenshots.
+// Audit one page: navigate, run in-page checks, interactive passes.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { BEYOND, testInfo } from './checks/catalog.mjs';
 import { listenerProbe, keyboardPass, disclosurePass, zoomPass, spacingPass, reflowPass, routeDiscoveryPass, modalOnLoadPass, redismissModal, searchPass, applyRanges } from './passes.mjs';
 import { discoverFrames, inFrame, MAX_FRAME_DEPTH, BETWEEN_IMAGES } from './frames.mjs';
@@ -72,7 +70,6 @@ async function auditPageIn(page, url, ctx) {
       state: f.state,
       // Only findings inside a same-origin frame carry the frame's selector.
       frame: f.frame,
-      screenshot: f.screenshot,
       // Only beyond-508 findings carry the key, so a default report.json keeps its shape.
       beyond508: f.beyond508 || BEYOND[f.test] ? true : undefined,
     });
@@ -265,11 +262,10 @@ async function auditPageIn(page, url, ctx) {
       }
     }
 
-    const shoot = opts.screenshots ? makeShooter(page, ctx, result) : null;
     if (opts.zoom) {
       try {
         if (page.progress) page.progress('zoom');
-        result.passes.zoom = await zoomPass(page, add, shoot);
+        result.passes.zoom = await zoomPass(page, add);
       } catch (e) {
         result.errors.push(`zoom pass: ${e.message}`);
       }
@@ -277,7 +273,7 @@ async function auditPageIn(page, url, ctx) {
     // Beyond-508 profile only, so a default run costs nothing extra.
     if (beyond) {
       try {
-        result.passes.spacing = await spacingPass(page, add, shoot);
+        result.passes.spacing = await spacingPass(page, add);
       } catch (e) {
         result.errors.push(`text spacing pass: ${e.message}`);
       }
@@ -288,17 +284,6 @@ async function auditPageIn(page, url, ctx) {
       }
     }
 
-    if (shoot) {
-      let n = 0;
-      const of = Math.min(opts.maxScreenshots, result.findings.filter((f) => !f.screenshot && f.rect).length);
-      for (const f of result.findings) {
-        if (n >= opts.maxScreenshots) break;
-        if (f.screenshot || !f.rect) continue;
-        if (page.progress) page.progress('screenshots', { done: n, of });
-        await shoot(f);
-        if (f.screenshot) n++;
-      }
-    }
     // Searches and filters, filled with a date range and submitted: the results they reveal are
     // re-checked here and the pages behind them queued. The page's own audit is what it was before.
     if (opts.forms) {
@@ -388,23 +373,4 @@ function coverageNotes(u) {
   if (u.crossOriginFrames.length) notes.push(`${u.crossOriginFrames.length} frame(s) from other origins were not audited: ${[...new Set(u.crossOriginFrames)].join(', ')}. Audit those origins separately.`);
   if (u.deepFrames) notes.push(`${u.deepFrames} frame(s) nested more than ${MAX_FRAME_DEPTH} levels deep were not audited.`);
   return notes;
-}
-
-function makeShooter(page, ctx, result) {
-  const dir = join(ctx.outDir, 'screenshots');
-  mkdirSync(dir, { recursive: true });
-  let counter = 0;
-  const pageIdx = ctx.nextPageIndex();
-  return async (f) => {
-    if (!f.rect || f.rect.width < 1 || f.rect.height < 1) return;
-    try {
-      const png = await page.screenshot(f.rect);
-      if (!png) return;
-      const name = `p${pageIdx}-${++counter}.png`;
-      writeFileSync(join(dir, name), png);
-      f.screenshot = `screenshots/${name}`;
-    } catch (e) {
-      result.errors.push(`screenshot: ${e.message}`);
-    }
-  };
 }

@@ -12,6 +12,7 @@ export const DEFAULT_STATE_FILE = 'a11y-508-state.json';
 
 // Flags the form may set. --out, --json, --quiet, --events, --login and
 // --troubleshoot belong to the server; --state and --cookie to auth.
+// --no-screenshots and --max-screenshots are no-ops now, still accepted from saved configs.
 export const FLAGS = {
   'max-pages': 'value', 'max-depth': 'value', concurrency: 'value', include: 'list', exclude: 'list', 'fail-on': 'value',
   viewport: 'value', timeout: 'value', settle: 'value', header: 'list', 'token-header': 'value', 'auth-origin': 'list',

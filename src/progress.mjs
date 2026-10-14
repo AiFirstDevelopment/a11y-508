@@ -1,9 +1,9 @@
 // Progress inside a page, for --events: which phase each page in flight is in (loading, checks,
-// keyboard, disclosures, frames, zoom, names, screenshots, discovery), with a count where the
+// keyboard, disclosures, frames, zoom, names, discovery), with a count where the
 // phase has one. Never more than about five events a second, and at least one every two seconds
 // for a page in a long phase, so a watcher always sees the time move.
 
-export const PHASES = ['loading', 'checks', 'keyboard', 'disclosures', 'frames', 'zoom', 'names', 'screenshots', 'discovery'];
+export const PHASES = ['loading', 'checks', 'keyboard', 'disclosures', 'frames', 'zoom', 'names', 'discovery'];
 
 export function progressReporter(emit, { minGapMs = 200, heartbeatMs = 2000 } = {}) {
   const pages = new Map();

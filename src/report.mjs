@@ -202,14 +202,13 @@ export function renderHtml(r) {
   const beyond = wcag ? beyondIds(wcag).filter((id) => groups.has(id)) : [];
   const pageOptions = r.pages.filter((p) => (p.findings || []).length).map((p) => `<option value="${esc(p.finalUrl || p.url)}">${esc(short(p.finalUrl || p.url))}</option>`).join('');
 
-  const finding = (f, i) => {
+  const finding = (f) => {
     const page = f.page ? `<a href="${esc(f.page)}">${esc(short(f.page))}</a>` : f.pages ? f.pages.map((p) => `<a href="${esc(p)}">${esc(short(p))}</a>`).join(', ') : '<em>site-wide</em>';
     return `<li class="f" data-level="${f.level}" data-impact="${f.impact}" data-page="${esc(f.page || '')}" data-text="${esc((f.message + ' ' + f.selector + ' ' + f.html).toLowerCase())}">
   <div class="fh"><span class="badge ${f.level} ${f.impact}">${f.level === 'violation' ? 'Violation' : 'Review'} · ${f.impact}</span> <span class="pg">${page}</span>${f.state ? ` <span class="state">${esc(f.state)}</span>` : ''}</div>
   <p class="msg">${esc(f.message)}</p>
   ${f.selector ? `<div class="meta"><span class="k">selector</span> <code>${esc(f.selector)}</code></div>` : ''}
   ${f.html ? `<div class="meta"><span class="k">html</span> <code>${esc(f.html)}</code></div>` : ''}
-  ${f.screenshot ? `<figure><img src="${esc(f.screenshot)}" alt="Screenshot of the element for finding ${i + 1}: ${esc(f.selector)}" loading="lazy"></figure>` : ''}
   ${f.details ? `<details><summary>Details</summary><pre>${esc(JSON.stringify(f.details, null, 2))}</pre></details>` : ''}
 </li>`;
   };
@@ -260,7 +259,7 @@ ol.findings{list-style:none;padding:0;margin:0}.f{border:1px solid var(--line);b
 .badge.violation.critical{background:var(--crit)}.badge.violation.serious{background:var(--ser)}.badge.violation.moderate{background:var(--mod)}.badge.violation.minor{background:var(--min)}
 .state{color:var(--muted);font-style:italic}.msg{margin:6px 0}.meta{font-size:13px;margin:2px 0}.k{color:var(--muted);display:inline-block;min-width:64px}
 code,pre{font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--code);padding:1px 4px;border-radius:3px;white-space:pre-wrap;word-break:break-word}
-pre{padding:8px;max-height:320px;overflow:auto}figure{margin:8px 0}figure img{max-width:100%;border:1px solid var(--line);max-height:300px}
+pre{padding:8px;max-height:320px;overflow:auto}
 table{border-collapse:collapse;width:100%;font-size:14px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}th{background:#f4f4f4}
 .err{color:var(--crit)}.skip{color:var(--muted)}a{color:#0b4f9c}a:focus,button:focus,input:focus,select:focus{outline:3px solid #0b4f9c;outline-offset:2px}
 .toc{columns:3;font-size:14px}.toc a{display:block;padding:2px 0}@media(max-width:800px){.toc{columns:1}}

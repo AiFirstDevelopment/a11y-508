@@ -128,11 +128,6 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
             </dd>
             <dt>HTML</dt><dd><code data-testid="detail-html">{{ f.html }}</code></dd>
           </dl>
-          @if (f.screenshot) {
-            <img data-testid="detail-screenshot" [src]="shot(f.screenshot)" [alt]="'Screenshot of the element ' + (f.selector || '')" />
-          } @else {
-            <p>No screenshot for this finding.</p>
-          }
           <button type="button" class="secondary" (click)="selected.set(null)">Close detail</button>
         </section>
       }
@@ -427,9 +422,6 @@ export class ReportScreen {
   }
   condition(test: string): string {
     return this.report()?.catalog?.[test]?.condition || '';
-  }
-  shot(path: string): string {
-    return `/api/reports/${encodeURIComponent(this.reportId())}/${path.split('/').map(encodeURIComponent).join('/')}`;
   }
   count(findings: Finding[], level: string): number {
     return (findings || []).filter((f) => f.level === level).length;
