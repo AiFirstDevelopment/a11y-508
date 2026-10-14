@@ -84,6 +84,17 @@ export function coverage(pages, crawl, opts) {
   // A search that returned nothing even for the whole date range: the result pages behind it were not reached.
   const empty = pages.filter((p) => p.search && p.search.empty);
   if (empty.length) notes.push(`A search on ${empty.length} page(s) (${empty.slice(0, 3).map((p) => short(p.finalUrl || p.url)).join(', ')}${empty.length > 3 ? ', ...' : ''}) returned nothing even for the last ${opts.searchMonths} month${opts.searchMonths === 1 ? '' : 's'}; the pages behind its results were not audited. Search with a wider range (--search-months) or audit a result page by its address.`);
+  // What each searched form was filled with: the preset chosen (and when it was the widest there was,
+  // short of --search-months), or the dates typed.
+  const searched = pages.flatMap((p) => ((p.search && p.search.forms) || []).map((f) => ({ p, f })));
+  for (const { p, f } of searched.slice(0, 10)) {
+    const where = `Search form on ${short(p.finalUrl || p.url)}`;
+    if (f.preset && f.short) notes.push(`${where}: chose '${f.preset}', the widest preset (${f.presetDays} days), shorter than --search-months ${opts.searchMonths}; results older than that were not looked for.`);
+    else if (f.preset) notes.push(`${where}: chose '${f.preset}'.`);
+    else if (f.from || f.to) notes.push(`${where}: filled ${f.from || '(no start)'} to ${f.to || '(no end)'}.`);
+    else notes.push(`${where}: submitted with no date range (no preset or date field found).`);
+  }
+  if (searched.length > 10) notes.push(`${searched.length - 10} more searched form(s) are listed in report.json under pages[].search.forms.`);
   if (opts.forms === false) notes.push('Search-form discovery was off (--no-forms); result pages behind search and filter forms were not looked for.');
   if (crawl.clickOnly) notes.push(`${crawl.clickOnly} page(s) were reachable only by clicking a control with no link (href); they were found by clicking and audited. Screen reader users cannot discover these destinations as links (check WCAG 2.1.1, 4.1.2).`);
   return { complete: warnings.length === 0, warnings, notes };

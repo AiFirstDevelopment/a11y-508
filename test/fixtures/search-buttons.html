@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orders by period - a11y-508 test site</title>
+<style>
+  [aria-pressed="true"], [aria-checked="true"] { background: #003366; color: #fff; }
+  [role="radio"] { display: inline-block; padding: 4px 8px; border: 1px solid #555; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+<h1>Orders by period</h1>
+<p>Date-range presets as a button group and as a radio group. Orders appear for three months or more.</p>
+<form id="buttons-form" aria-label="Search orders by period">
+  <div role="group" aria-label="Period">
+    <button type="button" aria-pressed="false">Last 7 days</button>
+    <button type="button" aria-pressed="false">Last 90 days</button>
+    <button type="button" aria-pressed="false">Past year</button>
+  </div>
+  <button type="submit">Search</button>
+</form>
+<div id="buttons-results" aria-live="polite"></div>
+<form id="radios-form" aria-label="Filter invoices by period">
+  <div role="radiogroup" aria-label="Invoice period">
+    <div role="radio" tabindex="0" aria-checked="false">1 month</div>
+    <div role="radio" tabindex="-1" aria-checked="false">3 months</div>
+    <div role="radio" tabindex="-1" aria-checked="false">YTD</div>
+  </div>
+  <button type="submit">Find</button>
+</form>
+<div id="radios-results" aria-live="polite"></div>
+</main>
+<script>
+  const DAYS = { 'Last 7 days': 7, 'Last 90 days': 90, 'Past year': 365, '1 month': 30, '3 months': 90, YTD: 200 };
+  const model = { buttons: null, radios: null };
+  const get = (q) => fetch('/api/preset-search?' + q, { headers: { authorization: 'Bearer FIXTURE_TOKEN' } }).then((r) => r.json());
+  for (const [form, item, attr] of [['buttons', 'button[aria-pressed]', 'aria-pressed'], ['radios', '[role="radio"]', 'aria-checked']]) {
+    const f = document.getElementById(`${form}-form`);
+    for (const b of f.querySelectorAll(item)) b.addEventListener('click', () => {
+      for (const x of f.querySelectorAll(item)) x.setAttribute(attr, String(x === b));
+      model[form] = b.textContent.trim();
+    });
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const links = await get(new URLSearchParams({ form, preset: model[form] || '', days: DAYS[model[form]] || 0, open: '0' }));
+      document.getElementById(`${form}-results`).innerHTML = links.length ? '<ul>' + links.map((l, i) => `<li><a href="${l}">Order ${i + 1}</a></li>`).join('') + '</ul>' : '<p>Nothing found.</p>';
+    });
+  }
+</script>
+</body>
+</html>

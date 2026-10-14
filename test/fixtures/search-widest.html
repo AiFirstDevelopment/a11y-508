@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recent activity - a11y-508 test site</title>
+<style>
+  .overlay { position: absolute; background: #fff; border: 1px solid #555; padding: 4px 0; z-index: 10; }
+  .overlay [role="option"] { padding: 4px 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+<h1>Recent activity</h1>
+<p>A dropdown whose widest range is 30 days, opened only from the keyboard (Alt+ArrowDown). Activity appears for 30 days.</p>
+<form id="widest-form" aria-label="Filter activity">
+  <p><span id="range-label">Date range</span>
+    <button type="button" id="range" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="range-label range">Any</button></p>
+  <button type="submit">Apply filters</button>
+</form>
+<div id="results" aria-live="polite"></div>
+</main>
+<script>
+  const DAYS = { Today: 1, 'Last 7 days': 7, 'Last 30 days': 30 };
+  let chosen = null;
+  let pane = null;
+  const trigger = document.getElementById('range');
+  const close = () => {
+    if (!pane) return;
+    pane.remove();
+    pane = null;
+    trigger.setAttribute('aria-expanded', 'false');
+  };
+  trigger.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' || !e.altKey || pane) return;
+    const r = trigger.getBoundingClientRect();
+    pane = document.createElement('div');
+    pane.className = 'overlay';
+    pane.style.left = `${r.right + window.scrollX + 12}px`;
+    pane.style.top = `${r.top + window.scrollY}px`;
+    pane.innerHTML = `<div role="listbox" aria-label="Date range">${Object.keys(DAYS).map((o) => `<div role="option" aria-selected="false">${o}</div>`).join('')}</div>`;
+    document.body.appendChild(pane);
+    for (const el of pane.querySelectorAll('[role="option"]')) el.addEventListener('click', () => {
+      chosen = el.textContent;
+      trigger.textContent = chosen;
+      close();
+    });
+    trigger.setAttribute('aria-expanded', 'true');
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') close();
+  });
+  document.getElementById('widest-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const open = document.querySelector('[role="listbox"]') ? '1' : '0';
+    const q = new URLSearchParams({ form: 'widest', preset: chosen || '', days: DAYS[chosen] || 0, open });
+    const links = await (await fetch('/api/preset-search?' + q, { headers: { authorization: 'Bearer FIXTURE_TOKEN' } })).json();
+    document.getElementById('results').innerHTML = links.length ? '<ul>' + links.map((l, i) => `<li><a href="${l}">Activity ${i + 1}</a></li>`).join('') + '</ul>' : '<p>No activity.</p>';
+  });
+</script>
+</body>
+</html>

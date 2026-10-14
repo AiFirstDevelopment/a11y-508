@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Claims by date - a11y-508 test site</title>
+</head>
+<body>
+<main>
+<h1>Claims by date</h1>
+<p>Like Angular Material datepicker inputs: text fields whose model is updated only by input events and accepts only MM/DD/YYYY. Claims appear for a range reaching back two months or more.</p>
+<form id="mat-placeholder" aria-label="Search claims by opening date">
+  <div class="mat-form-field"><input type="text" id="p-lo" aria-label="Opened after" placeholder="MM/DD/YYYY"></div>
+  <div class="mat-form-field"><input type="text" id="p-hi" aria-label="Opened before" placeholder="MM/DD/YYYY"></div>
+  <button type="submit">Search</button>
+</form>
+<div id="mat-placeholder-results" aria-live="polite"></div>
+<form id="mat-toggle" aria-label="Search claims by receipt">
+  <div class="mat-form-field"><input type="text" id="t-lo" aria-label="Received after">
+    <mat-datepicker-toggle><button type="button" aria-label="Open calendar">v</button></mat-datepicker-toggle></div>
+  <div class="mat-form-field"><input type="text" id="t-hi" aria-label="Received before">
+    <mat-datepicker-toggle><button type="button" aria-label="Open calendar">v</button></mat-datepicker-toggle></div>
+  <button type="submit">Search</button>
+</form>
+<div id="mat-toggle-results" aria-live="polite"></div>
+</main>
+<script>
+  // The model: what input events said, kept only when it parses as MM/DD/YYYY (as a DateAdapter would).
+  const model = {};
+  const get = (q) => fetch('/api/preset-search?' + q, { headers: { authorization: 'Bearer FIXTURE_TOKEN' } }).then((r) => r.json());
+  for (const el of document.querySelectorAll('input')) el.addEventListener('input', () => (model[el.id] = /^\d{2}\/\d{2}\/\d{4}$/.test(el.value) ? el.value : null));
+  for (const [form, lo, hi] of [['mat-placeholder', 'p-lo', 'p-hi'], ['mat-toggle', 't-lo', 't-hi']]) {
+    document.getElementById(form).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const links = await get(new URLSearchParams({ form, from: model[lo] || '', to: model[hi] || '' }));
+      document.getElementById(`${form}-results`).innerHTML = links.length ? '<ul>' + links.map((l, i) => `<li><a href="${l}">Claim ${i + 1}</a></li>`).join('') + '</ul>' : '<p>No claims.</p>';
+    });
+  }
+</script>
+</body>
+</html>

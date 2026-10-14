@@ -165,6 +165,23 @@ export async function startFixtureSite({ port = 0, host = '127.0.0.1', token = T
       res.writeHead(200, { 'content-type': TYPES['.html'] });
       return res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Search results - a11y-508 test site</title></head><body><main><h1>Search results</h1>${ok ? '<ul><li><a href="/result-5.html">Case 5</a></li><li><a href="/result-6.html">Case 6</a></li></ul>' : '<p>No cases found.</p>'}</main></body></html>`);
     }
+    // The search-preset fixtures (search-combo, -widest, -buttons, -material): each submit is recorded
+    // with the preset's span in days, whether a dropdown was still open, and the dates as typed;
+    // results only for a range wide enough, with no dropdown open, and dates in MM/DD/YYYY.
+    if (path === '/api/preset-search') {
+      const q = new URL(req.url, 'http://x').searchParams;
+      const form = q.get('form');
+      const days = Number(q.get('days') || 0);
+      const open = q.get('open') === '1';
+      const from = q.get('from');
+      const mdy = /^\d{2}\/\d{2}\/\d{4}$/;
+      const need = { combo: 90, widest: 30, buttons: 90, radios: 90 }[form];
+      const ok = need ? days >= need && !open : mdy.test(from || '') && mdy.test(q.get('to') || '') && Date.now() - parseDate(from).getTime() >= 59 * 24 * 3600 * 1000;
+      state.searches.push({ form, status: q.get('status'), preset: q.get('preset'), days, open, from, to: q.get('to'), ok });
+      const links = { combo: [21, 22], widest: [31], buttons: [41], radios: [42], 'mat-placeholder': [51], 'mat-toggle': [52] }[form] || [];
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify(ok ? links.map((n) => `/result-${n}.html`) : []));
+    }
     if (path === '/api/delete-filtered') {
       state.deleteHits.push(req.method);
       res.writeHead(200, { 'content-type': TYPES['.html'] });

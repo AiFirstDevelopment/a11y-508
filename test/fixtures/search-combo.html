@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Case search by quick date - a11y-508 test site</title>
+<style>
+  .sel { display: inline-block; min-width: 10em; padding: 4px 8px; border: 1px solid #555; cursor: pointer; }
+  .row { margin: 12px 0; }
+  .cdk-overlay-pane { position: absolute; background: #fff; border: 1px solid #555; padding: 4px 0; z-index: 10; }
+  .cdk-overlay-pane [role="option"] { padding: 4px 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+<h1>Case search by quick date</h1>
+<p>Like an Angular Material mat-select: a custom dropdown whose options render in an overlay at the end of the page. Cases appear only for a range of three months or more, submitted with no dropdown left open.</p>
+<form id="combo-form" aria-label="Search cases by quick date">
+  <div class="row"><span id="status-label">Status</span>
+    <div role="combobox" id="status" class="sel" tabindex="0" aria-labelledby="status-label" aria-haspopup="listbox" aria-expanded="false">All</div></div>
+  <div class="row"><span id="quick-label">Quick Date/Time</span>
+    <div role="combobox" id="quick" class="sel" tabindex="0" aria-labelledby="quick-label" aria-haspopup="listbox" aria-expanded="false">Choose a range</div></div>
+  <button type="submit">Search</button>
+</form>
+<p id="overlay-closed">No dropdown is open.</p>
+<div id="results" aria-live="polite"></div>
+</main>
+<script>
+  const DAYS = { 'Last 7 days': 7, 'Last 30 days': 30, 'Last 6 months': 180, 'Last year': 365 };
+  const model = { status: 'All', quick: null };
+  // The marker: present only while no dropdown is open.
+  const marker = () => {
+    const open = !!document.querySelector('[role="listbox"]');
+    const m = document.getElementById('overlay-closed');
+    if (open && m) m.remove();
+    if (!open && !m) document.getElementById('combo-form').insertAdjacentHTML('afterend', '<p id="overlay-closed">No dropdown is open.</p>');
+  };
+  function select(trigger, key, options) {
+    let pane = null;
+    const close = () => {
+      if (!pane) return;
+      pane.remove();
+      pane = null;
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.removeAttribute('aria-controls');
+      marker();
+    };
+    const open = () => {
+      if (pane) return;
+      const r = trigger.getBoundingClientRect();
+      pane = document.createElement('div');
+      pane.className = 'cdk-overlay-pane';
+      pane.style.left = `${r.right + window.scrollX + 12}px`;
+      pane.style.top = `${r.top + window.scrollY}px`;
+      pane.innerHTML = `<div role="listbox" id="${key}-panel" aria-label="${key}">${options.map((o, i) => `<div role="option" id="${key}-opt-${i}" aria-selected="${model[key] === o}">${o}</div>`).join('')}</div>`;
+      document.body.appendChild(pane);
+      for (const el of pane.querySelectorAll('[role="option"]')) {
+        el.addEventListener('click', () => {
+          model[key] = el.textContent;
+          trigger.textContent = el.textContent;
+          close();
+        });
+      }
+      trigger.setAttribute('aria-expanded', 'true');
+      trigger.setAttribute('aria-controls', `${key}-panel`);
+      marker();
+    };
+    trigger.addEventListener('click', () => (pane ? close() : open()));
+    trigger.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' && e.altKey) open();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') close();
+    });
+  }
+  select(document.getElementById('status'), 'status', ['All', 'Open', 'Closed']);
+  select(document.getElementById('quick'), 'quick', Object.keys(DAYS));
+  document.getElementById('combo-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const open = document.getElementById('overlay-closed') ? '0' : '1';
+    const q = new URLSearchParams({ form: 'combo', status: model.status, preset: model.quick || '', days: DAYS[model.quick] || 0, open });
+    const links = await (await fetch('/api/preset-search?' + q, { headers: { authorization: 'Bearer FIXTURE_TOKEN' } })).json();
+    document.getElementById('results').innerHTML = links.length ? '<ul>' + links.map((l, i) => `<li><a href="${l}">Case ${i + 1}</a></li>`).join('') + '</ul>' : '<p>No cases found.</p>';
+  });
+</script>
+</body>
+</html>

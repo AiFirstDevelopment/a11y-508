@@ -11,6 +11,13 @@
   const FROM = /\b(from|start|begin|since|after|min)\b|from|start/i;
   const TO = /\b(to|end|until|through|thru|before|max)\b|end|until/i;
   const DATEY = /date|from|\bto\b|start|end|period|range|since|until/i;
+  // Custom dropdowns (mat-select, React Select, PrimeNG, Kendo) and preset buttons: date controls that
+  // are not form fields.
+  const COMBO = '[role="combobox"], [role="listbox"], button[aria-haspopup="listbox"]';
+  const PRESETBTN = '[role="radio"], [role="radiogroup"] button, button[aria-pressed]';
+  const WIDGET = `${COMBO}, ${PRESETBTN}`;
+  const DATEFMT = /\b(yyyy|mm?|dd?)([-/.])(yyyy|mm?|dd?)\2(yyyy|mm?|dd?)\b/i;
+  const TOGGLE = 'mat-datepicker-toggle, [class*="datepicker-toggle" i], button[aria-label*="calendar" i], button[aria-label*="date picker" i], button[aria-label*="datepicker" i]';
 
   const nameOf = (el) => (A.accName(el).name || el.value || A.text(el) || el.getAttribute('title') || '').trim().replace(/\s+/g, ' ').slice(0, 80);
   const hintOf = (el) => {
@@ -27,7 +34,7 @@
       if (c.closest('form, [role="search"]')) continue;
       let p = c.parentElement;
       for (let i = 0; p && i < 4; i++, p = p.parentElement) {
-        if (p.querySelectorAll(FIELD).length >= 1 && p !== document.body) {
+        if (p.querySelectorAll(`${FIELD}, ${WIDGET}`).length >= 1 && p !== document.body) {
           scopes.add(p);
           break;
         }
@@ -41,7 +48,8 @@
       if (used.has(scope) || [...used].some((u) => u.contains(scope) || scope.contains(u))) continue;
       if (!A.isVisible(scope) || inDialog(scope)) continue;
       const fields = [...scope.querySelectorAll(FIELD)].filter((f) => A.isVisible(f) && !f.disabled);
-      if (!fields.length || fields.some((f) => f.type === 'password' || f.type === 'file')) continue;
+      const widgets = [...scope.querySelectorAll(WIDGET)].filter((w) => A.isVisible(w));
+      if ((!fields.length && !widgets.length) || fields.some((f) => f.type === 'password' || f.type === 'file')) continue;
       const controls = [...scope.querySelectorAll(CONTROL)].filter((c) => A.isVisible(c) && !c.disabled && c.getAttribute('aria-disabled') !== 'true');
       const named = controls.map((c) => ({ c, name: nameOf(c) }));
       // A scope with any control named like an action is not a search, whatever else it has.
@@ -71,7 +79,7 @@
     if (el.type === 'date') return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     if (el.type === 'datetime-local') return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T00:00`;
     const hint = `${el.getAttribute('placeholder') || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('data-format') || ''} ${el.labels ? [...el.labels].map((l) => A.text(l)).join(' ') : ''}`;
-    const m = /\b(yyyy|mm?|dd?)([-/.])(yyyy|mm?|dd?)\2(yyyy|mm?|dd?)\b/i.exec(hint);
+    const m = DATEFMT.exec(hint);
     const parts = m ? [m[1], m[3], m[4]] : ['mm', 'dd', 'yyyy'];
     const sep = m ? m[2] : '/';
     return parts
@@ -93,48 +101,104 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
     el.dispatchEvent(new FocusEvent('blur'));
   };
-  // "Last 6 months", "Past year": the number of months a preset covers.
-  const presetMonths = (text) => {
-    const t = text.toLowerCase();
-    let m = /(?:last|past|previous)\s+(\d+)\s+(month|year|week|day)s?/.exec(t);
-    if (m) return { month: 1, year: 12, week: 0.25, day: 1 / 30 }[m[2]] * Number(m[1]);
-    m = /(?:last|past|previous)\s+(month|year|quarter|week)\b/.exec(t);
-    if (m) return { month: 1, year: 12, quarter: 3, week: 0.25 }[m[1]];
-    if (/\b(all time|any time|all dates)\b/.test(t)) return 1200;
+  // "Last 6 months", "Past year", "90 days", "YTD": the number of days a preset covers (0: not a
+  // preset). "All" / "All time" is ALL.
+  const ALL = 36500;
+  const UNIT = { day: 1, week: 7, month: 30, quarter: 90, year: 365 };
+  const presetDays = (text) => {
+    const t = String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    let m = /\b(?:last|past|previous|prior)\s+(\d+)\s*(day|week|month|quarter|year)s?\b/.exec(t) || /^(\d+)\s*(day|week|month|quarter|year)s?\b/.exec(t);
+    if (m) return UNIT[m[2]] * Number(m[1]);
+    m = /\b(?:last|past|previous|prior)\s+(day|week|month|quarter|year)\b/.exec(t);
+    if (m) return UNIT[m[1]];
+    if (/\b(ytd|year[ -]to[ -]date|this year)\b/.test(t)) {
+      const now = new Date();
+      return Math.max(1, Math.round((now - new Date(now.getFullYear(), 0, 1)) / 86400000));
+    }
+    if (/^all$/.test(t) || /\b(all time|any time|anytime|all dates)\b/.test(t)) return ALL;
     return 0;
   };
+  const presetMonths = (text) => presetDays(text) / 30;
+  A.presetMonths = presetMonths;
+  // Of a list of choices ({ text }), the narrowest preset covering `months`, else the widest there is
+  // (short: true). A list whose only preset is "All" is not a list of date ranges (a status filter).
+  const choosePreset = (items, months) => {
+    const scored = items.map((x) => ({ ...x, days: presetDays(x.text) })).filter((x) => x.days > 0);
+    if (!scored.some((x) => x.days < ALL)) return null;
+    const enough = scored.filter((x) => x.days >= months * 30).sort((a, b) => a.days - b.days)[0];
+    if (enough) return { item: enough, days: enough.days, short: false };
+    const widest = scored.sort((a, b) => b.days - a.days)[0];
+    return { item: widest, days: widest.days, short: true };
+  };
+  // A datepicker toggle (Angular Material's, or a button labelled "calendar") beside a text field:
+  // in the field's nearest container that holds one, with at most a from/to pair of fields.
+  const toggleBeside = (f) => {
+    let p = f.parentElement;
+    for (let i = 0; p && i < 3; i++, p = p.parentElement) {
+      if (!p.querySelector(TOGGLE)) continue;
+      return p.querySelectorAll(FIELD).length <= 2;
+    }
+    return false;
+  };
+  const isDate = (f) =>
+    ['date', 'datetime-local'].includes(f.type) ||
+    (['text', ''].includes(f.type || '') &&
+      (DATEFMT.test(hintOf(f)) ||
+        f.classList.contains('mat-datepicker-input') ||
+        (DATEY.test(hintOf(f)) && /date|from|\bto\b|start|end|since|until|mm|dd|yyyy/i.test(hintOf(f))) ||
+        toggleBeside(f)));
 
-  // Fills one scope: a date-range preset at least `months` wide if there is one, else the date
-  // fields (from = today minus `months`, to = today); required fields get a value; a free-text
-  // search stays empty. Returns what it did.
-  A.fillSearch = (sel, months) => {
+  // Fills one scope: a date-range preset at least `months` wide if there is one (else the widest),
+  // else the date fields (from = today minus `months`, to = today); required fields get a value; a
+  // free-text search stays empty. `steps` picks what to do: the crawler chooses presets first, then
+  // tries the custom dropdowns it is handed back (`combos`) from outside the page, then the dates.
+  A.fillSearch = (sel, months, steps = {}) => {
+    const { presets = true, dates: doDates = true, required = true } = steps;
     const scope = A.query(sel);
     if (!scope) return null;
-    const out = { dates: 0, preset: null, required: 0 };
+    const out = { dates: 0, preset: null, presetDays: null, short: false, required: 0, combos: [] };
     const fields = [...scope.querySelectorAll(FIELD)].filter((f) => A.isVisible(f) && !f.disabled && !f.readOnly);
-    // A preset: an option of a select, or a radio's label.
-    for (const s of fields.filter((f) => f.localName === 'select')) {
-      const best = [...s.options].map((o) => ({ o, m: presetMonths(o.text) })).filter((x) => x.m >= months).sort((a, b) => a.m - b.m)[0];
-      if (best) {
-        setValue(s, best.o.value);
-        out.preset = best.o.text.trim();
-      }
-    }
-    if (!out.preset) {
-      for (const r of fields.filter((f) => f.type === 'radio')) {
-        if (presetMonths(hintOf(r)) >= months) {
-          r.click();
-          out.preset = hintOf(r).trim();
+    const take = (c, text) => {
+      out.preset = String(text).trim().replace(/\s+/g, ' ').slice(0, 80);
+      out.presetDays = c.days;
+      out.short = c.short;
+    };
+    if (presets) {
+      // A preset: an option of a select, a radio's label, or a button of a group ("Last 90 days").
+      for (const s of fields.filter((f) => f.localName === 'select')) {
+        const c = choosePreset([...s.options].map((o) => ({ o, text: o.text })), months);
+        if (c) {
+          setValue(s, c.item.o.value);
+          take(c, c.item.o.text);
           break;
         }
+      }
+      if (!out.preset) {
+        const c = choosePreset(fields.filter((f) => f.type === 'radio').map((r) => ({ r, text: hintOf(r) })), months);
+        if (c) {
+          c.item.r.click();
+          take(c, c.item.r.labels && c.item.r.labels.length ? A.text(c.item.r.labels[0]) : c.item.text);
+        }
+      }
+      if (!out.preset) {
+        const btns = [...scope.querySelectorAll(PRESETBTN)].filter((b) => A.isVisible(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true');
+        const c = choosePreset(btns.map((b) => ({ b, text: nameOf(b) })), months);
+        if (c) {
+          if (c.item.b.getAttribute('aria-checked') !== 'true' && c.item.b.getAttribute('aria-pressed') !== 'true') c.item.b.click();
+          take(c, c.item.text);
+        }
+      }
+      // Custom dropdowns, for the crawler to open: outermost ones only (not an input inside a combobox).
+      if (!out.preset) {
+        const combos = [...scope.querySelectorAll(COMBO)].filter((c) => A.isVisible(c) && !c.disabled && c.getAttribute('aria-disabled') !== 'true');
+        out.combos = combos.filter((c) => !combos.some((o) => o !== c && o.contains(c))).slice(0, 4).map((c) => A.selector(c));
       }
     }
     const today = new Date();
     const from = new Date(today);
     from.setMonth(from.getMonth() - months);
-    const isDate = (f) => ['date', 'datetime-local'].includes(f.type) || (['text', ''].includes(f.type || '') && DATEY.test(hintOf(f)) && /date|from|\bto\b|start|end|since|until|mm|dd|yyyy/i.test(hintOf(f)));
     const dates = fields.filter((f) => f.localName === 'input' && isDate(f));
-    if (!out.preset && dates.length) {
+    if (doDates && !out.preset && dates.length) {
       let fromEl = dates.find((f) => FROM.test(hintOf(f)) && !TO.test(hintOf(f).replace(/date/i, ''))) || null;
       let toEl = dates.find((f) => f !== fromEl && TO.test(hintOf(f))) || null;
       // A pair with no telling labels: the first is the start, the second the end.
@@ -151,20 +215,85 @@
         out.to = toEl.value;
       }
     }
-    for (const f of fields) {
-      if (dates.includes(f) || !(f.required || f.getAttribute('aria-required') === 'true')) continue;
-      if (f.localName === 'select') {
-        const o = [...f.options].find((x) => x.value);
-        if (o && !f.value) setValue(f, o.value);
-      } else if (f.type === 'checkbox' || f.type === 'radio') {
-        if (!f.checked) f.click();
-      } else if (!f.value) {
-        setValue(f, ' ');
-        if (f.checkValidity && !f.checkValidity()) setValue(f, 'a');
+    if (required) {
+      for (const f of fields) {
+        if (dates.includes(f) || !(f.required || f.getAttribute('aria-required') === 'true')) continue;
+        if (f.localName === 'select') {
+          const o = [...f.options].find((x) => x.value);
+          if (o && !f.value) setValue(f, o.value);
+        } else if (f.type === 'checkbox' || f.type === 'radio') {
+          if (!f.checked) f.click();
+        } else if (!f.value) {
+          setValue(f, ' ');
+          if (f.checkValidity && !f.checkValidity()) setValue(f, 'a');
+        }
+        out.required++;
       }
-      out.required++;
     }
     return out;
+  };
+
+  // A custom dropdown, driven from outside the page (real clicks and keys, so the framework sees a
+  // person): comboMark before opening it, comboOptions to read what it shows and choose, comboIsOpen
+  // to know whether it still needs closing.
+  const LISTY = '[role="listbox"], [role="option"]';
+  A.comboMark = () => {
+    A._comboPre = new WeakSet(A.all(LISTY).filter((e) => A.isVisible(e)));
+    return true;
+  };
+  const optionsIn = (root) => [...root.querySelectorAll('[role="option"]')].filter((o) => A.isVisible(o));
+  A.comboOptions = (sel, months) => {
+    const el = A.query(sel);
+    if (!el) return { options: [], choice: null };
+    const pre = A._comboPre || new WeakSet();
+    let opts = [];
+    // An inline listbox shows its options already; a combobox names its popup with aria-controls/owns.
+    if (el.matches('[role="listbox"]')) opts = optionsIn(el);
+    if (!opts.length) {
+      const refs = [el, ...el.querySelectorAll('[aria-controls], [aria-owns]')].flatMap((e) => `${e.getAttribute('aria-controls') || ''} ${e.getAttribute('aria-owns') || ''}`.split(/\s+/)).filter(Boolean);
+      for (const id of refs) {
+        const lb = A.rootOf(el).getElementById ? A.rootOf(el).getElementById(id) : document.getElementById(id);
+        if (lb) opts.push(...(lb.matches('[role="option"]') ? [lb] : optionsIn(lb)));
+      }
+    }
+    // Else whatever options appeared since it was opened, wherever the overlay renders them.
+    if (!opts.length) opts = A.all('[role="option"]').filter((o) => A.isVisible(o) && !pre.has(o));
+    const items = opts.map((o) => ({ selector: A.selector(o), text: (A.text(o) || A.accName(o).name || '').trim().replace(/\s+/g, ' ').slice(0, 80) }));
+    const c = choosePreset(items, months);
+    return { options: items.map((i) => i.text), choice: c ? { selector: c.item.selector, text: c.item.text, days: c.days, short: c.short } : null };
+  };
+  // Whether an option took: it is gone (the popup closed) or marked selected.
+  A.optionTaken = (sel) => {
+    let o;
+    try {
+      o = A.query(sel);
+    } catch {
+      return true;
+    }
+    return !o || !A.isVisible(o) || o.getAttribute('aria-selected') === 'true';
+  };
+  // For the Enter fallback: the option made the active one, focused when it can be.
+  A.comboActivate = (comboSel, optSel) => {
+    const el = A.query(comboSel);
+    const o = A.query(optSel);
+    if (!o) return false;
+    o.scrollIntoView({ block: 'nearest' });
+    if (el && o.id) el.setAttribute('aria-activedescendant', o.id);
+    if (o.tabIndex >= 0 || o.hasAttribute('tabindex')) o.focus();
+    else if (el) el.focus();
+    return true;
+  };
+  A.comboFocus = (sel) => {
+    const el = A.query(sel);
+    if (el) el.focus();
+    return !!el;
+  };
+  // Open: the dropdown says so, or a listbox or options are showing that were not before it opened.
+  A.comboIsOpen = (sel) => {
+    const el = A.query(sel);
+    const pre = A._comboPre || new WeakSet();
+    if (el && el.getAttribute('aria-expanded') === 'true') return true;
+    return A.all(LISTY).some((e) => e !== el && A.isVisible(e) && !pre.has(e) && !(el && el.contains(e)));
   };
 
   // Elements present before a search, so what it reveals can be told apart.

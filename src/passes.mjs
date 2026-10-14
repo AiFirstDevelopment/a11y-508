@@ -521,6 +521,60 @@ async function settle(page, max = 8000) {
   await sleep(500);
 }
 
+// Opens a custom dropdown (a click, then Alt+ArrowDown if no options show), chooses the preset
+// A.comboOptions picks by clicking it (Enter if the click does not take), and closes whatever it
+// left open with Escape. Returns the choice ({ text, days, short }) or null.
+const ALT = 1;
+async function comboPreset(page, sel, months) {
+  const A = 'window.__a11y508';
+  const q = JSON.stringify(sel);
+  const options = async () => {
+    let r = { options: [], choice: null };
+    const until = Date.now() + 1200;
+    while (Date.now() < until) {
+      r = await page.evaluate(`${A}.comboOptions(${q}, ${months})`);
+      if (r.options.length) break;
+      await sleep(100);
+    }
+    return r;
+  };
+  await page.evaluate(`${A}.comboMark()`);
+  let r = await page.evaluate(`${A}.comboOptions(${q}, ${months})`);
+  if (!r.options.length) {
+    const pt = await page.evaluate(`${A}.prepareClick(${q})`).catch(() => null);
+    if (pt) {
+      await page.click(pt.x, pt.y);
+      r = await options();
+    }
+    if (!r.options.length && (await page.evaluate(`${A}.comboFocus(${q})`))) {
+      await page.press('ArrowDown', ALT);
+      r = await options();
+    }
+  }
+  let chosen = null;
+  if (r.choice) {
+    const o = JSON.stringify(r.choice.selector);
+    const pt = await page.evaluate(`${A}.prepareClick(${o})`).catch(() => null);
+    if (pt) {
+      await page.click(pt.x, pt.y);
+      await sleep(200);
+    }
+    if (!pt || !(await page.evaluate(`${A}.optionTaken(${o})`))) {
+      if (await page.evaluate(`${A}.comboActivate(${q}, ${o})`)) {
+        await page.press('Enter');
+        await sleep(200);
+      }
+    }
+    chosen = r.choice;
+  }
+  for (let i = 0; i < 2 && (await page.evaluate(`${A}.comboIsOpen(${q})`)); i++) {
+    if (i === 0) await page.evaluate(`${A}.comboFocus(${q})`);
+    await page.press('Escape');
+    await sleep(150);
+  }
+  return chosen;
+}
+
 // Search-form discovery: fills and submits the forms that look like searches or filters (at most
 // three), with a date range from `opts.searchMonths` months ago to today, then follows what they
 // reveal: links in the results, result rows and "view" controls, and pagination (within
@@ -545,8 +599,18 @@ export async function searchPass(page, add, fingerprints, opts, reload, origin) 
   const run = async (f) => {
     await fresh();
     await page.evaluate('window.__a11y508.markBeforeSearch()');
-    const fill = await page.evaluate(`window.__a11y508.fillSearch(${JSON.stringify(f.selector)}, ${months})`);
+    const sel = JSON.stringify(f.selector);
+    const fill = await page.evaluate(`window.__a11y508.fillSearch(${sel}, ${months}, { dates: false, required: false })`);
     if (!fill) return null;
+    // A preset in a custom dropdown, when the form had none in its own fields.
+    for (const c of fill.preset ? [] : fill.combos) {
+      const got = await comboPreset(page, c, months).catch(() => null);
+      if (!got) continue;
+      Object.assign(fill, { preset: got.text, presetDays: got.days, short: got.short });
+      break;
+    }
+    const rest = await page.evaluate(`window.__a11y508.fillSearch(${sel}, ${months}, { presets: false, dates: ${!fill.preset} })`);
+    if (rest) Object.assign(fill, { dates: rest.dates, from: rest.from, to: rest.to, required: rest.required });
     let pt = null;
     if (f.submit) pt = await page.evaluate(`window.__a11y508.prepareClick(${JSON.stringify(f.submit)})`).catch(() => null);
     if (pt) await page.click(pt.x, pt.y);
@@ -629,7 +693,7 @@ export async function searchPass(page, add, fingerprints, opts, reload, origin) 
     // The first two results of a search are queued whatever the query-variant limit says.
     out.urls.push(...found.map((url, k) => ({ url, priority: k < 2 })));
     out.results += found.length;
-    out.forms.push({ name: f.name, selector: f.selector, from: fill.from || null, to: fill.to || null, preset: fill.preset, results: found.length, navigated: !!navigated });
+    out.forms.push({ name: f.name, selector: f.selector, from: fill.from || null, to: fill.to || null, preset: fill.preset, presetDays: fill.presetDays, short: !!fill.short, results: found.length, navigated: !!navigated });
     if (!found.length && !res.candidates.length && (fill.dates || fill.preset)) out.empty++;
   }
   if ((await here()) !== startHref) await reload();
