@@ -4,8 +4,12 @@
 // submits a form whose button deletes. The search-*.html fixtures add date presets in a custom
 // dropdown, in button and radio groups, and Material-style datepicker text fields.
 //
+// The search-quick and search-reset fixtures: the date range is set on every load and set again
+// before any pass presses a search control, so no search runs with the app's default range.
+//
 // `node test/search.mjs --only combo` runs one group (search, combo, combo12, widest, buttons,
-// material, presets) with its crawl only: the narrowed run for a guard's mutation.
+// material, presets, quick, quickload, quickoff, reset) with its crawl only: the narrowed run for a
+// guard's mutation.
 
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
-const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets'];
+const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset'];
 if (only && !GROUPS.includes(only)) throw new Error(`--only takes one of ${GROUPS.join(', ')}`);
 const want = (group) => !only || only === group;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-search-')));
@@ -31,7 +35,8 @@ const check = (name, fn) => {
     console.log(`  ok   ${name}`);
   } catch (e) {
     failures++;
-    console.log(`  FAIL ${name}\n       ${e.message.split('\n').join('\n       ')}`);
+    const at = /search\.mjs:(\d+)/.exec(e.stack || '');
+    console.log(`  FAIL ${name}${at ? ` (test/search.mjs:${at[1]})` : ''}\n       ${e.message.split('\n').join('\n       ')}`);
   }
 };
 const cli = (args) => new Promise((resolve) => {
@@ -46,10 +51,10 @@ const cli = (args) => new Promise((resolve) => {
     resolve({ status, stdout, stderr });
   });
 });
-const crawl = async (name, extra = [], start = 'search.html') => {
+const crawl = async (name, extra = [], start = 'search.html', { interact = false } = {}) => {
   const site = await startFixtureSite({ dropForms: 0 });
   const out = join(tmp, name);
-  const r = await cli([site.base + start, '--max-pages', '12', '--no-interact', '--no-zoom', '--no-screenshots', '--fail-on', 'none', '--out', out, ...extra]);
+  const r = await cli([site.base + start, '--max-pages', '12', ...(interact ? [] : ['--no-interact']), '--no-zoom', '--no-screenshots', '--fail-on', 'none', '--out', out, ...extra]);
   site.close();
   const report = existsSync(join(out, 'report.json')) ? JSON.parse(readFileSync(join(out, 'report.json'), 'utf8')) : null;
   return { ...r, report, searches: site.searches, deleteHits: site.deleteHits };
@@ -203,6 +208,78 @@ if (want('presets')) {
     const got = Object.fromEntries(['Last 90 days', '90 days', '3 months', 'Last 6 months', 'Past year', 'Last quarter', 'Previous 2 weeks', '30 days overdue', 'YTD', 'Year to date', 'This year', 'All', 'All time', 'Open', 'Closed'].map((t) => [t, Math.round(pm(t) * 100) / 100]));
     const r = (x) => Math.round(x * 100) / 100;
     assert.deepEqual(got, { 'Last 90 days': 3, '90 days': 3, '3 months': 3, 'Last 6 months': 6, 'Past year': r(365 / 30), 'Last quarter': 3, 'Previous 2 weeks': r(14 / 30), '30 days overdue': 0, YTD: r(ytd), 'Year to date': r(ytd), 'This year': r(ytd), All: 1216.67, 'All time': 1216.67, Open: 0, Closed: 0 });
+  });
+}
+
+// The date range on every load (docs/plans/date-range-always.md).
+const QUICK_NOTE = 'Search form on /search-quick.html: date range set to the last 3 months (Last 6 months preset) before every search';
+const rangeNotes = (report, page) => notes(report).filter((n) => n.startsWith(`Search form on ${page}: date range set`));
+const pageOf = (report, p) => report && report.pages.find((x) => path(x.url) === p);
+const revealedBy = (report, p, cls, name) => {
+  const pg = pageOf(report, p);
+  return pg ? pg.findings.filter((f) => f.test === '7.A' && f.html.includes(cls) && String(f.state || '').startsWith(`after activating "${name}"`)) : [];
+};
+if (want('quick')) {
+  const q = await crawl('quick', ['--quiet', '--json', '--max-pages', '4'], 'search-quick.html', { interact: true });
+  const by = (form) => q.searches.filter((s) => s.form === form);
+  check('quick (a): click discovery\'s search runs with "Last 6 months", not the default "Last 24 hours", and its results are audited', () => {
+    assert.ok(q.report, q.stderr);
+    assert.ok(by('quick-click').length, JSON.stringify(q.searches));
+    assert.deepEqual([...new Set(by('quick-click').map((s) => s.preset))], ['Last 6 months']);
+    const audit = q.report.pages.filter((p) => !p.error).map((p) => path(p.url));
+    for (const p of ['/search-quick-results.html', '/result-61.html']) assert.ok(audit.includes(p), `${p} in ${audit}`);
+    assert.ok(pageOf(q.report, '/result-61.html').findings.some((f) => f.test === '7.A'), 'planted 7.A on /result-61.html');
+  });
+  check('quick (c): the disclosure pass\'s search ("Show results") runs with "Last 6 months", and its results are re-checked', () => {
+    assert.ok(by('quick-kb').length, JSON.stringify(q.searches));
+    assert.deepEqual([...new Set(by('quick-kb').map((s) => s.preset))], ['Last 6 months']);
+    assert.ok(revealedBy(q.report, '/search-quick.html', 'quick-kb-icon', 'Show results').length, JSON.stringify(pageOf(q.report, '/search-quick.html').findings.map((f) => [f.test, f.state])));
+  });
+  check('quick (d): the coverage notes say once for the form that its range was set before every search', () => {
+    assert.deepEqual(rangeNotes(q.report, '/search-quick.html'), [QUICK_NOTE], JSON.stringify(notes(q.report)));
+  });
+  check('quick: the search pass still leaves the form alone (it has a Clear button) and its notes are unchanged', () => {
+    const pg = pageOf(q.report, '/search-quick.html');
+    assert.ok(pg.search && pg.search.skipped.some((s) => s.name === 'Clear'), JSON.stringify(pg.search));
+    assert.ok(!notes(q.report).some((n) => n.startsWith('Search form on /search-quick.html: chose')));
+  });
+}
+if (want('quickload')) {
+  const q = await crawl('quickload', ['--quiet', '--json', '--max-pages', '1', '--no-follow-clicks'], 'search-quick.html');
+  check('quickload: setting the range on load submits nothing, and the note is still written once', () => {
+    assert.ok(q.report, q.stderr);
+    assert.deepEqual(q.searches, []);
+    assert.deepEqual(rangeNotes(q.report, '/search-quick.html'), [QUICK_NOTE], JSON.stringify(notes(q.report)));
+    assert.deepEqual(pageOf(q.report, '/search-quick.html').ranges.forms.map((f) => [f.selector, f.preset]), [['#quick-filters', 'Last 6 months']]);
+  });
+}
+if (want('quickoff')) {
+  const q = await crawl('quickoff', ['--quiet', '--json', '--max-pages', '3', '--no-forms'], 'search-quick.html', { interact: true });
+  check('quickoff (e): --no-forms leaves the range alone: every search runs with "Last 24 hours", and no note', () => {
+    assert.ok(q.report, q.stderr);
+    const subs = q.searches.filter((s) => s.form === 'quick-click' || s.form === 'quick-kb');
+    assert.ok(subs.some((s) => s.form === 'quick-click'), JSON.stringify(q.searches));
+    assert.deepEqual([...new Set(subs.map((s) => s.preset))], ['Last 24 hours']);
+    assert.deepEqual(rangeNotes(q.report, '/search-quick.html'), []);
+    assert.ok(!pageOf(q.report, '/search-quick.html').ranges);
+  });
+}
+if (want('reset')) {
+  const r = await crawl('reset', ['--quiet', '--json', '--max-pages', '1', '--no-follow-clicks'], 'search-reset.html', { interact: true });
+  check('reset (b): fields that reset to today on focus are set again before the disclosure pass searches; every search spans three months', () => {
+    assert.ok(r.report, r.stderr);
+    const subs = r.searches.filter((s) => s.form === 'reset');
+    assert.ok(subs.length >= 2, JSON.stringify(r.searches));
+    for (const s of subs) {
+      const back = daysFrom(s.from);
+      assert.ok(s.ok && back >= 88 && back <= 93 && Math.abs(daysFrom(s.to)) <= 1, `a search ran with ${s.from} to ${s.to}`);
+    }
+    assert.ok(revealedBy(r.report, '/search-reset.html', 'reset-icon', 'Search').length, JSON.stringify(pageOf(r.report, '/search-reset.html').findings.map((f) => [f.test, f.state])));
+    assert.ok(pageOf(r.report, '/search-reset.html').ranges.reapplied >= 1, JSON.stringify([r.searches, pageOf(r.report, '/search-reset.html').ranges, pageOf(r.report, '/search-reset.html').passes]));
+  });
+  check('reset: the note gives the dates the range was set to', () => {
+    assert.equal(rangeNotes(r.report, '/search-reset.html').length, 1, JSON.stringify(notes(r.report)));
+    assert.match(rangeNotes(r.report, '/search-reset.html')[0], /^Search form on \/search-reset\.html: date range set to the last 3 months \(dates \d{2}\/\d{2}\/\d{4} to \d{2}\/\d{2}\/\d{4}\) before every search$/);
   });
 }
 

@@ -28,7 +28,7 @@
 
   // The scopes worth searching: forms, role="search" regions, and containers of two or more
   // fields with a button that are not in a form. Each with the control that submits it.
-  A.searchForms = (max) => {
+  const candidateScopes = () => {
     const scopes = new Set(A.all('form, [role="search"]'));
     for (const c of A.all(CONTROL)) {
       if (c.closest('form, [role="search"]')) continue;
@@ -40,6 +40,10 @@
         }
       }
     }
+    return scopes;
+  };
+  A.searchForms = (max) => {
+    const scopes = candidateScopes();
     const out = [];
     const skipped = [];
     const used = new Set();
@@ -173,6 +177,7 @@
         if (c) {
           setValue(s, c.item.o.value);
           take(c, c.item.o.text);
+          out.via = { kind: 'select', selector: A.selector(s) };
           break;
         }
       }
@@ -183,6 +188,7 @@
         if (c) {
           c.item.r.click();
           take(c, c.item.text);
+          out.via = { kind: 'radio', selector: A.selector(c.item.r) };
         }
       }
       if (!out.preset) {
@@ -191,6 +197,7 @@
         if (c) {
           if (c.item.b.getAttribute('aria-checked') !== 'true' && c.item.b.getAttribute('aria-pressed') !== 'true') c.item.b.click();
           take(c, c.item.text);
+          out.via = { kind: 'button', selector: A.selector(c.item.b) };
         }
       }
       // Custom dropdowns, for the crawler to open: outermost ones only (not an input inside a combobox).
@@ -213,11 +220,13 @@
         setValue(fromEl, formatFor(fromEl, from));
         out.dates++;
         out.from = fromEl.value;
+        out.fromSel = A.selector(fromEl);
       }
       if (toEl) {
         setValue(toEl, formatFor(toEl, today));
         out.dates++;
         out.to = toEl.value;
+        out.toSel = A.selector(toEl);
       }
     }
     if (required) {
@@ -236,6 +245,91 @@
       }
     }
     return out;
+  };
+
+  // The date range kept at the last N months on every load (src/passes.mjs applyRanges and
+  // guardRange): the search and filter scopes with a control named like a search (or a search box)
+  // that may hold a date range. Scopes with an action button too (Clear, Reset) are included, since
+  // nothing is submitted; login and upload forms are not.
+  A.rangeScopes = (max) => {
+    const out = [];
+    const used = new Set();
+    for (const scope of candidateScopes()) {
+      if (out.length >= max) break;
+      if (used.has(scope) || [...used].some((u) => u.contains(scope) || scope.contains(u))) continue;
+      if (!A.isVisible(scope) || inDialog(scope)) continue;
+      const fields = [...scope.querySelectorAll(FIELD)].filter((f) => A.isVisible(f) && !f.disabled);
+      if (fields.some((f) => f.type === 'password' || f.type === 'file')) continue;
+      const controls = [...scope.querySelectorAll(CONTROL)].filter((c) => A.isVisible(c) && !c.disabled);
+      const go = controls.some((c) => SEARCH.test(nameOf(c)) && !DANGER.test(nameOf(c)));
+      const box = fields.some((f) => f.type === 'search') || scope.matches('[role="search"]');
+      if (!go && !box) continue;
+      const ranged = fields.some((f) => f.localName === 'select' || f.type === 'radio' || (f.localName === 'input' && isDate(f))) || [...scope.querySelectorAll(WIDGET)].some((w) => A.isVisible(w));
+      if (!ranged) continue;
+      used.add(scope);
+      out.push({ selector: A.selector(scope) });
+    }
+    return out;
+  };
+  // What was set in a scope on this load, and how to tell whether the app has changed it since.
+  A.rangeRecord = (sel, rec) => {
+    A._ranges = A._ranges || {};
+    A._ranges[sel] = rec;
+    return true;
+  };
+  const norm = (t) => String(t || '').trim().replace(/\s+/g, ' ');
+  A.rangeIntact = (sel) => {
+    const rec = A._ranges && A._ranges[sel];
+    if (!rec || !rec.via) return true;
+    const v = rec.via;
+    const q = (s) => {
+      try {
+        return s ? A.query(s) : null;
+      } catch {
+        return null;
+      }
+    };
+    if (v.kind === 'dates') {
+      const f = q(v.from);
+      const t = q(v.to);
+      return (!f || f.value === rec.from) && (!t || t.value === rec.to);
+    }
+    const el = q(v.selector);
+    if (!el) return true;
+    if (v.kind === 'select') return norm(el.selectedOptions && el.selectedOptions[0] ? el.selectedOptions[0].text : '').slice(0, 80) === rec.preset;
+    if (v.kind === 'radio') return el.checked;
+    if (v.kind === 'button') return el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked') ? el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true' : true;
+    // A custom dropdown shows its choice as its text (mat-select) or its input's value (React Select).
+    const shown = norm(`${A.text(el)} ${el.value || ''} ${[...el.querySelectorAll('input')].map((i) => i.value).join(' ')}`);
+    return shown.includes(rec.preset);
+  };
+  // The recorded scope a pass is about to submit by activating `sel` (or, with `enter`, by pressing
+  // Enter on the focused element): a submit button, a control named like a search, or Enter on one
+  // of the scope's fields. null when the activation submits no recorded scope.
+  const SUBMITLIKE = /\b(search|filter|apply|go|find|run|show results)\b/i;
+  A.rangeTarget = (sel, enter) => {
+    if (!A._ranges) return null;
+    let el;
+    try {
+      el = sel ? A.query(sel) : A.activeElement();
+    } catch {
+      return null;
+    }
+    if (!el) return null;
+    const submits =
+      el.matches('input[type="submit"], input[type="image"], button[type="submit"]') ||
+      (el.localName === 'button' && !el.hasAttribute('type') && !!el.form) ||
+      (enter && el.matches(FIELD) && !el.matches('select, textarea')) ||
+      (el.matches('button, [role="button"], input[type="button"], a[href^="javascript:" i], a[href="#"]') && SUBMITLIKE.test(nameOf(el)));
+    if (!submits) return null;
+    for (const s of Object.keys(A._ranges)) {
+      let scope = null;
+      try {
+        scope = A.query(s);
+      } catch {}
+      if (scope && scope.contains(el)) return s;
+    }
+    return null;
   };
 
   // A custom dropdown, driven from outside the page (real clicks and keys, so the framework sees a

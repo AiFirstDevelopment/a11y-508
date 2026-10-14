@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Events by quick date - a11y-508 test site</title>
+<style>
+  .sel { display: inline-block; min-width: 10em; padding: 4px 8px; border: 1px solid #555; cursor: pointer; }
+  .row { margin: 12px 0; }
+  .cdk-overlay-pane { position: absolute; background: #fff; border: 1px solid #555; padding: 4px 0; z-index: 10; }
+  .cdk-overlay-pane [role="option"] { padding: 4px 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+<h1>Events by quick date</h1>
+<p>Like an Angular Material search screen: a "Quick Date/Time" dropdown that defaults to the last 24 hours, a Clear button (so the search pass leaves this group alone as an action), a Search button that only click discovery presses, and a Show results button that only the disclosure pass presses. Events appear only for three months or more; every search is recorded with the preset it ran with.</p>
+<div class="filters" id="quick-filters">
+  <div class="row"><span id="quick-label">Quick Date/Time</span>
+    <div role="combobox" id="quick" class="sel" tabindex="0" aria-labelledby="quick-label" aria-haspopup="listbox" aria-expanded="false">Last 24 hours</div></div>
+  <div class="row">
+    <button type="button" id="quick-search" onclick="searchByClick()">Search</button>
+    <button type="button" id="quick-show" aria-expanded="false" aria-controls="quick-results">Show results</button>
+    <button type="button" id="quick-clear">Clear</button>
+  </div>
+</div>
+<div id="quick-results" aria-live="polite"></div>
+</main>
+<script>
+  const DAYS = { 'Last 24 hours': 1, 'Last 7 days': 7, 'Last 30 days': 30, 'Last 6 months': 180, 'Last year': 365 };
+  const model = { quick: 'Last 24 hours' };
+  const trigger = document.getElementById('quick');
+  let pane = null;
+  const close = () => {
+    if (!pane) return;
+    pane.remove();
+    pane = null;
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.removeAttribute('aria-controls');
+  };
+  const open = () => {
+    if (pane) return;
+    const r = trigger.getBoundingClientRect();
+    pane = document.createElement('div');
+    pane.className = 'cdk-overlay-pane';
+    pane.style.left = `${r.right + window.scrollX + 12}px`;
+    pane.style.top = `${r.top + window.scrollY}px`;
+    pane.innerHTML = `<div role="listbox" id="quick-panel" aria-label="Quick Date/Time">${Object.keys(DAYS).map((o, i) => `<div role="option" id="quick-opt-${i}" aria-selected="${model.quick === o}">${o}</div>`).join('')}</div>`;
+    document.body.appendChild(pane);
+    for (const el of pane.querySelectorAll('[role="option"]')) {
+      el.addEventListener('click', () => {
+        model.quick = el.textContent;
+        trigger.textContent = el.textContent;
+        close();
+      });
+    }
+    trigger.setAttribute('aria-expanded', 'true');
+    trigger.setAttribute('aria-controls', 'quick-panel');
+  };
+  trigger.addEventListener('click', () => (pane ? close() : open()));
+  trigger.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' && e.altKey) open();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') close();
+  });
+  document.getElementById('quick-clear').addEventListener('click', () => {
+    model.quick = 'Last 24 hours';
+    trigger.textContent = model.quick;
+  });
+  // Click discovery's search: a results page for the preset it ran with.
+  function searchByClick() {
+    location.href = '/search-quick-results.html?' + new URLSearchParams({ preset: model.quick, days: DAYS[model.quick] });
+  }
+  // The disclosure pass's search: results shown in place.
+  const show = document.getElementById('quick-show');
+  show.addEventListener('click', async () => {
+    show.setAttribute('aria-expanded', 'true');
+    const q = new URLSearchParams({ form: 'quick-kb', preset: model.quick, days: DAYS[model.quick] });
+    const links = await (await fetch('/api/preset-search?' + q, { headers: { authorization: 'Bearer FIXTURE_TOKEN' } })).json();
+    document.getElementById('quick-results').innerHTML = links.length ? '<ul>' + links.map((l, i) => `<li><a href="${l}">Event ${i + 1}</a> <img src="/img/event.png" class="quick-kb-icon" width="16" height="16"></li>`).join('') + '</ul>' : '<p>No events found.</p>';
+  });
+</script>
+</body>
+</html>

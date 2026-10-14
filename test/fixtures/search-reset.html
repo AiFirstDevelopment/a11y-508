@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Entries by date - a11y-508 test site</title>
+</head>
+<body>
+<main>
+<h1>Entries by date</h1>
+<p>A date range whose script puts a field back to today whenever it gets focus (the Tab pass focuses both), and a Search button that only the disclosure pass presses. Entries appear for a range reaching back two months or more; every search is recorded with the dates it ran with.</p>
+<div class="filters" id="reset-filters">
+  <label for="reset-from">From date</label> <input type="text" id="reset-from" placeholder="MM/DD/YYYY">
+  <label for="reset-to">To date</label> <input type="text" id="reset-to" placeholder="MM/DD/YYYY">
+  <button type="button" id="reset-search" aria-expanded="false" aria-controls="reset-results">Search</button>
+</div>
+<div id="reset-results" aria-live="polite"></div>
+</main>
+<script>
+  const pad = (n) => String(n).padStart(2, '0');
+  const now = new Date();
+  const today = `${pad(now.getMonth() + 1)}/${pad(now.getDate())}/${now.getFullYear()}`;
+  for (const el of document.querySelectorAll('input')) {
+    el.value = today;
+    el.addEventListener('focus', () => (el.value = today));
+  }
+  const btn = document.getElementById('reset-search');
+  btn.addEventListener('click', async () => {
+    btn.setAttribute('aria-expanded', 'true');
+    const q = new URLSearchParams({ form: 'reset', from: document.getElementById('reset-from').value, to: document.getElementById('reset-to').value });
+    const links = await (await fetch('/api/preset-search?' + q, { headers: { authorization: 'Bearer FIXTURE_TOKEN' } })).json();
+    document.getElementById('reset-results').innerHTML = links.length ? '<ul>' + links.map((l, i) => `<li><a href="${l}">Entry ${i + 1}</a> <img src="/img/entry.png" class="reset-icon" width="16" height="16"></li>`).join('') + '</ul>' : '<p>No entries found.</p>';
+  });
+</script>
+</body>
+</html>

@@ -250,7 +250,7 @@ export async function disclosurePass(page, add, fingerprints, opts, reload) {
   // The top document first, then each same-origin frame's (found after the top document's
   // activations, which may have reloaded the page), within one budget of --max-activations.
   let budget = opts.maxActivations;
-  const top = await disclosureScope(page, add, fingerprints, reload, null, budget, out);
+  const top = await disclosureScope(page, add, fingerprints, reload, null, budget, out, opts);
   budget -= top;
   if (budget > 0) {
     let frames = [];
@@ -259,7 +259,7 @@ export async function disclosurePass(page, add, fingerprints, opts, reload) {
     } catch {}
     for (const fr of frames) {
       if (budget <= 0) break;
-      budget -= await disclosureScope(page, add, fingerprints, reload, fr, budget, out);
+      budget -= await disclosureScope(page, add, fingerprints, reload, fr, budget, out, opts);
     }
   }
   return out;
@@ -267,7 +267,7 @@ export async function disclosurePass(page, add, fingerprints, opts, reload) {
 
 // The disclosure pass over one document: the top one (fr null) or a same-origin frame's, whose
 // findings are named with the frame's prefix. Returns how many candidates it had.
-async function disclosureScope(page, add, fingerprints, reload, fr, max, out) {
+async function disclosureScope(page, add, fingerprints, reload, fr, max, out, opts) {
   let ctx = fr ? fr.contextId : undefined;
   const ev = (expr) => page.evaluate(expr, { contextId: ctx });
   const wrap = (sel) => (fr && sel ? `${fr.path} >>> ${sel}` : sel);
@@ -292,6 +292,8 @@ async function disclosureScope(page, add, fingerprints, reload, fr, max, out) {
   const state = (sel) => ev(`window.__a11y508.disclosureState(${JSON.stringify(sel)})`);
   for (const [i, c] of cands.entries()) {
     if (page.progress) page.progress('disclosures', { done: i, of: cands.length });
+    // Enter or Space on a search button runs the search: with the date range set first.
+    if (!fr) await guardRange(page, opts, c.selector).catch(() => false);
     let focused = false;
     try {
       focused = await ev(`window.__a11y508.focusSelector(${JSON.stringify(c.selector)})`);
@@ -367,6 +369,8 @@ export async function routeDiscoveryPass(page, meta, opts, reload, origin) {
   for (const [i, c] of candidates.entries()) {
     if (page.progress) page.progress('discovery', { clicked: i, of: candidates.length });
     if ((await here()) !== startHref) await reload();
+    // A search button clicked here runs the search: with the date range set first.
+    await guardRange(page, opts, c.selector).catch(() => false);
     let pt = null;
     try {
       pt = await page.evaluate(`window.__a11y508.prepareClick(${JSON.stringify(c.selector)})`);
@@ -574,6 +578,83 @@ async function comboPreset(page, sel, months) {
     await sleep(150);
   }
   return chosen;
+}
+
+// The date range, set on every load: each search or filter scope with a date range or preset is set
+// to the last --search-months months (the search pass's own choice, nothing submitted), and what was
+// set is recorded in the page so a pass about to run a search can tell whether the app changed it
+// (guardRange). page.ranges collects one entry per scope for the page's report. --no-forms: nothing.
+const A = 'window.__a11y508';
+async function fillRange(page, sel, months) {
+  const q = JSON.stringify(sel);
+  const fill = await page.evaluate(`${A}.fillSearch(${q}, ${months}, { dates: false, required: false })`);
+  if (!fill) return null;
+  let via = fill.via || null;
+  for (const c of fill.preset ? [] : fill.combos) {
+    const got = await comboPreset(page, c, months).catch(() => null);
+    if (!got) continue;
+    Object.assign(fill, { preset: got.text, presetDays: got.days, short: got.short });
+    via = { kind: 'combo', selector: c };
+    break;
+  }
+  if (!fill.preset) {
+    const rest = await page.evaluate(`${A}.fillSearch(${q}, ${months}, { presets: false, required: false })`);
+    if (!rest || !rest.dates) return null;
+    Object.assign(fill, { from: rest.from, to: rest.to });
+    via = { kind: 'dates', from: rest.fromSel || null, to: rest.toSel || null };
+  }
+  const rec = { selector: sel, preset: fill.preset || null, presetDays: fill.presetDays || null, short: !!fill.short, from: fill.from || null, to: fill.to || null, via };
+  await page.evaluate(`${A}.rangeRecord(${q}, ${JSON.stringify(rec)})`);
+  return rec;
+}
+
+export async function applyRanges(page, opts) {
+  if (!opts.forms) return [];
+  await page.ensureInjected();
+  const scopes = await page.evaluate(`(() => { ${A}._ranges = {}; return ${A}.rangeScopes(3); })()`);
+  if (!scopes.length) return [];
+  const scroll = await page.evaluate(`${A}.scrollPosition()`).catch(() => null);
+  const set = [];
+  for (const s of scopes) {
+    const rec = await fillRange(page, s.selector, opts.searchMonths).catch(() => null);
+    if (!rec) continue;
+    set.push(rec);
+    // One entry per form for the report, however often the page is loaded.
+    if (page.ranges && !page.ranges.forms.some((f) => f.selector === rec.selector)) {
+      const { via, ...shown } = rec;
+      page.ranges.forms.push(shown);
+    }
+  }
+  // Left as loaded: nothing focused, Tab starting from the top of the page again (a focused element
+  // removed at the start of the body moves the browser's starting point there), scrolled back.
+  await page.evaluate(`(() => {
+    const a = document.activeElement;
+    if (a && a !== document.body) a.blur();
+    if (document.body) {
+      const m = document.createElement('span');
+      m.tabIndex = -1;
+      document.body.prepend(m);
+      m.focus({ preventScroll: true });
+      m.blur();
+      m.remove();
+    }
+    ${scroll ? `window.scrollTo(${scroll.x}, ${scroll.y});` : ''}
+    return true;
+  })()`).catch(() => {});
+  return set;
+}
+
+// Before a pass activates `sel` (or presses Enter on the focused element, with `enter`): when that
+// submits a scope whose range was set on this load and the app has changed the range since, it is
+// set again. Returns true when it was.
+export async function guardRange(page, opts, sel, enter = false) {
+  if (!opts.forms) return false;
+  const scope = await page.evaluate(`${A}.rangeTarget(${JSON.stringify(sel)}, ${!!enter})`).catch(() => null);
+  if (!scope) return false;
+  if (await page.evaluate(`${A}.rangeIntact(${JSON.stringify(scope)})`).catch(() => true)) return false;
+  const rec = await fillRange(page, scope, opts.searchMonths).catch(() => null);
+  if (rec && page.ranges) page.ranges.reapplied++;
+  return !!rec;
 }
 
 // Search-form discovery: fills and submits the forms that look like searches or filters (at most

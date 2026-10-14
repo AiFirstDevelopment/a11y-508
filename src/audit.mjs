@@ -3,7 +3,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BEYOND, testInfo } from './checks/catalog.mjs';
-import { listenerProbe, keyboardPass, disclosurePass, zoomPass, spacingPass, reflowPass, routeDiscoveryPass, modalOnLoadPass, redismissModal, searchPass } from './passes.mjs';
+import { listenerProbe, keyboardPass, disclosurePass, zoomPass, spacingPass, reflowPass, routeDiscoveryPass, modalOnLoadPass, redismissModal, searchPass, applyRanges } from './passes.mjs';
 import { discoverFrames, inFrame, MAX_FRAME_DEPTH, BETWEEN_IMAGES } from './frames.mjs';
 
 // What a document that the server called an error actually rendered: enough
@@ -18,11 +18,16 @@ export async function auditPage(page, url, ctx) {
   if (ctx.progress) ctx.progress.start(url);
   // The passes report where they are through the page (--events only).
   page.progress = ctx.progress ? (phase, detail = null) => ctx.progress.phase(url, phase, detail) : null;
+  // The date ranges set on this page's loads (src/passes.mjs applyRanges), one entry per form.
+  page.ranges = { forms: [], reapplied: 0 };
   try {
-    return await auditPageIn(page, url, ctx);
+    const result = await auditPageIn(page, url, ctx);
+    if (page.ranges.forms.length) result.ranges = page.ranges;
+    return result;
   } finally {
     if (ctx.progress) ctx.progress.end(url);
     page.progress = null;
+    page.ranges = null;
   }
 }
 
@@ -128,10 +133,18 @@ async function auditPageIn(page, url, ctx) {
     if (result.modalOnLoad && result.modalOnLoad.dismissed && (await redismissModal(page).catch(() => false))) {
       result.modalOnLoad.redismissed = (result.modalOnLoad.redismissed || 0) + 1;
     }
+    // Every load: the date range at the last --search-months months before anything is pressed.
+    await applyRanges(page, opts).catch(() => {});
   };
 
   try {
     await page.ensureInjected();
+    // The date range at the last --search-months months before any check or pass runs.
+    try {
+      await applyRanges(page, opts);
+    } catch (e) {
+      result.errors.push(`date range: ${e.message}`);
+    }
     result.info = await page.evaluate('window.__a11y508.pageInfo()');
     result.title = result.info.title;
     // A modal dialog open on load (a cookie or consent banner) hides the page from every check.

@@ -175,12 +175,22 @@ export async function startFixtureSite({ port = 0, host = '127.0.0.1', token = T
       const open = q.get('open') === '1';
       const from = q.get('from');
       const mdy = /^\d{2}\/\d{2}\/\d{4}$/;
-      const need = { combo: 90, widest: 30, buttons: 90, radios: 90 }[form];
+      const need = { combo: 90, widest: 30, buttons: 90, radios: 90, 'quick-kb': 90 }[form];
       const ok = need ? days >= need && !open : mdy.test(from || '') && mdy.test(q.get('to') || '') && Date.now() - parseDate(from).getTime() >= 59 * 24 * 3600 * 1000;
       state.searches.push({ form, status: q.get('status'), preset: q.get('preset'), days, open, from, to: q.get('to'), ok });
-      const links = { combo: [21, 22], widest: [31], buttons: [41], radios: [42], 'mat-placeholder': [51], 'mat-toggle': [52] }[form] || [];
+      const links = { combo: [21, 22], widest: [31], buttons: [41], radios: [42], 'mat-placeholder': [51], 'mat-toggle': [52], 'quick-kb': [62], reset: [63] }[form] || [];
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(ok ? links.map((n) => `/result-${n}.html`) : []));
+    }
+    // search-quick.html's click-discovery search: a results page for the preset it ran with, recorded;
+    // rows only for three months or more. It links back to the fixture list, not to the search.
+    if (path === '/search-quick-results.html') {
+      const q = new URL(req.url, 'http://x').searchParams;
+      const days = Number(q.get('days') || 0);
+      const ok = days >= 90;
+      state.searches.push({ form: 'quick-click', preset: q.get('preset'), days, ok });
+      res.writeHead(200, { 'content-type': TYPES['.html'] });
+      return res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Events - a11y-508 test site</title></head><body><main><h1>Events</h1>${ok ? '<ul><li><a href="/result-61.html">Event 1</a></li></ul>' : '<p>No events found.</p>'}<p><a href="/about.html">Back to the fixture list</a></p></main></body></html>`);
     }
     if (path === '/api/delete-filtered') {
       state.deleteHits.push(req.method);

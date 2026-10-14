@@ -41,7 +41,7 @@ export function coverage(pages, crawl, opts) {
   const audited = pages.filter((p) => !p.error && !p.skipped);
   const start = pages[0];
   const startLinks = start && start.info ? start.info.links.length : 0;
-  const startClicks = start && start.discovery ? start.discovery.urls.length : 0;
+  const startClicks = start && start.discovery && start.discovery.urls ? start.discovery.urls.length : 0;
   if (audited.length === 1 && start && !start.error && !start.skipped && startLinks + startClicks === 0) {
     warnings.push(`Only the start page was audited: it has no links the crawler could follow${opts.followClicks ? ', and clicking its navigation-like controls led nowhere new' : ''}. Pages behind this one were not audited. Run --troubleshoot to see what the page offers, or pass more start URLs.`);
   }
@@ -95,6 +95,14 @@ export function coverage(pages, crawl, opts) {
     else notes.push(`${where}: submitted with no date range (no preset or date field found).`);
   }
   if (searched.length > 10) notes.push(`${searched.length - 10} more searched form(s) are listed in report.json under pages[].search.forms.`);
+  // The date range set on every load of a page with a search or filter form, once per form.
+  const ranged = pages.flatMap((p) => ((p.ranges && p.ranges.forms) || []).map((f) => ({ p, f })));
+  const span = `the last ${opts.searchMonths} month${opts.searchMonths === 1 ? '' : 's'}`;
+  for (const { p, f } of ranged.slice(0, 10)) {
+    const what = f.preset ? (f.short ? `${f.preset}, the widest preset` : `${f.preset} preset`) : `dates ${f.from || '(no start)'} to ${f.to || '(no end)'}`;
+    notes.push(`Search form on ${short(p.finalUrl || p.url)}: date range set to ${span} (${what}) before every search`);
+  }
+  if (ranged.length > 10) notes.push(`${ranged.length - 10} more form(s) had their date range set on every load; they are listed in report.json under pages[].ranges.forms.`);
   if (opts.forms === false) notes.push('Search-form discovery was off (--no-forms); result pages behind search and filter forms were not looked for.');
   if (crawl.clickOnly) notes.push(`${crawl.clickOnly} page(s) were reachable only by clicking a control with no link (href); they were found by clicking and audited. Screen reader users cannot discover these destinations as links (check WCAG 2.1.1, 4.1.2).`);
   return { complete: warnings.length === 0, warnings, notes };
