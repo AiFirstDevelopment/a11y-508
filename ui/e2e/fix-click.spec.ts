@@ -162,7 +162,8 @@ test('fix-click AC9 / guard 9a: a loop that could not start still says so after 
     expect(await runId(dash)).toBe(id);
     // A relaunch of the dashboard: the outcome comes from the run journal.
     await dash.stop();
-    dash = await dashboard({ cwd, keepCwd: true });
+    // The same state base: the run journal is in the tool's own folder for the repository there.
+    dash = await dashboard({ cwd, keepCwd: true, env: { A11Y_508_HOME: dash.home } });
     await restore(page, dash, '/fix-loop');
     await shown();
     expect(await runId(dash)).toBe(id);
