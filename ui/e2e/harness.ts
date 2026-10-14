@@ -336,6 +336,5 @@ export function run(file: string, args: string[], opts: { cwd?: string; env?: No
 export function countsLine(c: Record<string, number | undefined>): string {
   const v = c['verified'] || 0;
   const p = c['pending'] || 0;
-  const nh = c['needs-human'] || 0;
-  return [v ? `${v} verified fixed` : '', p ? `${p} fixed, awaiting verification` : '', !v && !p ? '0 fixed' : '', `${c['open'] || 0} remaining`, nh ? `${nh} need${nh === 1 ? 's' : ''} a person` : ''].filter(Boolean).join(' · ');
+  return [v ? `${v} verified fixed` : '', p ? `${p} fixed, awaiting verification` : '', !v && !p ? '0 fixed' : '', `${c['open'] || 0} remaining`].filter(Boolean).join(' · ');
 }

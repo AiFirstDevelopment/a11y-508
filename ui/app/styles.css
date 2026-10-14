@@ -57,6 +57,15 @@ button:disabled { background: #e6e6e6; color: #595959; border-color: #8c8c8c; cu
 .notice.error { border-color: var(--crit); background: var(--err-bg); }
 .notice h2, .notice h3 { margin: 4px 0; }
 .notice ul { margin: 4px 0; padding-left: 20px; }
+/* "Where you are": the checklist at the top of the Fix step and History. */
+.where { border: 1px solid var(--line); border-radius: 6px; padding: 6px 14px; margin: 8px 0 14px; }
+.where h2 { margin: 4px 0; font-size: 1rem; }
+.where-list { list-style: none; margin: 4px 0; padding: 0; }
+.where-list li { margin: 3px 0; overflow-wrap: anywhere; }
+.where-list li[data-kind='now'] { font-weight: 600; }
+.where-mark { display: inline-block; width: 1.4em; }
+.where-link { margin-left: 8px; font-size: 0.9rem; }
+.round-headline { font-weight: 600; }
 .ok { color: var(--ok); }
 code, pre { font: 0.9rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code); border-radius: 3px; }
 code { padding: 1px 4px; word-break: break-word; }
@@ -168,15 +177,3 @@ dialog.setup { max-width: min(640px, calc(100vw - 32px)); border: 1px solid var(
 dialog.setup::backdrop { background: rgba(0, 0, 0, 0.35); }
 .inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .inline input { flex: 1 1 260px; }
-/* The Needs a person screen (/review). */
-.review-card { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; padding: 8px 14px; margin: 14px 0; }
-.review-card h3 { margin: 4px 0; font-size: 1.05rem; overflow-wrap: anywhere; }
-.review-card h4 { margin: 12px 0 2px; font-size: 0.95rem; }
-.review-card dt { font-weight: 600; }
-.review-card dd { margin: 0 0 6px; }
-.review-card code { overflow-wrap: anywhere; }
-.review-card img { max-width: 100%; border: 1px solid var(--line); display: block; margin: 6px 0; }
-.review-card textarea { width: 100%; max-width: 640px; }
-.review-card .label { margin: 4px 0 0; font-weight: 600; }
-ul.review-pages, ul.review-sources { margin: 2px 0 6px; padding-left: 20px; }
-.needs-person { font-weight: 600; }

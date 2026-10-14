@@ -19,7 +19,6 @@ export function stepPath(url: string): string | null {
   if (p.startsWith('/live') || p.startsWith('/troubleshoot')) return '/live';
   if (p.startsWith('/report')) return '/report';
   if (p.startsWith('/fix-loop')) return '/fix-loop';
-  if (p.startsWith('/review')) return '/review';
   if (p.startsWith('/history')) return '/history';
   return null;
 }

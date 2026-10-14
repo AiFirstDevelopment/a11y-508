@@ -9,7 +9,7 @@ import { join, dirname, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { applyReport, decide, loadLedger, saveLedger } from '../src/ledger.mjs';
+import { applyReport, loadLedger } from '../src/ledger.mjs';
 import { agentEnv, fixPrompt, triagePrompt } from '../src/agent.mjs';
 import { normalizeConfig, sessionArgs, splitCheck } from '../src/loop.mjs';
 import { splitLoopArgs } from '../src/cli.mjs';
@@ -80,7 +80,7 @@ const check = (name, fn) => {
     e.attempts.push({ round: r, outcome: 'pending' });
     applyReport(l2, report([page('/a', [f('7.A', 'img', 'no alt')])]), r + 1, { maxAttempts: 3 });
   }
-  check('ledger: gives up after maxAttempts fixes that did not hold', () => assert.equal(e.status, 'needs-human'));
+  check('ledger: gives up after maxAttempts fixes that did not hold', () => assert.equal(e.status, 'skipped'));
 }
 
 // ---- unit: prompts never carry secrets, env strips the token
@@ -252,7 +252,7 @@ check('findings the agent declined stay open with a no-change attempt', () => {
 check('triage closed review items as adequate and reopened the inadequate one', () => {
   assert.ok(entries.some((e) => e.status === 'adequate' && e.triage && e.triage.round === 1));
   const sensory = byTest('13.B')[0];
-  assert.ok(sensory && sensory.triage.decision === 'inadequate' && ['open', 'needs-human'].includes(sensory.status), JSON.stringify(sensory));
+  assert.ok(sensory && sensory.triage.decision === 'inadequate' && ['open', 'skipped'].includes(sensory.status), JSON.stringify(sensory));
 });
 check('the token never reached the agent', () => {
   const results = entries.flatMap((e) => e.attempts);
@@ -1160,67 +1160,85 @@ rmSync(repo2, { recursive: true, force: true });
     void g;
   }
 
-  // Needs a person (docs/plans/needs-a-person.md) AC 5, guards 5 and 6: a person's decision in the
-  // ledger is what the loop follows. Looks fine and Won't fix are never fixed, re-asked or reopened
-  // by the next crawl; Ask the assistant to fix it sends the finding back with the note in its prompt.
+  // ---- fixes waiting for a deployment someone else runs (docs/plans/deploy-wait.md): the site's
+  // start page carries a script bundle whose name this test changes to stand for a new build.
   {
-    const { dir, g } = appRepo('a11y-508-decided-', { maxAttempts: 3 });
-    const site = await serve(dir);
-    const url = `http://127.0.0.1:${site.address().port}/`;
-    writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(dir, 'a11y-508.config.json'), 'utf8')), url }, null, 2));
-    g('commit', '-qam', 'the config names the site');
-    const crawl = await cli(dir, [url, ...quick, '--quiet', '--fail-on', 'none']);
-    const report = JSON.parse(readFileSync(join(reportDir(dir), 'report.json'), 'utf8'));
-    // Round 1 from that report, then three violations the loop gave up on, each decided by a person.
+    const { dir } = appRepo('a11y-508-deploy-wait-', { deployed: 'bundle-change', deployTimeout: 2500, deployPoll: 400 });
+    let build = 1;
+    const srv = createServer((req, res) => {
+      if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+        res.writeHead(401);
+        return res.end();
+      }
+      let path = new URL(req.url, 'http://x').pathname;
+      if (path === '/') path = '/index.html';
+      if (/^\/bundle\.\d+\.js$/.test(path)) {
+        res.writeHead(200, { 'content-type': 'text/javascript' });
+        return res.end('');
+      }
+      if (path.startsWith('/img/') || path === '/pixel.png') {
+        res.writeHead(200, { 'content-type': 'image/png' });
+        return res.end(PNG);
+      }
+      const file = join(dir, 'site', path);
+      if (extname(path) !== '.html' || !existsSync(file)) {
+        res.writeHead(404, { 'content-type': 'text/html' });
+        return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
+      }
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(readFileSync(file, 'utf8').replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN).replace('</head>', `<script src="/bundle.${build}.js"></script></head>`));
+    });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${srv.address().port}/`;
     const ledgerFile = join(workDir(dir), 'ledger.json');
-    const ledger = loadLedger(ledgerFile);
-    applyReport(ledger, report, 1);
-    const violations = Object.values(ledger.findings).filter((e) => e.level === 'violation');
-    const [fine, wont, back] = violations;
-    for (const e of [fine, wont, back]) {
-      e.status = 'needs-human';
-      e.reason = 'still present after 3 fix attempts';
-      e.attempts = [1, 2, 3].map((round) => ({ round, files: [], note: 'tried', outcome: 'no-change' }));
-    }
-    const NOTE = 'The image shows the harbour at dawn; use that as its alt text.';
-    decide(ledger, fine.fingerprint, { status: 'adequate' });
-    decide(ledger, wont.fingerprint, { status: 'wont-fix', note: 'Decorative; the vendor owns this widget.' });
-    decide(ledger, back.fingerprint, { status: 'open', note: NOTE });
-    saveLedger(ledgerFile, ledger);
-    const loop = await loopIn(dir, ['--max-rounds', '1', '--events']);
-    site.close();
-    const work = workDir(dir);
-    // Every fix prompt the round wrote, by the fingerprint of the finding in its machine-readable block.
-    const prompts = readdirSync(tasksOf(dir)).filter((f) => /^prompt-r2-fix-\d+\.md$/.test(f)).map((f) => readFileSync(join(tasksOf(dir), f), 'utf8'));
-    const fpOf = (p) => {
-      const b = [...p.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1])).find((o) => o.kind === 'fix');
-      return `${b.finding.test}|${b.finding.selector || ''}|${b.finding.message}`;
-    };
-    const after = loadLedger(ledgerFile);
-    check('needs-a-person AC5/guard 5: Looks fine and Won\'t fix are never fixed, and the next crawl does not reopen them', () => {
-      assert.equal(crawl.status, 0, crawl.out);
-      assert.ok(violations.length >= 3, `the fixture has ${violations.length} violations`);
-      assert.ok(prompts.length >= 1, loop.out);
-      const fixed = prompts.map(fpOf);
-      assert.ok(!fixed.includes(fine.fingerprint), `the assistant was asked to fix ${fine.fingerprint}, which a person said looks fine`);
-      assert.ok(!fixed.includes(wont.fingerprint), `the assistant was asked to fix ${wont.fingerprint}, which a person said won't be fixed`);
-      // Round 2's crawl saw them again; they stay as the person decided.
-      assert.equal(after.rounds.length, 2, loop.out);
-      assert.equal(after.findings[fine.fingerprint].lastSeenRound, 2);
-      assert.equal(after.findings[fine.fingerprint].status, 'adequate');
-      assert.equal(after.findings[wont.fingerprint].status, 'wont-fix');
-      assert.equal(after.findings[wont.fingerprint].decision.note, 'Decorative; the vendor owns this widget.');
+    const first = await loopIn(dir, [url, '--max-rounds', '3']);
+    const l1 = loadLedger(ledgerFile);
+    const pending1 = Object.values(l1.findings).filter((e) => e.status === 'pending').length;
+    check('deploy-wait AC2/AC3: the wait running out ends with exit 4 (not an error), the explanation and the three commands', () => {
+      assert.equal(first.status, 4, first.out);
+      assert.ok(pending1 > 0, first.out);
+      assert.match(first.out, /Your deployment has not arrived yet/);
+      assert.ok(first.out.includes(`${pending1} fix${pending1 === 1 ? ' is' : 'es are'} committed on branch main. The site at 127.0.0.1:${srv.address().port} still serves the build from before them, so they cannot be verified yet. Deploy that branch — or merge it into the branch your pipeline builds`), first.out);
+      for (const c of ['a11y-508 loop --verify ', 'a11y-508 loop --from-report ', 'a11y-508 loop --wait ']) assert.ok(first.out.includes(c), `${c}\n${first.out}`);
+      assert.doesNotMatch(first.out, /^error /m);
+      assert.ok(l1.deploy && l1.deploy.signature.includes('/bundle.1.js'), JSON.stringify(l1.deploy));
     });
-    check('needs-a-person AC5/guard 6: a finding sent back has the person\'s note in its next fix prompt, with its attempts reset', () => {
-      const mine = prompts.filter((p) => fpOf(p) === back.fingerprint);
-      assert.equal(mine.length, 1, `prompts for ${back.fingerprint}: ${mine.length}\n${loop.out}`);
-      assert.ok(mine[0].includes(`A person reviewed this and says: ${NOTE}`), mine[0]);
-      // The attempts before the decision are not "earlier attempts that did not work" for this one.
-      assert.ok(!/Earlier attempts that did not work/.test(mine[0]), mine[0]);
-      const e = after.findings[back.fingerprint];
-      assert.equal(e.attempts.length, 1);
-      assert.equal(e.earlierAttempts.length, 3);
+    const verify = await loopIn(dir, [url, '--verify', '--events']);
+    const vEvents = parseEvents(verify.stdout);
+    const l2 = loadLedger(ledgerFile);
+    check('deploy-wait AC2/AC5: --verify with the old build still live ends at once, crawls nothing, and changes nothing', () => {
+      assert.deepEqual(vEvents.problems, []);
+      assert.equal(verify.status, 4, verify.out);
+      const dep = vEvents.events.find((e) => e.type === 'deployment');
+      assert.equal(dep && dep.state, 'still-old', verify.stdout);
+      assert.ok(vEvents.events.some((e) => e.type === 'warn' && e.message === 'The site still serves the old build (checked just now); nothing was changed.'), verify.stdout);
+      assert.ok(!vEvents.events.some((e) => e.type === 'step' || e.type === 'page' || e.type === 'round'), verify.stdout);
+      assert.equal(l2.rounds.length, l1.rounds.length);
+      assert.equal(Object.values(l2.findings).filter((e) => e.status === 'pending').length, pending1);
+      assert.equal(vEvents.events[vEvents.events.length - 1].code, 4);
     });
+    const remaining = await loopIn(dir, [url, '--from-report', '--events', '--max-rounds', '1']);
+    const rEvents = parseEvents(remaining.stdout);
+    const l3 = loadLedger(ledgerFile);
+    check('deploy-wait AC2: --from-report with no file fixes from the ledger with no crawl; the waiting fixes stay pending', () => {
+      assert.deepEqual(rEvents.problems, []);
+      assert.ok(!rEvents.events.some((e) => (e.type === 'step' && e.step === 'crawl') || e.type === 'page'), remaining.stdout);
+      assert.ok(rEvents.events.some((e) => e.type === 'step' && e.step === 'ledger'), remaining.stdout);
+      assert.equal(l3.rounds[l3.rounds.length - 1].source, 'ledger');
+      assert.ok(Object.values(l3.findings).filter((e) => e.status === 'pending').length >= pending1);
+      // It then waits again for the same old build, and runs out.
+      assert.equal(remaining.status, 4, remaining.out);
+      assert.ok(l3.deploy.signature.includes('/bundle.1.js'));
+    });
+    build = 2;
+    const arrived = await loopIn(dir, [url, '--verify', '--max-rounds', '1']);
+    const l4 = loadLedger(ledgerFile);
+    check('deploy-wait AC5: once the bundles changed, a loop start verifies the waiting fixes', () => {
+      assert.match(arrived.out, /Your deployment arrived: verifying \d+ fixes/);
+      assert.ok(Object.values(l4.findings).some((e) => e.status === 'verified'), arrived.out);
+      assert.equal(l4.rounds.length, l3.rounds.length + 1, arrived.out);
+    });
+    srv.close();
     removeOwn(dir);
   }
 }

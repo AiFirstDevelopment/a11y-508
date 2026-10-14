@@ -36,7 +36,7 @@ export function doingOf(run) {
     const n = (gate && gate.n) || (task && task.n) || null;
     const STEP = {
       crawl: 'crawling', report: 'writing the report', triage: 'sorting the findings', commit: 'committing a fix', push: 'pushing',
-      deploy: 'deploying', 'await-deploy': 'waiting for the deploy',
+      deploy: 'deploying', 'await-deploy': 'waiting for the deploy', ledger: 'fixing the remaining findings without a crawl',
     };
     if (gate || step === 'gate') words = n ? `checking fix ${n}` : 'checking the fixes';
     else if (step === 'fix') words = task ? `fixing ${task.n} of ${task.m}` : 'fixing';

@@ -8,28 +8,28 @@ import { fixedLine, resultWord, localTime, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
 import { ReportListEntry } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
-import { NeedsPersonLink } from '../shared/needs-person-link';
+import { WhereYouAre } from '../shared/where-you-are';
 import { ChangeRow, ChangesTable } from '../shared/changes-table';
 import { Starter } from '../core/starter';
 import { detailsOpen, setDetailsOpen } from '../core/details';
 
-interface LoopRound { round: number; at: string | null; found: number; fixed: number; commits: number; remaining: number; needsHuman: number; changes?: Omit<ChangeRow, 'round'>[] }
-interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: number; pending?: number; of: number; remaining: number; needsHuman: number; decided?: number } }
+interface LoopRound { round: number; at: string | null; found: number; fixed: number; commits: number; remaining: number; label?: string | null; state?: string; changes?: Omit<ChangeRow, 'round'>[] }
+interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: number; pending?: number; of: number; remaining: number } }
 
 // One timeline: the crawls and the fix loop's rounds, newest first.
 @Component({
   selector: 'app-history-screen',
-  imports: [RouterLink, ChartPanel, BarChartModule, NeedsPersonLink, ChangesTable],
+  imports: [RouterLink, ChartPanel, BarChartModule, WhereYouAre, ChangesTable],
   template: `
     <h1>History</h1>
+    <app-where-you-are />
     <p>Every crawl and every round of the fix loop, newest first. They are kept outside the app's repository, in the tool's own folder for it (~/.a11y-508/repos/…: report/, history/, work/; <code>a11y-508 status</code> prints where).</p>
     @if (error()) {
       <div class="notice error" role="alert">{{ error() }}</div>
     }
     <p role="status" class="hint" data-testid="history-status">{{ status() }}</p>
     @if (timeline(); as t) {
-      <p data-testid="loop-summary">Fix loop: {{ t.total.rounds }} round{{ t.total.rounds === 1 ? '' : 's' }} · {{ t.total.of }} violations · {{ counts(t.total) }}@if (t.total.decided) { · {{ t.total.decided }} decided by a person}</p>
-      <app-needs-person-link [count]="t.total.needsHuman" />
+      <p data-testid="loop-summary">Fix loop: {{ t.total.rounds }} round{{ t.total.rounds === 1 ? '' : 's' }} · {{ t.total.of }} violations · {{ counts(t.total) }}</p>
     }
     @if (earlier().length || timeline()) {
       <div class="actions">
@@ -50,7 +50,8 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
             @let lr = loopRound(r);
             <tr [attr.data-id]="r.id" [attr.data-source]="r.source">
               <th scope="row"><a [routerLink]="r.id === 'latest' ? ['/report'] : ['/report', r.id]">{{ name(r) }}</a>
-                @if (r.source !== 'round') { <span class="hint"> {{ word(r.result) }}</span> }</th>
+                @if (r.source !== 'round') { <span class="hint"> {{ word(r.result) }}</span> }
+                @if (lr?.label) { <span class="hint" data-testid="round-state"> {{ lr!.label }}</span> }</th>
               <td><time [attr.datetime]="r.finishedAt" [attr.title]="r.finishedAt" data-testid="finished">{{ local(r.finishedAt) }}</time></td>
               <td>{{ r.summary.audited }}</td>
               <td data-testid="found">{{ lr ? lr.found : r.summary.violations }}</td>
@@ -59,7 +60,6 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
               <td data-testid="remaining">
                 @if (lr) {
                   <span>{{ lr.remaining }}</span>
-                  @if (lr.needsHuman) { <span> ({{ lr.needsHuman }} need a person)</span> }
                 } @else {
                   —
                 }
@@ -81,7 +81,7 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
       @for (lr of t.rounds; track lr.round) {
         @if (lr.changes?.length) {
           <details class="round-changes" [attr.data-round]="lr.round" data-testid="round-changes">
-            <summary>Fix round {{ lr.round }}: changes ({{ lr.changes!.length }})</summary>
+            <summary data-testid="round-summary">Fix round {{ lr.round }}: fixed {{ lr.fixed }} · remaining {{ lr.remaining }}@if (lr.label) { · {{ lr.label }}}</summary>
             <app-changes-table [rows]="rowsOf(lr)" [label]="'Changes in fix round ' + lr.round" />
           </details>
         }
@@ -141,7 +141,7 @@ export class HistoryScreen {
   }
   // The loop's totals in the Fix step's words.
   counts(t: LoopTimeline['total']): string {
-    return fixedLine({ verified: t.fixed, pending: t.pending || 0, open: t.remaining, 'needs-human': t.needsHuman });
+    return fixedLine({ verified: t.fixed, pending: t.pending || 0, open: t.remaining });
   }
   readonly remainingCols = [{ key: 'round', label: 'Round' }, { key: 'remaining', label: 'Remaining' }];
   readonly remainingRows = computed(() => (this.timeline()?.rounds || []).map((r) => ({ round: r.round, remaining: r.remaining })));

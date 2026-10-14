@@ -109,7 +109,7 @@ export interface EnvInfo {
   signIn?: 'tab' | 'window' | 'separate-window';
   legacy?: string[];
   session: { exists: boolean; file: string; ageMs?: number; capturedAt?: string | null; origins?: string[] };
-  report: { exists: boolean; finishedAt?: string; baseUrl?: string };
+  report: { exists: boolean; finishedAt?: string; baseUrl?: string; pages?: number | null; violations?: number | null; reviews?: number | null };
   tokenInEnv: boolean;
   tokenHeld: boolean;
   // Null while the assistants are still being detected (detecting: true).
@@ -219,48 +219,34 @@ export interface LedgerInfo {
   counts?: Record<string, number>;
   line?: string;
   lists?: Record<string, LedgerItem[]>;
+  // Fixes committed and waiting for a deployment (the loop's ledger.deploy).
+  deploy?: { round: number; branch: string; remote: string | null; pushed: boolean; host: string; since: string } | null;
 }
 
-// The Needs a person screen (GET /api/review).
-export type DecisionStatus = 'adequate' | 'wont-fix' | 'open';
-export interface PersonDecision {
-  by: 'person';
-  status: DecisionStatus;
-  note: string;
-  at: string;
+// GET /api/loop/timeline: the fix loop's rounds from the ledger, as History and "Where you are" show them.
+export interface TimelineRound {
   round: number;
+  at: string | null;
+  found: number;
+  fixed: number;
+  commits: number;
+  covered?: number;
+  remaining: number;
+  verified?: number;
+  source?: 'crawl' | 'report' | 'ledger';
+  pages?: number | null;
+  audited?: number | null;
+  reviews?: number | null;
+  failed?: number;
+  branch?: string | null;
+  pushed?: boolean;
+  remote?: string | null;
+  state?: 'awaiting-deploy' | 'done';
+  label?: string | null;
+  changes?: any[];
 }
-export interface SourcePlace {
-  file: string;
-  line: number;
-  token: string;
-  kind: string;
-}
-export interface ReviewItem {
-  fingerprint: string;
-  test: string;
-  name: string;
-  wcag: string;
-  impact: string;
-  level: string | null;
-  condition: string;
-  message: string;
-  reason: string | null;
-  status: string;
-  round: number;
-  attempts: number;
-  wholePage: boolean;
-  selector: string;
-  frame: string | null;
-  html: string;
-  pages: string[];
-  screenshot: string | null;
-  screenshotMissing: boolean;
-  sources: SourcePlace[];
-  decision: PersonDecision | null;
-}
-export interface ReviewList {
-  exists: boolean;
-  items: ReviewItem[];
-  decided: ReviewItem[];
+export interface LoopTimeline {
+  rounds: TimelineRound[];
+  deploy?: LedgerInfo['deploy'];
+  total: { rounds: number; fixed: number; pending?: number; of: number; remaining: number };
 }

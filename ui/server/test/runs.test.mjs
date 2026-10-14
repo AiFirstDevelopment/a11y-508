@@ -135,13 +135,48 @@ test('the fix loop timeline from the ledger, and clearing the loop history (roun
       findings: { a: e('verified', [{ round: 1, commit: 'abc', outcome: 'pending' }]), b: e('verified', [{ round: 1, commit: 'def', outcome: 'pending' }]), c: e('open'), d: e('open'), f: e('needs-human') },
     }));
     const t = await s.call('GET', '/api/loop/timeline');
-    assert.deepEqual(t.json.rounds.map((r) => [r.round, r.found, r.fixed, r.commits, r.remaining, r.needsHuman]), [[1, 5, 0, 2, 3, 0], [2, 3, 2, 0, 2, 1]]);
-    assert.deepEqual(t.json.total, { rounds: 2, fixed: 2, pending: 0, of: 5, remaining: 2, needsHuman: 1, decided: 0 });
+    assert.deepEqual(t.json.rounds.map((r) => [r.round, r.found, r.fixed, r.verified, r.commits, r.remaining]), [[1, 5, 2, 0, 2, 3], [2, 3, 0, 2, 0, 2]]);
+    assert.ok(!('needsHuman' in t.json.rounds[1]), 'nothing about a person');
+    assert.deepEqual(t.json.total, { rounds: 2, fixed: 2, pending: 0, of: 4, remaining: 2 });
     const c = await s.call('DELETE', '/api/loop/history');
     assert.equal(c.status, 200);
     assert.equal(c.json.removed, 2);
     assert.deepEqual(readdirSync(work), ['prompt-r2-fix-0.md']);
     assert.equal((await s.call('GET', '/api/loop/timeline')).json, null);
+  } finally {
+    await s.stop();
+  }
+});
+
+// docs/plans/deploy-wait.md AC 2 / guard f: a round whose fixes wait for a deployment is "awaiting
+// deployment" in History's summary, never a failure; and only committed rows are listed (criterion 9).
+test('loop timeline: a round waiting for its deployment is awaiting deployment, not failed; only committed rows are listed', async () => {
+  const s = await startServer();
+  try {
+    const work = s.dirs().work;
+    mkdirSync(work, { recursive: true });
+    const e = (status, attempts) => ({ status, test: '7.A', impact: 'serious', message: 'm', pages: ['/'], attempts, selector: 'img' });
+    writeFileSync(join(work, 'ledger.json'), JSON.stringify({
+      version: 1,
+      rounds: [{ round: 1, at: '2026-10-13T20:21:00.000Z', pages: 33, audited: 33, violations: 30, reviews: 4, diff: { new: 34 }, committed: 1, branch: 'a11y-508', pushed: true, remote: 'origin' }],
+      deploy: { round: 1, signature: '/main.abc.js', branch: 'a11y-508', remote: 'origin', pushed: true, host: 'cargo-dev.example.gov', since: '2026-10-13T20:30:00.000Z' },
+      findings: {
+        a: e('pending', [{ round: 1, n: 1, commit: 'abc1234', outcome: 'pending', files: ['src/a.html'], note: 'added alt text' }]),
+        b: e('open', [{ round: 1, n: 2, outcome: 'no-change', files: [], note: 'could not locate the element; it is rendered by a library component' }]),
+      },
+    }));
+    const t = (await s.call('GET', '/api/loop/timeline')).json;
+    assert.equal(t.rounds[0].state, 'awaiting-deploy');
+    assert.equal(t.rounds[0].label, 'awaiting deployment');
+    assert.deepEqual([t.rounds[0].branch, t.rounds[0].pushed, t.rounds[0].remote, t.rounds[0].covered], ['a11y-508', true, 'origin', 1]);
+    assert.equal(t.deploy.host, 'cargo-dev.example.gov');
+    assert.equal(t.deploy.signature, undefined);
+    // Criterion 9: only what the assistant changed and committed is listed.
+    assert.deepEqual(t.rounds[0].changes.map((c) => c.outcome), ['committed']);
+    assert.equal(t.rounds[0].fixed, 1);
+    const { outcomeOf } = await import('../runs.mjs');
+    assert.equal(outcomeOf({ kind: 'loop', code: 4 }), 'awaiting-deploy');
+    assert.equal(outcomeOf({ kind: 'crawl', code: 4 }), 'error');
   } finally {
     await s.stop();
   }

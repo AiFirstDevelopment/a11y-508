@@ -56,7 +56,7 @@ const summary = {
   rounds: ledger.rounds.length,
   findings: entries.length,
   firstRound: entries.filter((e) => e.firstSeenRound === 1).length,
-  byStatus: Object.fromEntries(['open', 'review', 'pending', 'verified', 'needs-human', 'adequate', 'gone'].map((s) => [s, count(s)])),
+  byStatus: Object.fromEntries(['open', 'review', 'pending', 'verified', 'skipped', 'adequate', 'gone'].map((s) => [s, count(s)])),
   fixAttempts: attempts.length,
   committed: attempts.filter((a) => a.commit).length,
   agentCalls: logs.length,

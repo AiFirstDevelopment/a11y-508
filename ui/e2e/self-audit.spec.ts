@@ -8,7 +8,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { api, dashboard, fixtureSite, run, BIN, TOKEN, SECRET_HEADER, tempDir } from './harness';
 
-const ROUTES = ['/run', '/live', '/report', '/troubleshoot', '/sign-in', '/fix-loop', '/history', '/review'];
+const ROUTES = ['/run', '/live', '/report', '/troubleshoot', '/sign-in', '/fix-loop', '/history'];
 
 test('AC 20: every screen is audited and none has a critical or serious violation', async () => {
   test.setTimeout(540_000);
@@ -33,17 +33,6 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     writeFileSync(join(dash.cwd, 'a11y-508.config.json'), JSON.stringify({ url: site.base + 'about.html', args: ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots'] }));
     expect((await api(dash, '/api/runs', { method: 'POST', body: { kind: 'dry-run', auth: { mode: 'token' } } })).status).toBe(202);
     await wait('dry-run');
-    // The Needs a person screen with cards on it: the dry run's first finding needs a person, and a
-    // page-level one a person has decided (docs/plans/needs-a-person.md AC 7).
-    const ledgerFile = join(dash.dirs().work, 'ledger.json');
-    const ledger = JSON.parse(readFileSync(ledgerFile, 'utf8'));
-    const first = Object.values<any>(ledger.findings)[0];
-    first.status = 'needs-human';
-    const titles = '12.B|head > title|Page titles for 1 page(s).';
-    ledger.findings[titles] = { ...first, fingerprint: titles, test: '12.B', selector: 'head > title', message: 'Page titles for 1 page(s).', html: '', pages: ['site'], status: 'adequate', decision: { by: 'person', status: 'adequate', note: '', at: new Date().toISOString(), round: 1 } };
-    writeFileSync(ledgerFile, JSON.stringify(ledger, null, 2));
-    const review = (await api(dash, '/api/review')).json;
-    expect([review.items.length, review.decided.length]).toEqual([1, 1]);
 
     // Every screen asks for the environment; how long its first detection takes on this host.
     const env = await api(dash, '/api/env?wait=1');
@@ -63,10 +52,9 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
     // Routes nothing links to here: /sign-in (the Run screen signs in in place), and the Fix step,
     // which the wizard offers only in the app's repository (this dashboard's directory is not
-    // one). Each is audited by a one-page crawl of its own (docs/plans/run-simple.md), and so is
-    // Needs a person (/review), linked only from the Fix step and History.
+    // one). Each is audited by a one-page crawl of its own (docs/plans/run-simple.md).
     const outputs: string[] = [r.output];
-    for (const route of ['/sign-in', '/fix-loop', '/review']) {
+    for (const route of ['/sign-in', '/fix-loop']) {
       const outN = tempDir('a11y-508-self-extra-');
       const rN = await run(
         process.execPath,

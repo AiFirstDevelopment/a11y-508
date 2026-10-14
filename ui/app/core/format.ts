@@ -191,14 +191,13 @@ export function spoken(ms: number, minutes = false): string {
 }
 
 // The fix loop's counts in the words the Fix step and History share: "3 verified fixed · 1 fixed,
-// awaiting verification · 19 remaining · 4 need a person" (a part that is 0 is left out; "0 fixed"
-// when nothing is fixed yet). tasks: while a loop runs whose round grouped its findings into fewer
+// awaiting verification · 19 remaining" (a part that is 0 is left out; "0 fixed" when nothing is
+// fixed yet; what the loop skipped is not counted anywhere). tasks: while a loop runs whose round grouped its findings into fewer
 // fix tasks, how many; the line says so ("20 remaining, in 8 fixes this round"), so "fixing 1 of 8"
 // above it does not read as contradicting it.
 export function fixedLine(c: Record<string, number | undefined>, tasks: number | null = null): string {
   const v = c['verified'] || 0;
   const p = c['pending'] || 0;
-  const nh = c['needs-human'] || 0;
   const parts: string[] = [];
   if (v) parts.push(`${v} verified fixed`);
   if (p) parts.push(`${p} fixed, awaiting verification`);
@@ -206,6 +205,5 @@ export function fixedLine(c: Record<string, number | undefined>, tasks: number |
   const open = c['open'] || 0;
   const grouped = typeof tasks === 'number' && tasks > 0;
   parts.push(`${open} remaining${grouped ? `, in ${tasks} fix${tasks === 1 ? '' : 'es'} this round` : ''}`);
-  if (nh) parts.push(`${nh} need${nh === 1 ? 's' : ''} a person`);
   return parts.join(' · ');
 }

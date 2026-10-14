@@ -7,7 +7,6 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { streamDecoder } from './agent-stream.mjs';
-import { personNote } from './ledger.mjs';
 
 // The prompt and result files are in the tool's tasks folder under the state base, outside the
 // repository the assistant works in: each preset is given that one folder ({tasksDir}) besides the
@@ -353,7 +352,7 @@ ${finding.frame ? `Inside the same-origin frame: ${finding.frame}\n` : ''}${/ >>
 \`\`\`html
 ${(finding.html || '').slice(0, 2000)}
 \`\`\`
-${personNote(finding) ? `\n## A person reviewed this\n\nA person reviewed this and says: ${personNote(finding)}\n\nFollow that guidance.\n` : ''}${elements}${prior.length ? `\n## Earlier attempts that did not work\n\n${prior.map((a) => `- Round ${a.round}: ${a.note || 'no note'} (files: ${(a.files || []).join(', ') || 'none'}; outcome: ${a.outcome})`).join('\n')}\n\nThe finding was still present after those changes, so try a different approach.\n` : ''}
+${elements}${prior.length ? `\n## Earlier attempts that did not work\n\n${prior.map((a) => `- Round ${a.round}: ${a.note || 'no note'} (files: ${(a.files || []).join(', ') || 'none'}; outcome: ${a.outcome})`).join('\n')}\n\nThe finding was still present after those changes, so try a different approach.\n` : ''}
 ## How to find it in the source
 
 Search the source folders for the class names, ids, attribute values, text and tag names in the rendered HTML. Framework templates (Angular, React, Vue) usually contain the same literals. If the HTML is generated from data, fix the component that renders it.

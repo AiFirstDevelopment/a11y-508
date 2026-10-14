@@ -12,7 +12,6 @@ export const routes: Routes = [
   { path: 'sign-in', title: 'Sign in - a11y-508', loadComponent: () => import('./screens/sign-in').then((m) => m.SignInScreen) },
   { path: 'fix-loop/settings', title: 'Fix loop settings - a11y-508', data: { settings: true }, loadComponent: () => import('./screens/fix-loop').then((m) => m.FixLoopScreen) },
   { path: 'fix-loop', title: 'Fix loop - a11y-508', loadComponent: () => import('./screens/fix-loop').then((m) => m.FixLoopScreen) },
-  { path: 'review', title: 'Needs a person - a11y-508', loadComponent: () => import('./screens/review').then((m) => m.ReviewScreen) },
   { path: 'diagnostics', title: 'Diagnostics - a11y-508', loadComponent: () => import('./screens/diagnostics').then((m) => m.DiagnosticsScreen) },
   { path: 'history', title: 'History - a11y-508', loadComponent: () => import('./screens/history').then((m) => m.HistoryScreen) },
   { path: '**', title: 'Not found - a11y-508', loadComponent: () => import('./screens/not-found').then((m) => m.NotFoundScreen) },

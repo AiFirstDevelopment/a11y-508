@@ -6,7 +6,6 @@ import './dirs.test.mjs';
 import './loop-defaults.test.mjs';
 import './state-dir.test.mjs';
 import './guard.test.mjs';
-import './review.test.mjs';
 import './startup.test.mjs';
 import './resume.test.mjs';
 import './diary.test.mjs';

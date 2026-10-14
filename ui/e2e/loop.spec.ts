@@ -188,18 +188,16 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
     const counts: Record<string, number> = {};
     for (const e of Object.values<any>(ledger.findings)) counts[e.status] = (counts[e.status] || 0) + 1;
-    for (const s of ['open', 'review', 'pending', 'verified', 'needs-human', 'adequate', 'gone']) {
+    for (const s of ['open', 'review', 'pending', 'verified', 'adequate', 'gone']) {
       await expect(page.getByTestId('ledger-counts').locator(`[data-status="${s}"] dd`)).toHaveText(String(counts[s] || 0));
     }
     for (const [title, status] of [['OPEN', 'open'], ['FIXED, AWAITING VERIFICATION', 'pending']]) {
       const m = new RegExp(`^${title} \\((\\d+)\\)`, 'm').exec(st);
       await expect(page.locator(`[data-list="${status}"] li`)).toHaveCount(m ? Number(m[1]) : 0);
     }
-    // Findings that need a person: one line and a link to the Needs a person screen, no list.
-    const nh = Number((/^NEEDS A PERSON \((\d+)\)/m.exec(st) || [])[1] || 0);
-    await expect(page.locator('[data-list="needs-human"]')).toHaveCount(0);
-    if (nh) await expect(page.getByTestId('needs-person-link')).toHaveText(`${nh} need${nh === 1 ? 's' : ''} a person — review them`);
-    else await expect(page.getByTestId('needs-person-link')).toHaveCount(0);
+    // What the assistant could not fix is not shown at all (docs/plans/deploy-wait.md criterion 7).
+    await expect(page.locator('[data-list="skipped"], [data-status="skipped"]')).toHaveCount(0);
+    await expect(page.locator('body')).not.toContainText(/need a person|needs a person/i);
     const panel = page.locator('app-chart-panel#rounds');
     await panel.getByRole('button', { name: /Show data table/ }).click();
     await expect(panel.locator('table tbody tr')).toHaveCount(ledger.rounds.length);
@@ -222,10 +220,13 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     const lastRow = page.getByTestId('history').locator(`tr[data-id="round-${last.round}"]`);
     await expect(lastRow.getByRole('link')).toHaveText(`Fix round ${last.round}`);
     await expect(lastRow.getByTestId('found')).toHaveText(statusRound[1]);
-    await expect(lastRow.getByTestId('fixed')).toHaveText(statusRound[2]);
+    // Fixed: the findings the round's commits covered (docs/plans/deploy-wait.md criterion 9).
+    void statusRound[2];
+    const committedInLast = Object.values<any>(ledger.findings).filter((e) => e.attempts.some((a: any) => a.round === last.round && a.commit)).length;
+    await expect(lastRow.getByTestId('fixed')).toHaveText(String(committedInLast));
     await expect(lastRow.getByTestId('remaining').locator('span').first()).toHaveText(String(counts.open || 0));
     await expect(page.getByTestId('history').locator('tr[data-source="round"]')).toHaveCount(ledger.rounds.length);
-    await expect(page.getByTestId('loop-summary')).toHaveText(`Fix loop: ${ledger.rounds.length} rounds · ${(counts.verified || 0) + (counts.open || 0) + (counts.pending || 0) + (counts['needs-human'] || 0)} violations · ${countsLine(counts)}`);
+    await expect(page.getByTestId('loop-summary')).toHaveText(`Fix loop: ${ledger.rounds.length} rounds · ${(counts.verified || 0) + (counts.open || 0) + (counts.pending || 0)} violations · ${countsLine(counts)}`);
     // Clear fix-loop history removes the rounds and the ledger, after a confirmation.
     page.once('dialog', (d) => void d.accept());
     await page.getByRole('button', { name: 'Clear fix-loop history' }).click();

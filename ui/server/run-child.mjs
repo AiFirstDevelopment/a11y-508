@@ -73,7 +73,11 @@ const control = setInterval(() => {
     fd = openSync(spec.controlFile, 'r');
     const buf = Buffer.alloc(size - offset);
     offset += readSync(fd, buf, 0, buf.length, offset);
-    for (const l of buf.toString('utf8').split('\n')) if (l.trim() === 'continue') child.stdin.write('\n');
+    for (const l of buf.toString('utf8').split('\n')) {
+      const word = l.trim();
+      if (word === 'continue') child.stdin.write('\n');
+      else if (word === 'fix-remaining' || word === 'stop-waiting') child.stdin.write(`${word}\n`);
+    }
   } catch {
   } finally {
     if (fd !== undefined) closeSync(fd);

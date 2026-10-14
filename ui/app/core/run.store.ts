@@ -68,7 +68,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
   'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit', 'changes', 'attempt', 'bisect',
-  'resume',
+  'resume', 'deployment',
 ]);
 
 // The current run, built from its event stream.
@@ -94,6 +94,10 @@ export class RunStore {
   readonly fixFindings = signal<number | null>(null);
   readonly ledger = signal<RunEvent | null>(null);
   readonly awaitingDeploy = signal(false);
+  // The wait for a deployment (its await-deploy event: branch, remote, host, counts, until, intervalMs),
+  // and how the run ended about it (its deployment event: arrived, still-old, timeout, stopped-waiting).
+  readonly deployWait = signal<RunEvent | null>(null);
+  readonly deployment = signal<RunEvent | null>(null);
   // The loop could not start: a set-up error before its first round, with its remedy.
   readonly precondition = signal<RunEvent | null>(null);
   // The round whose crawl has begun in this run (a round started from the report has none).
@@ -157,6 +161,8 @@ export class RunStore {
     this.task.set(null);
     this.ledger.set(null);
     this.awaitingDeploy.set(false);
+    this.deployWait.set(null);
+    this.deployment.set(null);
     this.precondition.set(null);
     this.crawlRound.set(null);
     this.gaveUp.set(null);
@@ -274,6 +280,7 @@ export class RunStore {
           this.pane(`— Round ${ev['round']}: re-checking the site —`, true);
         }
         if (ev['step'] === 'report') this.pane(`— Round ${ev['round']}: starting from the report you just saw —`, true);
+        if (ev['step'] === 'ledger') this.pane(`— Round ${ev['round']}: fixing the remaining findings without waiting (no crawl) —`, true);
         if (ev['step'] === 'triage' && typeof ev['batch'] === 'number' && this.agentCall()?.startedAt === at && this.agentCall()?.kind === 'triage') {
           this.pane(`— Review items${(ev['batches'] ?? 1) > 1 ? `, batch ${ev['batch']} of ${ev['batches']}` : ''}: asking about ${ev['count']} review item${ev['count'] === 1 ? '' : 's'} —`, true);
         }
@@ -367,10 +374,16 @@ export class RunStore {
         break;
       case 'await-deploy':
         this.awaitingDeploy.set(true);
+        this.deployWait.set(ev);
         if (typeof ev['committed'] === 'number') this.committed.set(ev['committed']);
         break;
       case 'precondition':
         this.precondition.set(ev);
+        break;
+      case 'deployment':
+        this.deployment.set(ev);
+        if (ev['state'] === 'arrived') this.pane(`Your deployment arrived: verifying ${ev['pending']} fix${ev['pending'] === 1 ? '' : 'es'}`, true);
+        if (ev['state'] === 'verify-anyway') this.pane('Verifying anyway: fixes not yet deployed count as not holding', true);
         break;
       // Continue after an interruption: the unfinished fix's changes it discarded, in the pane.
       case 'resume':
@@ -445,9 +458,10 @@ export class RunStore {
     await this.api.post('/api/runs/current/stop');
   }
 
-  async continueAfterDeploy(): Promise<void> {
+  // action: 'continue' (the site is updated — verify now), 'fix-remaining' or 'stop-waiting'.
+  async continueAfterDeploy(action: 'continue' | 'fix-remaining' | 'stop-waiting' = 'continue'): Promise<void> {
     this.awaitingDeploy.set(false);
     this.continued++;
-    await this.api.post('/api/runs/current/continue');
+    await this.api.post('/api/runs/current/continue', action === 'continue' ? {} : { action });
   }
 }

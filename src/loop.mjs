@@ -46,6 +46,8 @@ export function normalizeConfig(c, overrides = {}, { interactive = !!process.std
     deployed: c.deployed || (c.deploy ? 'command' : 'enter'),
     deploy: c.deploy || null,
     deployTimeout: typeof c.deployTimeout === 'number' ? c.deployTimeout : 30 * 60 * 1000,
+    // How often "bundle-change" fetches the start page while it waits for the new build.
+    deployPoll: typeof c.deployPoll === 'number' && c.deployPoll > 0 ? c.deployPoll : 30 * 1000,
     maxAttempts: typeof c.maxAttempts === 'number' ? c.maxAttempts : 3,
     agentTimeout: typeof c.agentTimeout === 'number' ? c.agentTimeout : 15 * 60 * 1000,
     triageBatch: typeof c.triageBatch === 'number' ? c.triageBatch : 15,
@@ -199,14 +201,21 @@ async function bundleSignature(url) {
   }
 }
 
-// With --events, the dashboard's "Deployed — continue" writes a newline to stdin. While the loop
-// polls for a new build it also listens for that, so the button works whatever "deployed" says.
+// With --events, the dashboard's buttons during the wait write a line to stdin: an empty line (or
+// "verify") is "The site is updated — verify now", "fix-remaining" fixes what is open without
+// waiting, "stop-waiting" ends the wait. While the loop polls for a new build it listens for them,
+// so the buttons work whatever "deployed" says. Resolves with 'verify', 'fix-remaining' or 'stop-waiting'.
 function enterFromDashboard() {
   const stdin = process.stdin;
   let onData;
+  let buf = '';
   const promise = new Promise((resolve) => {
     onData = (chunk) => {
-      if (/[\r\n]/.test(String(chunk))) resolve(true);
+      buf += String(chunk);
+      const nl = buf.search(/\r?\n/);
+      if (nl < 0) return;
+      const word = buf.slice(0, nl).trim();
+      resolve(word === 'fix-remaining' || word === 'stop-waiting' ? word : 'verify');
     };
     stdin.setEncoding('utf8');
     stdin.on('data', onData);
@@ -331,7 +340,19 @@ export function reportForFirstRound(file, cfg, cwd, log) {
   return report;
 }
 
-export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false, signInFirst = false, fromReport = null, resume = false, passthrough = [], stopSignal, events = false }) {
+// The words for fixes that wait for a deployment someone else runs: the same in the terminal and on
+// the Fix step. d: { pending, branch, remote, pushed, host }.
+export function deploySentence(d) {
+  const n = d.pending;
+  const fixes = `${n} fix${n === 1 ? ' is' : 'es are'}`;
+  return `${fixes} committed on branch ${d.branch}${d.pushed && d.remote ? ` and pushed to ${d.remote}` : ''}. The site at ${d.host} still serves the build from before them, so they cannot be verified yet. Deploy that branch — or merge it into the branch your pipeline builds`;
+}
+
+// fromReport: a report file for round 1, or true (`--from-report` with no file): the first round
+// fixes what the ledger has open, with no crawl. verify / verifyAnyway / wait: what to do about fixes
+// that wait for a deployment (ledger.deploy): check the bundles first (the default), crawl whatever
+// the site serves, or go on waiting.
+export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false, signInFirst = false, fromReport = null, resume = false, verifyAnyway = false, wait = false, passthrough = [], stopSignal, events = false }) {
   const { cfg, errors } = normalizeConfig(config, { url: config._url, agent: config._agent }, { interactive: events || !!process.stdin.isTTY });
   const ev = (type, data) => log.event && log.event(type, data);
   const ledgerEvent = () => ev('ledger', { rounds: ledger.rounds.length, counts: statusCounts(ledger), line: summaryLine(ledger) });
@@ -436,6 +457,62 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // when it gave no answer (what happens to the work it was given, and that the loop goes on).
   const agentName = (PRESET_INFO[cfg.agent] && PRESET_INFO[cfg.agent].label) || 'The assistant';
   const duration = (ms) => (ms < 60000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60000)} min`);
+
+  // Fixes committed and waiting for a new build of the site (deployed: bundle-change): ledger.deploy
+  // holds the start page's bundles from before them, the branch and where it was pushed.
+  const awaitingDeploy = () => cfg.deployed === 'bundle-change' && !!ledger.deploy && byStatus(ledger, 'pending').length > 0;
+  const hostOf = (u) => {
+    try {
+      return new URL(u).host;
+    } catch {
+      return String(u || 'the site');
+    }
+  };
+  const deployFacts = () => ({
+    pending: byStatus(ledger, 'pending').length, open: openFindings(ledger).length,
+    branch: (ledger.deploy && ledger.deploy.branch) || git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out || 'the current branch',
+    remote: ledger.deploy ? ledger.deploy.remote : null, pushed: !!(ledger.deploy && ledger.deploy.pushed), host: hostOf(cfg.url),
+  });
+  // Waits for the start page's bundles to differ from the ones before the fixes, or for the
+  // dashboard's word. Returns 'live', 'verify', 'fix-remaining', 'stop-waiting', 'timeout' or 'stopped'.
+  const waitForDeploy = async (round) => {
+    const until = Date.now() + cfg.deployTimeout;
+    const facts = deployFacts();
+    log.info(`waiting for your deployment: ${deploySentence(facts)}; checking the start page every ${duration(cfg.deployPoll)} for up to ${duration(cfg.deployTimeout)}`);
+    const enter = events ? enterFromDashboard() : null;
+    let said = null;
+    if (enter) enter.promise.then((w) => (said = w));
+    ev('await-deploy', { round, committed: facts.pending, nextRound: round + 1, ...facts, intervalMs: cfg.deployPoll, timeoutMs: cfg.deployTimeout, until: new Date(until).toISOString() });
+    try {
+      while (Date.now() < until && !stopped()) {
+        await Promise.race([sleep(Math.max(0, Math.min(cfg.deployPoll, until - Date.now()))), ...(enter ? [enter.promise] : [])]);
+        if (said) return said;
+        const sig = await bundleSignature(cfg.url);
+        if (sig && sig !== ledger.deploy.signature) return 'live';
+      }
+    } finally {
+      if (enter) enter.cancel();
+    }
+    return stopped() ? 'stopped' : 'timeout';
+  };
+  // The loop ends waiting for the deployment: not an error (exit 4). What happened, the same
+  // explanation, and the three commands that go on.
+  const endAwaiting = (state, round) => {
+    const facts = deployFacts();
+    const head = state === 'still-old' ? 'The site still serves the old build (checked just now); nothing was changed.'
+      : state === 'unreachable' ? 'The start page could not be fetched to check its build (checked just now); nothing was changed.'
+      : state === 'timeout' ? `Your deployment has not arrived yet: the start page's bundles did not change within ${duration(cfg.deployTimeout)}.`
+      : 'Your deployment has not arrived yet; stopped waiting for it.';
+    ev('deployment', { state, round, ...facts, checkedAt: new Date().toISOString(), timeoutMs: cfg.deployTimeout });
+    log.warn(head);
+    log.info(`${deploySentence(facts)}. Then:`);
+    log.info('  a11y-508 loop --verify          the site is updated: check its bundles, then verify the fixes');
+    if (facts.open) log.info(`  a11y-508 loop --from-report     fix the remaining ${facts.open} without waiting (no crawl)`);
+    log.info('  a11y-508 loop --wait            keep waiting for the new build');
+    log.info('  a11y-508 loop --verify-anyway   crawl whatever the site serves (fixes not yet deployed count as not holding)');
+    save();
+    return 4;
+  };
   const withOutput = async (label, args, round, task, kind, count = 1) => {
     const on = outputTo(round, task, kind);
     const onWait = (w) => {
@@ -494,19 +571,65 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   const resuming = resume && ledger.rounds.length > 0;
   const startRound = resuming ? ledger.rounds.length : ledger.rounds.length + 1;
   // The report the person just saw stands in for round 1's crawl; the first crawl (and its sign-in) is round 2's.
-  const given = resuming ? null : reportForFirstRound(fromReport, cfg, cwd, log);
-  const firstCrawl = given || resuming ? startRound + 1 : startRound;
+  // --from-report with no file: the first round fixes what the ledger has open, with no crawl.
+  const fromLedger = fromReport === true && !resuming && ledger.rounds.length > 0;
+  if (fromReport === true && !resuming && !ledger.rounds.length) log.warn('--from-report: the ledger has no round yet, so round 1 crawls');
+  // Fixes waiting for a deployment: a report given for round 1 cannot tell whether it shows them.
+  const waiting = !dryRun && !resuming && awaitingDeploy();
+  const given = resuming || fromLedger || waiting || fromReport === true ? null : reportForFirstRound(fromReport, cfg, cwd, log);
   log.info(`a11y-508 loop: ${cfg.url}  agent: ${cfg.agent}  ledger: ${shortenHome(ledgerFile)}${ledger.rounds.length ? `  (resuming after round ${ledger.rounds.length})` : ''}`);
+
+  // The next round fixes from the ledger with no crawl (fix the remaining without waiting).
+  let noCrawlNext = fromLedger;
+  // Before any crawl that would verify fixes waiting for a deployment: are the start page's bundles
+  // still the ones from before them? Then the crawl would count every such fix as not holding, so
+  // the loop ends at once instead (--verify-anyway crawls all the same; --wait waits again).
+  if (waiting && !fromLedger) {
+    if (wait) {
+      const w = await waitForDeploy(ledger.rounds.length);
+      if (w === 'timeout' || w === 'stop-waiting') return endAwaiting(w === 'timeout' ? 'timeout' : 'stopped-waiting', ledger.rounds.length);
+      if (w === 'stopped') {
+        log.warn(`stopped. ${summaryLine(ledger)} Rerun the same command to resume.`);
+        save();
+        return 1;
+      }
+      if (w === 'fix-remaining') noCrawlNext = true;
+      else if (w === 'live') log.info('new build is live');
+    } else if (verifyAnyway) {
+      log.warn(`verifying anyway: the ${byStatus(ledger, 'pending').length} fixes waiting for a deployment count as not holding wherever the site still shows the finding`);
+      ev('deployment', { state: 'verify-anyway', round: ledger.rounds.length, ...deployFacts() });
+    } else {
+      const sig = await bundleSignature(cfg.url);
+      if (sig === null) return endAwaiting('unreachable', ledger.rounds.length);
+      if (sig === ledger.deploy.signature) return endAwaiting('still-old', ledger.rounds.length);
+      log.info(`Your deployment arrived: verifying ${byStatus(ledger, 'pending').length} fixes`);
+      ev('deployment', { state: 'arrived', round: ledger.rounds.length, ...deployFacts() });
+    }
+  }
+  const firstCrawl = given || resuming || noCrawlNext ? startRound + 1 : startRound;
 
   for (let round = startRound; round < startRound + maxRounds; round++) {
     if (stopped()) break;
     log.info('');
     const resumed = resuming && round === startRound;
+    const fromTheLedger = noCrawlNext && !resumed;
+    noCrawlNext = false;
     let signatureBefore = null;
     if (resumed) {
-      signatureBefore = cfg.deployed === 'bundle-change' ? await bundleSignature(cfg.url) : null;
+      signatureBefore = cfg.deployed === 'bundle-change' ? (awaitingDeploy() ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
       log.info(`=== round ${round}: continuing where it was interrupted (no crawl) ===`);
       ev('round', { round, resumed: true });
+    } else if (fromTheLedger) {
+      // A round with no crawl: the ledger's open findings, fixed while the earlier fixes still wait
+      // for their deployment (they stay pending). Recorded as a round so its attempts are its own.
+      signatureBefore = cfg.deployed === 'bundle-change' ? (awaitingDeploy() ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
+      const prev = ledger.rounds[ledger.rounds.length - 1] || {};
+      ledger.rounds.push({ round, at: new Date().toISOString(), source: 'ledger', pages: prev.pages || 0, audited: prev.audited || 0, violations: prev.violations || 0, reviews: prev.reviews || 0, coverage: null, diff: { new: 0, still: 0, failed: 0, verified: 0, gone: 0, reopened: 0, unchecked: 0, gaveUp: 0 } });
+      save();
+      log.info(`=== round ${round}: fixing the remaining findings from the ledger (no crawl) ===`);
+      ev('round', { round, fromLedger: true });
+      ev('step', { round, step: 'ledger', pending: byStatus(ledger, 'pending').length, open: openFindings(ledger).length });
+      ledgerEvent();
     } else {
     log.info(`=== round ${round}: crawl ===`);
     ev('round', { round });
@@ -543,13 +666,15 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       return 2;
     }
     const diff = applyReport(ledger, report, round, { maxAttempts: cfg.maxAttempts });
+    // The crawl has verified whatever waited for a deployment.
+    delete ledger.deploy;
     if (fromGiven) Object.assign(ledger.rounds[ledger.rounds.length - 1], { source: 'report', reportFinishedAt: given.finishedAt });
     save();
     ledgerEvent();
     log.info(`pages: ${s.pages} crawled, ${s.audited} audited  violations: ${s.violations}  review items: ${s.reviews}`);
     if (round > 1 || diff.verified.length) log.info(`since last round: ${diff.verified.length} verified fixed, ${diff.failed.length} fix(es) did not hold, ${diff.new.length} new, ${diff.still.length} still open, ${diff.gone.length} gone on their own, ${diff.reopened.length} came back, ${diff.unchecked.length} on pages not audited this round`);
     else log.info(`${diff.new.length} finding(s) recorded`);
-    for (const e of diff.gaveUp) log.warn(`giving up on ${e.test} "${e.message.slice(0, 80)}" after ${e.attempts.length} attempts; marked needs-human`);
+    for (const e of diff.gaveUp) log.info(`skipping ${e.test} "${e.message.slice(0, 80)}" after ${e.attempts.length} attempts`);
     for (const w of (s.coverage && s.coverage.warnings) || []) log.warn(`coverage: ${w}`);
     }
 
@@ -592,14 +717,14 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           const decision = d && typeof d.decision === 'string' ? d.decision.toLowerCase() : 'unsure';
           if (decision === 'adequate') entry.status = 'adequate';
           else if (decision === 'inadequate') entry.status = 'open';
-          else entry.status = 'needs-human';
+          else entry.status = 'skipped';
           entry.triage = { round, decision, reason: d && d.reason ? String(d.reason).slice(0, 300) : '' };
         }
         save();
       }
       ledgerEvent();
       const c = statusCounts(ledger);
-      log.info(`triage done: ${byStatus(ledger, 'adequate').length} adequate, ${c.open || 0} open to fix, ${c['needs-human'] || 0} need a person`);
+      log.info(`triage done: ${byStatus(ledger, 'adequate').length} adequate, ${c.open || 0} open to fix, ${c['skipped'] || 0} skipped (the assistant cannot decide them)`);
     }
 
     // Fix open findings, one bounded prompt each; findings that are the same problem on different
@@ -626,7 +751,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     // became of them, and how long the assistant and the check took.
     const attemptEvent = (n, entry, a, outcome) => ev('attempt', {
       round, n, m: tasks.length, test: entry.test, message: entry.message, elements: members(entry).length, files: a.files || [], outcome,
-      commit: a.commit || null, agentMs: a.agentMs ?? null, gateMs: a.gateMs ?? null, gateCode: a.gateCode ?? null,
+      commit: a.commit || null, note: a.note || null, agentMs: a.agentMs ?? null, gateMs: a.gateMs ?? null, gateCode: a.gateCode ?? null,
       gateTail: a.gateOutput ? a.gateOutput.split('\n').filter((l) => l.trim()).slice(-15).join('\n') : null,
       ...(a.gateReason ? { reason: a.gateReason } : {}),
     });
@@ -672,10 +797,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         log.info(`  no change (${note})`);
         for (const e of members(entry)) {
           if (e.attempts.length < cfg.maxAttempts) continue;
-          e.status = 'needs-human';
+          e.status = 'skipped';
           e.reason = note;
         }
-        if (entry.status === 'needs-human') log.warn(`  marked needs-human after ${entry.attempts.length} attempts`);
+        if (entry.status === 'skipped') log.info(`  skipped after ${entry.attempts.length} attempts`);
         save();
         taskDone(n, entry, 'no-change');
         continue;
@@ -696,7 +821,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           git(cwd, ['clean', '-fdq', '--', ...sourceDirs]);
           for (const e of members(entry)) {
             if (e.attempts.length < cfg.maxAttempts) continue;
-            e.status = 'needs-human';
+            e.status = 'skipped';
             e.reason = 'the fix broke the build or tests';
           }
           save();
@@ -739,8 +864,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         if (gate.reason) a.gateReason = gate.reason;
         delete a.commit;
         for (const x of members(e)) {
-          x.status = x.attempts.length >= cfg.maxAttempts ? 'needs-human' : 'open';
-          if (x.status === 'needs-human') x.reason = 'the fix broke the tests';
+          x.status = x.attempts.length >= cfg.maxAttempts ? 'skipped' : 'open';
+          if (x.status === 'skipped') x.reason = 'the fix broke the tests';
         }
         attemptEvent(a.n ?? 0, e, a, 'failed-gate');
       };
@@ -854,7 +979,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           a.gateCode = gate.code;
           delete a.commit;
           attemptEvent(a.n ?? 0, e, a, 'failed-gate');
-          for (const x of members(e)) x.status = x.attempts.length >= cfg.maxAttempts ? 'needs-human' : 'open';
+          for (const x of members(e)) x.status = x.attempts.length >= cfg.maxAttempts ? 'skipped' : 'open';
         }
         committed = 0;
         save();
@@ -864,7 +989,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
 
     if (!committed) {
       log.info(`round ${round}: nothing was fixed. ${summaryLine(ledger)}`);
-      if (!openFindings(ledger).length && !byStatus(ledger, 'review').length) {
+      // Earlier fixes still wait for their deployment: the loop waits for it rather than stopping.
+      if (!openFindings(ledger).length && !byStatus(ledger, 'review').length && !awaitingDeploy()) {
         log.info('nothing left the agent can fix; stopping.');
         return isDone(ledger) ? 0 : 1;
       }
@@ -892,7 +1018,18 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       }
     }
 
-    if (committed) {
+    // What the round committed, where: the dashboard's "Where you are" reads it from the ledger.
+    const roundEntry = ledger.rounds.find((r) => r.round === round);
+    if (committed && roundEntry) {
+      roundEntry.committed = (roundEntry.committed || 0) + committed;
+      roundEntry.branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
+      roundEntry.pushed = !!cfg.push;
+      roundEntry.remote = cfg.push ? 'origin' : null;
+      save();
+    }
+    // Earlier fixes still waiting for a deployment (fix the remaining without waiting) wait again.
+    const waitAgain = !committed && awaitingDeploy();
+    if (committed || waitAgain) {
       ev('step', { round, step: cfg.deployed === 'enter' ? 'await-deploy' : 'deploy', deployed: cfg.deployed, committed });
       if (cfg.deployed === 'command') {
         log.info(`deploying: ${cfg.deploy}`);
@@ -903,40 +1040,26 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           return 2;
         }
       } else if (cfg.deployed === 'bundle-change') {
-        log.info('waiting for the deployment: polling the start page until its script bundles change');
-        const until = Date.now() + cfg.deployTimeout;
-        let live = false;
-        const enter = events ? enterFromDashboard() : null;
-        let pressed = false;
-        if (enter) {
-          enter.promise.then(() => (pressed = true));
-          ev('await-deploy', { round, committed, nextRound: round + 1 });
+        // What the fixes wait for, kept in the ledger so a later run knows: the bundles from before the
+        // first of them (an earlier wait's, while the site has not changed since), the branch, the push.
+        const branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
+        const before = ledger.deploy;
+        ledger.deploy = {
+          round, signature: before ? before.signature : signatureBefore, branch, remote: cfg.push ? 'origin' : null,
+          pushed: !!cfg.push && (committed > 0 || !!(before && before.pushed)), host: hostOf(cfg.url), since: before ? before.since : new Date().toISOString(),
+        };
+        save();
+        const w = await waitForDeploy(round);
+        if (w === 'stopped') break;
+        if (w === 'timeout' || w === 'stop-waiting') return endAwaiting(w === 'timeout' ? 'timeout' : 'stopped-waiting', round);
+        if (w === 'fix-remaining') {
+          log.info('fixing the remaining findings without waiting; the committed fixes stay awaiting verification');
+          noCrawlNext = true;
+        } else if (w === 'verify') log.info('told the new build is live (The site is updated — verify now)');
+        else {
+          log.info('new build is live; giving it 10 seconds to settle');
+          await sleep(10000);
         }
-        try {
-          while (Date.now() < until && !stopped()) {
-            await Promise.race([sleep(15000), ...(enter ? [enter.promise] : [])]);
-            if (pressed) {
-              log.info('told the new build is live (Deployed — continue)');
-              live = true;
-              break;
-            }
-            const sig = await bundleSignature(cfg.url);
-            if (sig && sig !== signatureBefore) {
-              live = true;
-              break;
-            }
-          }
-        } finally {
-          if (enter) enter.cancel();
-        }
-        if (!live) {
-          if (stopped()) break;
-          log.error(`the start page's bundles did not change within ${Math.round(cfg.deployTimeout / 60000)} minutes; stopping. Rerun the loop once the deployment is live.`);
-          save();
-          return 1;
-        }
-        log.info('new build is live; giving it 10 seconds to settle');
-        await sleep(10000);
       } else if (cfg.deployed === 'enter') {
         await waitForEnter(`\nround ${round}: ${committed} fix(es) committed. Deploy them, then press Enter to start round ${round + 1} (Ctrl+C to stop)... `,
           events ? () => ev('await-deploy', { round, committed, nextRound: round + 1 }) : null);
@@ -954,7 +1077,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
 export function summaryLine(ledger) {
   const c = statusCounts(ledger);
   const part = (k, label) => (c[k] ? `${c[k]} ${label}` : null);
-  return [part('open', 'open'), part('review', 'awaiting triage'), part('pending', 'fixed, awaiting verification'), part('verified', 'verified fixed'), part('needs-human', 'need a person'), part('wont-fix', "won't fix"), part('adequate', 'adequate'), part('gone', 'gone')].filter(Boolean).join(', ') + '.';
+  return [part('open', 'open'), part('review', 'awaiting triage'), part('pending', 'fixed, awaiting verification'), part('verified', 'verified fixed'), part('wont-fix', "won't fix"), part('adequate', 'adequate'), part('gone', 'gone')].filter(Boolean).join(', ') + '.';
 }
 
 export function printStatus(cwd, out) {
@@ -968,7 +1091,7 @@ export function printStatus(cwd, out) {
   out(`a11y-508 loop status: ${ledger.rounds.length} round(s). ${summaryLine(ledger)}`);
   out(`  the tool's files for this repository: ${dirname(workDir(cwd))}`);
   for (const r of ledger.rounds.slice(-5)) out(`  round ${r.round} ${r.at || ''}: ${r.audited}/${r.pages} pages audited, ${r.violations} violations, ${r.reviews} review; +${r.diff.new} new, ${r.diff.verified} verified, ${r.diff.failed} did not hold${r.coverage && !r.coverage.complete ? ', coverage incomplete' : ''}`);
-  const groups = [['open', 'OPEN'], ['pending', 'FIXED, AWAITING VERIFICATION'], ['review', 'AWAITING TRIAGE'], ['needs-human', 'NEEDS A PERSON']];
+  const groups = [['open', 'OPEN'], ['pending', 'FIXED, AWAITING VERIFICATION'], ['review', 'AWAITING TRIAGE'], ['skipped', 'SKIPPED (THE ASSISTANT COULD NOT FIX THESE)']];
   for (const [status, title] of groups) {
     const list = byStatus(ledger, status);
     if (!list.length) continue;

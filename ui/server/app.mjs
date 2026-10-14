@@ -21,7 +21,6 @@ import { JOURNALED, LOOP_KINDS, annotateRun, discardInterrupted, interruptedDeta
 import { loopDefaults } from './loop-defaults.mjs';
 import { stateBase as stateBaseOf, readGlobal, writeGlobal, paths as statePaths, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { matchSource } from './loop-match.mjs';
-import { recordDecision, reviewList } from './review.mjs';
 import { carryAnalysis, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, sameStartUrl, latestDir, ledgerPath } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
@@ -29,7 +28,7 @@ import { addDiarySecrets, readDiary, writeDiary } from '../../src/diary.mjs';
 import { describeEntry, doingOf } from './diagnostics.mjs';
 
 // The wizard's steps, as lastStep stores them.
-const STEPS = ['/run', '/live', '/report', '/fix-loop', '/review', '/history'];
+const STEPS = ['/run', '/live', '/report', '/fix-loop', '/history'];
 const pkg = JSON.parse(readFileSync(join(UI_DIR, '..', 'package.json'), 'utf8'));
 export const SECRET_HEADER = 'x-a11y-508-secret';
 const TYPES = {
@@ -299,9 +298,15 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
           return false;
         }
       };
-      const fromReport = latest && loopUrl && sameUrl(latest.baseUrl, loopUrl) ? join(latestDir(cwd), 'report.json') : null;
-      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null, connect: signIn ? state.browserPort : null, fromReport, resume: body.resume === true });
-      meta = { agent: resolved };
+      // Fixes waiting for a deployment: deploy says what to do about them -- 'verify' (check the
+      // bundles, then verify), 'verify-anyway', 'from-ledger' (fix the remaining without waiting, no
+      // crawl), 'wait' (keep waiting).
+      const deploy = ['verify', 'verify-anyway', 'from-ledger', 'wait'].includes(body.deploy) ? body.deploy : null;
+      if (body.deploy !== undefined && !deploy) throw new BadRequest('deploy must be verify, verify-anyway, from-ledger or wait');
+      const fromReport = deploy === 'from-ledger' ? true : latest && loopUrl && sameUrl(latest.baseUrl, loopUrl) ? join(latestDir(cwd), 'report.json') : null;
+      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null, connect: signIn ? state.browserPort : null, fromReport, resume: body.resume === true, deploy });
+      // fromReport: 'ledger' (no crawl), the report file round 1 may start from, or null.
+      meta = { agent: resolved, fromReport: fromReport === true ? 'ledger' : fromReport, deploy };
     } else {
       built = crawlArgs({ kind, url: body.url, options: body.options, auth });
       if (kind === 'crawl' && typeof body.url === 'string' && body.url) setGlobal({ lastUrl: body.url });
@@ -401,7 +406,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       // Files the dashboard may have left in the repository before; asked about once.
       legacy: readSettings(sp().settings).migrationDeclined ? [] : legacyFiles(cwd).filter((f) => !f.ours && (f.name !== REPO_CONFIG || !repoConfigTeam(cwd))).map((f) => f.name),
       session,
-      report: latest ? { exists: true, finishedAt: latest.finishedAt, baseUrl: latest.baseUrl } : { exists: false },
+      // With its counts, for "Where you are" ("Crawled 33 pages on 13 Oct — 34 findings").
+      report: latest ? { exists: true, finishedAt: latest.finishedAt, baseUrl: latest.baseUrl, pages: latest.summary ? latest.summary.pages ?? null : null, violations: latest.summary ? latest.summary.violations ?? null : null, reviews: latest.summary ? latest.summary.reviews ?? null : null } : { exists: false },
       // Crawls and fix rounds on record (History has something to show).
       pastRuns: listReports(cwd).length,
       tokenInEnv: !!env.TOKEN, tokenHeld: !!state.token,
@@ -429,8 +435,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const ledger = loadLedger(file);
     const pick = (status) => byStatus(ledger, status).map((e) => ({ test: e.test, impact: e.impact, message: e.message, pages: e.pages.length, attempts: e.attempts.length, reason: e.reason || null, selector: e.selector }));
     return {
-      exists: true, rounds: ledger.rounds, counts: statusCounts(ledger), line: summaryLine(ledger),
-      lists: { open: pick('open'), pending: pick('pending'), review: pick('review'), 'needs-human': pick('needs-human') },
+      exists: true, rounds: ledger.rounds, counts: statusCounts(ledger), line: summaryLine(ledger), deploy: ledger.deploy || null,
+      lists: { open: pick('open'), pending: pick('pending'), review: pick('review') },
     };
   }
 
@@ -603,7 +609,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     }
     if (m === 'POST' && path === '/api/runs/current/stop') return send(res, 200, { signal: runs.stop() });
     if (m === 'POST' && path === '/api/runs/current/continue') {
-      runs.continue();
+      const body = await readBody(req).catch(() => ({}));
+      runs.continue(body && typeof body.action === 'string' ? body.action : 'continue');
       return send(res, 200, { ok: true });
     }
     if (m === 'GET' && path === '/api/runs/interrupted') {
@@ -708,19 +715,6 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       const latest = readReport(state.cwd, 'latest');
       if (!latest) return send(res, 200, { report: false, source, checked: 0, found: 0, examples: [] });
       return send(res, 200, { report: true, source, ...matchSource(state.cwd, latest, source) });
-    }
-    // The Needs a person screen: the findings waiting for a person, and their decisions (review.mjs).
-    if (m === 'GET' && path === '/api/review') {
-      const c = readConfig();
-      const d = loopDefaults(state.cwd, c.exists ? c.config : null).effective;
-      const source = (Array.isArray(d.source) ? d.source : [d.source]).filter((x) => typeof x === 'string' && x);
-      return send(res, 200, reviewList(state.cwd, { sourceDirs: source, url: (c.exists && c.config.url) || null }));
-    }
-    if (m === 'POST' && path === '/api/ledger/decision') {
-      const body = await readBody(req);
-      // The running loop holds the ledger and would write over the decision.
-      if (runs.active && ['loop', 'dry-run'].includes(runs.current.kind)) throw new BadRequest('the fix loop is running; record the decision when it has finished', 409);
-      return send(res, 200, recordDecision(state.cwd, body));
     }
     if (m === 'PUT' && path === '/api/config') return send(res, 200, writeConfig(await readBody(req)));
     if (m === 'GET' && path === '/api/command') {

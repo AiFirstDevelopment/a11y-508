@@ -136,6 +136,8 @@ export function loopTimeline(ledger, counts) {
     for (const a of e.attempts || []) {
       if (!a || typeof a.round !== 'number') continue;
       const outcome = a.commit ? 'committed' : a.outcome === 'failed-gate' ? 'failed-gate' : a.note === 'agent timed out' ? 'timed-out' : a.outcome === 'still-present' ? 'committed' : 'no-change';
+      // Only what the assistant changed and committed: a finding it did not change is not listed.
+      if (outcome !== 'committed') continue;
       // The findings of one fix task share its attempt: one row, with how many elements it covered.
       const list = (changes[a.round] = changes[a.round] || []);
       const same = typeof a.n === 'number' ? list.find((x) => x.n === a.n) : null;
@@ -144,24 +146,40 @@ export function loopTimeline(ledger, counts) {
         continue;
       }
       list.push({ elements: 1,
-        n: a.n ?? null, test: e.test, message: e.message, files: Array.isArray(a.files) ? a.files : [], outcome, commit: a.commit || null,
+        n: a.n ?? null, test: e.test, message: e.message, files: Array.isArray(a.files) ? a.files : [], outcome, commit: a.commit || null, note: a.note || null,
         agentMs: a.agentMs ?? null, gateMs: a.gateMs ?? null, gateCode: a.gateCode ?? null,
         gateTail: a.gateOutput ? String(a.gateOutput).split('\n').filter((l) => l.trim()).slice(-15).join('\n') : null,
       });
     }
   }
   for (const list of Object.values(changes)) list.sort((x, y) => (x.n ?? 0) - (y.n ?? 0));
+  // Rounds whose committed fixes still wait for a deployment (ledger.deploy): "awaiting deployment",
+  // never a failure.
+  const waitingRounds = new Set();
+  if (ledger.deploy) {
+    for (const e of Object.values(ledger.findings || {})) {
+      if (e.status !== 'pending') continue;
+      const a = (e.attempts || [])[e.attempts.length - 1];
+      if (a && a.commit) waitingRounds.add(a.round);
+    }
+  }
   const rounds = ledger.rounds.map((r) => {
     const made = covered[r.round] || 0;
     const fixed = (r.diff && r.diff.verified) || 0;
-    return { round: r.round, at: r.at || null, found: r.violations, fixed, commits: commits[r.round] ? commits[r.round].size : 0, changes: changes[r.round] || [], remaining: r.round === last ? counts.open || 0 : Math.max(0, r.violations - made), needsHuman: r.round === last ? counts['needs-human'] || 0 : 0 };
+    const state = waitingRounds.has(r.round) ? 'awaiting-deploy' : 'done';
+    return {
+      round: r.round, at: r.at || null, found: r.violations, commits: commits[r.round] ? commits[r.round].size : 0, covered: made, changes: changes[r.round] || [],
+      // fixed: the findings the round's commits covered; verified: earlier fixes its crawl confirmed.
+      fixed: made, verified: fixed, remaining: r.round === last ? counts.open || 0 : Math.max(0, r.violations - made),
+      source: r.source || 'crawl', pages: r.pages ?? null, audited: r.audited ?? null, reviews: r.reviews ?? null, failed: (r.diff && r.diff.failed) || 0,
+      branch: r.branch || null, pushed: !!r.pushed, remote: r.remote || null,
+      state, label: state === 'awaiting-deploy' ? 'awaiting deployment' : null,
+    };
   });
   const fixed = counts.verified || 0;
   const remaining = counts.open || 0;
-  const needsHuman = counts['needs-human'] || 0;
-  // Findings a person closed (looks fine, won't fix) on the Needs a person screen: resolved, not remaining.
-  const decided = Object.values(ledger.findings || {}).filter((e) => e.decision && e.decision.by === 'person' && ['adequate', 'wont-fix'].includes(e.status)).length;
-  return { rounds, total: { rounds: rounds.length, fixed, pending: counts.pending || 0, of: fixed + remaining + (counts.pending || 0) + needsHuman + decided, remaining, needsHuman, decided } };
+  const deploy = ledger.deploy ? { round: ledger.deploy.round, branch: ledger.deploy.branch, remote: ledger.deploy.remote, pushed: !!ledger.deploy.pushed, host: ledger.deploy.host, since: ledger.deploy.since } : null;
+  return { rounds, deploy, total: { rounds: rounds.length, fixed, pending: counts.pending || 0, of: fixed + remaining + (counts.pending || 0), remaining } };
 }
 
 // Clear the fix loop's history: its rounds (work/round-N/) and the ledger. The prompts

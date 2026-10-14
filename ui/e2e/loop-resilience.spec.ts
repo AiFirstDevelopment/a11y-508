@@ -108,7 +108,7 @@ test('loop-resilience: with a11y-508/fixes in the repository the Fix step and th
     const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
     const n = (s: string) => Object.values<any>(ledger.findings).filter((e) => e.status === s).length;
     expect(n('pending')).toBeGreaterThan(0);
-    await expect(page.getByTestId('fix-counts')).toHaveText(countsLine({ verified: n('verified'), pending: n('pending'), open: n('open'), 'needs-human': n('needs-human') }));
+    await expect(page.getByTestId('fix-counts')).toHaveText(countsLine({ verified: n('verified'), pending: n('pending'), open: n('open') }));
     await expect(page.getByRole('button', { name: 'Try again' })).toBeEnabled();
     await expect(page.getByRole('button', { name: 'Run again' })).toBeEnabled();
     await expect(page.locator('body')).not.toContainText('Loop finished');
@@ -255,10 +255,12 @@ test('loop-resilience AC13-18: one pane log for the run, the gate and the commit
     expect(await changes.evaluate((el) => !!el.closest('details'))).toBe(false);
     await expect(changes.locator('tr[data-outcome="committed"]').first().getByTestId('change-files')).toHaveText('site/index.html');
     await expect(changes.locator('tr[data-outcome="committed"]').first().getByTestId('change-outcome')).toHaveText(/^\s*committed [0-9a-f]{7,}\s*$/);
-    const reverted = changes.locator('tr[data-outcome="failed-gate"]');
-    await expect(reverted).toHaveCount(1);
-    await reverted.getByText(/^reverted: check failed \(exit 1\)$/).click();
-    await expect(reverted.locator('pre')).toContainText('error: the build is broken');
+    // docs/plans/deploy-wait.md criterion 9 / guard j: only what the assistant changed and committed
+    // is listed; the reverted fix and the findings it did not change are not (the reverted fix's gate
+    // output is in the pane, above).
+    await expect(changes.locator('tbody tr:not([data-outcome="committed"])')).toHaveCount(0);
+    await expect(changes).not.toContainText(/no change|reverted/);
+    await expect(page.getByTestId('round-headline')).toHaveText(/^Round \d+: fixed \d+ findings? in 1 file, committed on branch \S+$/);
     // AC 18: the gate after the first said how long the last one took.
     const said: string[] = await page.evaluate(() => (window as any).__status);
     expect(said.some((x) => /^Checking fix \d+ with .+check\.mjs · \d+ s \(the last check took \d+ s\)$/.test(x)), said.join(' | ')).toBe(true);
@@ -275,11 +277,13 @@ test('loop-resilience AC13-18: one pane log for the run, the gate and the commit
   }
 });
 
-test('loop-resilience AC21: the same problem on four elements is one fix task, "(4 elements)" in the status and the Changes list', async ({ page }) => {
+test('loop-resilience AC21: the same problem on four elements is one fix task, "(4 elements)" in the status; unchanged, it is not in the Changes list', async ({ page }) => {
   // The fixture's start page has four inline links told apart only by colour (13.A): one task.
   await fromReportLoop(page, 'a11y-508-grouped-', {}, { FAKE_AGENT_DELAY_MS: '1500' }, async () => {
     await expect(page.getByTestId('fix-status')).toHaveText(/^Round 1: fixing \d+ of \d+ \(4 elements\) from the report you just saw · 13\.A /, { timeout: 120_000 });
     await expect(page.getByTestId('agent-output')).toContainText(/— Fix \d+ of \d+ \(4 elements\): 13\.A /);
-    await expect(page.getByTestId('changes').locator('tr', { hasText: '13.A' }).first()).toContainText('(4 elements)', { timeout: 30_000 });
+    // The assistant changes nothing for it, so Changes this run does not list it (docs/plans/deploy-wait.md criterion 9).
+    await expect(page.getByTestId('agent-output')).toContainText('No change was made; the finding stays open', { timeout: 30_000 });
+    await expect(page.locator('[data-testid="changes"] tr', { hasText: '13.A' })).toHaveCount(0);
   });
 });

@@ -23,6 +23,8 @@ import { recordKill, refuseKill } from '../../src/kills.mjs';
 export const RUN_CHILD = join(dirname(fileURLToPath(import.meta.url)), 'run-child.mjs');
 export const RUNS_DIR = 'runs';
 // Kinds whose run is journaled; an assistant's install stays a child of the server.
+// The words the control file carries to a run (run-child.mjs passes them on to the CLI's stdin).
+export const CONTROL_WORDS = new Set(['continue', 'fix-remaining', 'stop-waiting']);
 export const JOURNALED = new Set(['crawl', 'troubleshoot', 'login', 'loop', 'dry-run']);
 const LOOP_KINDS = new Set(['loop', 'dry-run']);
 
@@ -217,11 +219,12 @@ export class JournalRun {
     return sig;
   }
 
-  // "Deployed — continue" and the sign-in's Enter: a line in the control file, which the run's
-  // process reads and passes to the CLI as Enter.
-  continue() {
+  // "The site is updated — verify now" and the sign-in's Enter: a line in the control file, which
+  // the run's process reads and passes to the CLI as Enter; the wait's other buttons ("fix-remaining",
+  // "stop-waiting") are passed as that word on its own line.
+  continue(action = 'continue') {
     if (this.status !== 'running') throw new BadRequest('no run is active', 409);
-    appendFileSync(this.files.control, 'continue\n');
+    appendFileSync(this.files.control, `${CONTROL_WORDS.has(action) ? action : 'continue'}\n`);
   }
 
   // The dashboard ends (Ctrl+C, Quit): the run ends with it, recorded as stopped.

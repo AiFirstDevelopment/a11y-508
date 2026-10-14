@@ -23,7 +23,7 @@ const HELP = `a11y-508 ${pkg.version} - Section 508 crawler (DHS Trusted Tester 
 
 Usage: a11y-508 <url> [options]
        npm run e2e:a11y-508 <url> [-- options]
-       a11y-508 loop [url] [--config <file>] [--max-rounds <n>] [--agent <spec>] [--dry-run] [--sign-in-first] [--from-report <file>] [crawl options]
+       a11y-508 loop [url] [--config <file>] [--max-rounds <n>] [--agent <spec>] [--dry-run] [--sign-in-first] [--from-report [file]] [--verify | --verify-anyway | --wait] [crawl options]
        a11y-508 status
 
 Crawls every same-origin page reachable from <url> in headless Chrome, runs the
@@ -114,9 +114,16 @@ Fix loop
     --dry-run          Crawl and update the ledger only; no agent, no commits
     --sign-in-first    Round 1 crawls in a visible window after you sign in (--login --stay),
                        saving the session the later rounds crawl with
-    --from-report <file>  Round 1 starts from this report.json instead of crawling (it must be
+    --from-report [file]  Round 1 starts from this report.json instead of crawling (it must be
                        for the config's URL and newer than the loop's last commit); round 2
-                       crawls to verify the fixes
+                       crawls to verify the fixes. With no file: the first round fixes what the
+                       ledger has open with no crawl; fixes waiting for a deployment stay pending
+    --verify           Fixes wait for a deployment ("deployed": "bundle-change"): check the start
+                       page's bundles first and verify them if the new build is live; if not, end
+                       at once (exit 4) without crawling. Any loop start does this check.
+    --verify-anyway    Crawl and verify whatever the site serves; fixes not yet deployed count as
+                       not holding
+    --wait             Go on waiting for the deployment (deployTimeout), then verify
     --resume           Go on with the ledger's last round where it was interrupted: its open
                        findings are fixed with no new crawl; the next round crawls
   status        Print the ledger: what is open, pending, verified, and needs a person, and
@@ -125,6 +132,7 @@ Fix loop
 Exit codes
   0  no violations at the --fail-on impacts     1  violations found
   2  usage or crawl error                        3  browser could not start
+  4  loop: fixes committed, waiting for the site to be deployed (see --verify, --from-report, --wait)
 `;
 
 export function parseArgs(argv) {
@@ -250,7 +258,7 @@ export function parseArgs(argv) {
 export function splitLoopArgs(argv) {
   const [command, ...rest] = argv;
   if (command !== 'loop' && command !== 'status') return null;
-  const loop = { command, config: 'a11y-508.config.json', maxRounds: 20, agent: null, dryRun: false, signInFirst: false, fromReport: null, resume: false, help: false };
+  const loop = { command, config: 'a11y-508.config.json', maxRounds: 20, agent: null, dryRun: false, signInFirst: false, fromReport: null, resume: false, verify: false, verifyAnyway: false, wait: false, help: false };
   const remaining = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -266,8 +274,12 @@ export function splitLoopArgs(argv) {
     else if (key === '--agent') loop.agent = val();
     else if (key === '--dry-run') loop.dryRun = true;
     else if (key === '--sign-in-first') loop.signInFirst = true;
-    else if (key === '--from-report') loop.fromReport = val();
+    // --from-report alone (or followed by something that is not a .json file): from the ledger.
+    else if (key === '--from-report') loop.fromReport = eq > 0 ? a.slice(eq + 1) : rest[i + 1] !== undefined && /\.json$/i.test(rest[i + 1]) ? rest[++i] : true;
     else if (key === '--resume') loop.resume = true;
+    else if (key === '--verify') loop.verify = true;
+    else if (key === '--verify-anyway') loop.verifyAnyway = true;
+    else if (key === '--wait') loop.wait = true;
     else if (key === '-h' || key === '--help') loop.help = true;
     else remaining.push(a);
   }
@@ -320,7 +332,7 @@ async function loopMain(split) {
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
   try {
-    return await runLoop({ config, cwd: process.cwd(), log, maxRounds: loop.maxRounds, dryRun: loop.dryRun, signInFirst: loop.signInFirst, fromReport: loop.fromReport, resume: loop.resume, passthrough, stopSignal, events });
+    return await runLoop({ config, cwd: process.cwd(), log, maxRounds: loop.maxRounds, dryRun: loop.dryRun, signInFirst: loop.signInFirst, fromReport: loop.fromReport, resume: loop.resume, verifyAnyway: loop.verifyAnyway, wait: loop.wait, passthrough, stopSignal, events });
   } finally {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);

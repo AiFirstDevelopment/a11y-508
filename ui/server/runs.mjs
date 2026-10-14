@@ -12,6 +12,8 @@ import { protectedPids, recordKill, refuseKill } from '../../src/kills.mjs';
 export function outcomeOf({ kind, code, signal, stopped }) {
   if (stopped || code === 130 || signal === 'SIGINT' || signal === 'SIGTERM') return 'stopped';
   if (code === 0) return 'ok';
+  // The fix loop's fixes are committed and wait for a deployment someone else runs: not a failure.
+  if (code === 4 && (kind === 'loop' || kind === 'dry-run')) return 'awaiting-deploy';
   if (code === 1 && kind !== 'install') return 'findings';
   return 'error';
 }
@@ -231,10 +233,12 @@ export class Runs {
     return sig;
   }
 
-  continue() {
+  // action: 'continue' (Enter), 'fix-remaining' or 'stop-waiting' (the deployment wait's buttons).
+  continue(action = 'continue') {
     if (!this.active) throw new BadRequest('no run is active', 409);
-    if (this.current.journal) return this.current.continue();
-    this.current.child.stdin.write('\n');
+    if (!['continue', 'fix-remaining', 'stop-waiting'].includes(action)) throw new BadRequest('action must be continue, fix-remaining or stop-waiting');
+    if (this.current.journal) return this.current.continue(action);
+    this.current.child.stdin.write(action === 'continue' ? '\n' : `${action}\n`);
   }
 
   // Replays from the first event, then streams. Returns an unsubscribe.
