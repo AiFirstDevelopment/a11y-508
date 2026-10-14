@@ -152,6 +152,7 @@ test('guard 3, AC6: kill paths refuse the dashboard\'s own browser, the dashboar
   const { killTree } = await import('../../../src/chrome.mjs');
   const { protectPid, _resetKills } = await import('../../../src/kills.mjs');
   const own = sleeper();
+  let reused = null;
   let s = null;
   try {
     // The own browser, registered as the server registers it.
@@ -179,8 +180,16 @@ test('guard 3, AC6: kill paths refuse the dashboard\'s own browser, the dashboar
     await sleep(300);
     assert.equal(alive(serverPid), true, 'the server is still running');
     assert.equal((await s.call('GET', '/api/ping')).status, 200);
+    // A record left by a dashboard that is gone protects nothing: its pids may belong to anything now.
+    reused = sleeper();
+    const gone = Number(spawnSync(process.execPath, ['-e', 'console.log(process.pid)'], { encoding: 'utf8' }).stdout.trim());
+    writeFileSync(join(home, 'server-1.json'), JSON.stringify({ pid: gone, ownBrowserPid: reused.pid }));
+    const r = killTree(reused.pid, 'check-time-limit');
+    assert.equal(r && r.killed, true, JSON.stringify(r));
+    await until(() => !alive(reused.pid), 5000, 'the process named by a stale record to be ended');
   } finally {
     endSleeper(own);
+    if (reused) endSleeper(reused);
     if (s) await s.stop();
     if (before === undefined) delete process.env.A11Y_508_HOME;
     else process.env.A11Y_508_HOME = before;

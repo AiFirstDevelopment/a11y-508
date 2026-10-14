@@ -25,7 +25,7 @@ import { recordDecision, reviewList } from './review.mjs';
 import { carryAnalysis, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, sameStartUrl, latestDir, ledgerPath } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
-import { readDiary, writeDiary } from '../../src/diary.mjs';
+import { addDiarySecrets, readDiary, writeDiary } from '../../src/diary.mjs';
 import { describeEntry, doingOf } from './diagnostics.mjs';
 
 // The wizard's steps, as lastStep stores them.
@@ -323,6 +323,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       request, preface: Array.isArray(preface) ? preface : [],
     };
     // Detached and recorded on disk, so it outlives this server (run-journal.mjs).
+    addDiarySecrets(spec.secrets);
     if (JOURNALED.has(kind)) return runs.adopt(startJournaled(spec));
     return runs.start(spec);
   }

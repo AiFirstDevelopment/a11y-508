@@ -103,6 +103,7 @@ if (existing) {
 
 let own = null;
 let closing = false;
+let closingReason = null;
 const dash = createDashboard({ cwd, restored, onQuit: () => quit(), onOpen: () => reopen() });
 await dash.listen(opt.port);
 if (dash.build.fresh === false) process.stdout.write(`warn ${dash.build.reason}\n`);
@@ -210,7 +211,7 @@ function watchOwn() {
     const at = new Date().toISOString();
     // What the dashboard was doing and the kill that came before, read at the moment it went away.
     const doing = dash.doing();
-    const kill = closing ? { kill: 'quit' } : lastKill({ withinMs: 5000 });
+    const kill = closing ? { kill: closingReason || 'quit' } : lastKill({ withinMs: 5000 });
     await mine.drained();
     unprotectPid(pid);
     if (serverRecord.ownBrowserPid === pid) saveServerRecord({ ownBrowserPid: null });
@@ -264,11 +265,12 @@ if (opt.open) await openOwnOrSystem();
 const shutdown = async (reason) => {
   if (closing) process.exit(130);
   closing = true;
+  closingReason = reason;
   writeDiary({ type: 'server-stop', reason }, { source: 'server' });
   forgetServerFile();
   // Ctrl+C closes the dashboard's own browser too.
   if (ownAlive()) {
-    recordKill('quit', { target: own.proc.pid, what: "the dashboard's own browser" });
+    recordKill(reason || 'quit', { target: own.proc.pid, what: "the dashboard's own browser" });
     const gone = new Promise((r) => own.proc.once('exit', () => setTimeout(r, 600)));
     try {
       own.proc.kill();

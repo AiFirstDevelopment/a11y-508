@@ -41,6 +41,15 @@ function ancestors() {
   return out;
 }
 
+const running = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+};
+
 function recordedDashboards(env) {
   const out = new Map();
   let names = [];
@@ -52,8 +61,11 @@ function recordedDashboards(env) {
   for (const n of names) {
     try {
       const r = JSON.parse(readFileSync(join(stateBase(env), n), 'utf8'));
-      if (Number.isInteger(r.pid)) out.set(r.pid, 'the dashboard server');
-      if (Number.isInteger(r.ownBrowserPid)) out.set(r.ownBrowserPid, "the dashboard's own browser");
+      // A record left by a dashboard that ended without removing it names a pid that may since
+      // belong to anything: only a live server's record counts.
+      if (!Number.isInteger(r.pid) || !running(r.pid)) continue;
+      out.set(r.pid, 'the dashboard server');
+      if (Number.isInteger(r.ownBrowserPid) && running(r.ownBrowserPid)) out.set(r.ownBrowserPid, "the dashboard's own browser");
     } catch {}
   }
   return out;

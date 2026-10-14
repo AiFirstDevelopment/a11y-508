@@ -122,6 +122,8 @@ export async function crawl({ browser: firstBrowser, startUrl, opts, log, outDir
     const old = browser;
     recovering = (async () => {
       const d = old.death ? old.death() : null;
+      // Kept: close() below makes death() answer null, and other workers still describe their page.
+      old.lastDeath = d;
       const cause = deathText(d);
       const connected = !!old.connected;
       writeDiary({ type: 'crawl-browser-died', connected, url: startUrl, pagesDone: pages.length, code: d ? d.code : null, signal: d ? d.signal : null, stderr: d ? d.stderr : [], cause, relaunching: !!relaunch && relaunches.length === 0 }, { source: 'cli' });
@@ -183,7 +185,7 @@ export async function crawl({ browser: firstBrowser, startUrl, opts, log, outDir
           if (dead(b)) {
             // The browser died while this page was audited: the page is recorded with the error
             // and the crawl goes on from the next one, in a browser started again.
-            const d = b.death ? b.death() : null;
+            const d = (b.death && b.death()) || b.lastDeath || null;
             res = { url: item.url, error: `the browser closed while this page was audited (${deathText(d)})`, findings: [], passes: {}, errors: [] };
             await recover();
             ({ session, page, b } = await newWorkerPage());

@@ -138,4 +138,7 @@ export const KILL_WORDS = {
   'crawl-close': "closing a crawl's browser",
   'detection-timeout': 'the assistant detection time limit',
   quit: 'Quit',
+  'ctrl-c': 'Ctrl+C',
+  sigterm: 'a SIGTERM to the dashboard',
+  idle: 'the idle shutdown',
 };

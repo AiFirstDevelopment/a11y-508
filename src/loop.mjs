@@ -94,7 +94,14 @@ const sh = (cwd, command, env, onData = null, timeoutMs = 0) =>
     child.stderr.on('data', keep);
     const timer = timeoutMs > 0 ? setTimeout(() => {
       timedOut = true;
-      killTree(child.pid, 'check-time-limit');
+      // A process this loop started is never the dashboard's: if a stale record made the tree kill
+      // refuse it, the command itself is still ended, so the time limit holds.
+      const r = killTree(child.pid, 'check-time-limit');
+      if (r && r.refused) {
+        try {
+          child.kill('SIGKILL');
+        } catch {}
+      }
     }, timeoutMs) : null;
     child.on('exit', (code) => {
       if (timer) clearTimeout(timer);
