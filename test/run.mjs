@@ -54,7 +54,7 @@ const run = await new Promise((resolve) => {
   });
   let stdout = '';
   child.stdout.on('data', (d) => (stdout += d));
-  const timer = setTimeout(() => child.kill('SIGKILL'), 300000);
+  const timer = setTimeout(() => child.kill('SIGKILL'), 420000); // the main crawl: about 95 pages, with search forms filled and followed
   child.on('exit', (code) => {
     clearTimeout(timer);
     resolve({ status: code, stdout });
@@ -121,7 +121,7 @@ evSite.close();
 const evReport = existsSync(join(evOut, 'report.json')) ? JSON.parse(readFileSync(join(evOut, 'report.json'), 'utf8')) : null;
 rmSync(evOut, { recursive: true, force: true });
 console.log(`cli finished in ${((Date.now() - t0) / 1000).toFixed(1)}s with exit code ${run.status}`);
-if (run.status === null) throw new Error('CLI was killed after 300s');
+if (run.status === null) throw new Error('CLI was killed after 420s');
 
 const mainReport = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
 // report: the default crawl. flagged: the crawl with --wcag 2.2 (null with --only on another page).

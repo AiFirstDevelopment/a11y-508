@@ -189,9 +189,10 @@ export async function startFixtureSite({ port = 0, host = '127.0.0.1', token = T
     }
     const result = /^\/result-(\d+)\.html$/.exec(path);
     if (result) {
-      // A result page, with a planted finding: an image without alt text.
+      // A result page, with a planted finding: an image without alt text. Those of the search-*.html
+      // fixtures (21 and up) link back to the fixture list, so the main crawl does not reach search.html.
       res.writeHead(200, { 'content-type': TYPES['.html'] });
-      return res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Case ${result[1]} - a11y-508 test site</title></head><body><main><h1>Case ${result[1]}</h1><img src="/img/case-${result[1]}.png" width="40" height="40"><p><a href="/search.html">Back to search</a></p></main></body></html>`);
+      return res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Case ${result[1]} - a11y-508 test site</title></head><body><main><h1>Case ${result[1]}</h1><img src="/img/case-${result[1]}.png" width="40" height="40">${Number(result[1]) < 20 ? '<p><a href="/search.html">Back to search</a></p>' : '<p><a href="/about.html">Back to the fixture list</a></p>'}</main></body></html>`);
     }
     if (path === '/forms.html' && state.dropsLeft > 0) {
       state.dropsLeft--;
