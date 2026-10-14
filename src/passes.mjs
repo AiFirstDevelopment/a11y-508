@@ -559,13 +559,14 @@ async function comboPreset(page, sel, months) {
       await page.click(pt.x, pt.y);
       await sleep(200);
     }
-    if (!pt || !(await page.evaluate(`${A}.optionTaken(${o})`))) {
-      if (await page.evaluate(`${A}.comboActivate(${q}, ${o})`)) {
-        await page.press('Enter');
-        await sleep(200);
-      }
+    let taken = !!pt && (await page.evaluate(`${A}.optionTaken(${o})`));
+    if (!taken && (await page.evaluate(`${A}.comboActivate(${q}, ${o})`))) {
+      await page.press('Enter');
+      await sleep(200);
+      taken = await page.evaluate(`${A}.optionTaken(${o})`);
     }
-    chosen = r.choice;
+    // Reported only when it took: else the form falls back to its date fields.
+    if (taken) chosen = r.choice;
   }
   for (let i = 0; i < 2 && (await page.evaluate(`${A}.comboIsOpen(${q})`)); i++) {
     if (i === 0) await page.evaluate(`${A}.comboFocus(${q})`);

@@ -20,6 +20,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
+const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets'];
+if (only && !GROUPS.includes(only)) throw new Error(`--only takes one of ${GROUPS.join(', ')}`);
 const want = (group) => !only || only === group;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-search-')));
 let failures = 0;
@@ -198,9 +200,9 @@ if (want('presets')) {
   const now = new Date();
   const ytd = Math.max(1, Math.round((now - new Date(now.getFullYear(), 0, 1)) / 86400000)) / 30;
   check('presetMonths reads "N months", "90 days", "YTD", "this year", "all" and the "Last N" forms', () => {
-    const got = Object.fromEntries(['Last 90 days', '90 days', '3 months', 'Last 6 months', 'Past year', 'Last quarter', 'Previous 2 weeks', 'YTD', 'Year to date', 'This year', 'All', 'All time', 'Open', 'Closed'].map((t) => [t, Math.round(pm(t) * 100) / 100]));
+    const got = Object.fromEntries(['Last 90 days', '90 days', '3 months', 'Last 6 months', 'Past year', 'Last quarter', 'Previous 2 weeks', '30 days overdue', 'YTD', 'Year to date', 'This year', 'All', 'All time', 'Open', 'Closed'].map((t) => [t, Math.round(pm(t) * 100) / 100]));
     const r = (x) => Math.round(x * 100) / 100;
-    assert.deepEqual(got, { 'Last 90 days': 3, '90 days': 3, '3 months': 3, 'Last 6 months': 6, 'Past year': r(365 / 30), 'Last quarter': 3, 'Previous 2 weeks': r(14 / 30), YTD: r(ytd), 'Year to date': r(ytd), 'This year': r(ytd), All: 1216.67, 'All time': 1216.67, Open: 0, Closed: 0 });
+    assert.deepEqual(got, { 'Last 90 days': 3, '90 days': 3, '3 months': 3, 'Last 6 months': 6, 'Past year': r(365 / 30), 'Last quarter': 3, 'Previous 2 weeks': r(14 / 30), '30 days overdue': 0, YTD: r(ytd), 'Year to date': r(ytd), 'This year': r(ytd), All: 1216.67, 'All time': 1216.67, Open: 0, Closed: 0 });
   });
 }
 

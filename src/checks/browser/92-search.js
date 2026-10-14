@@ -17,7 +17,7 @@
   const PRESETBTN = '[role="radio"], [role="radiogroup"] button, button[aria-pressed]';
   const WIDGET = `${COMBO}, ${PRESETBTN}`;
   const DATEFMT = /\b(yyyy|mm?|dd?)([-/.])(yyyy|mm?|dd?)\2(yyyy|mm?|dd?)\b/i;
-  const TOGGLE = 'mat-datepicker-toggle, [class*="datepicker-toggle" i], button[aria-label*="calendar" i], button[aria-label*="date picker" i], button[aria-label*="datepicker" i]';
+  const TOGGLE = 'mat-datepicker-toggle, [class*="datepicker-toggle" i], button[aria-label*="open calendar" i], button[aria-label*="choose date" i], button[aria-label*="choose a date" i], button[aria-label*="date picker" i], button[aria-label*="datepicker" i]';
 
   const nameOf = (el) => (A.accName(el).name || el.value || A.text(el) || el.getAttribute('title') || '').trim().replace(/\s+/g, ' ').slice(0, 80);
   const hintOf = (el) => {
@@ -107,7 +107,7 @@
   const UNIT = { day: 1, week: 7, month: 30, quarter: 90, year: 365 };
   const presetDays = (text) => {
     const t = String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
-    let m = /\b(?:last|past|previous|prior)\s+(\d+)\s*(day|week|month|quarter|year)s?\b/.exec(t) || /^(\d+)\s*(day|week|month|quarter|year)s?\b/.exec(t);
+    let m = /\b(?:last|past|previous|prior)\s+(\d+)\s*(day|week|month|quarter|year)s?\b/.exec(t) || /^(\d+)\s*(day|week|month|quarter|year)s?$/.exec(t);
     if (m) return UNIT[m[2]] * Number(m[1]);
     m = /\b(?:last|past|previous|prior)\s+(day|week|month|quarter|year)\b/.exec(t);
     if (m) return UNIT[m[1]];
@@ -120,15 +120,18 @@
   };
   const presetMonths = (text) => presetDays(text) / 30;
   A.presetMonths = presetMonths;
-  // Of a list of choices ({ text }), the narrowest preset covering `months`, else the widest there is
-  // (short: true). A list whose only preset is "All" is not a list of date ranges (a status filter).
-  const choosePreset = (items, months) => {
+  // Of a list of choices ({ text }), the narrowest preset covering `months`, else (with `widest`) the
+  // widest there is (short: true). A list whose only preset is "All" is not a list of date ranges (a
+  // status filter). A native select or radio left short keeps its default (often "All") and the
+  // date fields get the full range instead, so only custom dropdowns and button groups take `widest`.
+  const choosePreset = (items, months, widest = true) => {
     const scored = items.map((x) => ({ ...x, days: presetDays(x.text) })).filter((x) => x.days > 0);
     if (!scored.some((x) => x.days < ALL)) return null;
     const enough = scored.filter((x) => x.days >= months * 30).sort((a, b) => a.days - b.days)[0];
     if (enough) return { item: enough, days: enough.days, short: false };
-    const widest = scored.sort((a, b) => b.days - a.days)[0];
-    return { item: widest, days: widest.days, short: true };
+    if (!widest) return null;
+    const wide = scored.sort((a, b) => b.days - a.days)[0];
+    return { item: wide, days: wide.days, short: true };
   };
   // A datepicker toggle (Angular Material's, or a button labelled "calendar") beside a text field:
   // in the field's nearest container that holds one, with at most a from/to pair of fields.
@@ -166,7 +169,7 @@
     if (presets) {
       // A preset: an option of a select, a radio's label, or a button of a group ("Last 90 days").
       for (const s of fields.filter((f) => f.localName === 'select')) {
-        const c = choosePreset([...s.options].map((o) => ({ o, text: o.text })), months);
+        const c = choosePreset([...s.options].map((o) => ({ o, text: o.text })), months, false);
         if (c) {
           setValue(s, c.item.o.value);
           take(c, c.item.o.text);
@@ -174,10 +177,12 @@
         }
       }
       if (!out.preset) {
-        const c = choosePreset(fields.filter((f) => f.type === 'radio').map((r) => ({ r, text: hintOf(r) })), months);
+        // A radio's own label (or accessible name), so a bare "All" reads as one.
+        const text = (r) => (r.labels && r.labels.length ? [...r.labels].map((l) => A.text(l)).join(' ') : A.accName(r).name || hintOf(r));
+        const c = choosePreset(fields.filter((f) => f.type === 'radio').map((r) => ({ r, text: text(r) })), months, false);
         if (c) {
           c.item.r.click();
-          take(c, c.item.r.labels && c.item.r.labels.length ? A.text(c.item.r.labels[0]) : c.item.text);
+          take(c, c.item.text);
         }
       }
       if (!out.preset) {
