@@ -12,6 +12,7 @@ const CLICKY = new Set(['click', 'mousedown', 'mouseup', 'pointerdown', 'pointer
 export async function listenerProbe(page, meta, add) {
   const pointer = meta.pointerCandidates || [];
   const selects = meta.selectCandidates || [];
+  const wrappers = new Set(meta.pointerWrappers || []);
   const clickable = [];
   if (!pointer.length && !selects.length) return clickable;
   let delegated = false;
@@ -24,6 +25,7 @@ export async function listenerProbe(page, meta, add) {
   let maybe = 0;
   for (const sel of pointer) {
     if (direct + maybe >= 25) break;
+    if (wrappers.has(sel)) continue; // contains a focusable control the click bubbles from
     let types = [];
     try {
       types = await page.listenerTypes(sel);
