@@ -658,9 +658,14 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       ev('deployment', { state: 'verify-anyway', round: ledger.rounds.length, ...deployFacts() });
     } else {
       const sig = await buildForVerify();
-      if (sig === null || ledger.deploy.signature == null) {
-        // The build cannot be compared: the person said the site is updated, so it is verified.
-        log.info('could not check the site\'s build; taking your word that it is updated');
+      if (ledger.deploy.signature == null) {
+        // No build from before the fixes on record (an earlier run could not read the page), so there is
+        // nothing to compare: the person's word stands, and nothing is said about a check that never was.
+        log.info(`verifying ${byStatus(ledger, 'pending').length} fixes`);
+        ev('deployment', { state: 'verify-anyway', reason: 'no-baseline', round: ledger.rounds.length, ...deployFacts() });
+      } else if (sig === null) {
+        // The page could not be read, so the build cannot be compared: the person said the site is updated.
+        log.info('could not read the start page to check its build; going by your word that the site is updated');
         ev('deployment', { state: 'verify-anyway', reason: 'unreachable', round: ledger.rounds.length, ...deployFacts() });
       } else if (sig === ledger.deploy.signature) return endAwaiting('still-old', ledger.rounds.length);
       else {
@@ -679,13 +684,13 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     noCrawlNext = false;
     let signatureBefore = null;
     if (resumed) {
-      signatureBefore = cfg.deployed === 'bundle-change' ? (awaitingDeploy() ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
+      signatureBefore = cfg.deployed === 'bundle-change' ? (awaitingDeploy() && ledger.deploy.signature != null ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
       log.info(`=== round ${round}: continuing where it was interrupted (no crawl) ===`);
       ev('round', { round, resumed: true });
     } else if (fromTheLedger) {
       // A round with no crawl: the ledger's open findings, fixed while the earlier fixes still wait
       // for their deployment (they stay pending). Recorded as a round so its attempts are its own.
-      signatureBefore = cfg.deployed === 'bundle-change' ? (awaitingDeploy() ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
+      signatureBefore = cfg.deployed === 'bundle-change' ? (awaitingDeploy() && ledger.deploy.signature != null ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
       const prev = ledger.rounds[ledger.rounds.length - 1] || {};
       ledger.rounds.push({ round, at: new Date().toISOString(), source: 'ledger', pages: prev.pages || 0, audited: prev.audited || 0, violations: prev.violations || 0, reviews: prev.reviews || 0, coverage: null, diff: { new: 0, still: 0, failed: 0, verified: 0, gone: 0, reopened: 0, unchecked: 0, gaveUp: 0 } });
       save();
@@ -1111,7 +1116,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         const branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
         const before = ledger.deploy;
         ledger.deploy = {
-          round, signature: before ? before.signature : signatureBefore, branch, remote: cfg.push ? 'origin' : null,
+          // A build on record stays; one never read (null) is replaced by this round's, so the check can work next time.
+          round, signature: before && before.signature != null ? before.signature : signatureBefore, branch, remote: cfg.push ? 'origin' : null,
           pushed: !!cfg.push && (committed > 0 || !!(before && before.pushed)), host: hostOf(cfg.url), since: before ? before.since : new Date().toISOString(),
         };
         save();

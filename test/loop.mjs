@@ -1354,7 +1354,7 @@ rmSync(repo2, { recursive: true, force: true });
       assert.equal(site.blockBrowserDocs, 0, 'the browser was tried');
       const dep = vEvents.events.find((e) => e.type === 'deployment');
       assert.deepEqual(dep && [dep.state, dep.reason], ['verify-anyway', 'unreachable'], verify.stdout);
-      assert.ok(vEvents.events.some((e) => e.type === 'info' && e.message === "could not check the site's build; taking your word that it is updated"), verify.stdout);
+      assert.ok(vEvents.events.some((e) => e.type === 'info' && e.message === 'could not read the start page to check its build; going by your word that the site is updated'), verify.stdout);
       assert.ok(!vEvents.events.some((e) => e.type === 'login-waiting'), verify.stdout);
       assert.ok(vEvents.events.some((e) => e.type === 'step' && e.step === 'crawl'), verify.stdout);
       assert.equal(l2.rounds.length, l1.rounds.length + 1, verify.out);
@@ -1421,6 +1421,29 @@ rmSync(repo2, { recursive: true, force: true });
       assert.ok(readFileSync(join(dir, 'a11y-508-state.json'), 'utf8').includes('renewed-in-tab'));
       assert.ok(alive, 'the dashboard\'s browser is still up');
       assert.equal(vEvents.events.filter((e) => e.type === 'login-waiting').length, 1, 'one sign-in, not a second one for the crawl');
+      assert.ok(Object.values(l2.findings).some((e) => e.status === 'verified'), verify.out);
+    });
+    site.srv.close();
+    removeOwn(dir);
+  }
+  {
+    // No build from before the fixes on record (an older run could not read the page): --verify says
+    // nothing about a check, verifies, and the round records this build so the next wait can compare.
+    const { dir, site, ledgerFile } = await ssoRepo('a11y-508-deploy-nobase-', { deployed: 'bundle-change', deployTimeout: 3000, deployPoll: 400 });
+    await loopIn(dir, [site.url, '--max-rounds', '1']);
+    const l = JSON.parse(readFileSync(ledgerFile, 'utf8'));
+    l.deploy.signature = null;
+    writeFileSync(ledgerFile, JSON.stringify(l));
+    site.build = 2;
+    const verify = await loopIn(dir, [site.url, '--verify', '--events', '--max-rounds', '1']);
+    const vEvents = parseEvents(verify.stdout);
+    const l2 = loadLedger(ledgerFile);
+    check('deploy check: with no build from before the fixes on record, --verify says nothing about the check and verifies', () => {
+      assert.deepEqual(vEvents.problems, []);
+      const dep = vEvents.events.find((e) => e.type === 'deployment');
+      assert.deepEqual(dep && [dep.state, dep.reason], ['verify-anyway', 'no-baseline'], verify.stdout);
+      assert.ok(!vEvents.events.some((e) => (e.type === 'info' || e.type === 'warn') && /could not (check|read)|your word/i.test(e.message || '')), verify.stdout);
+      assert.ok(vEvents.events.some((e) => e.type === 'step' && e.step === 'crawl'), verify.stdout);
       assert.ok(Object.values(l2.findings).some((e) => e.status === 'verified'), verify.out);
     });
     site.srv.close();
