@@ -299,6 +299,14 @@ check('13.A link by color alone', () => has('/', '13.A', null, /only by color/))
 check('13.B sensory instruction', () => has('/', '13.B', 'review', /green button on the right/));
 check('4.A role=button not focusable', () => has('/', '4.A', 'violation', /role="button" but is not keyboard focusable/));
 check('4.A click listener on span (CDP probe)', () => has('/', '4.A', 'violation', /click listener but is not keyboard focusable/));
+check('4.A click listener on a wrapper that contains an input is not reported', () => {
+  const hits = (pages['/'].findings || []).filter((f) => f.test === '4.A' && /wrap-input/.test(f.selector || ''));
+  assert.equal(hits.length, 0, hits.map((f) => `${f.selector}: ${f.message}`).join('\n'));
+});
+check('4.A click listener on a text-only wrapper is still reported', () => {
+  const f = (pages['/'].findings || []).find((x) => x.test === '4.A' && x.level === 'violation' && /wrap-text/.test(x.selector || '') && /click listener but is not keyboard focusable/.test(x.message));
+  assert.ok(f, (pages['/'].findings || []).filter((x) => x.test === '4.A').map((x) => `${x.selector}: ${x.message}`).join('\n'));
+});
 check('4.D no focus indicator', () => has('/', '4.D', 'violation', /No visible change/));
 check('18.A clipped text at 200%', () => has('/', '18.A', 'violation', /clipped at 200% zoom/));
 check('12.D iframe without title', () => has('/', '12.D', 'violation', /no title/));

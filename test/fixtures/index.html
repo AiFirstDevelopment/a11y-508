@@ -59,6 +59,8 @@
   <a href="/tables.html"></a>
   <button class="no-focus">No focus indicator</button>
   <span class="pointer" id="pointer-span">Clickable span</span>
+  <div class="pointer field-wrapper" id="wrap-input"><label for="wrapped-field">Wrapped field</label> <input type="text" id="wrapped-field"></div>
+  <div class="pointer field-wrapper" id="wrap-text">Wrapper with text only</div>
   <div role="button" id="custom-button">Custom button without tabindex</div>
   <p class="low-contrast">This text has low contrast against its background.</p>
   <p class="ok-contrast">This text has fine contrast.</p>
@@ -94,6 +96,7 @@
   document.getElementById('go-dashboard').addEventListener('click', function () { history.pushState({}, '', '/dashboard.html'); document.querySelector('h1').textContent = 'Dashboard'; });
   document.getElementById('danger').addEventListener('click', function () { fetch('/danger', { method: 'POST' }); });
   document.getElementById('pointer-span').addEventListener('click', function () { this.textContent = 'clicked'; });
+  document.querySelectorAll('.field-wrapper').forEach(function (w) { w.addEventListener('click', function () { var i = w.querySelector('input'); if (i) i.focus(); }); });
   document.getElementById('disc').addEventListener('click', function () {
     var open = this.getAttribute('aria-expanded') === 'true';
     this.setAttribute('aria-expanded', String(!open));

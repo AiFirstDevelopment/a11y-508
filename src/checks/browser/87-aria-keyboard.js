@@ -10,6 +10,14 @@ window.__a11y508.register(function ariaKeyboard(A) {
   const { aria } = A;
   const KNOWN = Object.keys(aria.attrs);
   A.meta.pointerCandidates = [];
+  // Pointer candidates that contain a keyboard-reachable control (e.g. Angular Material's
+  // .mat-mdc-text-field-wrapper around its <input>): a click bubbles up from that control, so
+  // keyboard users reach the handler and the 4.A listener probe skips them. They stay in
+  // pointerCandidates so route discovery is unchanged; they also drop out of the probe's
+  // clickable list, so 2.5.8 target size no longer measures them (the inner control is measured).
+  A.meta.pointerWrappers = [];
+  const containsTabbable = (el) => Array.from(el.querySelectorAll('*')).some((d) =>
+    A.isTabbable(d) && d.getAttribute('aria-disabled') !== 'true' && !d.closest('[aria-hidden="true"]'));
   A.meta.selectCandidates = [];
 
   // Levenshtein distance, for "did you mean" on a misspelled attribute.
@@ -166,7 +174,11 @@ window.__a11y508.register(function ariaKeyboard(A) {
       const s = A.cs(el);
       if (s && s.cursor === 'pointer' && A.meta.pointerCandidates.length < 150) {
         const parentPointer = el.parentElement && A.cs(el.parentElement).cursor === 'pointer';
-        if (!parentPointer) A.meta.pointerCandidates.push(A.selector(el));
+        if (!parentPointer) {
+          const sel = A.selector(el);
+          A.meta.pointerCandidates.push(sel);
+          if (containsTabbable(el)) A.meta.pointerWrappers.push(sel);
+        }
       }
     }
     if (el.localName === 'select' && A.meta.selectCandidates.length < 50) A.meta.selectCandidates.push(A.selector(el));
