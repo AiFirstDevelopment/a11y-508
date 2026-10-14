@@ -460,12 +460,15 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // session expired, or there is none), a visible window opens on the start page for the person to
   // sign in, as round 1 does, and the session is saved for the check and the crawl. Returns the
   // build's signature then (null when it still cannot be read, or no sign-in happened in time).
+  let signedInNow = false;
   const buildForVerify = async () => {
     const r = await checkBuild(cfg.url);
     if (!r.portal) return r.signature;
     log.info(`the start page sends the browser to its sign-in: opening ${connectArgs.length ? 'a tab in the dashboard\'s window' : 'a window'} to sign in`);
     const ok = await signInOnly({ cfg, cwd, log, events, stateFile, connectArgs, passthrough: passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') });
     if (!ok) return null;
+    // Signed in just now: the crawl uses that session instead of signing in again (--sign-in-first).
+    signedInNow = true;
     session = sessionArgs(cfg, passthrough, cwd);
     return bundleSignature(cfg.url);
   };
@@ -710,7 +713,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       }
       crawl = { report: given };
     } else try {
-      const first = signInFirst && round === firstCrawl;
+      const first = signInFirst && round === firstCrawl && !signedInNow;
       crawl = await crawlOnce({ cfg, cwd, round, log, passthrough: first ? passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') : passthrough, events, session: first ? signInArgs : session });
       if (first) session = sessionArgs(cfg, passthrough, cwd);
       // Behind a sign-in the build could not be read before this round signed in; the site has not
