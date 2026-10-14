@@ -26,7 +26,8 @@ sets it again if the app reset it; and the report says so once per form.
    preset (a native or custom dropdown, a button or radio preset, date or
    datepicker inputs, as `A.fillSearch` reads them) and a control named like a
    search (or a search box) is set to the last `--search-months` months: the
-   same choice as the search pass (narrowest preset of at least N months,
+   same choice as the search pass (at most ten scopes per page; behind a
+   modal shown on load, once Escape has closed it) (narrowest preset of at least N months,
    else the widest for custom dropdowns and button groups, else the date
    fields from N months ago to today), once per scope, with nothing
    submitted. A scope with a button named like an action (Clear, Reset) is

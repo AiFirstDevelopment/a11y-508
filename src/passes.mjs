@@ -611,7 +611,7 @@ async function fillRange(page, sel, months) {
 export async function applyRanges(page, opts) {
   if (!opts.forms) return [];
   await page.ensureInjected();
-  const scopes = await page.evaluate(`(() => { ${A}._ranges = {}; return ${A}.rangeScopes(3); })()`);
+  const scopes = await page.evaluate(`(() => { ${A}._ranges = {}; return ${A}.rangeScopes(10); })()`);
   if (!scopes.length) return [];
   const scroll = await page.evaluate(`${A}.scrollPosition()`).catch(() => null);
   const set = [];

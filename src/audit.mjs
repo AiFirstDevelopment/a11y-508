@@ -139,12 +139,16 @@ async function auditPageIn(page, url, ctx) {
 
   try {
     await page.ensureInjected();
-    // The date range at the last --search-months months before any check or pass runs.
-    try {
-      await applyRanges(page, opts);
-    } catch (e) {
-      result.errors.push(`date range: ${e.message}`);
-    }
+    // The date range at the last --search-months months before any check or pass runs; behind a
+    // modal shown on load, once Escape has closed it (filling first could close the modal early).
+    const setRanges = async () => {
+      try {
+        await applyRanges(page, opts);
+      } catch (e) {
+        result.errors.push(`date range: ${e.message}`);
+      }
+    };
+    if (!(await page.evaluate('window.__a11y508.modalOnLoad()').catch(() => null))) await setRanges();
     result.info = await page.evaluate('window.__a11y508.pageInfo()');
     result.title = result.info.title;
     // A modal dialog open on load (a cookie or consent banner) hides the page from every check.
@@ -168,6 +172,7 @@ async function auditPageIn(page, url, ctx) {
       }
       const behind = await modalOnLoadPass(page, add, fingerprints);
       result.modalOnLoad = { ...modal, dismissed: behind.dismissed };
+      if (behind.dismissed) await setRanges();
       if (behind.run) {
         result.passes.static.behindModal = behind.added;
         result.passes.static.scrollRestored = result.passes.static.scrollRestored && behind.run.meta.scrollRestored;
