@@ -3,10 +3,11 @@ import { RouterLink } from '@angular/router';
 import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { SignInFlow } from '../core/sign-in';
+import { SignInWait } from '../shared/sign-in-wait';
 
 @Component({
   selector: 'app-sign-in-screen',
-  imports: [RouterLink],
+  imports: [RouterLink, SignInWait],
   template: `
     <h1>Sign in</h1>
     <p>For apps behind a sign-in portal: a Chrome window opens on the start URL, you sign in there, and the session is saved to <code>a11y-508-state.json</code> for later crawls.</p>
@@ -26,7 +27,7 @@ import { SignInFlow } from '../core/sign-in';
           <p class="ok">Signed in. The session was saved to {{ s['file'] }} ({{ s['summary'] }}). The Run screen now uses the saved session.</p>
           <a class="button" routerLink="/run">Back to Run</a>
         } @else if (store.loginWaiting()) {
-          <p>A Chrome window has opened. Sign in there and stay on the app's page; this screen updates by itself when the session is saved.</p>
+          <app-sign-in-wait testId="signin-waiting" />
         } @else if (store.done()) {
           <p class="notice error">Sign-in did not finish (exit code {{ store.done()?.['code'] }}). Open the raw output on the Live run screen for details.</p>
         } @else {

@@ -5,12 +5,13 @@ import { RunStore } from '../core/run.store';
 import { phaseText, resultWord, routeParts } from '../core/format';
 import { detailsOpen, setDetailsOpen } from '../core/details';
 import { RunView } from '../shared/run-view';
+import { SignInWait } from '../shared/sign-in-wait';
 import { SignInFlow } from '../core/sign-in';
 import { EnvStore } from '../core/env.store';
 
 @Component({
   selector: 'app-live-screen',
-  imports: [RunView, RouterLink],
+  imports: [RunView, RouterLink, SignInWait],
   template: `
     <h1>Crawl</h1>
     @if (!store.run()) {
@@ -18,6 +19,9 @@ import { EnvStore } from '../core/env.store';
     } @else {
       <!-- What it is doing, in one line; counts, not details. -->
       <p class="big-status" role="status" data-testid="crawl-status">{{ bigStatus() }}</p>
+      @if (store.loginWaiting() && store.active()) {
+        <app-sign-in-wait testId="crawl-login-waiting" />
+      }
       <div class="thin-progress">
         <progress aria-labelledby="crawl-pages" [value]="store.progress().done" [max]="store.progress().discovered || 1"></progress>
         <span id="crawl-pages" data-testid="crawl-pages">{{ store.progress().done }} of {{ store.progress().discovered }} pages</span>
@@ -147,7 +151,7 @@ export class LiveScreen implements OnDestroy {
     const d = this.store.done();
     const s = this.store.summary();
     if (this.store.stopping() && !d) return 'Stopping…';
-    if (!d && this.store.loginWaiting()) return 'A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.';
+    if (!d && this.store.loginWaiting()) return `Sign in on the tab that opened in Chrome${this.store.loginWaitingHost() ? ` (${this.store.loginWaitingHost()})` : ''}.`;
     if (!d) return `Running: ${this.store.kind()}`;
     if (d['outcome'] === 'stopped') return 'Stopped';
     if (s) return `Finished: ${resultWord(s['result'])}`;

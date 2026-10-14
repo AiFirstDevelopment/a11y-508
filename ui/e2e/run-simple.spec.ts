@@ -11,7 +11,7 @@ import { api, dashboard, fixtureSite, moreOptions, open, readReport, startFromRu
 import { SESSION_COOKIE, SESSION_VALUE } from '../../test/fixture-site.mjs';
 
 const start = (page: Page) => page.getByRole('button', { name: 'Start', exact: true });
-const WAITING = 'A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.';
+const WAITING = /^Sign in on the tab that opened in Chrome \(127\.0\.0\.1:\d+\)\.$/;
 
 test('run-simple (a): the Run screen shows the URL and Start and nothing else; the other settings are at /run/advanced, which nothing links to', async ({ page }) => {
   const dash = await dashboard();
@@ -188,7 +188,14 @@ test('run-simple (d): a run bounced to a sign-in page on another origin offers S
     await notice.getByRole('button', { name: 'Sign in', exact: true }).click();
     // A new crawl that signs in and stays in the window; Live follows it.
     await expect(page).toHaveURL(/\/live$/);
-    await expect(page.getByTestId('run-status')).toHaveText(/^A Chrome window is open/, { timeout: 60_000 });
+    await expect(page.getByTestId('run-status')).toHaveText(/^Sign in on the tab that opened in Chrome/, { timeout: 60_000 });
+    // The wait says where, in one sentence, with a button that brings the sign-in tab to the front.
+    const wait = page.getByTestId('crawl-login-waiting');
+    await expect(wait).toContainText(`Sign in on the tab that opened in Chrome (${new URL(appBase).host}).`);
+    const show = page.waitForResponse((r) => r.url().endsWith('/api/sign-in/show') && r.request().method() === 'POST');
+    await wait.getByRole('button', { name: 'Show the sign-in tab' }).click();
+    expect((await show).status()).toBe(200);
+    await expect(page.getByTestId('show-sign-in-tab-missed')).toHaveCount(0);
     const cur = (await api(dash, '/api/runs/current')).json;
     expect(cur.kind).toBe('crawl');
     expect(cur.meta.command).toContain('--login --stay');

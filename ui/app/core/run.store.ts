@@ -122,6 +122,8 @@ export class RunStore {
   // Pages in flight (progress events), by URL, with when each event arrived; and when the sign-in wait began.
   readonly inFlight = signal<Record<string, PhaseEvent & { receivedAt: number }>>({});
   readonly loginWaitingSince = signal<number | null>(null);
+  // The host of the page the sign-in tab opened on (from login-waiting), for "Sign in on the tab…".
+  readonly loginWaitingHost = signal<string | null>(null);
   // When the current run started (its run event).
   readonly startedAt = signal<number | null>(null);
   readonly done = signal<RunEvent | null>(null);
@@ -177,6 +179,7 @@ export class RunStore {
     this.agentCall.set(null);
     this.inFlight.set({});
     this.loginWaitingSince.set(null);
+    this.loginWaitingHost.set(null);
     this.done.set(null);
     this.stopping.set(false);
   }
@@ -248,6 +251,11 @@ export class RunStore {
       case 'login-waiting':
         this.loginWaiting.set(true);
         this.loginWaitingSince.set(Date.parse(String(ev['at'])) || Date.now());
+        try {
+          this.loginWaitingHost.set(new URL(String(ev['url'])).host || null);
+        } catch {
+          this.loginWaitingHost.set(null);
+        }
         break;
       case 'session-saved':
         this.loginWaiting.set(false);

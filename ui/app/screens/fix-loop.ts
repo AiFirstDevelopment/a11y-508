@@ -12,6 +12,7 @@ import { fixedLine, localTime, spoken } from '../core/format';
 import { AgentTest, LedgerInfo, LoopDefaults, LoopMatch, Preset } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
 import { RunView } from '../shared/run-view';
+import { SignInWait } from '../shared/sign-in-wait';
 import { WhereYouAre } from '../shared/where-you-are';
 import { every, timeLeft } from '../core/where';
 import { StartOver } from '../shared/start-over';
@@ -46,7 +47,7 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
 // and shows it, with one button; everything it inferred is editable at /fix-loop/settings.
 @Component({
   selector: 'app-fix-loop-screen',
-  imports: [ChartPanel, LineChartModule, RunView, RouterLink, WhereYouAre, StartOver, ChangesTable, InterruptedNotice],
+  imports: [ChartPanel, LineChartModule, RunView, RouterLink, WhereYouAre, StartOver, ChangesTable, InterruptedNotice, SignInWait],
   template: `
     <h1>Fix loop</h1>
     <app-where-you-are />
@@ -315,7 +316,7 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
     @if (isLoop() && problem()?.kind !== 'start') {
       <p role="status" data-testid="loop-step">{{ stepText() }}</p>
       @if (store.loginWaiting() && store.active()) {
-        <p class="notice" role="status" data-testid="loop-login-waiting">A Chrome window is open: sign in there and stay on the app page. This continues by itself once the app has loaded.</p>
+        <app-sign-in-wait testId="loop-login-waiting" />
       }
       <!-- The crawl's view only once a round has begun re-checking the site (a round from the report has no crawl). -->
       @if (store.kind() === 'dry-run' || store.crawlRound() !== null) {

@@ -3,7 +3,7 @@
 // debugging port is opened.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Cdp, Session } from './cdp.mjs';
@@ -146,7 +146,9 @@ export async function launchChrome({ chromePath, viewport = { width: 1280, heigh
 async function startBrowser({ exe, viewport, noSandbox, headless, launchTimeout }) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'a11y-508-'));
   const args = [
-    ...(headless ? ['--headless=new', '--disable-gpu'] : ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding']),
+    // A visible browser (the sign-in window) also listens on a local DevTools port, so the
+    // dashboard can bring its window to the front (debugPort below).
+    ...(headless ? ['--headless=new', '--disable-gpu'] : ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--remote-debugging-port=0']),
     '--remote-debugging-pipe',
     `--user-data-dir=${userDataDir}`,
     `--window-size=${viewport.width},${viewport.height}`,
@@ -286,7 +288,18 @@ async function startBrowser({ exe, viewport, noSandbox, headless, launchTimeout 
     return { code: exit ? exit.code : null, signal: exit ? exit.signal : null, at: exit ? exit.at : new Date().toISOString(), stderr: stderrTail(), pid: proc.pid, how: exit ? 'exited' : 'the DevTools pipe closed' };
   }
 
-  return { exe, proc, cdp, version, userDataDir, newPage, closePage, close, death, exited: exitedWith, alive: () => !exit && !cdp.closed };
+  // The visible browser's DevTools port on 127.0.0.1 (Chrome writes it to DevToolsActivePort), or null.
+  function debugPort() {
+    if (headless) return null;
+    try {
+      const port = Number(readFileSync(join(userDataDir, 'DevToolsActivePort'), 'utf8').split('\n')[0].trim());
+      return Number.isInteger(port) && port > 0 ? port : null;
+    } catch {
+      return null;
+    }
+  }
+
+  return { exe, proc, cdp, version, userDataDir, newPage, closePage, close, death, debugPort, exited: exitedWith, alive: () => !exit && !cdp.closed };
 }
 
 // Attaches to a browser that is already running (--connect <port | ws://…>): the dashboard's own
@@ -295,12 +308,19 @@ async function startBrowser({ exe, viewport, noSandbox, headless, launchTimeout 
 // A11Y_508_RETURN_URL (the dashboard's) back to the front.
 export async function connectChrome(target, { returnUrl = process.env.A11Y_508_RETURN_URL || null } = {}) {
   let wsUrl = String(target);
+  let port = null;
   if (/^\d+$/.test(wsUrl)) {
+    port = Number(wsUrl);
     const res = await fetch(`http://127.0.0.1:${wsUrl}/json/version`).catch((e) => {
       throw new Error(`no browser is listening on port ${target} (${e.message})`);
     });
     const v = await res.json();
     wsUrl = v.webSocketDebuggerUrl;
+  }
+  if (port === null) {
+    try {
+      port = Number(new URL(wsUrl).port) || null;
+    } catch {}
   }
   const ws = await WebSocketClient.connect(wsUrl);
   const { reader, writer } = cdpStreams(ws);
@@ -359,6 +379,7 @@ export async function connectChrome(target, { returnUrl = process.env.A11Y_508_R
 
   return {
     exe: version.product, proc: null, cdp, version, userDataDir: null, connected: true, newPage, closePage, close,
+    debugPort: () => port,
     alive: () => !cdp.closed,
     // The browser's connection went away without close() (the browser exited or was killed).
     death: () => (closing || !cdp.closed ? null : { code: null, signal: null, at: (lost && lost.at) || new Date().toISOString(), stderr: [], how: 'its DevTools connection closed' }),

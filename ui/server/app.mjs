@@ -26,6 +26,7 @@ import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
 import { addDiarySecrets, readDiary, writeDiary } from '../../src/diary.mjs';
 import { describeEntry, doingOf } from './diagnostics.mjs';
+import { bringToFront as bringTabToFront, signInTabOf } from './sign-in-tab.mjs';
 
 // The wizard's steps, as lastStep stores them.
 const STEPS = ['/run', '/live', '/report', '/fix-loop', '/history'];
@@ -53,7 +54,7 @@ ${JSON.stringify({ kind: 'test', resultFile }, null, 2)}
 \`\`\`
 `;
 
-export function createDashboard({ cwd: startDir = process.cwd(), launchDir = startDir, restored = false, env = process.env, platform = process.platform, distDir = join(UI_DIR, 'dist'), uiDir = UI_DIR, agentTestTimeout = 180000, onQuit = null, onOpen = null } = {}) {
+export function createDashboard({ cwd: startDir = process.cwd(), launchDir = startDir, restored = false, env = process.env, platform = process.platform, distDir = join(UI_DIR, 'dist'), uiDir = UI_DIR, agentTestTimeout = 180000, onQuit = null, onOpen = null, bringToFront = bringTabToFront } = {}) {
   const secret = randomBytes(24).toString('hex');
   // Report files (<img>, a new tab) cannot send the header, so they take a
   // cookie instead: a separate value that opens report files and nothing else.
@@ -75,7 +76,30 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const was = doingOf({ ...run, status: 'running' });
     writeDiary({ type: 'run-ended', kind: run.kind, outcome, code: done ? done.code ?? null : null, signal: done ? done.signal ?? null : null, reason: (done && done.reason) || (lastError && lastError.message) || null, doing: was ? was.words : null, run: was ? { kind: was.kind, round: was.round, step: was.step, lastEvent: was.lastEvent } : null, cwd: state.cwd }, { env });
   };
-  const runs = new Runs({ onExit: (run) => noteRunEnd(run) });
+  // The current run's sign-in tab ({ runId, port, targetId }), from its latest login-waiting event.
+  // It is brought to the front once when the wait starts, and again by POST /api/sign-in/show.
+  let signInTab = null;
+  const onRunEvent = (run, e) => {
+    if (e.type !== 'login-waiting') return;
+    const where = signInTabOf(e, state.browserPort);
+    signInTab = where ? { runId: run.id, ...where } : null;
+    if (where) bringToFront(where).catch(() => {});
+  };
+  const runs = new Runs({ onExit: (run) => noteRunEnd(run), onEvent: onRunEvent });
+  async function showSignInTab() {
+    // A run found again after a restart: its latest login-waiting, from the events read back.
+    if (runs.active && (!signInTab || signInTab.runId !== runs.current.id)) {
+      const last = [...(runs.current.events || [])].reverse().find((e) => e.type === 'login-waiting');
+      const where = last ? signInTabOf(last, state.browserPort) : null;
+      if (where) signInTab = { runId: runs.current.id, ...where };
+    }
+    if (!signInTab || !runs.active || runs.current.id !== signInTab.runId) throw new BadRequest('no sign-in is waiting', 409);
+    try {
+      return { ...(await bringToFront({ port: signInTab.port, targetId: signInTab.targetId })), port: signInTab.port };
+    } catch (e) {
+      throw new BadRequest(`could not reach the sign-in tab: ${e.message}`, 409);
+    }
+  }
   const build = freshness(uiDir);
   // The dashboard's own files for the working directory (state-dir.mjs).
   const sp = () => statePaths(state.cwd, env, platform);
@@ -607,6 +631,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       });
       return;
     }
+    if (m === 'POST' && path === '/api/sign-in/show') return send(res, 200, await showSignInTab());
     if (m === 'POST' && path === '/api/runs/current/stop') return send(res, 200, { signal: runs.stop() });
     if (m === 'POST' && path === '/api/runs/current/continue') {
       const body = await readBody(req).catch(() => ({}));

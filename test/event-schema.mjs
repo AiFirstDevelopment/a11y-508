@@ -20,7 +20,7 @@ export const EVENT_SCHEMA = {
   coverage: { complete: bool, warnings: arr, notes: arr, round: opt(num) },
   summary: { result: oneOf('pass', 'fail', 'incomplete', 'nothing-audited'), passed: bool, baseUrl: str, failOn: arr, summary: obj, files: obj, round: opt(num) },
   troubleshoot: { result: obj },
-  'login-waiting': { url: str, stableSeconds: num },
+  'login-waiting': { url: str, stableSeconds: num, port: opt(num), targetId: opt(str), round: opt(num) },
   'session-saved': { file: str, summary: str },
   round: { round: num },
   step: { round: num, step: oneOf('crawl', 'report', 'triage', 'fix', 'gate', 'commit', 'push', 'deploy', 'await-deploy', 'ledger') },

@@ -85,9 +85,11 @@ export async function killTreeWindows(pid, kind = 'stop') {
 }
 
 export class Runs {
-  constructor({ onExit } = {}) {
+  constructor({ onExit, onEvent } = {}) {
     this.current = null;
     this.onExit = onExit;
+    // Called with (run, event) for every event of the current run, this server's child or adopted.
+    this.onEvent = onEvent;
   }
 
   get active() {
@@ -100,6 +102,7 @@ export class Runs {
     if (this.active) throw new BadRequest(`a ${this.current.kind} run is already active`, 409);
     this.current = run;
     run.onEnd = () => this.onExit && this.onExit(run);
+    if (this.onEvent) run.listeners.add((e) => e && this.onEvent(run, e));
     return run;
   }
 
@@ -113,6 +116,7 @@ export class Runs {
     const redact = redactor(spec.secrets || []);
     run.redact = redact;
     this.current = run;
+    if (this.onEvent) run.listeners.add((e) => e && this.onEvent(run, e));
     this.push(run, { type: 'run', id: run.id, kind: run.kind, ...run.meta });
     let child;
     try {
