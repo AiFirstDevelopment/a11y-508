@@ -111,6 +111,15 @@ check('loop-resilience AC14: the loop words the closing line, so it is not read 
   assert.equal(lines.at(-1), 'Gemini CLI is done: 2 files changed — checking the fix next');
   assert.ok(!lines.includes('Done: 2 files changed'));
 });
+check('the result file and files outside the checkout do not count as changed', () => {
+  const tasks = join(tmpdir(), 'home', '.a11y-508', 'repos', 'app-1', 'work', 'tasks');
+  const write = (id, file_path) => [{ type: 'tool_use', timestamp: 't', tool_name: 'write_file', tool_id: id, parameters: { file_path, content: '…' } }, { type: 'tool_result', timestamp: 't', tool_id: id, status: 'success' }];
+  const end = { type: 'result', timestamp: 't', status: 'success' };
+  const only = jsonl(...write('a', join(tasks, 'result-r1-fix-1.json')), ...write('b', join(tmpdir(), 'elsewhere', 'x.txt')), ...write('c', '~/.a11y-508/repos/app-1/work/tasks/result-r1-fix-1.json'), end);
+  assert.equal(readable(only, { cwd, ignore: [tasks] }).lines.at(-1), 'Done: no files changed');
+  const one = jsonl(...write('a', join(tasks, 'result-r1-fix-1.json')), ...write('b', 'src/app/x.html'), end);
+  assert.equal(readable(one, { cwd, ignore: [tasks] }).lines.at(-1), 'Done: 1 file changed');
+});
 check('loop-resilience AC12: the Gemini and Claude presets ask for the stream', () => {
   assert.match(PRESETS.gemini, / --output-format stream-json /);
   assert.match(PRESETS.claude, / --output-format stream-json --verbose /);

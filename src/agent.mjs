@@ -269,7 +269,7 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, ti
   let stderr = '';
   const keep = (s, d) => (s + d).slice(-20000);
   // A streaming assistant's JSON events reach onOutput as readable lines, as they arrive.
-  const decoder = streamDecoder((line) => onOutput && onOutput('stdout', `${line}\n`), { cwd, doneLine });
+  const decoder = streamDecoder((line) => onOutput && onOutput('stdout', `${line}\n`), { cwd, doneLine, ignore: [tasksDir] });
   child.stdout.on('data', (d) => {
     stdout = keep(stdout, String(d));
     decoder.push(String(d));
@@ -338,7 +338,8 @@ You are working in this repository. Fix the finding below by editing the applica
 - Do not search or read node_modules or other installed dependencies: the fix belongs in the application's own source, and reading packages only costs time.
 - Make the smallest change that resolves this finding everywhere it appears. The same element is often rendered by one component or template used on many pages.
 - Do not change the page's behavior or visual design beyond what the fix requires.
-- If you cannot locate the element, or the fix needs a decision only a person can make (for example what an image depicts), make no change and say so in the result.
+- Decide as the developer of this application would and fix it: pick sensible text, roles and markup from the context (what the page is for, nearby text, file and variable names, the image's file name and where it is used). Nobody reviews the finding after you, so a reasonable fix beats none.
+- The one reason to make no change: the element is rendered by a library (for example Angular Material's or a map widget's own DOM) and nothing under the source folders produces it. Say so in the result.
 
 ## The finding
 

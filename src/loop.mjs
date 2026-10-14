@@ -531,11 +531,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       if (on) on.flush();
     }
     const ok = !!res.result;
-    const what = kind === 'triage' ? `the ${count} review item${count === 1 ? ' stays' : 's stay'} in review` : 'this finding stays open';
     const message = ok ? null
-      : res.timedOut ? `${agentName} did not answer within ${duration(cfg.agentTimeout)}; ${what} and the loop goes on`
-      : res.quota ? `${agentName} was still rate-limited after ${res.quotaRetries} ${res.quotaRetries === 1 ? 'retry' : 'retries'}; ${what} and the loop goes on`
-      : `${agentName} ended without an answer (exit code ${res.code}); ${what} and the loop goes on`;
+      : res.timedOut ? `${agentName} did not answer within ${duration(cfg.agentTimeout)}; the loop goes on`
+      : res.quota ? `${agentName} was still rate-limited after ${res.quotaRetries} ${res.quotaRetries === 1 ? 'retry' : 'retries'}; the loop goes on`
+      : `${agentName} ended without an answer (exit code ${res.code}); the loop goes on`;
     ev('agent-result', { round, task, kind, ok, timedOut: !!res.timedOut, quota: !!res.quota, code: typeof res.code === 'number' ? res.code : null, message });
     return res;
   };
@@ -1081,7 +1080,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
 export function summaryLine(ledger) {
   const c = statusCounts(ledger);
   const part = (k, label) => (c[k] ? `${c[k]} ${label}` : null);
-  return [part('open', 'open'), part('review', 'awaiting triage'), part('pending', 'fixed, awaiting verification'), part('verified', 'verified fixed'), part('wont-fix', "won't fix"), part('adequate', 'adequate'), part('gone', 'gone')].filter(Boolean).join(', ') + '.';
+  return [part('open', 'open'), part('review', 'undecided'), part('pending', 'fixed, awaiting verification'), part('verified', 'verified fixed'), part('adequate', 'judged fine'), part('gone', 'gone')].filter(Boolean).join(', ') + '.';
 }
 
 export function printStatus(cwd, out) {

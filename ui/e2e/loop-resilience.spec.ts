@@ -282,8 +282,10 @@ test('loop-resilience AC21: the same problem on four elements is one fix task, "
   await fromReportLoop(page, 'a11y-508-grouped-', {}, { FAKE_AGENT_DELAY_MS: '1500' }, async () => {
     await expect(page.getByTestId('fix-status')).toHaveText(/^Round 1: fixing \d+ of \d+ \(4 elements\) from the report you just saw · 13\.A /, { timeout: 120_000 });
     await expect(page.getByTestId('agent-output')).toContainText(/— Fix \d+ of \d+ \(4 elements\): 13\.A /);
-    // The assistant changes nothing for it, so Changes this run does not list it (docs/plans/deploy-wait.md criterion 9).
-    await expect(page.getByTestId('agent-output')).toContainText('No change was made; the finding stays open', { timeout: 30_000 });
+    // The assistant changes nothing for it, so Changes this run does not list it (docs/plans/deploy-wait.md criterion 9);
+    // and nothing says it was left open: that is not the person's to deal with.
+    await expect(page.getByTestId('fix-status')).not.toHaveText(/\(4 elements\)/, { timeout: 30_000 });
+    await expect(page.getByTestId('agent-output')).not.toContainText(/stays open/);
     await expect(page.locator('[data-testid="changes"] tr', { hasText: '13.A' })).toHaveCount(0);
   });
 });

@@ -1163,7 +1163,7 @@ rmSync(repo2, { recursive: true, force: true });
       const given = t.events.filter((e) => e.type === 'agent-result' && !e.ok);
       assert.equal(given.length, 1, timedOut.out);
       assert.equal(given[0].timedOut, true);
-      assert.match(given[0].message, /^The assistant did not answer within 2 s; (this finding stays open|the \d+ review items? stays? in review) and the loop goes on$/);
+      assert.match(given[0].message, /^The assistant did not answer within 2 s; the loop goes on$/);
     });
     removeOwn(dirname(refusedOnce));
     removeOwn(dirname(slow));
