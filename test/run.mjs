@@ -404,16 +404,20 @@ check('links whose href runs a script are clicked to find pages, except ones tha
   assert.ok(!report.pages.some((q) => /js-delete/.test(q.url)), 'js-delete.html was never visited');
 });
 
-check('links that differ from an audited page only in query values are audited at most twice per route, and noted', () => {
+check('links that differ from an audited page only in query values or a record id are audited at most three times per route, picked at random, and noted', () => {
   const p = pages['/variants.html'];
   assert.ok(p && !p.error, `/variants.html audited: ${p && p.error}`);
   const targets = report.pages.filter((q) => /\/variant-target\.html/.test(q.url) && !q.skipped && !q.error);
   const ranges = targets.filter((q) => /[?&]from=/.test(q.url));
-  assert.equal(ranges.length, 2, `from/to variants audited: ${targets.map((q) => q.url).join(', ')}`);
+  assert.equal(ranges.length, 3, `from/to variants audited (4 linked): ${targets.map((q) => q.url).join(', ')}`);
   assert.equal(targets.filter((q) => /[?&]tab=/.test(q.url)).length, 1, 'a different parameter set is its own route');
-  const notes = (report.summary.coverage.notes || []).filter((n) => /differed from an audited page only in query values/.test(n));
+  // Record ids in the path (/detail/101.html … 104) are variants of one route too: three audited, one counted.
+  const details = report.pages.filter((q) => /\/detail\/\d+\.html/.test(q.url) && !q.skipped && !q.error);
+  assert.equal(details.length, 3, `detail pages audited (4 linked): ${details.map((q) => q.url).join(', ')}`);
+  assert.ok(details.every((q) => /\/detail\/10[1-4]\.html/.test(q.url)), 'each audited detail page is one of the four linked');
+  const notes = (report.summary.coverage.notes || []).filter((n) => /differed from an audited page only in query values or in a record id in the path/.test(n));
   assert.equal(notes.length, 1, `coverage notes: ${JSON.stringify(report.summary.coverage.notes)}`);
-  assert.ok(/2 link\(s\)/.test(notes[0]) && /variant-target\.html\?from&to/.test(notes[0]), notes[0]);
+  assert.ok(/2 link\(s\)/.test(notes[0]) && /variant-target\.html\?from&to/.test(notes[0]) && /\/detail\/:id\.html/.test(notes[0]) && /picked at random/.test(notes[0]), notes[0]);
 });
 
 const FOCUS = '/checks-focus.html';

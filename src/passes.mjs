@@ -772,8 +772,9 @@ export async function searchPass(page, add, fingerprints, opts, reload, origin) 
       }
       if (after && after !== before) note(after);
     }
-    // The first two results of a search are queued whatever the query-variant limit says.
-    out.urls.push(...found.map((url, k) => ({ url, priority: k < 2 })));
+    // Three results of a search, picked at random, are queued whatever the query-variant limit says.
+    const picked = new Set(found.map((_, k) => k).sort(() => Math.random() - 0.5).slice(0, 3));
+    out.urls.push(...found.map((url, k) => ({ url, priority: picked.has(k) })));
     out.results += found.length;
     out.forms.push({ name: f.name, selector: f.selector, from: fill.from || null, to: fill.to || null, preset: fill.preset, presetDays: fill.presetDays, short: !!fill.short, results: found.length, navigated: !!navigated });
     if (!found.length && !res.candidates.length && (fill.dates || fill.preset)) out.empty++;

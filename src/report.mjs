@@ -63,7 +63,7 @@ export function coverage(pages, crawl, opts) {
   if (crawl.overflow) warnings.push(`Stopped at --max-pages ${opts.maxPages}: ${crawl.overflow} more link(s) were found but not audited.`);
   if (crawl.variantOverflow) {
     const routes = crawl.variantRoutes || [];
-    notes.push(`${crawl.variantOverflow} link(s) differed from an audited page only in query values (${routes.length} route(s): ${routes.slice(0, 3).join(', ')}${routes.length > 3 ? ', ...' : ''}); at most ${crawl.variantsPerRoute} such variants of a route are audited.`);
+    notes.push(`${crawl.variantOverflow} link(s) differed from an audited page only in query values or in a record id in the path (${routes.length} route(s): ${routes.slice(0, 3).join(', ')}${routes.length > 3 ? ', ...' : ''}); at most ${crawl.variantsPerRoute} such variants of a route are audited, picked at random from each page's links.`);
   }
   if (opts.wcag && opts.wcag !== '2.0') notes.push(`The WCAG ${opts.wcag} profile was on (--wcag ${opts.wcag}): rules beyond Section 508 ran too. Their findings are listed under "${beyondHeading(opts.wcag)}" and count toward --fail-on like any other; Section 508 itself requires WCAG 2.0 AA.`);
   if (!opts.followClicks) notes.push('Click discovery was off (--no-follow-clicks); pages reachable only through click handlers were not looked for.');

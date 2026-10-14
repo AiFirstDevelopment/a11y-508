@@ -49,12 +49,32 @@ export function normalizeUrl(href, origin) {
 // query parameters, not their values. /search?from=1&to=2 and
 // /search?from=3&to=4 are one route, and an app whose pages link to date
 // variants of themselves would otherwise be crawled to the page limit.
+// A path segment that is a record id rather than a route: digits, a hex/uuid token, or a code of
+// eight or more characters with at least four digits (a slug like soft-404 or wcag-2-2 is not one).
+// The extension, if any, is kept: /detail/101.html -> /detail/:id.html.
+const ID_SEGMENT = /^(\d+|[0-9a-f-]{8,}|(?=(?:[a-z-]*\d){4})[a-z0-9-]{8,})$/i;
+export function hasIdSegment(url) {
+  return new URL(url).pathname.split('/').some((s) => ID_SEGMENT.test(s.replace(/\.[a-z0-9]+$/i, '')) && /\d/.test(s));
+}
 export function routeKey(url) {
   const u = new URL(url);
+  const path = u.pathname.split('/').map((s) => {
+    const m = /^(.*?)(\.[a-z0-9]+)?$/i.exec(s);
+    return ID_SEGMENT.test(m[1]) && /\d/.test(m[1]) ? `:id${m[2] || ''}` : s;
+  }).join('/');
   const keys = [...u.searchParams.keys()].sort().join('&');
-  return `${u.pathname}${u.hash}${keys ? '?' + keys : ''}`;
+  return `${path}${u.hash}${keys ? '?' + keys : ''}`;
 }
-const VARIANTS_PER_ROUTE = 2;
+const VARIANTS_PER_ROUTE = 3;
+// Fisher-Yates, on a copy.
+function shuffle(items) {
+  const a = items.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
 // relaunch: a function that launches a new browser (the crawl's own, headless one), or null for a
 // browser the crawl must not replace (--connect, --login --stay). When the browser dies mid-crawl it
@@ -75,10 +95,10 @@ export async function crawl({ browser: firstBrowser, startUrl, opts, log, outDir
   const variants = new Map(); // route key -> query variants of it accepted so far
   const variantRoutes = new Set();
   let variantOverflow = 0;
-  // True when this URL may be crawled: a URL without a query always, one with a query
-  // only while its route has fewer than VARIANTS_PER_ROUTE variants accepted.
+  // True when this URL may be crawled: a URL without a query or an id in its path always; one
+  // with either only while its route has fewer than VARIANTS_PER_ROUTE variants accepted.
   const acceptVariant = (u) => {
-    if (!new URL(u).search) return true;
+    if (!new URL(u).search && !hasIdSegment(u)) return true;
     const k = routeKey(u);
     const c = variants.get(k) || 0;
     if (c >= VARIANTS_PER_ROUTE) return false;
@@ -224,9 +244,21 @@ export async function crawl({ browser: firstBrowser, startUrl, opts, log, outDir
           }
           if (res.info && item.depth < opts.maxDepth) {
             const viaClick = (res.discovery && res.discovery.urls) || [];
+            // Links that are variants of one route (query values, record ids) are taken from this
+            // page at random, up to the route's quota, rather than in page order: three records
+            // picked from a results page show more of what a detail page can render than the first three.
+            const groups = new Map();
             for (const link of [...res.info.links, ...viaClick]) {
               const n = normalizeUrl(link, origin);
               if (!n || seen.has(n) || landed.has(n) || !allowed(n)) continue;
+              const k = new URL(n).search || hasIdSegment(n) ? routeKey(n) : '';
+              if (!groups.has(k)) groups.set(k, []);
+              groups.get(k).push({ link, n });
+            }
+            const ordered = [];
+            for (const [k, items] of groups) ordered.push(...(k ? shuffle(items) : items));
+            for (const { link, n } of ordered) {
+              if (seen.has(n)) continue;
               if (!acceptVariant(n)) {
                 variantOverflow++;
                 variantRoutes.add(routeKey(n));
@@ -240,7 +272,7 @@ export async function crawl({ browser: firstBrowser, startUrl, opts, log, outDir
               if (viaClick.includes(link) && !res.info.links.includes(link)) clickOnly.add(n);
               queue.push({ url: n, depth: item.depth + 1, via: clickOnly.has(n) ? 'click' : 'link' });
             }
-            // What a search revealed: the first two results of each search are queued whatever the
+            // What a search revealed: three results of each search, picked at random, are queued whatever the
             // query-variant limit says.
             for (const { url, priority } of (res.search && res.search.urls) || []) {
               const n = normalizeUrl(url, origin);
