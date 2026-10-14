@@ -28,7 +28,7 @@ export const EVENT_SCHEMA = {
   task: { round: num, n: num, m: num, test: str, impact: str, message: str, state: oneOf('start', 'done'), outcome: opt(str) },
   ledger: { rounds: num, counts: obj, line: str },
   'await-deploy': { round: num, committed: num, nextRound: num, pending: opt(num), open: opt(num), branch: opt(str), host: opt(str), intervalMs: opt(num), timeoutMs: opt(num), until: opt(str) },
-  deployment: { state: oneOf('arrived', 'still-old', 'unreachable', 'timeout', 'stopped-waiting', 'verify-anyway'), round: num, pending: num, open: num, branch: str, host: str, pushed: bool, remote: opt(str) },
+  deployment: { state: oneOf('arrived', 'still-old', 'unreachable', 'timeout', 'stopped-waiting', 'verify-anyway'), reason: opt(oneOf('unreachable')), round: num, pending: num, open: num, branch: str, host: str, pushed: bool, remote: opt(str) },
   'agent-wait': { round: num, task: num, kind: oneOf('fix', 'triage'), reason: oneOf('quota'), delayMs: num, attempt: num, attempts: num },
   'agent-result': { round: num, task: num, kind: oneOf('fix', 'triage'), ok: bool, timedOut: bool, quota: bool, code: opt(num), message: opt(str) },
   bisect: { round: num, state: oneOf('start', 'found'), count: opt(num), n: opt(num), commit: opt(str) },

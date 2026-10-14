@@ -14,6 +14,7 @@ import { testInfo } from './checks/catalog.mjs';
 import { migrateRepo, migrationLines, shortenHome, tasksDir, workDir } from './home.mjs';
 import { sleep } from './page.mjs';
 import { killTree } from './chrome.mjs';
+import { bundleSignature as readBuild } from './deploy-check.mjs';
 
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const BIN = join(TOOL_DIR, 'bin', 'a11y-508.mjs');
@@ -188,17 +189,32 @@ async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = 
   return { report, code, out };
 }
 
-async function bundleSignature(url) {
-  try {
-    const headers = {};
-    if (process.env.TOKEN) headers.authorization = /^\S+\s+\S/.test(process.env.TOKEN.trim()) ? process.env.TOKEN.trim() : `Bearer ${process.env.TOKEN.trim()}`;
-    const res = await fetch(url, { headers, redirect: 'follow' });
-    const html = await res.text();
-    const refs = [...html.matchAll(/<(?:script|link)[^>]+(?:src|href)=["']([^"']+)["']/gi)].map((m) => m[1]).sort();
-    return refs.join('\n');
-  } catch {
-    return null;
-  }
+// A visible sign-in on the start page (--login-only): the session is saved to stateFile and nothing
+// is crawled. Its sign-in events reach the dashboard with --events. true when a session was saved;
+// false when no sign-in happened within the usual wait (or the window could not open).
+async function signInOnly({ cfg, cwd, log, events, stateFile, passthrough = [] }) {
+  const args = [BIN, cfg.url, ...cfg.args.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state'), ...passthrough, '--login-only', '--state', stateFile, '--quiet'];
+  if (events) args.push('--events');
+  const child = spawn(process.execPath, args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let partial = '';
+  child.stdout.on('data', (d) => {
+    if (!events) return;
+    const lines = (partial + d).split('\n');
+    partial = lines.pop();
+    for (const l of lines) {
+      try {
+        const ev = JSON.parse(l);
+        if (ev.type === 'login-waiting' || ev.type === 'session-saved') {
+          const { type, at, ...data } = ev;
+          log.event(type, data);
+        }
+      } catch {}
+    }
+  });
+  child.stderr.on('data', () => {});
+  const code = await new Promise((r) => child.on('exit', r));
+  log.info(code === 0 ? `signed in; the session is saved to ${stateFile}` : 'no sign-in happened; going on without it');
+  return code === 0;
 }
 
 // With --events, the dashboard's buttons during the wait write a line to stdin: an empty line (or
@@ -342,10 +358,12 @@ export function reportForFirstRound(file, cfg, cwd, log) {
 
 // The words for fixes that wait for a deployment someone else runs: the same in the terminal and on
 // the Fix step. d: { pending, branch, remote, pushed, host }.
-export function deploySentence(d) {
+export function committedSentence(d) {
   const n = d.pending;
-  const fixes = `${n} fix${n === 1 ? ' is' : 'es are'}`;
-  return `${fixes} committed on branch ${d.branch}${d.pushed && d.remote ? ` and pushed to ${d.remote}` : ''}. The site at ${d.host} still serves the build from before them, so they cannot be verified yet. Deploy that branch — or merge it into the branch your pipeline builds`;
+  return `${n} fix${n === 1 ? ' is' : 'es are'} committed on branch ${d.branch}${d.pushed && d.remote ? ` and pushed to ${d.remote}` : ''}`;
+}
+export function deploySentence(d) {
+  return `${committedSentence(d)}. The site at ${d.host} still serves the build from before them, so they cannot be verified yet. Deploy that branch — or merge it into the branch your pipeline builds`;
 }
 
 // fromReport: a report file for round 1, or true (`--from-report` with no file): the first round
@@ -426,6 +444,30 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   if (ci >= 0) passthrough = passthrough.filter((a, i) => i !== ci && i !== ci + 1);
   const signInArgs = connectArgs.length ? [...connectArgs, '--login', '--state', stateFile] : ['--login', '--stay', '--state', stateFile];
   let session = sessionArgs(cfg, passthrough, cwd);
+  // The start page's build (deployed: bundle-change): a plain fetch, or the crawler's browser with
+  // the crawl's way in when the page is behind a sign-in. null when neither could read it. Says
+  // which way only when that changes, so a poll stays quiet.
+  let buildVia;
+  const checkBuild = async (url) => {
+    const r = await readBuild(url, { args: [...(cfg.args || []), ...passthrough, ...session], cwd });
+    if (r.via !== buildVia) log.info(r.via === 'browser' ? 'read the start page\'s build through the browser with the saved session' : r.via === 'fetch' ? 'read the start page\'s build with a plain request' : 'could not read the start page\'s build');
+    buildVia = r.via;
+    return r;
+  };
+  const bundleSignature = async (url) => (await checkBuild(url)).signature;
+  // Before verifying: when even the browser with the saved session ends on the sign-in portal (the
+  // session expired, or there is none), a visible window opens on the start page for the person to
+  // sign in, as round 1 does, and the session is saved for the check and the crawl. Returns the
+  // build's signature then (null when it still cannot be read, or no sign-in happened in time).
+  const buildForVerify = async () => {
+    const r = await checkBuild(cfg.url);
+    if (!r.portal) return r.signature;
+    log.info('the start page sends the browser to its sign-in: opening a window to sign in');
+    const ok = await signInOnly({ cfg, cwd, log, events, stateFile, passthrough: passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') });
+    if (!ok) return null;
+    session = sessionArgs(cfg, passthrough, cwd);
+    return bundleSignature(cfg.url);
+  };
   if (signInFirst && fromReport) log.info(`the first round that crawls signs in first in a visible window; the later rounds crawl with the saved session ${stateFile}`);
   else if (signInFirst) log.info(`round 1 signs in first in a visible window; the later rounds crawl with the saved session ${stateFile}`);
   else if (session.length) log.info(`crawling with the saved session ${session[1]}`);
@@ -474,7 +516,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     remote: ledger.deploy ? ledger.deploy.remote : null, pushed: !!(ledger.deploy && ledger.deploy.pushed), host: hostOf(cfg.url),
   });
   // Waits for the start page's bundles to differ from the ones before the fixes, or for the
-  // dashboard's word. Returns 'live', 'verify', 'fix-remaining', 'stop-waiting', 'timeout' or 'stopped'.
+  // dashboard's word. Returns 'live', 'verify', 'fix-remaining', 'stop-waiting', 'timeout', 'unreachable'
+  // (the time ran out and no poll could read the build to compare) or 'stopped'.
   const waitForDeploy = async (round) => {
     const until = Date.now() + cfg.deployTimeout;
     const facts = deployFacts();
@@ -483,29 +526,36 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     let said = null;
     if (enter) enter.promise.then((w) => (said = w));
     ev('await-deploy', { round, committed: facts.pending, nextRound: round + 1, ...facts, intervalMs: cfg.deployPoll, timeoutMs: cfg.deployTimeout, until: new Date(until).toISOString() });
+    // compared: some poll could set the build against the one from before the fixes.
+    let compared = false;
     try {
       while (Date.now() < until && !stopped()) {
         await Promise.race([sleep(Math.max(0, Math.min(cfg.deployPoll, until - Date.now()))), ...(enter ? [enter.promise] : [])]);
         if (said) return said;
         const sig = await bundleSignature(cfg.url);
-        if (sig && sig !== ledger.deploy.signature) return 'live';
+        if (said) return said;
+        // Nothing to compare with when the build from before could not be read: the person's word decides.
+        if (sig === null || ledger.deploy.signature == null) continue;
+        compared = true;
+        if (sig !== ledger.deploy.signature) return 'live';
       }
     } finally {
       if (enter) enter.cancel();
     }
-    return stopped() ? 'stopped' : 'timeout';
+    return stopped() ? 'stopped' : compared ? 'timeout' : 'unreachable';
   };
   // The loop ends waiting for the deployment: not an error (exit 4). What happened, the same
   // explanation, and the three commands that go on.
   const endAwaiting = (state, round) => {
     const facts = deployFacts();
     const head = state === 'still-old' ? 'The site still serves the old build (checked just now); nothing was changed.'
-      : state === 'unreachable' ? 'The start page could not be fetched to check its build (checked just now); nothing was changed.'
+      : state === 'unreachable' ? 'Could not check the site\'s build: a11y-508 could not reach the start page (it may be behind your sign-in).'
       : state === 'timeout' ? `Your deployment has not arrived yet: the start page's bundles did not change within ${duration(cfg.deployTimeout)}.`
       : 'Your deployment has not arrived yet; stopped waiting for it.';
     ev('deployment', { state, round, ...facts, checkedAt: new Date().toISOString(), timeoutMs: cfg.deployTimeout });
     log.warn(head);
-    log.info(`${deploySentence(facts)}. Then:`);
+    // Unreachable: whether the site still serves the old build is not known, so it is not said.
+    log.info(`${state === 'unreachable' ? committedSentence(facts) : deploySentence(facts)}. Then:`);
     log.info('  a11y-508 loop --verify          the site is updated: check its bundles, then verify the fixes');
     if (facts.open) log.info(`  a11y-508 loop --from-report     fix the remaining ${facts.open} without waiting (no crawl)`);
     log.info('  a11y-508 loop --wait            keep waiting for the new build');
@@ -587,13 +637,14 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   if (waiting && !fromLedger) {
     if (wait) {
       const w = await waitForDeploy(ledger.rounds.length);
-      if (w === 'timeout' || w === 'stop-waiting') return endAwaiting(w === 'timeout' ? 'timeout' : 'stopped-waiting', ledger.rounds.length);
+      if (w === 'timeout' || w === 'unreachable' || w === 'stop-waiting') return endAwaiting(w === 'stop-waiting' ? 'stopped-waiting' : w, ledger.rounds.length);
       if (w === 'stopped') {
         log.warn(`stopped. ${summaryLine(ledger)} Rerun the same command to resume.`);
         save();
         return 1;
       }
       if (w === 'fix-remaining') noCrawlNext = true;
+      else if (w === 'verify') await buildForVerify();
       else if (w === 'live') {
         log.info('new build is live; giving it 10 seconds to settle');
         await sleep(10000);
@@ -602,11 +653,16 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       log.warn(`verifying anyway: the ${byStatus(ledger, 'pending').length} fixes waiting for a deployment count as not holding wherever the site still shows the finding`);
       ev('deployment', { state: 'verify-anyway', round: ledger.rounds.length, ...deployFacts() });
     } else {
-      const sig = await bundleSignature(cfg.url);
-      if (sig === null) return endAwaiting('unreachable', ledger.rounds.length);
-      if (sig === ledger.deploy.signature) return endAwaiting('still-old', ledger.rounds.length);
-      log.info(`Your deployment arrived: verifying ${byStatus(ledger, 'pending').length} fixes`);
-      ev('deployment', { state: 'arrived', round: ledger.rounds.length, ...deployFacts() });
+      const sig = await buildForVerify();
+      if (sig === null || ledger.deploy.signature == null) {
+        // The build cannot be compared: the person said the site is updated, so it is verified.
+        log.info('could not check the site\'s build; taking your word that it is updated');
+        ev('deployment', { state: 'verify-anyway', reason: 'unreachable', round: ledger.rounds.length, ...deployFacts() });
+      } else if (sig === ledger.deploy.signature) return endAwaiting('still-old', ledger.rounds.length);
+      else {
+        log.info(`Your deployment arrived: verifying ${byStatus(ledger, 'pending').length} fixes`);
+        ev('deployment', { state: 'arrived', round: ledger.rounds.length, ...deployFacts() });
+      }
     }
   }
   const firstCrawl = given || resuming || noCrawlNext ? startRound + 1 : startRound;
@@ -656,6 +712,9 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       const first = signInFirst && round === firstCrawl;
       crawl = await crawlOnce({ cfg, cwd, round, log, passthrough: first ? passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') : passthrough, events, session: first ? signInArgs : session });
       if (first) session = sessionArgs(cfg, passthrough, cwd);
+      // Behind a sign-in the build could not be read before this round signed in; the site has not
+      // changed since, so it is read again now with the session just saved.
+      if (first && cfg.deployed === 'bundle-change' && signatureBefore === null) signatureBefore = await bundleSignature(cfg.url);
     } catch (e) {
       log.error(`crawl failed: ${e.message}`);
       save();
@@ -1054,11 +1113,14 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         save();
         const w = await waitForDeploy(round);
         if (w === 'stopped') break;
-        if (w === 'timeout' || w === 'stop-waiting') return endAwaiting(w === 'timeout' ? 'timeout' : 'stopped-waiting', round);
+        if (w === 'timeout' || w === 'unreachable' || w === 'stop-waiting') return endAwaiting(w === 'stop-waiting' ? 'stopped-waiting' : w, round);
         if (w === 'fix-remaining') {
           log.info('fixing the remaining findings without waiting; the committed fixes stay awaiting verification');
           noCrawlNext = true;
-        } else if (w === 'verify') log.info('told the new build is live (The site is updated — verify now)');
+        } else if (w === 'verify') {
+          log.info('told the new build is live (The site is updated — verify now)');
+          await buildForVerify();
+        }
         else {
           log.info('new build is live; giving it 10 seconds to settle');
           await sleep(10000);

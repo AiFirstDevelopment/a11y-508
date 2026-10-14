@@ -1252,6 +1252,142 @@ rmSync(repo2, { recursive: true, force: true });
     srv.close();
     removeOwn(dir);
   }
+
+  // ---- the start page behind a sign-in portal: an anonymous request is sent to a sign-in page on
+  // another host, and only a request carrying the session cookie gets the app. The build is read
+  // through the crawler's browser with the saved session; when the session has expired a visible
+  // window signs in (the portal signs a visible Chrome in by itself, never a headless one); when the
+  // page cannot be read at all, --verify takes the person's word.
+  const ssoSite = async (dir) => {
+    const site = { build: 1, session: 'ok', blockPlain: false, blockBrowserDocs: 0 };
+    const srv = createServer((req, res) => {
+      const port = srv.address().port;
+      const ua = req.headers['user-agent'] || '';
+      let path = new URL(req.url, 'http://x').pathname;
+      if (path === '/signin') {
+        const visible = /Chrome/.test(ua) && !/Headless/.test(ua);
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        return res.end(`<!doctype html><html lang="en"><title>Sign in</title><h1>Sign in</h1>${visible ? `<script>setTimeout(() => location.replace('http://127.0.0.1:${port}/auth'), 500)</script>` : ''}</html>`);
+      }
+      if (path === '/auth') {
+        res.writeHead(302, { location: '/', 'set-cookie': `sid=${site.session}; Path=/` });
+        return res.end();
+      }
+      const plain = !/Chrome/.test(ua);
+      // Neither way can read the page: it answers with an error.
+      let down = plain && site.blockPlain;
+      if (!plain && path === '/' && site.blockBrowserDocs > 0) {
+        site.blockBrowserDocs--;
+        down = true;
+      }
+      if (down) {
+        res.writeHead(503, { 'content-type': 'text/html' });
+        return res.end('<!doctype html><html lang="en"><title>Unavailable</title><h1>Unavailable</h1></html>');
+      }
+      if (!new RegExp(`(?:^|;\\s*)sid=${site.session}(?:;|$)`).test(req.headers.cookie || '')) {
+        res.writeHead(302, { location: `http://localhost:${port}/signin` });
+        return res.end();
+      }
+      if (path === '/') path = '/index.html';
+      if (/^\/bundle\.\d+\.js$/.test(path)) {
+        res.writeHead(200, { 'content-type': 'text/javascript' });
+        return res.end('');
+      }
+      if (path.startsWith('/img/') || path === '/pixel.png') {
+        res.writeHead(200, { 'content-type': 'image/png' });
+        return res.end(PNG);
+      }
+      const file = join(dir, 'site', path);
+      if (extname(path) !== '.html' || !existsSync(file)) {
+        res.writeHead(404, { 'content-type': 'text/html' });
+        return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
+      }
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(readFileSync(file, 'utf8').replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN).replace('</head>', `<script src="/bundle.${site.build}.js"></script></head>`));
+    });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    site.srv = srv;
+    site.url = `http://127.0.0.1:${srv.address().port}/`;
+    return site;
+  };
+  // A repository whose crawl and build check use a saved session (what --login writes) with sid=ok.
+  const ssoRepo = async (prefix, config) => {
+    const { dir, g } = appRepo(prefix, config);
+    const site = await ssoSite(dir);
+    writeFileSync(join(dir, 'a11y-508-state.json'), JSON.stringify({ version: 1, capturedAt: new Date().toISOString(), origins: [site.url.slice(0, -1)], cookies: [{ name: 'sid', value: 'ok', domain: '127.0.0.1', path: '/' }], storage: {} }));
+    writeFileSync(join(dir, '.gitignore'), 'check-logs/\na11y-508-state.json\n');
+    g('add', '-A');
+    g('commit', '-q', '-m', 'the session file stays out of git');
+    const setConfig = (more) => writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, maxAttempts: 3, ...config, ...more }, null, 2));
+    return { dir, site, setConfig, ledgerFile: join(workDir(dir), 'ledger.json') };
+  };
+  {
+    const { dir, site, setConfig, ledgerFile } = await ssoRepo('a11y-508-deploy-sso-', { deployed: 'bundle-change', deployTimeout: 120000, deployPoll: 400 });
+    // Once the fixes are committed and the loop waits, a new build goes live.
+    const watcher = setInterval(() => {
+      try {
+        if (loadLedger(ledgerFile).deploy) {
+          site.build = 2;
+          clearInterval(watcher);
+        }
+      } catch {}
+    }, 200);
+    const live = await loopIn(dir, [site.url, '--max-rounds', '1']);
+    clearInterval(watcher);
+    const l1 = loadLedger(ledgerFile);
+    check('deploy check behind a sign-in: the build is read through the browser with the saved session, and a changed bundle is seen as live', () => {
+      assert.match(live.out, /read the start page's build through the browser with the saved session/, live.out);
+      assert.ok(l1.deploy && typeof l1.deploy.signature === 'string' && l1.deploy.signature.includes('/bundle.1.js'), JSON.stringify(l1.deploy));
+      assert.match(live.out, /new build is live/, live.out);
+      assert.doesNotMatch(live.out, /could not reach the start page|opening a window to sign in/);
+      assert.ok(Object.values(l1.findings).some((e) => e.status === 'pending'), live.out);
+    });
+    // Neither a plain request nor the browser can read the page for the check: --verify takes the person's word.
+    site.blockPlain = true;
+    site.blockBrowserDocs = 1;
+    setConfig({ deployTimeout: 3000 });
+    const verify = await loopIn(dir, [site.url, '--verify', '--events', '--max-rounds', '1']);
+    const vEvents = parseEvents(verify.stdout);
+    const l2 = loadLedger(ledgerFile);
+    check('deploy check: --verify with a start page that cannot be checked takes the person\'s word and verifies', () => {
+      assert.deepEqual(vEvents.problems, []);
+      assert.equal(site.blockBrowserDocs, 0, 'the browser was tried');
+      const dep = vEvents.events.find((e) => e.type === 'deployment');
+      assert.deepEqual(dep && [dep.state, dep.reason], ['verify-anyway', 'unreachable'], verify.stdout);
+      assert.ok(vEvents.events.some((e) => e.type === 'info' && e.message === "could not check the site's build; taking your word that it is updated"), verify.stdout);
+      assert.ok(!vEvents.events.some((e) => e.type === 'login-waiting'), verify.stdout);
+      assert.ok(vEvents.events.some((e) => e.type === 'step' && e.step === 'crawl'), verify.stdout);
+      assert.equal(l2.rounds.length, l1.rounds.length + 1, verify.out);
+      assert.ok(Object.values(l2.findings).some((e) => e.status === 'verified'), verify.out);
+    });
+    site.srv.close();
+    removeOwn(dir);
+  }
+  {
+    const { dir, site, ledgerFile } = await ssoRepo('a11y-508-deploy-relogin-', { deployed: 'bundle-change', deployTimeout: 3000, deployPoll: 400 });
+    const first = await loopIn(dir, [site.url, '--max-rounds', '1']);
+    const l1 = loadLedger(ledgerFile);
+    // The saved session expires, and a new build goes live.
+    site.session = 'renewed';
+    site.build = 2;
+    const verify = await loopIn(dir, [site.url, '--verify', '--events', '--max-rounds', '1']);
+    const vEvents = parseEvents(verify.stdout);
+    const l2 = loadLedger(ledgerFile);
+    check('deploy check: when the saved session has expired, --verify opens a window to sign in, saves the session, reads the build and verifies', () => {
+      assert.equal(first.status, 4, first.out);
+      assert.ok(l1.deploy && l1.deploy.signature.includes('/bundle.1.js'), JSON.stringify(l1.deploy));
+      assert.deepEqual(vEvents.problems, []);
+      assert.ok(vEvents.events.some((e) => e.type === 'info' && e.message === 'the start page sends the browser to its sign-in: opening a window to sign in'), verify.stdout);
+      assert.ok(vEvents.events.some((e) => e.type === 'login-waiting'), verify.stdout);
+      assert.ok(vEvents.events.some((e) => e.type === 'session-saved'), verify.stdout);
+      assert.ok(readFileSync(join(dir, 'a11y-508-state.json'), 'utf8').includes('renewed'));
+      const dep = vEvents.events.find((e) => e.type === 'deployment');
+      assert.equal(dep && dep.state, 'arrived', verify.stdout);
+      assert.ok(Object.values(l2.findings).some((e) => e.status === 'verified'), verify.out);
+    });
+    site.srv.close();
+    removeOwn(dir);
+  }
 }
 rmSync(HOME, { recursive: true, force: true, maxRetries: 10 });
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');

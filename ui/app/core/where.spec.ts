@@ -26,6 +26,7 @@ describe('where you are', () => {
     expect(whereYouAre({ ...base, live: live({ round: 2, step: 'crawl', crawled: { done: 14, discovered: 33 } }) })[2].text).toBe('Now: round 2: re-checking the site (14 of 33 pages)');
     expect(whereYouAre({ ...base, live: live({ round: 2, step: 'fix', task: { n: 3, m: 6 } }) })[2].text).toBe('Now: round 2: fixing 3 of 6');
     expect(whereYouAre({ ...base, live: live({ active: false, outcome: 'awaiting-deploy', deployment: 'still-old' }) })[2].text).toBe('Now: your deployment has not arrived yet — the site still serves the old build');
+    expect(whereYouAre({ ...base, live: live({ active: false, outcome: 'awaiting-deploy', deployment: 'unreachable' }) })[2].text).toBe("Now: could not check the site's build");
     expect(whereYouAre({ ...base, live: live({ active: false, outcome: 'findings' }) })[2].text).toBe('Now: finished');
   });
   it('counts down in words', () => {

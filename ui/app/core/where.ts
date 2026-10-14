@@ -26,7 +26,7 @@ export interface WhereLive {
   task: { n: number; m: number } | null;
   // Waiting for a deployment: the await-deploy event's facts.
   waiting: { branch: string; intervalMs: number; until: number } | null;
-  // The run's deployment event: arrived, still-old, timeout, stopped-waiting, verify-anyway.
+  // The run's deployment event: arrived, still-old, unreachable, timeout, stopped-waiting, verify-anyway.
   deployment: string | null;
   // How many fixes the arrived deployment is verifying.
   verifying: number | null;
@@ -118,7 +118,7 @@ function nowLine(live: WhereLive | null, timeline: LoopTimeline | null, counts: 
     return `round ${r}: working`;
   }
   if (live && loop && live.outcome) {
-    if (live.outcome === 'awaiting-deploy') return live.deployment === 'still-old' ? 'your deployment has not arrived yet — the site still serves the old build' : 'your deployment has not arrived yet';
+    if (live.outcome === 'awaiting-deploy') return live.deployment === 'still-old' ? 'your deployment has not arrived yet — the site still serves the old build' : live.deployment === 'unreachable' ? "could not check the site's build" : 'your deployment has not arrived yet';
     if (live.outcome === 'interrupted') return 'the fix loop was interrupted';
     if (live.outcome === 'stopped') return 'stopped';
     if (live.outcome === 'error') return `stopped: ${live.reason || 'the fix loop ended with an error'}`;

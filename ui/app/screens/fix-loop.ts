@@ -242,13 +242,17 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
     @if (awaitingEnd()) {
       <!-- The loop ended waiting for the deployment: a state, not a failure. -->
       <section class="notice warn" role="status" aria-labelledby="not-arrived-h" data-testid="deploy-not-arrived">
-        <h2 id="not-arrived-h">Your deployment has not arrived yet</h2>
+        <h2 id="not-arrived-h">{{ notArrivedHeading() }}</h2>
         @if (store.deployment()?.['state'] === 'still-old') {
           <p data-testid="still-old">The site still serves the old build (checked just now); nothing was changed.</p>
         } @else if (store.deployment()?.['state'] === 'unreachable') {
-          <p data-testid="still-old">The start page could not be fetched to check its build (checked just now); nothing was changed.</p>
+          <p data-testid="unreachable">a11y-508 could not reach the start page to check its build (it may be behind your sign-in).</p>
         }
-        <p class="wrap" data-testid="deploy-explain">{{ deploySentence() }}, then:</p>
+        @if (unreachable()) {
+          <p class="wrap" data-testid="deploy-explain">{{ committedSentence() }}.</p>
+        } @else {
+          <p class="wrap" data-testid="deploy-explain">{{ deploySentence() }}, then:</p>
+        }
         <div class="actions">
           <button type="button" (click)="fix(true, 'verify')" [disabled]="store.active() || starting()" data-testid="verify-now">The site is updated — verify now</button>
           @if (openCount()) {
@@ -257,7 +261,7 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
           <button type="button" class="secondary" (click)="fix(true, 'wait')" [disabled]="store.active() || starting()" data-testid="keep-waiting">Keep waiting</button>
           <app-start-over />
         </div>
-        @if (store.deployment()?.['state'] === 'still-old') {
+        @if (store.deployment()?.['state'] === 'still-old' || unreachable()) {
           <p class="hint">
             <button type="button" class="link" (click)="fix(true, 'verify-anyway')" [disabled]="store.active() || starting()" data-testid="verify-anyway">Verify anyway</button>
             — re-checks the site as it is now; fixes that are not deployed yet will count as not holding.
@@ -649,15 +653,24 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   // "11 fixes are committed on branch a11y-508 and pushed to origin. The site at … still serves the
   // build from before them, so they cannot be verified yet. Deploy that branch — or merge it into the
   // branch your pipeline builds" (the loop's own words, src/loop.mjs deploySentence).
-  readonly deploySentence = computed(() => {
+  // The loop ended without reading the start page's build: whether the site still serves the old
+  // build is not known, so nothing says it does.
+  readonly unreachable = computed(() => this.store.deployment()?.['state'] === 'unreachable');
+  readonly notArrivedHeading = computed(() => (this.unreachable() ? "Could not check the site's build" : 'Your deployment has not arrived yet'));
+  readonly committedSentence = computed(() => {
     const e = this.store.deployment() || this.store.deployWait();
     const d = this.ledger()?.deploy;
     const n = this.counts()['pending'] ?? (e ? Number(e['pending']) || 0 : 0);
     const branch = String((e && e['branch']) || d?.branch || this.plan()?.branch || 'the branch');
     const pushed = e ? !!e['pushed'] : !!d?.pushed;
     const remote = (e && e['remote']) || d?.remote || 'origin';
+    return `${n} fix${n === 1 ? ' is' : 'es are'} committed on branch ${branch}${pushed ? ` and pushed to ${remote}` : ''}`;
+  });
+  readonly deploySentence = computed(() => {
+    const e = this.store.deployment() || this.store.deployWait();
+    const d = this.ledger()?.deploy;
     const host = String((e && e['host']) || d?.host || this.host());
-    return `${n} fix${n === 1 ? ' is' : 'es are'} committed on branch ${branch}${pushed ? ` and pushed to ${remote}` : ''}. The site at ${host} still serves the build from before them, so they cannot be verified yet. Deploy that branch — or merge it into the branch your pipeline builds`;
+    return `${this.committedSentence()}. The site at ${host} still serves the build from before them, so they cannot be verified yet. Deploy that branch — or merge it into the branch your pipeline builds`;
   });
   // Changes this run: only what the assistant changed and committed.
   readonly committedChanges = computed(() => this.store.changes().filter((c) => c.outcome === 'committed'));

@@ -382,7 +382,7 @@ export class RunStore {
       case 'deployment':
         this.deployment.set(ev);
         if (ev['state'] === 'arrived') this.pane(`Your deployment arrived: verifying ${ev['pending']} fix${ev['pending'] === 1 ? '' : 'es'}`, true);
-        if (ev['state'] === 'verify-anyway') this.pane('Verifying anyway: fixes not yet deployed count as not holding', true);
+        if (ev['state'] === 'verify-anyway') this.pane(ev['reason'] === 'unreachable' ? 'Could not check the site\'s build; taking your word that it is updated' : 'Verifying anyway: fixes not yet deployed count as not holding', true);
         break;
       // Continue after an interruption: the unfinished fix's changes it discarded, in the pane.
       case 'resume':

@@ -14,11 +14,21 @@ const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 't
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
 // The app's pages from its working tree, each with the current build's script bundle.
-async function bundleSite(cwd: string): Promise<{ base: string; host: string; server: Server; setBuild: (n: number) => void }> {
+// setBlocked(true): every request is sent to a sign-in page on another host, as a sign-in portal does.
+async function bundleSite(cwd: string): Promise<{ base: string; host: string; server: Server; setBuild: (n: number) => void; setBlocked: (b: boolean) => void }> {
   mkdirSync(join(cwd, 'site'), { recursive: true });
   for (const f of ['index.html', 'about.html', 'forms.html']) cpSync(join(ROOT, 'test', 'fixtures', f), join(cwd, 'site', f));
   let build = 1;
+  let blocked = false;
   const server = createServer((req, res) => {
+    if (new URL(req.url!, 'http://x').pathname === '/signin') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      return res.end('<!doctype html><html lang="en"><title>Sign in</title><h1>Sign in</h1></html>');
+    }
+    if (blocked) {
+      res.writeHead(302, { location: `http://localhost:${(server.address() as any).port}/signin` });
+      return res.end();
+    }
     if (req.headers.authorization !== `Bearer ${TOKEN}`) {
       res.writeHead(401);
       return res.end();
@@ -43,7 +53,7 @@ async function bundleSite(cwd: string): Promise<{ base: string; host: string; se
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as any).port;
-  return { base: `http://127.0.0.1:${port}/`, host: `127.0.0.1:${port}`, server, setBuild: (n) => (build = n) };
+  return { base: `http://127.0.0.1:${port}/`, host: `127.0.0.1:${port}`, server, setBuild: (n) => (build = n), setBlocked: (b) => (blocked = b) };
 }
 
 async function setToken(page: Page): Promise<void> {
@@ -220,6 +230,79 @@ test('deploy-wait AC1/2/5/6/8/9, guards a b c d g h: the wait says what is going
     site.server.close();
     removeTemp(cwd);
     removeTemp(originDir);
+  }
+});
+
+// The start page cannot be checked (behind a sign-in the check could not get past): the notice says
+// so plainly and offers Verify anyway, which starts a run.
+test('deploy check: when the start page cannot be reached to check its build, the notice says so and Verify anyway starts a run', async ({ page }) => {
+  test.setTimeout(600_000);
+  const cwd = tempDir('a11y-508-dw-unreach-');
+  const g = gitRepo(cwd);
+  const site = await bundleSite(cwd);
+  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
+  const configFile = join(cwd, 'a11y-508.config.json');
+  const config = {
+    url: site.base, args: ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage', '--concurrency', '1'],
+    agent: FAKE, source: ['site'], check: `${JSON.stringify(process.execPath)} -e 0`, branch: 'a11y-508', push: false, maxAttempts: 5, triageBatch: 50,
+    deployed: 'bundle-change', deployTimeout: 120_000, deployPoll: 1000,
+  };
+  writeFileSync(configFile, JSON.stringify(config, null, 2));
+  g('add', '-A');
+  g('commit', '-q', '-m', 'fixture site');
+  const dash: Dash = await dashboard({ cwd });
+  try {
+    await open(page, dash, '/fix-loop');
+    await setToken(page);
+    await page.getByTestId('loop-start').click();
+    await expect(page.getByTestId('deploy-wait')).toBeVisible({ timeout: 240_000 });
+    await page.getByTestId('deploy-wait').getByRole('button', { name: 'Stop waiting' }).click();
+    const notArrived = page.getByTestId('deploy-not-arrived');
+    await expect(notArrived).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('verify-anyway')).toHaveCount(0);
+
+    // The site now sends every request to its sign-in page: the wait cannot read the build.
+    site.setBlocked(true);
+    writeFileSync(configFile, JSON.stringify({ ...config, deployTimeout: 5000 }, null, 2));
+    await notArrived.getByRole('button', { name: 'Keep waiting' }).click();
+    await expect(page.getByTestId('unreachable')).toHaveText('a11y-508 could not reach the start page to check its build (it may be behind your sign-in).', { timeout: 120_000 });
+    // Whether the site still serves the old build is not known, so nothing says it does.
+    await expect(notArrived.getByRole('heading')).toHaveText("Could not check the site's build");
+    await expect(page.getByTestId('deploy-explain')).toHaveText(/^\d+ fix(es are| is) committed on branch a11y-508\.$/);
+    await expect(notArrived).not.toContainText('still serves');
+    await expect(notArrived).not.toContainText('has not arrived');
+    await expect(page.getByTestId('where-now-text')).toHaveText("Now: could not check the site's build");
+    for (const name of ['The site is updated — verify now', 'Keep waiting', 'Start over']) await expect(notArrived.getByRole('button', { name })).toBeVisible();
+    await expect(page.getByTestId('still-old')).toHaveCount(0);
+    await expect(page.getByTestId('try-again')).toHaveCount(0);
+
+    site.setBlocked(false);
+    const before = (await api(dash, '/api/runs/current')).json.id;
+    await page.getByTestId('verify-anyway').click();
+    await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.id, { timeout: 30_000 }).not.toBe(before);
+    expect((await api(dash, '/api/runs/current')).json.meta.deploy).toBe('verify-anyway');
+    // The run's events so far (the stream replays them, then stays open while the run goes on).
+    const events = async (): Promise<string> => {
+      const ctrl = new AbortController();
+      const stop = setTimeout(() => ctrl.abort(), 2000);
+      let text = '';
+      try {
+        const res = await fetch(dash.origin + '/api/runs/current/events', { headers: { [SECRET_HEADER]: dash.secret }, signal: ctrl.signal });
+        const reader = res.body!.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += Buffer.from(value).toString('utf8');
+        }
+      } catch {}
+      clearTimeout(stop);
+      return text;
+    };
+    await expect.poll(events, { timeout: 60_000 }).toContain('"state":"verify-anyway"');
+  } finally {
+    await dash.stop();
+    site.server.close();
+    removeTemp(cwd);
   }
 });
 
