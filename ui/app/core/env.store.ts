@@ -35,7 +35,7 @@ export class EnvStore {
       this.error.set(null);
       return e;
     } catch (e: any) {
-      this.error.set(e.status === 401 ? 'This page has no session secret. Open the address the dashboard printed when it started.' : e.message);
+      this.error.set(e.status === 401 ? 'This page has no session secret, so it cannot talk to the dashboard. In the terminal, run "npm run ui" again: it opens the dashboard at the address that carries the secret. Or open the address it printed when it started.' : e.message);
       return null;
     }
   }
