@@ -185,7 +185,7 @@ test('AC 4: the Report screen equals report.json: result line, totals, review co
   }
 });
 
-test('AC 5: on the selected page, findings filter by level, impact, test and text; the detail panel shows selector, HTML, WCAG and screenshot', async () => {
+test('AC 5: on the selected page, findings filter by level, impact, test and text; the detail panel shows selector, HTML and WCAG', async () => {
   await ensureCrawl();
   const report = readReport(dash.cwd);
   const urlOf = (p: any) => p.finalUrl || p.url;
@@ -224,9 +224,10 @@ test('AC 5: on the selected page, findings filter by level, impact, test and tex
   const weight = (b: string) => (b.endsWith('violation') ? 0 : 10) + ['critical', 'serious', 'moderate', 'minor'].findIndex((i) => b.includes(i));
   expect(badges.map(weight)).toEqual([...badges.map(weight)].sort((a, b) => a - b));
 
-  // A finding with a screenshot: the detail panel shows all four.
-  const shotPage = report.pages.find((p: any) => p.findings.some((f: any) => f.screenshot && f.selector));
-  const withShot = shotPage.findings.find((f: any) => f.screenshot && f.selector);
+  // A finding with a selector: the detail panel shows all three, and no finding carries a screenshot.
+  expect(report.pages.every((p: any) => p.findings.every((f: any) => !('screenshot' in f)))).toBe(true);
+  const shotPage = report.pages.find((p: any) => p.findings.some((f: any) => f.selector && f.html));
+  const withShot = shotPage.findings.find((f: any) => f.selector && f.html);
   await route(urlOf(shotPage)).click();
   await page.getByLabel('Text', { exact: true }).fill(withShot.selector);
   await rows.filter({ hasText: withShot.message }).first().getByRole('button', { name: /Details/ }).click();
@@ -234,9 +235,7 @@ test('AC 5: on the selected page, findings filter by level, impact, test and tex
   await expect(detail.getByTestId('detail-selector')).toHaveText(withShot.selector);
   await expect(detail.getByTestId('detail-html')).toHaveText(withShot.html);
   await expect(detail.getByTestId('detail-wcag')).toHaveText(withShot.wcag);
-  const img = detail.getByTestId('detail-screenshot');
-  await expect(img).toBeVisible();
-  await expect.poll(() => img.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth)).toBeGreaterThan(0);
+  await expect(detail.locator('img')).toHaveCount(0);
   await page.getByLabel('Text', { exact: true }).fill('');
 });
 

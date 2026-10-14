@@ -108,12 +108,11 @@ export async function crawl({ browser: firstBrowser, startUrl, opts, log, outDir
   acceptVariant(first);
   const pages = [];
   let active = 0;
-  let pageCounter = 0;
   let overflow = 0;
   const clickOnly = new Set();
   // --events: where each page in flight is (src/progress.mjs).
   const progress = opts.events && log.event ? progressReporter((e) => log.event('progress', e)) : null;
-  const ctx = { opts, origin, outDir, nextPageIndex: () => ++pageCounter, progress };
+  const ctx = { opts, origin, progress };
   const allowed = (u) => {
     if (opts.exclude.some((re) => re.test(u))) return false;
     if (opts.include.length && !opts.include.some((re) => re.test(u))) return false;

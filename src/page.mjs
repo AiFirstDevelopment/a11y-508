@@ -1,6 +1,6 @@
 // A single Chrome tab driven over CDP: navigation, auth header injection,
 // web-storage and cookie seeding, script injection, keyboard input,
-// screenshots, zoom emulation.
+// zoom emulation.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -348,29 +348,6 @@ export class Page {
     const base = { key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, modifiers };
     await this.s.send('Input.dispatchKeyEvent', { type: k.text ? 'keyDown' : 'rawKeyDown', ...base, ...(k.text ? { text: k.text, unmodifiedText: k.text } : {}) });
     await this.s.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
-  }
-
-  async screenshot(rect, pad = 6) {
-    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
-    const clip = {
-      x: Math.max(0, rect.x - pad),
-      y: Math.max(0, rect.y - pad),
-      width: Math.min(1600, rect.width + pad * 2),
-      height: Math.min(1200, rect.height + pad * 2),
-      scale: 1,
-    };
-    // Bounded: a tab that draws no frames never answers, and one missing
-    // screenshot must not stall the whole crawl.
-    let timer;
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error('Page.captureScreenshot did not answer within 15s')), 15000);
-    });
-    try {
-      const { data } = await Promise.race([this.s.send('Page.captureScreenshot', { format: 'png', clip, captureBeyondViewport: true, fromSurface: true }), timeout]);
-      return Buffer.from(data, 'base64');
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   async setZoom(factor) {

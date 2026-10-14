@@ -66,7 +66,6 @@ test('run-simple (b): Start opens a window to sign in in and crawls there (--log
     await page.getByLabel('Maximum pages').fill('1');
     await page.locator('details.advanced > summary').click();
     await page.locator('#adv-no-zoom').check();
-    await page.locator('#adv-no-screenshots').check();
     await startSignIn(page);
     // The wait is the Live status line, not a warning.
     await expect(status(page)).toHaveText(WAITING, { timeout: 60_000 });
@@ -131,7 +130,6 @@ test('run-simple (c): with a saved session, Start still signs in afresh; the sav
     await page.getByLabel('Maximum pages').fill('1');
     await page.locator('details.advanced > summary').click();
     await page.locator('#adv-no-zoom').check();
-    await page.locator('#adv-no-screenshots').check();
     // Start: a fresh sign-in window, never the saved session headless.
     await startSignIn(page);
     await expect(page.getByTestId('run-command')).toContainText('--login --stay');

@@ -10,7 +10,7 @@ test('checks-shadow-frames AC 11: the finding detail shows a " >>> " selector an
   const dash = await dashboard();
   try {
     await open(page, dash, '/run');
-    await fillRun(page, { url: site.base + 'checks-frames.html', token: TOKEN, maxPages: 1, advanced: { 'no-zoom': true, 'no-screenshots': true } });
+    await fillRun(page, { url: site.base + 'checks-frames.html', token: TOKEN, maxPages: 1, advanced: { 'no-zoom': true } });
     await startFromRun(page);
     await waitFinished(page);
 

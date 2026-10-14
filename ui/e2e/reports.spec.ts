@@ -18,7 +18,7 @@ test.afterEach(async () => {
 
 test('tool-files AC1/guard 4: a crawl from the dashboard: the Report screen shows it, and the repository folder holds nothing of the tool\'s', async ({ page }) => {
   await open(page, dash, '/run');
-  await fillRun(page, { url: site.base + 'about.html', token: TOKEN, maxPages: 1, advanced: { 'no-interact': true, 'no-zoom': true, 'no-screenshots': true } });
+  await fillRun(page, { url: site.base + 'about.html', token: TOKEN, maxPages: 1, advanced: { 'no-interact': true, 'no-zoom': true } });
   await startFromRun(page);
   await waitFinished(page);
   // The Report screen shows the crawl that just finished.
@@ -32,7 +32,7 @@ test('tool-files AC1/guard 4: a crawl from the dashboard: the Report screen show
 
 test('AC 6: a pass with coverage warnings reads "PASS on N pages, but coverage is incomplete", never a plain PASS', async ({ page }) => {
   await open(page, dash, '/run');
-  await fillRun(page, { url: site.base + 'submit', token: TOKEN, advanced: { 'no-interact': true, 'no-zoom': true, 'no-screenshots': true } });
+  await fillRun(page, { url: site.base + 'submit', token: TOKEN, advanced: { 'no-interact': true, 'no-zoom': true } });
   await startFromRun(page);
   await waitFinished(page);
   const report = readReport(dash.cwd);
@@ -62,7 +62,7 @@ test('AC 15: History lists both crawls and the loop rounds; each opens on the Re
 
   const crawl = async (path: string) => {
     await nav(page, 'Run');
-    await fillRun(page, { url: site.base + path, token: TOKEN, maxPages: 1, advanced: { 'no-interact': true, 'no-zoom': true, 'no-screenshots': true } });
+    await fillRun(page, { url: site.base + path, token: TOKEN, maxPages: 1, advanced: { 'no-interact': true, 'no-zoom': true } });
     await startFromRun(page);
     await waitFinished(page);
     expect(existsSync(join(dash.dirs().report, 'report.json')), `the report folder holds the crawl of ${path} that just finished`).toBe(true);

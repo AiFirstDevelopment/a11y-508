@@ -24,13 +24,19 @@ test('the API needs the session secret, refuses foreign hosts, and confines repo
     assert.notEqual(cookie, s.secret);
     assert.equal((await s.call('GET', '/api/env', { secret: cookie })).status, 401);
     assert.equal((await s.call('GET', '/api/env', { secret: null, headers: { cookie: `a11y508_${s.port}=${cookie}` } })).status, 401);
-    mkdirSync(join(s.dirs().report, 'screenshots'), { recursive: true });
+    mkdirSync(s.dirs().report, { recursive: true });
     writeFileSync(join(s.dirs().report, 'report.json'), JSON.stringify({ finishedAt: 'x', summary: {}, pages: [] }));
-    writeFileSync(join(s.dirs().report, 'screenshots', 'a.png'), 'png');
+    writeFileSync(join(s.dirs().report, 'report.html'), '<p>report</p>');
+    // A decoy report.html outside every report folder: no path may reach it.
+    writeFileSync(join(s.cwd, 'report.html'), 'outside');
     writeFileSync(join(s.cwd, 'outside.txt'), 'outside');
-    assert.equal((await s.call('GET', '/api/reports/latest/screenshots/a.png')).status, 200);
-    for (const p of ['/api/reports/latest/screenshots/..%2F..%2Foutside.txt', '/api/reports/latest/screenshots/%2e%2e/%2e%2e/outside.txt', '/api/reports/latest/screenshots/../../outside.txt', '/api/reports/h-..%2F..%2F/screenshots/a.png']) {
-      assert.equal((await s.call('GET', p)).status, 404, p);
+    const ok = await s.call('GET', '/api/reports/latest/report.html');
+    assert.equal(ok.status, 200);
+    assert.ok(!ok.text.includes('outside'));
+    for (const p of ['/api/reports/..%2F..%2F/report.html', '/api/reports/%2e%2e/report.html', '/api/reports/h-..%2F..%2F..%2F/report.html', '/api/reports/..%2F..%2F..%2F..%2Foutside.txt/report.html', '/api/reports/latest/..%2F..%2Foutside.txt', '/api/reports/latest/screenshots/a.png']) {
+      const r = await s.call('GET', p);
+      assert.equal(r.status, 404, p);
+      assert.ok(!r.text.includes('outside'), p);
     }
   } finally {
     await s.stop();

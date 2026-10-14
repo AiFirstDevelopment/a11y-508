@@ -414,7 +414,7 @@ export async function routeDiscoveryPass(page, meta, opts, reload, origin) {
   return out;
 }
 
-export async function zoomPass(page, add, shoot) {
+export async function zoomPass(page, add) {
   const before = await page.evaluate('window.__a11y508.layoutIssues()');
   await page.setZoom(2);
   await sleep(400);
@@ -425,12 +425,10 @@ export async function zoomPass(page, add, shoot) {
     const overlaps = after.overlaps.filter((o) => !before.overlaps.some((b) => b.a === o.a && b.b === o.b));
     for (const c of clipped) {
       const f = { test: '18.A', level: 'violation', impact: 'serious', selector: c.selector, html: c.html, rect: c.rect, message: `Text "${c.text}" is clipped at 200% zoom (overflow hidden; ${c.overflowX > 4 ? `${c.overflowX}px cut horizontally` : `${c.overflowY}px cut vertically`}). Content is lost when text is enlarged.` };
-      if (shoot) await shoot(f);
       add(f);
     }
     for (const o of overlaps) {
       const f = { test: '18.A', level: 'violation', impact: 'moderate', selector: o.a, html: o.html, rect: o.rect, message: `At 200% zoom, text "${o.textA}" overlaps "${o.textB}" (${o.b}), making one or both unreadable.` };
-      if (shoot) await shoot(f);
       add(f);
     }
     if (before.textLength > 200 && after.textLength < before.textLength * 0.85) {
@@ -446,7 +444,7 @@ export async function zoomPass(page, add, shoot) {
 // WCAG 1.4.12 (beyond-508 profile): apply the text-spacing values as a bookmarklet would, then look
 // for text that is clipped or overlaps only with them, like the zoom pass. The style is removed
 // afterwards; restored says it is gone.
-export async function spacingPass(page, add, shoot) {
+export async function spacingPass(page, add) {
   const before = await page.evaluate('window.__a11y508.layoutIssues()');
   await page.evaluate('window.__a11y508.applyTextSpacing()');
   await sleep(200);
@@ -458,12 +456,10 @@ export async function spacingPass(page, add, shoot) {
     const overlaps = after.overlaps.filter((o) => !before.overlaps.some((b) => b.a === o.a && b.b === o.b));
     for (const c of clipped) {
       const f = { test: '1.4.12', level: 'violation', impact: 'serious', selector: c.selector, html: c.html, rect: c.rect, message: `Text "${c.text}" is clipped when the user's text spacing is applied (line height 1.5, letter spacing 0.12em, word spacing 0.16em, paragraph spacing 2em; overflow hidden, ${c.overflowX > 4 ? `${c.overflowX}px cut horizontally` : `${c.overflowY}px cut vertically`}). Let the container grow with its text.` };
-      if (shoot) await shoot(f);
       add(f);
     }
     for (const o of overlaps) {
       const f = { test: '1.4.12', level: 'violation', impact: 'moderate', selector: o.a, html: o.html, rect: o.rect, message: `With the user's text spacing applied, text "${o.textA}" overlaps "${o.textB}" (${o.b}), making one or both unreadable.` };
-      if (shoot) await shoot(f);
       add(f);
     }
   } finally {
@@ -486,7 +482,7 @@ export async function reflowPass(page, add) {
     const r = await page.evaluate('window.__a11y508.reflowIssues()');
     for (const i of r.issues) {
       found++;
-      // No rect: it was measured at 320 px, and screenshots are taken at the configured width.
+      // No rect: it was measured at 320 px, not at the configured width.
       const f = { test: '1.4.10', level: 'violation', impact: 'serious', selector: i.selector, html: i.html, details: { right: i.right, width: i.width, viewport: r.viewport }, message: `At 320 CSS px wide (400% zoom), this element reaches ${i.right}px (it is ${i.width}px wide), so the page has to be scrolled sideways to read it. Let it shrink or wrap; only content that needs two dimensions (tables, images, maps, code) may scroll.` };
       add(f);
     }

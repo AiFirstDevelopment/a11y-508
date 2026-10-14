@@ -644,7 +644,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     let crawl;
     if (fromGiven) {
       log.info(`round ${round}: starting from ${fromReport} (${given.finishedAt}) instead of crawling; round ${round + 1} crawls to verify the fixes`);
-      // The round's report is that report (History lists rounds by their folder): copied, with its screenshots.
+      // The round's report is that report (History lists rounds by their folder): copied whole.
       const out = join(work, `round-${round}`);
       try {
         cpSync(dirname(resolve(cwd, fromReport)), out, { recursive: true });

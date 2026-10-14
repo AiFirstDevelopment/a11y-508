@@ -70,8 +70,6 @@ Options
                            requires. 2.1 or 2.2 also runs the WCAG 2.1/2.2 rules and best
                            practices beyond Section 508, listed under their own heading
   --beyond-508             Same as --wcag 2.2
-  --no-screenshots         Do not capture element screenshots
-  --max-screenshots <n>    Screenshots per page (default 40)
   --max-tabs <n>           Maximum Tab presses per page (default 400)
   --max-activations <n>    Disclosure controls activated per page (default 12)
   --max-clicks <n>         Link-less navigation controls clicked per page to find pages
@@ -139,7 +137,7 @@ export function parseArgs(argv) {
   const o = {
     url: null, maxPages: 200, maxDepth: 10, concurrency: 4, include: [], exclude: [], failOn: ['critical', 'serious'],
     out: null, viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
-    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stay: false, connect: null, stateFile: null, troubleshoot: false, interact: true, zoom: true, screenshots: true, maxScreenshots: 40,
+    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stay: false, connect: null, stateFile: null, troubleshoot: false, interact: true, zoom: true,
     maxTabs: 400, maxActivations: 12, maxClicks: 30, followClicks: true, forms: true, searchMonths: 3, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false, events: false,
     listTests: false, help: false, version: false, wcag: '2.0',
   };
@@ -223,9 +221,9 @@ export function parseArgs(argv) {
       }
       case '--beyond-508': o.wcag = '2.2'; break;
       case '--zoom': o.zoom = true; break;
-      case '--no-screenshots': o.screenshots = false; break;
-      case '--screenshots': o.screenshots = true; break;
-      case '--max-screenshots': o.maxScreenshots = int(a, next(a)); break;
+      // Screenshots are gone; saved configs and scripts that still pass these keep working.
+      case '--no-screenshots': case '--screenshots': break;
+      case '--max-screenshots': next(a); break;
       case '--max-tabs': o.maxTabs = int(a, next(a)); break;
       case '--max-activations': o.maxActivations = int(a, next(a)); break;
       case '--max-clicks': o.maxClicks = int(a, next(a)); break;
@@ -579,7 +577,7 @@ async function run(argv) {
     finishedAt: new Date().toISOString(),
     options: {
       maxPages: opts.maxPages, maxDepth: opts.maxDepth, concurrency: opts.concurrency, include: opts.include.map(String), exclude: opts.exclude.map(String),
-      failOn: opts.failOn, viewport: opts.viewport, timeout: opts.timeout, interact: opts.interact, followClicks: opts.followClicks, maxClicks: opts.maxClicks, forms: opts.forms, searchMonths: opts.searchMonths, zoom: opts.zoom, screenshots: opts.screenshots,
+      failOn: opts.failOn, viewport: opts.viewport, timeout: opts.timeout, interact: opts.interact, followClicks: opts.followClicks, maxClicks: opts.maxClicks, forms: opts.forms, searchMonths: opts.searchMonths, zoom: opts.zoom,
       tokenHeader: opts.auth ? opts.tokenHeader : null, authOrigins: opts.auth ? [...opts.auth.origins] : [],
       tokenStorage: opts.auth && opts.auth.storage ? opts.auth.storage.keys : [], cookies: opts.cookies.map((c) => c.name),
       session: opts.state ? { cookies: opts.state.cookies.length, origins: Object.keys(opts.state.storage || {}) } : null,

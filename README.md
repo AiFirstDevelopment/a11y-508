@@ -3,7 +3,7 @@
 A Section 508 crawler with **no dependencies**. It drives the Chrome, Chromium, or Edge already installed on the machine over the DevTools Protocol, crawls every same-origin page it can reach, runs the automatable [DHS Trusted Tester v5](https://section508coordinators.github.io/TrustedTester/) test conditions on each page, and writes a report that separates:
 
 - **Violations**: determinate failures of a Trusted Tester test condition.
-- **Review items**: escalations for a human. The tool found something it cannot judge (an alt text, a link name, a form's error handling) and says exactly what to check, with the element, its HTML, and a screenshot.
+- **Review items**: escalations for a human. The tool found something it cannot judge (an alt text, a link name, a form's error handling) and says exactly what to check, with the element and its HTML.
 - **Manual checklist**: the test conditions that can only be performed by a person.
 
 It exists for environments where nothing can be published to a package registry and nothing can be downloaded at install time. It is plain JavaScript; nothing is fetched from the network except the site being audited. There are two ways to use it:
@@ -50,8 +50,8 @@ node ui/server/main.mjs --dir ../my-app   # the same, started in another reposit
 Then, in the browser, a wizard across the top: **1 Set up → 2 Crawl → 3 Results → 4 Fix → 5 History**. Only the step in hand is on screen, steps that make no sense yet are not reachable (Results, Fix and History while a crawl runs; Fix outside a repository), and each step ends with its one forward action. Every step shows counts, not details; a small **Details** link at the bottom opens the full view (charts, tables, the command line, raw output), and stays open once opened.
 
 1. **Set up.** The app's repository folder (paste a path, or **Browse…**) and its URL, then **Start**. On a first visit this is a dialog; afterwards the folder is remembered in your browser and the dashboard opens on it. The header's **Change…** switches folders at any time. A crawl needs neither git nor a package.json; the fix loop needs the app's repository.
-2. **Crawl.** Start opens a fresh Chrome window on the URL; you sign in there (through the single sign-on portal if the app uses one) and the crawl runs in that window (`--login --stay`). The step shows one status line ("Waiting for you to sign in in the browser window · 48 s", "Analyzing /layout/default · 1,240 elements", "Taking screenshots · 9 of 22"), the pages done, the violations and review items so far, the elapsed time, and **Stop**. When it is done the wizard moves to Results by itself. A crawl that could not get in stays here with a notice and **Troubleshoot**.
-3. **Results.** The result line, then the audited routes, worst first, each with its counts; choosing one lists its findings (a badge, the test, the message, **Details** for the selector, HTML and screenshot). Totals, charts and the manual checklist are under Details. **Fix the violations** goes on to Fix and starts it.
+2. **Crawl.** Start opens a fresh Chrome window on the URL; you sign in there (through the single sign-on portal if the app uses one) and the crawl runs in that window (`--login --stay`). The step shows one status line ("Waiting for you to sign in in the browser window · 48 s", "Analyzing /layout/default · 1,240 elements"), the pages done, the violations and review items so far, the elapsed time, and **Stop**. When it is done the wizard moves to Results by itself. A crawl that could not get in stays here with a notice and **Troubleshoot**.
+3. **Results.** The result line, then the audited routes, worst first, each with its counts; choosing one lists its findings (a badge, the test, the message, **Details** for the selector and HTML). Totals, charts and the manual checklist are under Details. **Fix the violations** goes on to Fix and starts it.
 4. **Fix.** "Fixing with Claude Code (version)" (*change* opens the picker), one line of what it will do ("Edits `src` · gate `npm run build` · commits to branch `a11y-508` · pushes to `origin`"), and while it runs: the round and the fix in hand with its time, a bar of fixes, "5 fixed · 2 remaining", and the assistant's last line of output (**Show output** opens the whole of it). At the top, **Where you are** says in a few lines what has happened and what comes next ("✓ Crawled 33 pages on 13 Oct, 8:21 PM — 34 findings", "✓ Round 1: 11 fixes committed on branch a11y-508 and pushed to origin", "● Now: waiting for your deployment of a11y-508 (checks every 30 s, 12 min left)", "○ Next: verify the 11 fixes against the new build, then fix the 6 remaining"); History has the same. When a round ends, the step says what the assistant did ("Round 1: fixed 11 findings in 9 files, committed on branch a11y-508 and pushed to origin") with **Changes this run** under it: only what it changed and committed. What the assistant could not fix is skipped and not shown; the people who use the app report what is left. When the loop ends: **See what changed** and **Run again** (a new crawl from the same set up, then Results and Fix, with the ledger carried forward). When it could not start (not a repository, uncommitted changes in the source folders, a branch git refuses), the step says **The fix loop could not start**, what happened and what to do; when it stopped after a round (a crawl, push or deploy that failed), **The fix loop stopped**, why, and the counts so far. Either way **Try again** runs the loop again from the same report and the ledger, without a new crawl.
 5. **History.** The crawls and the fix rounds in one timeline (found, fixed, remaining, commits), and **Run again**.
 
@@ -138,8 +138,6 @@ a11y-508 <url> [options]
                            requires. 2.1 or 2.2 also runs the WCAG 2.1/2.2 rules and best
                            practices beyond Section 508, listed under their own heading
   --beyond-508             Same as --wcag 2.2
-  --no-screenshots         Do not capture element screenshots
-  --max-screenshots <n>    Screenshots per page (default 40)
   --max-tabs <n>           Maximum Tab presses per page (default 400)
   --max-activations <n>    Disclosure controls activated per page (default 12)
   --max-clicks <n>         Link-less navigation controls clicked per page to find pages
@@ -309,8 +307,7 @@ flowchart TD
   D --> Z[Zoom pass at 200%<br/>clipped and overlapping text]
   Z --> B[With --wcag 2.2: text spacing and 320 px reflow passes]
   B --> N[Names with no source<br/>confirmed against Chrome's accessibility tree]
-  N --> C[Screenshots of each finding]
-  C --> F[Find more pages<br/>href links, plus clicks on link-less navigation]
+  N --> F[Find more pages<br/>href links, plus clicks on link-less navigation]
   F --> Q
   Q -- queue empty --> X[Site checks across pages<br/>consistent navigation and names, duplicate titles, multiple ways]
   X --> O[report.html, report.json, summary.md<br/>exit 0 or 1]
@@ -344,7 +341,7 @@ flowchart LR
   S -- "spawns node bin/a11y-508.mjs … --events<br/>TOKEN in the child's environment only" --> C[The CLI]
   C -- "one JSON event per line" --> S
   C --> R[(~/.a11y-508/repos/name-hash/<br/>report/ history/ work/)]
-  S -- "reads reports, screenshots, ledger, config" --> R
+  S -- "reads reports, ledger, config" --> R
   S -- "detects, installs, tests" --> G[claude / gemini / codex CLIs]
 ```
 
@@ -419,7 +416,7 @@ With `--events` the CLI prints one JSON object per line on stdout instead of its
 | `start` | `kind` (`crawl`, `troubleshoot`, `login`, `loop`), `version`, `url`, `maxPages` | first |
 | `info`, `warn`, `error` | `message` | a line the human output would print, by level |
 | `page` | `url`, `finalUrl`, `title`, `status`, `error`, `skipped`, `violations`, `reviews`, `byImpact`, `durationMs`, `foundBy`, `modalOnLoad` (or `null`), `servedWith` (404 when the server said not found and the app rendered the page anyway, else `null`), `links` (links found on the page), `clicked` (controls clicked by click discovery; `null` when it did not run), `clickedNew` (new URLs those clicks led to; `null` likewise), `skippedActions` (names of controls not clicked because they look like actions, up to 20), `skippedActionsCount`, `done` (pages finished so far), `discovered` (pages found so far), `limit` (`--max-pages`) | each page as it finishes; `done` over `discovered` is the progress |
-| `progress` | `url`, `phase` (`loading`, `checks`, `keyboard`, `disclosures`, `frames`, `zoom`, `names`, `screenshots`, `discovery`), `detail` (the phase's count: `elements`; `stops`/`of`; `done`/`of`; `checked`/`of`; `clicked`/`of`; or `null`), `elapsedMs` | where a page in flight is: at each phase and at least every 2 seconds within one, at most about five a second |
+| `progress` | `url`, `phase` (`loading`, `checks`, `keyboard`, `disclosures`, `frames`, `zoom`, `names`, `discovery`), `detail` (the phase's count: `elements`; `stops`/`of`; `done`/`of`; `checked`/`of`; `clicked`/`of`; or `null`), `elapsedMs` | where a page in flight is: at each phase and at least every 2 seconds within one, at most about five a second |
 | `coverage` | `complete`, `warnings`, `notes` | after the crawl |
 | `summary` | `result` (`pass`, `fail`, `incomplete`, `nothing-audited`), `passed`, `baseUrl`, `failOn`, `summary` (as in `report.json`), `files` | after the crawl |
 | `troubleshoot` | `result` (the `--troubleshoot --json` object) | `--troubleshoot` |
@@ -473,7 +470,7 @@ Every finding carries a Trusted Tester test ID and the WCAG success criterion. `
 | 5.H | Error prevention | legal/financial forms escalated |
 | 6.A | Link and button purpose | no name (an icon-font glyph is not a name), generic text with/without context, same text to different targets, URL-as-text; a focusable element inside a control whose children are presentational (a link inside a button; escalated when it has `tabindex="-1"`); a focusable element inside `<summary>`, escalated (Chrome does not make a summary's children presentational) |
 | 6.B | Change notification (links) | manual |
-| 7.A | Meaningful image name | missing alt, filename/generic alt, long alt; `role="img"` and `<svg role="img">` with no name (escalated, suggesting `aria-hidden`, inside a link or button that already has a name); every loaded `<object>` with no fallback text, `aria-label` or `title`, and every `<embed>` with no `aria-label`, `aria-labelledby` or `title`, whatever they embed; an alt that repeats the text of its link or button (case and spacing aside), escalated; inventory of every alt text escalated with screenshots; unnamed SVG/icon fonts |
+| 7.A | Meaningful image name | missing alt, filename/generic alt, long alt; `role="img"` and `<svg role="img">` with no name (escalated, suggesting `aria-hidden`, inside a link or button that already has a name); every loaded `<object>` with no fallback text, `aria-label` or `title`, and every `<embed>` with no `aria-label`, `aria-labelledby` or `title`, whatever they embed; an alt that repeats the text of its link or button (case and spacing aside), escalated; inventory of every alt text escalated; unnamed SVG/icon fonts |
 | 7.B | Decorative image | decorative images that still have a name; large decorative images, and `alt=""` images that are focusable or carry a global ARIA attribute (the browser ignores the empty alt), escalated |
 | 7.C | Background images | CSS background images with no text equivalent escalated |
 | 7.D | CAPTCHA | detected CAPTCHAs escalated |
@@ -542,10 +539,9 @@ The rule set is informed by axe-core (MPL-2.0) and IBM Equal Access (Apache-2.0)
 
 The report folder (the `report:` line names it; `--out` sets it) contains:
 
-- `report.html`: everything, filterable by level, impact, page, and text. Each finding shows the test condition, the element's selector and HTML, a screenshot, and any supporting data. The manual checklist and the page table are at the bottom.
+- `report.html`: everything, filterable by level, impact, page, and text. Each finding shows the test condition, the element's selector and HTML, and any supporting data. The manual checklist and the page table are at the bottom.
 - `report.json`: the same data for tooling. Top-level `summary` has counts by test and by impact; `pages[].findings[]` and `site.findings[]` hold the items. A finding inside a same-origin frame has `frame`; a page with content the checks could not read has `coverageNotes` and `unaudited` (`closedShadow`, `crossOriginFrames`, `deepFrames`), and one with audited frames has `passes.frames`. `passes.keyboardModal` is the keyboard pass inside a modal shown on load, and `passes.axNames` counts the "no name" findings looked up in Chrome's accessibility tree (`candidates`, `checked`, `named`).
 - `summary.md`: a short Markdown summary suitable for a pull-request comment.
-- `screenshots/`: element screenshots referenced by the report.
 
 Impact is `critical`, `serious`, `moderate`, or `minor`. By default the run fails on `critical` and `serious`.
 

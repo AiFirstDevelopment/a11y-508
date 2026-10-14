@@ -266,7 +266,7 @@ test('from the report: after a wizard crawl, Fix the violations starts with tria
   try {
     await api(dash, '/api/settings', { method: 'PUT', body: { rounds: 1 } });
     await open(page, dash, '/run');
-    await fillRun(page, { url: base, token: TOKEN, maxPages: 3, advanced: { 'no-zoom': true, 'no-screenshots': true } });
+    await fillRun(page, { url: base, token: TOKEN, maxPages: 3, advanced: { 'no-zoom': true } });
     await startFromRun(page);
     await waitFinished(page);
     await nav(page, 'Fix loop');

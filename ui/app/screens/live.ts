@@ -135,7 +135,6 @@ export class LiveScreen implements OnDestroy {
     const dd = f.detail || {};
     const n = (x: number | undefined) => (x ?? 0).toLocaleString('en-US');
     switch (f.phase) {
-      case 'screenshots': return `Taking screenshots · ${n(dd['done'])} of ${n(dd['of'])}`;
       case 'loading': return `Loading ${path}`;
       case 'search': return phaseText(f);
       case 'checks': return `Analyzing ${path} · ${n(dd['elements'])} elements`;

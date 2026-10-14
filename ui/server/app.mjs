@@ -564,7 +564,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   async function api(req, res, url) {
     const path = url.pathname;
     const m = req.method;
-    const reportFile = /^\/api\/reports\/([^/]+)\/(screenshots\/.+|report\.html)$/.exec(path);
+    const reportFile = /^\/api\/reports\/([^/]+)\/(report\.html)$/.exec(path);
     if (!authorized(req, m === 'GET' && !!reportFile)) return send(res, 401, { error: 'missing or wrong session secret' });
 
     if (reportFile) {

@@ -248,8 +248,8 @@ export async function fillRun(page: Page, f: CrawlForm): Promise<void> {
   }
 }
 
-// The fixture crawl most tests use: small, but with screenshots.
-export const QUICK = { maxPages: 5, advanced: { 'no-zoom': true, 'max-screenshots': '3' } };
+// The fixture crawl most tests use: small.
+export const QUICK = { maxPages: 5, advanced: { 'no-zoom': true } };
 
 export async function startFromRun(page: Page): Promise<void> {
   // A report for this URL exists: Set up reads Continue, and Crawl again starts a new crawl.
