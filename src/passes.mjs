@@ -501,18 +501,34 @@ export const searchLabel = (months) => `after searching the last ${months} month
 
 // Waits until the page stops changing: the same element count, resource count and address for
 // 500 ms (a search's request answered and rendered), then 500 ms more; at most `max` ms.
-async function settle(page, max = 8000) {
-  const until = Date.now() + max;
+// After a search is submitted: waits for the results. First for the page to change at all from
+// `before` (results, a message, a spinner, a navigation; a slow API is given `quiet` ms, after which
+// a search that changed nothing is taken as done), then for it to hold still for half a second
+// with nothing saying it is busy (a spinner, a progress bar, an aria-busy region: results replace
+// those when they arrive), up to `max` ms in all.
+async function settle(page, { max = 20000, quiet = 8000, before = null } = {}) {
+  const t0 = Date.now();
+  const until = t0 + max;
+  let changed = before == null;
   let last = null;
   let since = Date.now();
   await sleep(250);
   while (Date.now() < until) {
     let sig = null;
+    let busy = false;
     try {
       await page.ensureInjected();
-      sig = await page.evaluate('window.__a11y508.searchSignature()');
+      ({ sig, busy } = await page.evaluate('window.__a11y508.searchState()'));
     } catch {}
-    if (sig && sig === last) {
+    if (!changed) {
+      if (sig && sig !== before) changed = true;
+      else if (Date.now() - t0 >= quiet) break;
+      else {
+        await sleep(150);
+        continue;
+      }
+    }
+    if (sig && sig === last && !busy) {
       if (Date.now() - since >= 500) break;
     } else {
       last = sig;
@@ -693,12 +709,15 @@ export async function searchPass(page, add, fingerprints, opts, reload, origin) 
     if (rest) Object.assign(fill, { dates: rest.dates, from: rest.from, to: rest.to, required: rest.required });
     let pt = null;
     if (f.submit) pt = await page.evaluate(`window.__a11y508.prepareClick(${JSON.stringify(f.submit)})`).catch(() => null);
+    const before = await page.evaluate('window.__a11y508.searchSignature()').catch(() => null);
     if (pt) await page.click(pt.x, pt.y);
+    // Enter submits the form's default button: never beside one named like an action.
+    else if (f.danger) return null;
     else {
       await page.evaluate(`(() => { const s = window.__a11y508.query(${JSON.stringify(f.selector)}); const el = s && s.querySelector('input:not([type=hidden]), select, textarea'); if (el) el.focus(); return !!el; })()`);
       await page.press('Enter');
     }
-    await settle(page);
+    await settle(page, { before });
     await page.ensureInjected().catch(() => {});
     return fill;
   };

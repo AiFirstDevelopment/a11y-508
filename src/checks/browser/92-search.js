@@ -56,23 +56,21 @@
       if ((!fields.length && !widgets.length) || fields.some((f) => f.type === 'password' || f.type === 'file')) continue;
       const controls = [...scope.querySelectorAll(CONTROL)].filter((c) => A.isVisible(c) && !c.disabled && c.getAttribute('aria-disabled') !== 'true');
       const named = controls.map((c) => ({ c, name: nameOf(c) }));
-      // A scope with any control named like an action is not a search, whatever else it has.
+      // The search is submitted by its own control, one named like a search; the other controls in
+      // the scope (Clear, Reset, Export, Save...) are never pressed, so they do not make the scope an
+      // action. Only a scope whose one way to submit is such a control, or Enter with one as the
+      // form's default, is left alone (and reported).
       const danger = named.find((x) => DANGER.test(x.name) || /^submit$/i.test(x.name));
       const go = named.find((x) => SEARCH.test(x.name) && !DANGER.test(x.name));
       if (danger && !go) {
         skipped.push({ selector: A.selector(scope), name: danger.name, reason: 'looks like an action' });
         continue;
       }
-      if (danger && go && DANGER.test(go.name)) continue;
       // A search box with no button submits with Enter.
       const searchBox = fields.find((f) => f.type === 'search') || (scope.matches('[role="search"]') ? fields[0] : null);
       if (!go && !searchBox) continue;
-      if (danger) {
-        skipped.push({ selector: A.selector(scope), name: danger.name, reason: 'looks like an action' });
-        continue;
-      }
       used.add(scope);
-      out.push({ selector: A.selector(scope), submit: go ? A.selector(go.c) : null, name: go ? go.name : 'Enter', fields: fields.length, method: (scope.getAttribute('method') || 'get').toLowerCase() });
+      out.push({ selector: A.selector(scope), submit: go ? A.selector(go.c) : null, name: go ? go.name : 'Enter', fields: fields.length, method: (scope.getAttribute('method') || 'get').toLowerCase(), danger: !!danger });
     }
     return { forms: out, skipped };
   };
@@ -402,6 +400,10 @@
   };
   // Settled: no new elements and no new resource loads for a while.
   A.searchSignature = () => `${document.getElementsByTagName('*').length}|${performance.getEntriesByType('resource').length}|${location.href}`;
+  // The page as the results wait reads it: its signature, and whether something says it is busy (a
+  // spinner, a progress bar, an aria-busy region), which results replace when they arrive.
+  const BUSY = '[aria-busy="true"], [role="progressbar"], progress:not([value]), mat-spinner, mat-progress-spinner, mat-progress-bar, .mat-mdc-progress-spinner, .mat-mdc-progress-bar, .spinner, .loading, .loader';
+  A.searchState = () => ({ sig: A.searchSignature(), busy: A.all(BUSY).some((el) => A.isVisible(el)) });
 
   // What a search revealed: links in the new content, and the controls in it worth clicking (result
   // rows, "view"/"details" buttons, pagination), named like nothing with side effects.
