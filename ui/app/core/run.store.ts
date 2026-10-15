@@ -68,7 +68,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
   'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit', 'changes', 'attempt', 'bisect',
-  'resume', 'deployment', 'deploy-check', 'retry', 'rerun', 'sign-in-again', 'sign-in-opening', 'sign-in-failed',
+  'resume', 'deployment', 'deploy-check', 'marker', 'retry', 'rerun', 'sign-in-again', 'sign-in-opening', 'sign-in-failed',
 ]);
 
 // The current run, built from its event stream.
@@ -416,6 +416,9 @@ export class RunStore {
         this.deployCheck.set(ev);
         this.pane(checkLine(ev), true);
         break;
+      case 'marker':
+        this.pane(`Build marker ${String(ev['token'])} committed in ${String(ev['file'])}: the fixes are verified against a build that serves it`, true);
+        break;
       case 'sign-in-opening':
         this.pane(`Opening the sign-in in ${ev['how'] === 'tab' ? 'a tab of this window' : 'a window'} (${String(ev['why'] || '')})`, true);
         break;
@@ -556,8 +559,11 @@ export function checkLine(ev: Record<string, unknown>): string {
   const when = Number.isNaN(at.getTime()) ? 'just now' : at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
   const how = ev['via'] === 'browser' ? ' (read through the browser with your sign-in)' : '';
   const r = ev['result'];
-  if (r === 'changed') return `Checked at ${when}: a new build is live${how}. Verifying the fixes.`;
+  const expected = ev['expected'] ? String(ev['expected']) : '';
+  const served = ev['marker'] ? String(ev['marker']) : '';
+  if (r === 'changed') return expected && served === expected ? `Checked at ${when}: the build with this round's marker ${expected} is live${how}. Verifying the fixes.` : `Checked at ${when}: a new build is live${how}. Verifying the fixes.`;
   if (r === 'unreadable') return `Checked at ${when}: the start page could not be read (${String(ev['reason'] || 'the site may be down, or behind a sign-in')}).`;
   if (r === 'no-baseline') return `Checked at ${when}: no build from before the fixes is on record, so this one is verified${how}.`;
+  if (expected) return `Checked at ${when}: still a build without this round's marker ${expected}${served ? ` (it serves ${served})` : ''}${how}.`;
   return `Checked at ${when}: still the build from before the fixes${how}.`;
 }

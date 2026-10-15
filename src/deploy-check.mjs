@@ -15,6 +15,16 @@ import { Page } from './page.mjs';
 import { loadState } from './login.mjs';
 
 const REFS = /<(?:script|link)[^>]+(?:src|href)=["']([^"']+)["']/gi;
+// The build marker the fix loop commits into the app's index.html with each round it pushes (src/loop.mjs
+// stampBuildMarker): <meta name="a11y-508-build" content="r12-abc">. A build that serves it is one
+// made from that push, so the loop verifies against the right build, not an earlier one the pipeline
+// finished late.
+export const MARKER_NAME = 'a11y-508-build';
+const MARKER = /<meta\b[^>]*\bname=["']a11y-508-build["'][^>]*\bcontent=["']([^"']+)["'][^>]*>|<meta\b[^>]*\bcontent=["']([^"']+)["'][^>]*\bname=["']a11y-508-build["'][^>]*>/i;
+export function markerIn(html) {
+  const m = MARKER.exec(String(html || ''));
+  return m ? m[1] || m[2] || null : null;
+}
 // The signature is one line per script or stylesheet reference the start page loads: the reference
 // and a hash of what it serves, so a deployment that keeps its file names (a build without output
 // hashing) is seen as well as one that renames them. Other links (icons, manifests) carry "?", as
@@ -94,8 +104,9 @@ async function byFetch(url) {
       }
     })();
     const app = res.ok && sameHost && refs.length > 0;
+    const marker = app ? markerIn(html) : null;
     const reason = !sameHost ? `a plain request is sent to ${new URL(res.url || url).host}` : !res.ok ? `a plain request gets HTTP ${res.status}` : null;
-    return { ok: res.ok && sameHost, signature: app ? await hashedLines(html, refs, res.url || url, headers) : refs.join('\n'), app, reason };
+    return { ok: res.ok && sameHost, signature: app ? await hashedLines(html, refs, res.url || url, headers) : refs.join('\n'), app, reason, marker };
   } catch (e) {
     return { ok: false, signature: null, app: false, reason: `a plain request fails (${e && e.message ? e.message : e})` };
   }
@@ -180,9 +191,14 @@ async function byBrowser(url, { args, cwd, timeout }) {
         } catch {}
         lines.push(ref + ' ' + h);
       }
-      return lines.join('\\n');
+      const meta = document.querySelector('meta[name="a11y-508-build"]');
+      return JSON.stringify({ lines: lines.join('\\n'), marker: meta ? meta.getAttribute('content') : null });
     })()`, { awaitPromise: true });
-    if (typeof refs === 'string' && refs) return { refs, portal: false, reason: null };
+    let read = null;
+    try {
+      read = JSON.parse(refs);
+    } catch {}
+    if (read && typeof read.lines === 'string' && read.lines) return { refs: read.lines, portal: false, reason: null, marker: read.marker || null };
     return { refs: null, portal: false, reason: `${r.status && r.status >= 400 ? `the browser gets HTTP ${r.status} and ` : ''}the page loads no scripts or stylesheets` };
   })();
   try {
@@ -198,13 +214,14 @@ async function byBrowser(url, { args, cwd, timeout }) {
   }
 }
 
-// Resolves { signature, via, portal, reason }: reason says, in words, why there is no signature.
+// Resolves { signature, via, portal, reason, marker }: reason says, in words, why there is no
+// signature; marker is the build marker the page serves (null when none).
 export async function bundleSignature(url, { args = [], cwd = process.cwd(), timeout = 90000 } = {}) {
   const f = await byFetch(url);
-  if (f.app) return { signature: f.signature, via: 'fetch', portal: false, reason: null };
+  if (f.app) return { signature: f.signature, via: 'fetch', portal: false, reason: null, marker: f.marker || null };
   const b = await byBrowser(url, { args, cwd, timeout });
-  if (b.refs !== null) return { signature: b.refs, via: 'browser', portal: false, reason: null };
+  if (b.refs !== null) return { signature: b.refs, via: 'browser', portal: false, reason: null, marker: b.marker || null };
   // The page answered on its own host but loads no scripts or styles: that is its build.
-  if (f.ok) return { signature: f.signature, via: 'fetch', portal: false, reason: null };
-  return { signature: null, via: null, portal: b.portal, reason: [b.reason, f.reason].filter(Boolean).join('; ') || null };
+  if (f.ok) return { signature: f.signature, via: 'fetch', portal: false, reason: null, marker: f.marker || null };
+  return { signature: null, via: null, portal: b.portal, reason: [b.reason, f.reason].filter(Boolean).join('; ') || null, marker: null };
 }

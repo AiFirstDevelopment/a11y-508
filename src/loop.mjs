@@ -14,7 +14,7 @@ import { testInfo } from './checks/catalog.mjs';
 import { migrateRepo, migrationLines, shortenHome, tasksDir, workDir } from './home.mjs';
 import { sleep } from './page.mjs';
 import { killTree } from './chrome.mjs';
-import { bundleSignature as readBuild, hasHashes, sameBuild } from './deploy-check.mjs';
+import { MARKER_NAME, bundleSignature as readBuild, hasHashes, sameBuild } from './deploy-check.mjs';
 
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -34,6 +34,41 @@ export function frameworkLine(cwd) {
   if (!parts.length) return null;
   const styles = deps.sass || deps['sass-embedded'] || deps['node-sass'] ? '; styles in SCSS' : deps.less ? '; styles in Less' : '';
   return `${parts.join(', ')}${styles}`;
+}
+
+// The app's index.html under its source folders (an Angular, React or Vue app's src/index.html, a
+// public/index.html, or one at the root of a source folder), relative to the repository; null when none.
+export function findIndexHtml(cwd, sourceDirs) {
+  const candidates = [];
+  for (const d of sourceDirs) for (const rel of ['index.html', 'public/index.html', 'app/index.html', 'src/index.html']) candidates.push(join(d, rel));
+  candidates.push('index.html', 'public/index.html');
+  for (const c of candidates) {
+    const full = resolve(cwd, c);
+    if (existsSync(full) && /<head\b/i.test(readFileSync(full, 'utf8').slice(0, 20000))) return relative(cwd, full).split(sep).join('/');
+  }
+  return null;
+}
+
+// Puts <meta name="a11y-508-build" content="token"> into the file's <head> (replacing an earlier one),
+// keeping its line endings. true when the file changed.
+export function stampBuildMarker(cwd, file, token) {
+  const full = resolve(cwd, file);
+  const text = readFileSync(full, 'utf8');
+  const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+  const tag = `<meta name="${MARKER_NAME}" content="${token}">`;
+  const had = /<meta\b[^>]*\bname=["']a11y-508-build["'][^>]*>/i;
+  let next;
+  if (had.test(text)) next = text.replace(had, tag);
+  else {
+    const m = /<head\b[^>]*>/i.exec(text);
+    if (!m) return false;
+    const at = m.index + m[0].length;
+    const indent = (/\n([ \t]*)<meta/.exec(text.slice(at, at + 2000)) || [, '  '])[1];
+    next = `${text.slice(0, at)}${eol}${indent}${tag}${text.slice(at)}`;
+  }
+  if (next === text) return false;
+  writeFileSync(full, next);
+  return true;
 }
 
 const SOURCE_EXT = /\.(html?|ts|tsx|js|jsx|mjs|vue|svelte|scss|sass|css|less|cshtml|razor|erb|jsp|php|hbs|njk|twig)$/i;
@@ -658,6 +693,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     ev('await-deploy', { round, committed: facts.pending, nextRound: round + 1, ...facts, intervalMs: cfg.deployPoll, timeoutMs: limit, until: limit ? new Date(until).toISOString() : null });
     // compared: some poll could set the build against the one from before the fixes.
     let compared = false;
+    // With a marker awaited: the first build read in this wait, and builds seen changed without any marker
+    // (a pipeline that drops meta tags: two such builds and the bundles' change decides, as without a marker).
+    let firstSig = null;
+    let markerless = 0;
     try {
       while (Date.now() < until && !stopped()) {
         await Promise.race([sleep(Math.max(0, Math.min(cfg.deployPoll, until - Date.now()))), new Promise((r) => {
@@ -678,11 +717,31 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         const sig = limit ? await bundleSignature(cfg.url) : await buildForVerify();
         if (said) return said;
         // Each check on record (when, what the site served, read how, or why not), so the wait is never silent.
-        const result = sig === null ? 'unreadable' : baseline() == null ? 'no-baseline' : sameBuild(sig, baseline()) ? 'same' : 'changed';
+        const served = sig !== null && lastBuild ? lastBuild.marker || null : null;
+        const expected = ledger.deploy.marker || null;
+        let result;
+        if (sig === null) result = 'unreadable';
+        else if (expected && served === expected) result = 'changed';
+        else if (expected && served) result = 'same';
+        else if (expected) {
+          const against = baseline() || firstSig;
+          if (!firstSig) firstSig = sig;
+          if (against && !sameBuild(sig, against)) markerless++;
+          result = markerless >= 2 ? 'changed' : 'same';
+          if (result === 'changed') log.info('the site serves no build marker; going by the bundles having changed');
+        } else result = baseline() == null ? 'no-baseline' : sameBuild(sig, baseline()) ? 'same' : 'changed';
         const at = new Date();
         const reason = result === 'unreadable' && lastBuild && lastBuild.reason ? lastBuild.reason : null;
-        ev('deploy-check', { round, at: at.toISOString(), result, forced: asked, via: buildVia || null, host: facts.host, pending: facts.pending, ...(reason ? { reason } : {}) });
-        log.info(`checked ${facts.host} at ${clock(at)}: ${result === 'same' ? 'still the build from before the fixes' : result === 'changed' ? 'a new build is live' : result === 'unreadable' ? `the start page could not be read${reason ? ` (${reason})` : ''}` : 'no build from before the fixes on record, so this one is verified'}`);
+        ev('deploy-check', { round, at: at.toISOString(), result, forced: asked, via: buildVia || null, host: facts.host, pending: facts.pending, ...(reason ? { reason } : {}), ...(expected ? { expected } : {}), ...(served ? { marker: served } : {}) });
+        const words = result === 'same' ? (expected ? `still a build without this round's marker ${expected}${served ? ` (it serves ${served})` : ''}` : 'still the build from before the fixes')
+          : result === 'changed' ? (expected && served === expected ? `the build with marker ${expected} is live` : 'a new build is live')
+          : result === 'unreadable' ? `the start page could not be read${reason ? ` (${reason})` : ''}` : 'no build from before the fixes on record, so this one is verified';
+        log.info(`checked ${facts.host} at ${clock(at)}: ${words}`);
+        if (expected) {
+          if (result === 'changed') return 'live';
+          if (sig !== null) compared = true;
+          continue;
+        }
         // Nothing to compare with when the build from before could not be read: the person's word decides.
         // No limit and no build from before the fixes on record: nothing can ever be compared, so the
         // first build that can be read is verified, as a start with no build on record does.
@@ -814,7 +873,16 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       // With no limit on the wait, a start against the build from before the fixes (or one whose build
       // cannot be read) waits for the new one the same way a round does, rather than ending.
       let awaitBuild = false;
-      if (baseline() == null) {
+      const servedNow = sig !== null && lastBuild ? lastBuild.marker || null : null;
+      const expectedNow = ledger.deploy.marker || null;
+      const markerSays = expectedNow && sig !== null ? (servedNow === expectedNow ? 'arrived' : servedNow || baseline() != null ? 'old' : null) : null;
+      if (markerSays === 'arrived') {
+        log.info(`Your deployment arrived (the build with marker ${expectedNow} is live): verifying ${byStatus(ledger, 'pending').length} fixes`);
+        ev('deployment', { state: 'arrived', round: ledger.rounds.length, ...deployFacts() });
+      } else if (markerSays === 'old') {
+        if (!forever) return endAwaiting('still-old', ledger.rounds.length);
+        awaitBuild = true;
+      } else if (baseline() == null) {
         // No build from before the fixes on record (an earlier run could not read the page), so there is
         // nothing to compare: the person's word stands, and nothing is said about a check that never was.
         log.info(`verifying ${byStatus(ledger, 'pending').length} fixes`);
@@ -1289,6 +1357,33 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       }
     }
 
+    // The round's build marker: a meta tag in the app's index.html, committed with the round, so the
+    // wait knows the build it sees is the one made from this push (not one the pipeline finished late
+    // from an earlier push). An app with no index.html under its source folders goes without: the
+    // bundles' change decides, as before.
+    let marker = null;
+    if (committed && cfg.deployed === 'bundle-change') {
+      const indexFile = findIndexHtml(cwd, sourceDirs);
+      if (!indexFile) log.info('no index.html under the source folders: the wait goes by the bundles changing');
+      else {
+        const token = `r${round}-${Date.now().toString(36)}`;
+        let stamped = false;
+        try {
+          stamped = stampBuildMarker(cwd, indexFile, token);
+        } catch (e) {
+          log.warn(`could not write the build marker into ${indexFile}: ${e.message}`);
+        }
+        if (stamped) {
+          git(cwd, ['add', '--', indexFile]);
+          const c = git(cwd, ['commit', '-q', '-m', `a11y-508: build marker ${token}\n\nThe fix loop verifies this round's fixes against a build that serves this marker, so a build made from an earlier push is not mistaken for it.`]);
+          if (c.code === 0) {
+            marker = token;
+            log.info(`build marker ${token} committed in ${indexFile}: the fixes are verified against a build that serves it`);
+            ev('marker', { round, token, file: indexFile });
+          } else log.warn(`could not commit the build marker: ${c.err}`);
+        }
+      }
+    }
     if (committed && cfg.push) {
       const branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
       log.info(`pushing ${committed} commit(s) to origin/${branch}`);
@@ -1334,6 +1429,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           round, signature: meanwhile && committed > 0 && signatureBefore != null ? signatureBefore : before && before.signature != null ? before.signature : signatureBefore, branch, remote: cfg.push ? 'origin' : null,
           pushed: !!cfg.push && (committed > 0 || !!(before && before.pushed)), host: hostOf(cfg.url), since: before ? before.since : new Date().toISOString(),
           pushedAt: (committed > 0 && pushedAt) || (before && before.pushedAt) || null,
+          // The marker the right build serves: this round's when it pushed, else the one still awaited.
+          marker: committed > 0 ? marker : (before && before.marker) || null,
         };
         save();
         // No limit on the wait: what is still open is fixed first, from the ledger with no crawl, while

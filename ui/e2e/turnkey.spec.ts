@@ -36,7 +36,7 @@ async function app(prefix: string, config: Record<string, unknown>, { portal = f
   mkdirSync(join(cwd, 'site'), { recursive: true });
   for (const f of ['index.html', 'about.html', 'forms.html']) cpSync(join(ROOT, 'test', 'fixtures', f), join(cwd, 'site', f));
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
-  const site = { build: 1, session: 'v1', allow: true };
+  const site = { build: 1, session: 'v1', allow: true, deployed: false };
   const server = createServer((req, res) => {
     const port = (server.address() as any).port;
     const ua = req.headers['user-agent'] || '';
@@ -78,7 +78,7 @@ async function app(prefix: string, config: Record<string, unknown>, { portal = f
       return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
     }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    return res.end(readFileSync(file, 'utf8').replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN).replace('</head>', `<script src="/bundle.${site.build}.js"></script></head>`));
+    return res.end(readFileSync(file, 'utf8').replace(/<meta name="a11y-508-build"[^>]*>\s*/i, (m) => (site.deployed ? m : '')).replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN).replace('</head>', `<script src="/bundle.${site.build}.js"></script></head>`));
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${(server.address() as any).port}/`;

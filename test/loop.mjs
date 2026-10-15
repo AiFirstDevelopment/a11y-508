@@ -11,7 +11,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { applyReport, loadLedger } from '../src/ledger.mjs';
 import { agentEnv, fixPrompt, runAgent, triagePrompt } from '../src/agent.mjs';
-import { frameworkLine, likelyFiles, normalizeConfig, sessionArgs, splitCheck } from '../src/loop.mjs';
+import { findIndexHtml, frameworkLine, likelyFiles, normalizeConfig, sessionArgs, splitCheck, stampBuildMarker } from '../src/loop.mjs';
 import { bundleSignature, sameBuild } from '../src/deploy-check.mjs';
 import { splitLoopArgs } from '../src/cli.mjs';
 import { statusCounts } from '../src/ledger.mjs';
@@ -132,6 +132,25 @@ check('the fix prompt shows a " >>> " selector path whole, and the frame', () =>
     assert.equal(circled.circled, true, JSON.stringify({ code: circled.code, timedOut: circled.timedOut, out: circled.stdout.slice(0, 200) }));
     assert.equal(circled.result, null);
     assert.equal(circled.timedOut, false);
+  });
+}
+// The build marker: found index.html under a source folder, stamped into its <head> once (replaced
+// on the next round), line endings kept.
+{
+  const dir = join(HOME, 'marker');
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'index.html'), '<!doctype html>\r\n<html>\r\n<head>\r\n  <meta charset="utf-8">\r\n  <title>App</title>\r\n</head>\r\n<body></body>\r\n</html>\r\n');
+  check('build marker: index.html is found under the source folder, stamped once, replaced next time, with its line endings kept', () => {
+    assert.equal(findIndexHtml(dir, ['src']), 'src/index.html');
+    assert.equal(findIndexHtml(dir, ['lib']), null);
+    assert.equal(stampBuildMarker(dir, 'src/index.html', 'r1-aaa'), true);
+    const once = readFileSync(join(dir, 'src', 'index.html'), 'utf8');
+    assert.ok(once.includes('<head>\r\n  <meta name="a11y-508-build" content="r1-aaa">\r\n  <meta charset="utf-8">'), JSON.stringify(once));
+    assert.equal(stampBuildMarker(dir, 'src/index.html', 'r1-aaa'), false);
+    assert.equal(stampBuildMarker(dir, 'src/index.html', 'r2-bbb'), true);
+    const twice = readFileSync(join(dir, 'src', 'index.html'), 'utf8');
+    assert.equal((twice.match(/a11y-508-build/g) || []).length, 1);
+    assert.ok(twice.includes('content="r2-bbb"') && !twice.includes('\n\n'), JSON.stringify(twice));
   });
 }
 check('config validation catches the common mistakes', () => {
@@ -1255,6 +1274,7 @@ rmSync(repo2, { recursive: true, force: true });
   {
     const { dir } = appRepo('a11y-508-deploy-wait-', { deployed: 'bundle-change', deployTimeout: 2500, deployPoll: 400 });
     let build = 1;
+    let deployed = false;
     const srv = createServer((req, res) => {
       if (req.headers.authorization !== `Bearer ${TOKEN}`) {
         res.writeHead(401);
@@ -1276,7 +1296,7 @@ rmSync(repo2, { recursive: true, force: true });
         return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
       }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(readFileSync(file, 'utf8').replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN).replace('</head>', `<script src="/bundle.${build}.js"></script></head>`));
+      res.end(readFileSync(file, 'utf8').replace(/<meta name="a11y-508-build"[^>]*>\s*/i, (m) => (deployed ? m : '')).replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN).replace('</head>', `<script src="/bundle.${build}.js"></script></head>`));
     });
     await new Promise((r) => srv.listen(0, '127.0.0.1', r));
     const url = `http://127.0.0.1:${srv.address().port}/`;
@@ -1292,6 +1312,10 @@ rmSync(repo2, { recursive: true, force: true });
       for (const c of ['a11y-508 loop --verify ', 'a11y-508 loop --from-report ', 'a11y-508 loop --wait ']) assert.ok(first.out.includes(c), `${c}\n${first.out}`);
       assert.doesNotMatch(first.out, /^error /m);
       assert.ok(l1.deploy && l1.deploy.signature.includes('/bundle.1.js'), JSON.stringify(l1.deploy));
+      // The round's build marker: committed into the app's index.html, and what the wait looks for.
+      assert.match(String(l1.deploy.marker), /^r\d+-[0-9a-z]+$/, JSON.stringify(l1.deploy));
+      assert.ok(readFileSync(join(dir, 'site', 'index.html'), 'utf8').includes(`<meta name="a11y-508-build" content="${l1.deploy.marker}">`), 'the marker in site/index.html');
+      assert.match(first.out, /build marker r\d+-[0-9a-z]+ committed in site\/index\.html/, first.out);
     });
     const verify = await loopIn(dir, [url, '--verify', '--events']);
     const vEvents = parseEvents(verify.stdout);
@@ -1321,10 +1345,11 @@ rmSync(repo2, { recursive: true, force: true });
       assert.ok(l3.deploy.signature.includes('/bundle.1.js'));
     });
     build = 2;
+    deployed = true;
     const arrived = await loopIn(dir, [url, '--verify', '--max-rounds', '1']);
     const l4 = loadLedger(ledgerFile);
-    check('deploy-wait AC5: once the bundles changed, a loop start verifies the waiting fixes', () => {
-      assert.match(arrived.out, /Your deployment arrived: verifying \d+ fixes/);
+    check('deploy-wait AC5: once the build with the marker is live, a loop start verifies the waiting fixes', () => {
+      assert.match(arrived.out, /Your deployment arrived \(the build with marker r\d+-[0-9a-z]+ is live\): verifying \d+ fixes/, arrived.out);
       assert.ok(Object.values(l4.findings).some((e) => e.status === 'verified'), arrived.out);
       assert.equal(l4.rounds.length, l3.rounds.length + 1, arrived.out);
     });
@@ -1338,7 +1363,7 @@ rmSync(repo2, { recursive: true, force: true });
   // window signs in (the portal signs a visible Chrome in by itself, never a headless one); when the
   // page cannot be read at all, --verify takes the person's word.
   const ssoSite = async (dir) => {
-    const site = { build: 1, session: 'ok', blockPlain: false, blockBrowserDocs: 0 };
+    const site = { build: 1, session: 'ok', blockPlain: false, blockBrowserDocs: 0, deployed: false };
     const srv = createServer((req, res) => {
       const port = srv.address().port;
       const ua = req.headers['user-agent'] || '';
@@ -1382,7 +1407,7 @@ rmSync(repo2, { recursive: true, force: true });
         return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
       }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(readFileSync(file, 'utf8').replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN).replace('</head>', `<script src="/bundle.${site.build}.js"></script></head>`));
+      res.end(readFileSync(file, 'utf8').replace(/<meta name="a11y-508-build"[^>]*>\s*/i, (m) => (site.deployed ? m : '')).replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN).replace('</head>', `<script src="/bundle.${site.build}.js"></script></head>`));
     });
     await new Promise((r) => srv.listen(0, '127.0.0.1', r));
     site.srv = srv;
@@ -1407,6 +1432,7 @@ rmSync(repo2, { recursive: true, force: true });
       try {
         if (loadLedger(ledgerFile).deploy) {
           site.build = 2;
+          site.deployed = true;
           clearInterval(watcher);
         }
       } catch {}
@@ -1451,6 +1477,7 @@ rmSync(repo2, { recursive: true, force: true });
     // The saved session expires, and a new build goes live.
     site.session = 'renewed';
     site.build = 2;
+    site.deployed = true;
     const verify = await loopIn(dir, [site.url, '--verify', '--events', '--max-rounds', '1']);
     const vEvents = parseEvents(verify.stdout);
     const l2 = loadLedger(ledgerFile);
@@ -1477,6 +1504,7 @@ rmSync(repo2, { recursive: true, force: true });
     await loopIn(dir, [site.url, '--max-rounds', '1']);
     site.session = 'renewed-in-tab';
     site.build = 2;
+    site.deployed = true;
     const profile = mkdtempHome(join(tmpHome(), 'a11y-508-tab-profile-'));
     // Visible (the fake portal signs in only a visible Chrome), like the dashboard's window.
     const proc = spawn(findChrome(), ['--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'ignore' });
@@ -1516,6 +1544,7 @@ rmSync(repo2, { recursive: true, force: true });
     l.deploy.signature = null;
     writeFileSync(ledgerFile, JSON.stringify(l));
     site.build = 2;
+    site.deployed = true;
     const verify = await loopIn(dir, [site.url, '--verify', '--events', '--max-rounds', '1']);
     const vEvents = parseEvents(verify.stdout);
     const l2 = loadLedger(ledgerFile);

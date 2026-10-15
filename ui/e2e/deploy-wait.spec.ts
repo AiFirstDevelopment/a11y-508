@@ -20,6 +20,8 @@ async function bundleSite(cwd: string): Promise<{ base: string; host: string; se
   for (const f of ['index.html', 'about.html', 'forms.html']) cpSync(join(ROOT, 'test', 'fixtures', f), join(cwd, 'site', f));
   let build = 1;
   let blocked = false;
+  // The build marker the loop commits is served only once the fixture has "deployed" (setBuild).
+  let deployed = false;
   const server = createServer((req, res) => {
     if (new URL(req.url!, 'http://x').pathname === '/signin') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -49,11 +51,14 @@ async function bundleSite(cwd: string): Promise<{ base: string; host: string; se
       return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
     }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    return res.end(readFileSync(file, 'utf8').replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN).replace('</head>', `<script src="/bundle.${build}.js"></script></head>`));
+    return res.end(readFileSync(file, 'utf8').replace(/<meta name="a11y-508-build"[^>]*>\s*/i, (m) => (deployed ? m : '')).replace('EXTERNAL_IMAGE', '/pixel.png').replace('FIXTURE_TOKEN', TOKEN).replace('</head>', `<script src="/bundle.${build}.js"></script></head>`));
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as any).port;
-  return { base: `http://127.0.0.1:${port}/`, host: `127.0.0.1:${port}`, server, setBuild: (n) => (build = n), setBlocked: (b) => (blocked = b) };
+  return { base: `http://127.0.0.1:${port}/`, host: `127.0.0.1:${port}`, server, setBuild: (n) => {
+      build = n;
+      deployed = true;
+    }, setBlocked: (b) => (blocked = b) };
 }
 
 async function setToken(page: Page): Promise<void> {
