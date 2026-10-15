@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { applyReport, loadLedger } from '../src/ledger.mjs';
 import { agentEnv, fixPrompt, triagePrompt } from '../src/agent.mjs';
 import { normalizeConfig, sessionArgs, splitCheck } from '../src/loop.mjs';
+import { bundleSignature, sameBuild } from '../src/deploy-check.mjs';
 import { splitLoopArgs } from '../src/cli.mjs';
 import { statusCounts } from '../src/ledger.mjs';
 import { reportDir, workDir } from '../src/home.mjs';
@@ -1176,6 +1177,36 @@ rmSync(repo2, { recursive: true, force: true });
     void g;
   }
 
+  // ---- the build check sees a deployment that keeps its file names: each script and stylesheet is
+  // hashed, and two signatures compare by content (by name where a hash is unknown, as in a ledger an
+  // earlier version wrote).
+  {
+    let body = 'console.log(1)';
+    const srv = createServer((req, res) => {
+      const path = new URL(req.url, 'http://x').pathname;
+      if (path === '/app.js') return res.writeHead(200, { 'content-type': 'text/javascript' }).end(body);
+      if (path === '/app.css') return res.writeHead(200, { 'content-type': 'text/css' }).end('b{}');
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><html><head><link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/app.css"><script src="/app.js"></script></head><body><p>app</p></body></html>');
+    });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const s1 = (await bundleSignature(url)).signature;
+    body = 'console.log(2)';
+    const s2 = (await bundleSignature(url)).signature;
+    srv.close();
+    check('deploy check: the signature hashes each script and stylesheet, so a new build with the same file names is seen', () => {
+      assert.match(s1, /^\/app\.css [0-9a-f]{64}\n\/app\.js [0-9a-f]{64}\n\/favicon\.ico \?$/, s1);
+      assert.ok(sameBuild(s1, s1));
+      assert.ok(!sameBuild(s1, s2), `${s1}\n--\n${s2}`);
+      assert.ok(s2.includes('/app.js ') && !s2.includes(s1.split('\n')[1]));
+      // A names-only signature (an earlier version's ledger) compares by names.
+      assert.ok(sameBuild('/app.css\n/app.js\n/favicon.ico', s1));
+      assert.ok(!sameBuild('/app.css\n/app.2.js\n/favicon.ico', s1));
+      assert.ok(!sameBuild(s1, null) && sameBuild(null, null));
+    });
+  }
+
   // ---- fixes waiting for a deployment someone else runs (docs/plans/deploy-wait.md): the site's
   // start page carries a script bundle whose name this test changes to stand for a new build.
   {
@@ -1343,6 +1374,8 @@ rmSync(repo2, { recursive: true, force: true });
     check('deploy check behind a sign-in: the build is read through the browser with the saved session, and a changed bundle is seen as live', () => {
       assert.match(live.out, /read the start page's build through the browser with the saved session/, live.out);
       assert.ok(l1.deploy && typeof l1.deploy.signature === 'string' && l1.deploy.signature.includes('/bundle.1.js'), JSON.stringify(l1.deploy));
+      // Read in the page: the bundle's contents are hashed there too.
+      assert.match(l1.deploy.signature, /\/bundle\.1\.js [0-9a-f]{64}/, l1.deploy.signature);
       assert.match(live.out, /new build is live/, live.out);
       assert.doesNotMatch(live.out, /could not reach the start page|opening a window to sign in/);
       assert.ok(Object.values(l1.findings).some((e) => e.status === 'pending'), live.out);

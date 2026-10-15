@@ -7,6 +7,7 @@
 // true when the browser, with the crawl's way in, still ended on another host (a sign-in portal: the
 // saved session has expired, or there is none).
 
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { launchChrome } from './chrome.mjs';
@@ -14,6 +15,55 @@ import { Page } from './page.mjs';
 import { loadState } from './login.mjs';
 
 const REFS = /<(?:script|link)[^>]+(?:src|href)=["']([^"']+)["']/gi;
+// The signature is one line per script or stylesheet reference the start page loads: the reference
+// and a hash of what it serves, so a deployment that keeps its file names (a build without output
+// hashing) is seen as well as one that renames them. Other links (icons, manifests) carry "?", as
+// does a reference that could not be read; the hashes cover up to MAX_ASSETS same-origin files.
+const MAX_ASSETS = 12;
+const MAX_BYTES = 4 * 1024 * 1024;
+const STYLE = /<link[^>]+rel=["'][^"']*stylesheet/i;
+const sha = (text) => createHash('sha256').update(String(text).slice(0, MAX_BYTES)).digest('hex');
+async function hashedLines(html, refs, base, headers) {
+  const assets = new Set();
+  for (const m of html.matchAll(/<(script|link)[^>]*>/gi)) {
+    const ref = /(?:src|href)=["']([^"']+)["']/i.exec(m[0]);
+    if (ref && (m[1].toLowerCase() === 'script' || STYLE.test(m[0]))) assets.add(ref[1]);
+  }
+  const lines = [];
+  let read = 0;
+  for (const ref of refs) {
+    let h = '?';
+    try {
+      const u = new URL(ref, base);
+      if (assets.has(ref) && u.origin === new URL(base).origin && read < MAX_ASSETS) {
+        read++;
+        const r = await fetch(u.href, { headers, redirect: 'follow', signal: AbortSignal.timeout(15000) });
+        if (r.ok) h = sha(await r.text());
+      }
+    } catch {}
+    lines.push(`${ref} ${h}`);
+  }
+  return lines.join('\n');
+}
+
+// Whether two signatures are the same build. A reference whose hash is unknown on either side ("?",
+// or a names-only signature an earlier version recorded) compares by its name.
+export function sameBuild(a, b) {
+  if (a == null || b == null) return a === b;
+  const parse = (sig) => new Map(String(sig).split('\n').filter(Boolean).map((l) => {
+    const i = l.lastIndexOf(' ');
+    return i > 0 && /^(?:[0-9a-f]{64}|\?)$/.test(l.slice(i + 1)) ? [l.slice(0, i), l.slice(i + 1)] : [l, '?'];
+  }));
+  const x = parse(a);
+  const y = parse(b);
+  if (x.size !== y.size) return false;
+  for (const [ref, h] of x) {
+    if (!y.has(ref)) return false;
+    const g = y.get(ref);
+    if (h !== '?' && g !== '?' && h !== g) return false;
+  }
+  return true;
+}
 const TOKEN_KEYS = ['token', 'access_token', 'accessToken', 'id_token', 'idToken', 'jwt', 'auth_token', 'authToken'];
 
 function tokenValue() {
@@ -38,7 +88,8 @@ async function byFetch(url) {
         return false;
       }
     })();
-    return { ok: res.ok && sameHost, signature: refs.join('\n'), app: res.ok && sameHost && refs.length > 0 };
+    const app = res.ok && sameHost && refs.length > 0;
+    return { ok: res.ok && sameHost, signature: app ? await hashedLines(html, refs, res.url || url, headers) : refs.join('\n'), app };
   } catch {
     return { ok: false, signature: null, app: false };
   }
@@ -93,8 +144,33 @@ async function byBrowser(url, { args, cwd, timeout }) {
     } catch {}
     // Still on the sign-in portal: its build is not the app's.
     if (host !== new URL(url).host) return { refs: null, portal: true };
-    const refs = await page.evaluate(`[...document.querySelectorAll('script[src], link[href]')].map((e) => e.getAttribute(e.tagName === 'SCRIPT' ? 'src' : 'href')).filter(Boolean).sort()`);
-    return { refs: Array.isArray(refs) ? refs.join('\n') : null, portal: false };
+    // The same lines as the fetch path, read in the page (its session and headers apply to the fetches).
+    const refs = await page.evaluate(`(async () => {
+      const els = [...document.querySelectorAll('script[src], link[href]')];
+      const refOf = (e) => e.getAttribute(e.tagName === 'SCRIPT' ? 'src' : 'href');
+      const assets = new Set(els.filter((e) => e.tagName === 'SCRIPT' || /\\bstylesheet\\b/i.test(e.getAttribute('rel') || '')).map(refOf));
+      const refs = els.map(refOf).filter(Boolean).sort();
+      const hash = async (text) => {
+        const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text.slice(0, ${MAX_BYTES})));
+        return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+      };
+      const lines = [];
+      let read = 0;
+      for (const ref of refs) {
+        let h = '?';
+        try {
+          const u = new URL(ref, location.href);
+          if (assets.has(ref) && u.origin === location.origin && read < ${MAX_ASSETS}) {
+            read++;
+            const r = await fetch(u.href, { credentials: 'include' });
+            if (r.ok) h = await hash(await r.text());
+          }
+        } catch {}
+        lines.push(ref + ' ' + h);
+      }
+      return lines.join('\\n');
+    })()`, { awaitPromise: true });
+    return { refs: typeof refs === 'string' ? refs : null, portal: false };
   })();
   try {
     return await Promise.race([work, new Promise((r) => (timer = setTimeout(() => r({ refs: null, portal: false }), timeout)))]);

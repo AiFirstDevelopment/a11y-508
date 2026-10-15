@@ -14,7 +14,7 @@ import { testInfo } from './checks/catalog.mjs';
 import { migrateRepo, migrationLines, shortenHome, tasksDir, workDir } from './home.mjs';
 import { sleep } from './page.mjs';
 import { killTree } from './chrome.mjs';
-import { bundleSignature as readBuild } from './deploy-check.mjs';
+import { bundleSignature as readBuild, sameBuild } from './deploy-check.mjs';
 
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const BIN = join(TOOL_DIR, 'bin', 'a11y-508.mjs');
@@ -572,7 +572,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         if (sig !== null && ledger.deploy.signature == null && !limit) return 'live';
         if (sig === null || ledger.deploy.signature == null) continue;
         compared = true;
-        if (sig !== ledger.deploy.signature) return 'live';
+        if (!sameBuild(sig, ledger.deploy.signature)) return 'live';
       }
     } finally {
       if (enter) enter.cancel();
@@ -705,7 +705,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         // The page could not be read, so the build cannot be compared: the person said the site is updated.
         log.info('could not read the start page to check its build; going by your word that the site is updated');
         ev('deployment', { state: 'verify-anyway', reason: 'unreachable', round: ledger.rounds.length, ...deployFacts() });
-      } else if (sig === null || sig === ledger.deploy.signature) {
+      } else if (sig === null || sameBuild(sig, ledger.deploy.signature)) {
         if (!forever) return endAwaiting('still-old', ledger.rounds.length);
         awaitBuild = true;
       } else {
