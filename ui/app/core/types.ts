@@ -284,3 +284,26 @@ export interface LoopTimeline {
   deploy?: LedgerInfo['deploy'];
   total: { rounds: number; fixed: number; pending?: number; of: number; remaining: number; tally?: Tally };
 }
+
+// GET /api/loop/routes: every route audited across the rounds, and the latest crawl's coverage.
+export interface RouteRow {
+  url: string;
+  path: string;
+  title: string | null;
+  rounds: number[];
+  audited: number;
+  errors: number;
+  skipped: number;
+  status: string | null;
+  violations: number;
+  reviews: number;
+  found: { links: number; clicked: number | null; clickedNew: number | null; searched?: number | null; searchResults?: number | null; skippedActions: string[]; skippedActionsCount: number } | null;
+  foundBy: string | null;
+  lastAt: string | null;
+}
+export interface CrawledRoutes {
+  routes: RouteRow[];
+  rounds: number;
+  discovered: number;
+  coverage: { complete: boolean; warnings: string[]; notes: string[] };
+}

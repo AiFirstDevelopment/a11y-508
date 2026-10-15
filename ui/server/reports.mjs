@@ -6,6 +6,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { historyDir, migrateRepo, reportDir as latestDir, workDir } from '../../src/home.mjs';
+import { discoveryFacts } from '../../src/report.mjs';
 
 export { historyDir, latestDir, workDir };
 export const ledgerPath = (cwd) => join(workDir(cwd), 'ledger.json');
@@ -281,4 +282,62 @@ export function carryAnalysis(from, to, url) {
     }
   }
   return out;
+}
+
+// Every route the loop's rounds (and the latest crawl) have audited, merged by URL: how often, with
+// what result, and what the crawler found on it (links, controls clicked, pages behind them, controls
+// it refused to click); with the latest crawl's coverage warnings. "Why not more pages", in one place.
+export function crawledRoutes(cwd) {
+  const sources = [];
+  const work = workDir(cwd);
+  if (existsSync(work)) for (const d of readdirSync(work)) {
+    const m = /^round-(\d+)$/.exec(d);
+    const r = m ? readJson(join(work, d, 'report.json')) : null;
+    if (r) sources.push({ round: Number(m[1]), report: r });
+  }
+  sources.sort((a, b) => a.round - b.round);
+  const latest = readJson(join(latestDir(cwd), 'report.json'));
+  if (latest && !sources.some((s) => s.report.finishedAt === latest.finishedAt)) sources.push({ round: null, report: latest });
+  sources.sort((a, b) => String(a.report.finishedAt || '').localeCompare(String(b.report.finishedAt || '')));
+  const pathOf = (url) => {
+    try {
+      const u = new URL(url);
+      return `${u.pathname || '/'}${u.search}${u.hash}`;
+    } catch {
+      return url;
+    }
+  };
+  const byUrl = new Map();
+  for (const { round, report } of sources) {
+    for (const p of report.pages || []) {
+      const url = p.finalUrl || p.url;
+      const row = byUrl.get(url) || { url, path: pathOf(url), title: null, rounds: [], audited: 0, errors: 0, skipped: 0, status: null, violations: 0, reviews: 0, found: null, foundBy: null, lastAt: null };
+      if (round != null && !row.rounds.includes(round)) row.rounds.push(round);
+      if (p.error) {
+        row.errors++;
+        row.status = `error: ${p.error}`;
+      } else if (p.skipped) {
+        row.skipped++;
+        row.status = `skipped: ${p.skipped}`;
+      } else {
+        row.audited++;
+        row.status = 'audited';
+        row.title = p.title || row.title;
+        row.violations = (p.findings || []).filter((f) => f.level === 'violation').length;
+        row.reviews = (p.findings || []).filter((f) => f.level !== 'violation').length;
+      }
+      row.found = discoveryFacts(p);
+      row.foundBy = p.foundBy || row.foundBy || 'link';
+      row.lastAt = report.finishedAt || row.lastAt;
+      byUrl.set(url, row);
+    }
+  }
+  const last = sources[sources.length - 1];
+  const cov = (last && last.report.summary && last.report.summary.coverage) || { complete: true, warnings: [], notes: [] };
+  return {
+    routes: [...byUrl.values()].sort((a, b) => a.path.localeCompare(b.path)),
+    rounds: sources.filter((s) => s.round != null).length,
+    discovered: last && last.report.summary ? last.report.summary.pages || 0 : 0,
+    coverage: { complete: cov.complete !== false, warnings: cov.warnings || [], notes: cov.notes || [] },
+  };
 }

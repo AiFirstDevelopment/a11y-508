@@ -3,7 +3,7 @@ import { RouterLink } from '@angular/router';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
-import { LoopTimeline } from '../core/types';
+import { CrawledRoutes, LoopTimeline } from '../core/types';
 import { WhereLive, notHoldingLine, tallyLine, whereYouAre } from '../core/where';
 
 // "Where you are": what has happened for this URL and what comes next, at the top of the Fix step
@@ -15,7 +15,7 @@ import { WhereLive, notHoldingLine, tallyLine, whereYouAre } from '../core/where
     <section class="where" aria-labelledby="where-h" data-testid="where-you-are">
       <h2 id="where-h">Where you are</h2>
       <!-- The whole run so far in a few numbers, and the one thing to change when fixes keep not holding. -->
-      @if (tally(); as t) { <p class="tally" data-testid="tally">{{ t }}</p> }
+      @if (tally(); as t) { <p class="tally" data-testid="tally">{{ t }}@if (routesCount(); as n) { · <a routerLink="/history" fragment="routes" data-testid="tally-routes">{{ n }} route{{ n === 1 ? '' : 's' }} crawled</a> }</p> }
       @if (notHolding(); as n) { <p class="notice warn" role="status" data-testid="not-holding">{{ n }}</p> }
       <ul class="plain where-list">
         @for (l of lines(); track $index) {
@@ -36,6 +36,7 @@ export class WhereYouAre implements OnDestroy {
   private store = inject(RunStore);
   readonly timeline = signal<LoopTimeline | null>(null);
   readonly now = signal(Date.now());
+  readonly routesCount = signal(0);
   readonly tally = computed(() => {
     const t = this.timeline()?.total?.tally;
     return t ? tallyLine(t, this.now(), this.store.active()) : '';
@@ -66,6 +67,7 @@ export class WhereYouAre implements OnDestroy {
     const n = ++this.loads;
     try {
       const t = await this.api.get<LoopTimeline | null>('/api/loop/timeline');
+      this.api.get<CrawledRoutes>('/api/loop/routes').then((r) => this.routesCount.set(r?.routes?.length || 0)).catch(() => {});
       if (n === this.loads) this.timeline.set(t);
     } catch {}
   }

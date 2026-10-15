@@ -21,7 +21,7 @@ import { JOURNALED, LOOP_KINDS, annotateRun, discardInterrupted, interruptedDeta
 import { loopDefaults } from './loop-defaults.mjs';
 import { stateBase as stateBaseOf, readGlobal, writeGlobal, paths as statePaths, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { matchSource } from './loop-match.mjs';
-import { carryAnalysis, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, sameStartUrl, latestDir, ledgerPath } from './reports.mjs';
+import { carryAnalysis, crawledRoutes, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, sameStartUrl, latestDir, ledgerPath } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
 import { addDiarySecrets, readDiary, writeDiary } from '../../src/diary.mjs';
@@ -930,6 +930,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (m === 'GET' && path === '/api/start-over') return send(res, 200, startOverInfo());
     if (m === 'POST' && path === '/api/start-over') return send(res, 200, startOver(await readBody(req)));
     if (m === 'GET' && path === '/api/reports') return send(res, 200, listReports(state.cwd));
+    if (m === 'GET' && path === '/api/loop/routes') return send(res, 200, crawledRoutes(state.cwd));
     if (m === 'GET' && path === '/api/loop/timeline') {
       const file = ledgerPath(state.cwd);
       if (!existsSync(file)) return send(res, 200, null);

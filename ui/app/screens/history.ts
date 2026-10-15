@@ -1,12 +1,14 @@
-import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { Component, Injector, afterNextRender, computed, effect, inject, signal, untracked } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { BarChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
 import { fixedLine, resultWord, localTime, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
-import { ReportListEntry } from '../core/types';
+import { CrawledRoutes, ReportListEntry } from '../core/types';
+import { foundText, skippedText } from '../core/format';
 import { ChartPanel } from '../shared/chart-panel';
 import { WhereYouAre } from '../shared/where-you-are';
 import { ChangeRow, ChangesTable } from '../shared/changes-table';
@@ -65,6 +67,41 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
     } @else {
       <p>No reports yet. <a routerLink="/run">Run a crawl</a>.</p>
     }
+    @if (routes(); as rt) {
+      <!-- Every route audited across the rounds, and why the crawl did not reach more: the one place to look. -->
+      <details class="details" id="routes" data-testid="routes-crawled" [open]="routesOpen()" (toggle)="routesOpen.set($any($event.target).open)">
+        <summary data-testid="routes-summary">Routes crawled: {{ rt.routes.length }}@if (rt.rounds) { across {{ rt.rounds }} round{{ rt.rounds === 1 ? '' : 's' }} }</summary>
+        <h2 id="routes-h" tabindex="-1">Routes crawled</h2>
+        @if (rt.coverage.warnings.length) {
+          <div class="notice warn" role="status" data-testid="routes-coverage">
+            <p>Why the last crawl did not reach more pages:</p>
+            <ul>@for (w of rt.coverage.warnings; track $index) { <li>{{ w }}</li> }</ul>
+          </div>
+        } @else if (rt.routes.length) {
+          <p class="hint" data-testid="routes-coverage">The last crawl reached every page it could find.</p>
+        }
+        <table data-testid="routes-table">
+          <caption>Every route audited, with what the crawler found on it</caption>
+          <thead><tr><th scope="col">Route</th><th scope="col">Title</th><th scope="col">Rounds</th><th scope="col">Last result</th><th scope="col">Violations</th><th scope="col">Review</th><th scope="col">Found on it</th></tr></thead>
+          <tbody>
+            @for (r of rt.routes; track r.url) {
+              <tr [attr.data-url]="r.url">
+                <th scope="row"><a [routerLink]="['/report']" [queryParams]="{ route: r.url }" [attr.title]="r.url">{{ r.path }}</a>@if (r.foundBy && r.foundBy !== 'link') { <span class="hint"> (found by {{ r.foundBy }})</span> }</th>
+                <td>{{ r.title || '—' }}</td>
+                <td>{{ r.rounds.length ? r.rounds.join(', ') : '—' }}</td>
+                <td>{{ r.status || '—' }}</td>
+                <td>{{ r.violations }}</td>
+                <td>{{ r.reviews }}</td>
+                <td>@if (r.found) { {{ found(r.found) }}@if (r.found.skippedActionsCount) { <span class="modal-note"> Not clicked, look like actions: {{ skipped(r.found) }}</span> } } @else { — }</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+        @if (rt.coverage.notes.length) {
+          <details><summary>Coverage notes ({{ rt.coverage.notes.length }})</summary><ul>@for (n of rt.coverage.notes; track $index) { <li>{{ n }}</li> }</ul></details>
+        }
+      </details>
+    }
     @if (timeline(); as t) {
       @for (lr of t.rounds; track lr.round) {
         @if (lr.changes?.length) {
@@ -112,6 +149,13 @@ export class HistoryScreen {
   }
   readonly list = signal<ReportListEntry[]>([]);
   readonly timeline = signal<LoopTimeline | null>(null);
+  readonly routes = signal<CrawledRoutes | null>(null);
+  readonly routesOpen = signal(false);
+  readonly found = foundText;
+  readonly skipped = skippedText;
+  private injector = inject(Injector);
+  // /history#routes (the tally's link): the Routes crawled section open, its heading focused.
+  readonly fragment = toSignal(inject(ActivatedRoute).fragment, { initialValue: null as string | null });
   readonly word = resultWord;
   readonly local = localTime;
   readonly animations = !prefersReducedMotion();
@@ -138,17 +182,32 @@ export class HistoryScreen {
       this.env.cwd();
       untracked(() => void this.load());
     });
+    effect(() => {
+      const wanted = this.fragment() === 'routes' && !!this.routes();
+      if (!wanted) return;
+      untracked(() => {
+        this.routesOpen.set(true);
+        afterNextRender(() => {
+          const h = document.getElementById('routes-h');
+          if (!h) return;
+          h.scrollIntoView({ block: 'start' });
+          h.focus({ preventScroll: true });
+        }, { injector: this.injector });
+      });
+    });
   }
 
   private async load(): Promise<void> {
     const n = ++this.loads;
     let l: ReportListEntry[] = [];
     let t: LoopTimeline | null = null;
+    let rt: CrawledRoutes | null = null;
     try {
-      [l, t] = await Promise.all([this.api.get<ReportListEntry[]>('/api/reports'), this.api.get<LoopTimeline | null>('/api/loop/timeline')]);
+      [l, t, rt] = await Promise.all([this.api.get<ReportListEntry[]>('/api/reports'), this.api.get<LoopTimeline | null>('/api/loop/timeline'), this.api.get<CrawledRoutes>('/api/loop/routes').catch(() => null)]);
     } catch {}
     if (n !== this.loads) return;
     this.list.set(l);
+    this.routes.set(rt && rt.routes.length ? rt : null);
     this.api.get<{ config: Record<string, any> }>('/api/config').then((c) => this.configUrl.set(String(c?.config?.['url'] || ''))).catch(() => {});
     this.timeline.set(t);
   }
