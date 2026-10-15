@@ -61,7 +61,7 @@ describe('the tally', () => {
     expect(tallyLine(t, Date.parse('2026-10-15T14:11:00.000Z'), false)).toMatch(/^12 rounds in 2 h 30 min · /);
   });
   it('names the branch the builds seem to leave out when fixes keep not holding, and keeps quiet otherwise', () => {
-    expect(notHoldingLine(t)).toBe('10 fixes counted as not holding after your deployments, and 1 verified: the builds the site serves do not seem to include branch a11y-508. Merge it into the branch your pipeline builds; until then the fixes are tried again against builds without them.');
+    expect(notHoldingLine(t)).toBe('10 fixes counted as not holding after your deployments, and 1 verified. Either the builds that arrived were made before those pushes (a pipeline that lags the loop), the site\'s builds do not include branch a11y-508, or the fixes did not take. Each such fix is tried again, up to its attempts.');
     expect(notHoldingLine({ ...t, didNotHold: 1 })).toBeNull();
     expect(notHoldingLine({ ...t, didNotHold: 3, verifiedTotal: 3 })).toBeNull();
   });

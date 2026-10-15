@@ -177,10 +177,11 @@ export function tallyLine(t: Tally, now: number, live: boolean): string {
   return parts.join(' · ');
 }
 
-// When fixes keep failing to hold after deployments and almost none verify, the builds the site
-// serves most likely do not include the loop's branch: said once, with the one thing that changes it.
+// When fixes keep failing to hold after deployments and almost none verify: the builds that arrived
+// were made before those pushes (a pipeline that lags the loop), the site's builds leave the loop's
+// branch out, or the fixes did not take. Said once, in those words, with what the loop does about it.
 export function notHoldingLine(t: Tally): string | null {
   if (t.didNotHold < 2 || t.didNotHold <= t.verifiedTotal) return null;
   const b = t.branch || "the loop's branch";
-  return `${t.didNotHold} fixes counted as not holding after your deployments, and ${t.verifiedTotal} verified: the builds the site serves do not seem to include branch ${b}. Merge it into the branch your pipeline builds; until then the fixes are tried again against builds without them.`;
+  return `${t.didNotHold} fixes counted as not holding after your deployments, and ${t.verifiedTotal} verified. Either the builds that arrived were made before those pushes (a pipeline that lags the loop), the site's builds do not include branch ${b}, or the fixes did not take. Each such fix is tried again, up to its attempts.`;
 }
