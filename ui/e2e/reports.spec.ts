@@ -95,7 +95,7 @@ test('AC 15: History lists both crawls and the loop rounds; each opens on the Re
 
   for (const [i, url, heading] of [[0, 'tables.html', 'Latest report'], [1, 'about.html', /Report from/], [2, 'about.html', 'Report: loop round 1']] as const) {
     await nav(page, 'History');
-    await rows.nth(i).getByRole('link').click();
+    await rows.nth(i).locator('th').getByRole('link').click();
     await expect(page).toHaveURL(i === 0 ? /\/report$/ : /\/report\/(h-|round-)/);
     await expect(page.getByTestId('result-line')).toBeVisible();
     await expect(page.locator('h1')).toHaveText(heading);

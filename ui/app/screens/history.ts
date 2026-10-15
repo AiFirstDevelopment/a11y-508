@@ -53,7 +53,10 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
                 @if (r.source !== 'round') { <span class="hint"> {{ word(r.result) }}</span> }
                 @if (lr?.label) { <span class="hint" data-testid="round-state"> {{ lr!.label }}</span> }</th>
               <td><time [attr.datetime]="r.finishedAt" [attr.title]="r.finishedAt" data-testid="finished">{{ local(r.finishedAt) }}</time></td>
-              <td>{{ r.summary.audited }}</td>
+              <td data-testid="audited">
+                <a [routerLink]="r.id === 'latest' ? ['/report'] : ['/report', r.id]" fragment="pages" data-testid="audited-link" [attr.aria-label]="auditedLabel(r)">{{ auditedText(r) }}</a>
+                @if (!r.summary.coverageComplete) { <span class="hint" data-testid="coverage-flag"> coverage incomplete</span> }
+              </td>
               <td data-testid="found">{{ lr ? lr.found : r.summary.violations }}</td>
               <td>{{ r.summary.reviews }}</td>
               <td data-testid="fixed">{{ lr ? lr.fixed : '—' }}</td>
@@ -200,6 +203,17 @@ export class HistoryScreen {
     await this.load();
   }
 
+  // The pages audited, as "2" or "2 of 9" when some pages were crawled but not audited (an error, or
+  // the same page as one already audited); the link opens that report on its Pages list.
+  auditedText(r: ReportListEntry): string {
+    const { pages, audited } = r.summary;
+    return pages > audited ? `${audited} of ${pages}` : String(audited);
+  }
+  auditedLabel(r: ReportListEntry): string {
+    const { pages, audited } = r.summary;
+    const which = pages > audited ? `${audited} of ${pages} pages` : `${audited} page${audited === 1 ? '' : 's'}`;
+    return `See which ${which} ${audited === 1 && pages <= audited ? 'was' : 'were'} audited in ${this.name(r)}`;
+  }
   name(r: ReportListEntry): string {
     if (r.source === 'round') return `Fix round ${r.round}`;
     const route = r.baseUrl ? shortUrl(r.baseUrl) : '';

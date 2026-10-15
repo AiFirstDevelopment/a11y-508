@@ -218,7 +218,7 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     const last = ledger.rounds[ledger.rounds.length - 1];
     const statusRound = new RegExp(`round ${last.round} [^\n]*: \\d+/\\d+ pages audited, (\\d+) violations, \\d+ review; \\+\\d+ new, (\\d+) verified`).exec(st)!;
     const lastRow = page.getByTestId('history').locator(`tr[data-id="round-${last.round}"]`);
-    await expect(lastRow.getByRole('link')).toHaveText(`Fix round ${last.round}`);
+    await expect(lastRow.locator('th').getByRole('link')).toHaveText(`Fix round ${last.round}`);
     await expect(lastRow.getByTestId('found')).toHaveText(statusRound[1]);
     // Fixed: the findings the round's commits covered (docs/plans/deploy-wait.md criterion 9).
     void statusRound[2];

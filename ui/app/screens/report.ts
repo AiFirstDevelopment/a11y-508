@@ -1,6 +1,7 @@
-import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { Component, Injector, afterNextRender, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { Title } from '@angular/platform-browser';
-import { Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { detailsOpen, setDetailsOpen } from '../core/details';
 import { BarChartModule } from '@swimlane/ngx-charts';
 import { Api } from '../core/api';
@@ -186,7 +187,7 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
         <thead><tr><th scope="col">Test</th><th scope="col">Name</th><th scope="col">WCAG</th><th scope="col">Automation</th><th scope="col">Condition</th></tr></thead>
         <tbody>@for (m of r.manual; track m.test) { <tr><th scope="row">{{ m.test }}</th><td>{{ m.name }}</td><td>{{ m.wcag }}</td><td>{{ m.automation }}</td><td>{{ m.condition }}</td></tr> }</tbody>
       </table>
-      <h2>Pages</h2>
+      <h2 id="pages" tabindex="-1">Pages</h2>
       <table data-testid="report-pages">
         <caption>Crawled pages</caption>
         <thead><tr><th scope="col">Page</th><th scope="col">Title</th><th scope="col">Status</th><th scope="col">Violations</th><th scope="col">Review</th><th scope="col">Found</th></tr></thead>
@@ -354,8 +355,27 @@ export class ReportScreen {
     );
   });
   private title = inject(Title);
+  private injector = inject(Injector);
+  // The address's fragment: "#pages" (History's pages-audited link) lands on the Pages list.
+  readonly fragment = toSignal(inject(ActivatedRoute).fragment, { initialValue: null as string | null });
 
   constructor() {
+    // Opened on its Pages list (/report/<id>#pages): Details open, and the Pages heading focused and
+    // in view once the report is on screen, so the list the count stands for is what one sees first.
+    effect(() => {
+      const wanted = this.fragment() === 'pages' && !!this.report();
+      if (!wanted) return;
+      untracked(() => {
+        this.showDetails.set(true);
+        setDetailsOpen('results', true);
+        afterNextRender(() => {
+          const h = document.getElementById('pages');
+          if (!h) return;
+          h.scrollIntoView({ block: 'start' });
+          h.focus({ preventScroll: true });
+        }, { injector: this.injector });
+      });
+    });
     // Each report has a title of its own.
     // Opened for one page (?route=), the title names it, so each such address has its own.
     effect(() => {
