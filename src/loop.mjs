@@ -34,7 +34,10 @@ export function loadConfig(file, cwd) {
 // interactive: whether someone can answer the "deployed": "enter" prompt. A
 // terminal can; so can the dashboard, which runs the loop with --events and
 // writes the newline to its stdin.
-export function normalizeConfig(c, overrides = {}, { interactive = !!process.stdin.isTTY } = {}) {
+// events: the loop is run by the dashboard. A config that says nothing about the deployment then
+// waits for the start page's build to change (with no limit unless the config sets one) rather than
+// for an Enter nobody is there to press: the dashboard's loop decides for itself when the site is new.
+export function normalizeConfig(c, overrides = {}, { interactive = !!process.stdin.isTTY, events = false } = {}) {
   const cfg = {
     url: overrides.url || c.url || null,
     args: Array.isArray(c.args) ? c.args : [],
@@ -44,7 +47,7 @@ export function normalizeConfig(c, overrides = {}, { interactive = !!process.std
     checkEvery: c.checkEvery === 'round' ? 'round' : 'finding',
     branch: c.branch || null,
     push: c.push !== false,
-    deployed: c.deployed || (c.deploy ? 'command' : 'enter'),
+    deployed: c.deployed || (c.deploy ? 'command' : events ? 'bundle-change' : 'enter'),
     deploy: c.deploy || null,
     // 0: no limit (the dashboard's): the loop waits for the new build however long it takes and
     // never ends with "has not arrived" (exit 4).
@@ -382,7 +385,7 @@ export function deploySentence(d) {
 // that wait for a deployment (ledger.deploy): check the bundles first (the default), crawl whatever
 // the site serves, or go on waiting.
 export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false, signInFirst = false, fromReport = null, resume = false, verifyAnyway = false, wait = false, passthrough = [], stopSignal, events = false }) {
-  const { cfg, errors } = normalizeConfig(config, { url: config._url, agent: config._agent }, { interactive: events || !!process.stdin.isTTY });
+  const { cfg, errors } = normalizeConfig(config, { url: config._url, agent: config._agent }, { interactive: events || !!process.stdin.isTTY, events });
   const ev = (type, data) => log.event && log.event(type, data);
   const ledgerEvent = () => ev('ledger', { rounds: ledger.rounds.length, counts: statusCounts(ledger), line: summaryLine(ledger) });
   if (dryRun) errors.splice(0, errors.length, ...errors.filter((e) => !/agent|deploy|Enter/.test(e)));

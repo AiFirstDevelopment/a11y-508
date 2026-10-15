@@ -395,6 +395,11 @@ check('"deployed": "enter" is accepted when someone can answer it (a terminal, o
   const c = { url: 'http://x', agent: 'claude', deployed: 'enter' };
   assert.deepEqual(normalizeConfig(c, {}, { interactive: true }).errors, []);
   assert.ok(normalizeConfig(c, {}, { interactive: false }).errors.some((e) => /no interactive terminal/.test(e)));
+  // Run by the dashboard, a config that says nothing about the deployment waits for the build to change
+  // (turnkey: nobody is there to press Enter); the same config in a terminal still asks for Enter.
+  assert.equal(normalizeConfig({ url: 'http://x', agent: 'claude' }, {}, { interactive: true, events: true }).cfg.deployed, 'bundle-change');
+  assert.equal(normalizeConfig({ url: 'http://x', agent: 'claude' }, {}, { interactive: true }).cfg.deployed, 'enter');
+  assert.equal(normalizeConfig({ url: 'http://x', agent: 'claude', deployed: 'enter' }, {}, { interactive: true, events: true }).cfg.deployed, 'enter');
 });
 const repo2 = join(here, '.loop-repo-events');
 rmSync(repo2, { recursive: true, force: true });
