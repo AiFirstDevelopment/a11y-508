@@ -146,6 +146,11 @@ test('deploy-wait AC1/5/6/9, turnkey AC2 / guards b c d l: the wait says what it
     await page.getByTestId('check-now').click();
     await expect.poll(async () => (await runEvents(dash)).filter((e) => e.type === 'deploy-check' && e.forced === true).length, { timeout: 20_000 }).toBeGreaterThan(0);
     await expect(check).toHaveText(/^Checked at \d{1,2}:\d\d:\d\d [AP]M: still the build from before the fixes\.$/);
+    await expect(page.getByTestId('check-error')).toHaveCount(0);
+    // Sign in: the word reaches the loop, which opens the sign-in and says so; nothing is swallowed.
+    await page.getByTestId('sign-in-now').click();
+    await expect.poll(async () => (await runEvents(dash)).some((e) => e.type === 'info' && /sign-in asked for: opening a (window|tab)/.test(String(e.message || ''))), { timeout: 30_000 }).toBe(true);
+    await expect(page.getByTestId('check-error')).toHaveCount(0);
     // AC 9: what the assistant did, with only what it committed under it.
     await expect(page.getByTestId('round-headline')).toHaveText(/^Round 1: fixed \d+ findings? in 1 file, committed on branch a11y-508 and pushed to origin$/);
     await expect(page.getByTestId('changes').locator('tbody tr:not([data-outcome="committed"])')).toHaveCount(0);

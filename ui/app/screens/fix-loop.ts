@@ -217,9 +217,10 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
         <!-- Every check on record, and one at once on request: the wait is never a mystery. -->
         <p role="status" data-testid="deploy-check">{{ checkText() }}</p>
         <div class="actions">
-          <button type="button" class="secondary" (click)="checkNow()" [disabled]="checking()" data-testid="check-now">{{ checking() ? 'Checking…' : 'Check now' }}</button>
-          <button type="button" class="secondary" (click)="signInNow()" [disabled]="checking()" data-testid="sign-in-now">Sign in</button>
+          <button type="button" class="secondary" (click)="checkNow()" [disabled]="checking()" data-testid="check-now">{{ checking() === 'check' ? 'Checking…' : 'Check now' }}</button>
+          <button type="button" class="secondary" (click)="signInNow()" [disabled]="checking()" data-testid="sign-in-now">{{ checking() === 'sign-in' ? 'Opening the sign-in…' : 'Sign in' }}</button>
         </div>
+        @if (checkError()) { <p class="notice error" role="alert" data-testid="check-error">{{ checkError() }}</p> }
         @if (meanwhile() && store.task(); as t) {
           @if (t.m) {
             <div class="thin-progress">
@@ -682,10 +683,13 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     return `Waiting for your deployment of branch ${branch}${where}. The site is checked ${every(Number(e['intervalMs']) || 30_000)}, and the ${n === 1 ? 'fix is' : `${n} fixes are`} verified as soon as the new build is live.`;
   });
   // The last check of the site's build, in words; "Checking…" from Check now until its result arrives.
-  readonly checking = signal(false);
+  readonly checking = signal<'' | 'check' | 'sign-in'>('');
+  // What went wrong when Check now or Sign in could not be passed on: never swallowed.
+  readonly checkError = signal('');
   readonly checkText = computed(() => {
     const c = this.store.deployCheck();
-    if (this.checking()) return 'Checking the site now…';
+    if (this.checking() === 'check') return 'Checking the site now…';
+    if (this.checking() === 'sign-in') return 'Opening the sign-in in a tab of this window…';
     if (!c) return 'Not checked yet.';
     return checkLine(c);
   });
@@ -695,16 +699,18 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   }
   async checkNow(action: 'check' | 'sign-in' = 'check'): Promise<void> {
     if (this.checking()) return;
-    this.checking.set(true);
+    this.checking.set(action);
+    this.checkError.set('');
     const before = this.store.deployCheck();
     try {
       await this.api.post('/api/runs/current/continue', { action });
-      // Until that check's result arrives (or 20 s), the button and the line say so.
+      // Until that check's result arrives, or the sign-in is being waited for (or 20 s), the button says so.
       const until = Date.now() + 20_000;
-      while (Date.now() < until && this.store.deployCheck() === before) await new Promise((r) => setTimeout(r, 200));
-    } catch {
+      while (Date.now() < until && this.store.deployCheck() === before && !(action === 'sign-in' && this.store.loginWaiting())) await new Promise((r) => setTimeout(r, 200));
+    } catch (e: any) {
+      this.checkError.set(`The dashboard could not pass that on to the loop: ${e?.message || e}`);
     } finally {
-      this.checking.set(false);
+      this.checking.set('');
     }
   }
   readonly waitNext = computed(() => {
