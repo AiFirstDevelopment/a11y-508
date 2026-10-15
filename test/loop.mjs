@@ -1195,6 +1195,20 @@ rmSync(repo2, { recursive: true, force: true });
     body = 'console.log(2)';
     const s2 = (await bundleSignature(url)).signature;
     srv.close();
+    // A start page the server answers 404 for while the app renders anyway (a deep link): read in the browser.
+    const soft = createServer((req, res) => {
+      const path = new URL(req.url, 'http://x').pathname;
+      if (path === '/app.js') return res.writeHead(200, { 'content-type': 'text/javascript' }).end('console.log(3)');
+      res.writeHead(404, { 'content-type': 'text/html' });
+      res.end('<!doctype html><html><head><script src="/app.js"></script></head><body><p>app</p></body></html>');
+    });
+    await new Promise((r) => soft.listen(0, '127.0.0.1', r));
+    const s3 = await bundleSignature(`http://127.0.0.1:${soft.address().port}/deep/link`);
+    soft.close();
+    check('deploy check: a start page served with 404 that loads the app all the same is read in the browser', () => {
+      assert.equal(s3.via, 'browser', JSON.stringify(s3));
+      assert.match(s3.signature, /^\/app\.js [0-9a-f]{64}$/, s3.signature);
+    });
     check('deploy check: the signature hashes each script and stylesheet, so a new build with the same file names is seen', () => {
       assert.match(s1, /^\/app\.css [0-9a-f]{64}\n\/app\.js [0-9a-f]{64}\n\/favicon\.ico \?$/, s1);
       assert.ok(sameBuild(s1, s1));

@@ -68,7 +68,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
   'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit', 'changes', 'attempt', 'bisect',
-  'resume', 'deployment', 'deploy-check', 'retry', 'rerun', 'sign-in-again',
+  'resume', 'deployment', 'deploy-check', 'retry', 'rerun', 'sign-in-again', 'sign-in-opening', 'sign-in-failed',
 ]);
 
 // The current run, built from its event stream.
@@ -415,6 +415,13 @@ export class RunStore {
       case 'deploy-check':
         this.deployCheck.set(ev);
         this.pane(checkLine(ev), true);
+        break;
+      case 'sign-in-opening':
+        this.pane(`Opening the sign-in in ${ev['how'] === 'tab' ? 'a tab of this window' : 'a window'} (${String(ev['why'] || '')})`, true);
+        break;
+      case 'sign-in-failed':
+        this.pane(`The sign-in did not happen: ${String(ev['reason'] || '')}`, true);
+        this.notices.update((n) => [...n, { level: 'error', message: `The sign-in did not happen: ${String(ev['reason'] || '')}` }]);
         break;
       case 'precondition':
         this.precondition.set(ev);

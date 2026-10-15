@@ -28,6 +28,8 @@ export const EVENT_SCHEMA = {
   task: { round: num, n: num, m: num, test: str, impact: str, message: str, state: oneOf('start', 'done'), outcome: opt(str) },
   ledger: { rounds: num, counts: obj, line: str },
   // timeoutMs 0 and until null: no limit (deployTimeout 0); meanwhile: the remaining findings are fixed from the ledger while it waits.
+  'sign-in-opening': { how: oneOf('tab', 'window'), why: str },
+  'sign-in-failed': { reason: str },
   'deploy-check': { round: num, at: str, result: oneOf('same', 'changed', 'unreadable', 'no-baseline'), forced: bool, via: opt(str), host: str, pending: num, reason: opt(str) },
   'await-deploy': { round: num, committed: num, nextRound: num, pending: opt(num), open: opt(num), branch: opt(str), host: opt(str), intervalMs: opt(num), timeoutMs: opt(num), until: opt(str), pushedAt: opt(str), meanwhile: opt(bool) },
   deployment: { state: oneOf('arrived', 'still-old', 'unreachable', 'timeout', 'stopped-waiting', 'verify-anyway'), reason: opt(oneOf('unreachable', 'no-baseline')), round: num, pending: num, open: num, branch: str, host: str, pushed: bool, remote: opt(str) },

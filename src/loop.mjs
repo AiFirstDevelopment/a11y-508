@@ -225,9 +225,17 @@ async function signInOnly({ cfg, cwd, log, events, stateFile, passthrough = [], 
       } catch {}
     }
   });
-  child.stderr.on('data', () => {});
+  let stderr = '';
+  child.stderr.on('data', (d) => (stderr = (stderr + d).slice(-4000)));
   const code = await new Promise((r) => child.on('exit', r));
-  log.info(code === 0 ? `signed in; the session is saved to ${stateFile}` : 'no sign-in happened; going on without it');
+  if (code === 0) log.info(`signed in; the session is saved to ${stateFile}`);
+  else {
+    // Why, in the words the sign-in run gave (its last error or warning line), never silently.
+    const lines = stderr.split('\n').map((l) => l.trim()).filter((l) => /^(error|warn) /.test(l) || (!/^\{/.test(l) && l));
+    const why = (lines.filter((l) => /^error /.test(l)).pop() || lines.pop() || `exit code ${code}`).replace(/^(error|warn) /, '');
+    log.warn(`the sign-in did not happen: ${why}`);
+    log.event && log.event('sign-in-failed', { reason: why });
+  }
   return code === 0;
 }
 
@@ -475,6 +483,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // takes that session for the checks and the crawls. why: said in the log.
   const openSignIn = async (why) => {
     log.info(`${why}: opening ${connectArgs.length ? 'a tab in the dashboard\'s window' : 'a window'} to sign in`);
+    ev('sign-in-opening', { how: connectArgs.length ? 'tab' : 'window', why });
     const ok = await signInOnly({ cfg, cwd, log, events, stateFile, connectArgs, passthrough: passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') });
     if (!ok) return false;
     // Signed in just now: the crawl uses that session instead of signing in again (--sign-in-first).

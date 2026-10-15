@@ -137,12 +137,14 @@ async function byBrowser(url, { args, cwd, timeout }) {
     const session = await browser.newPage();
     const page = new Page(session, opts.page);
     await page.init();
-    const r = await page.goto(url, timeout);
+    // The page's own load gets most of the time; the launch and the hashing share the rest.
+    const r = await page.goto(url, Math.max(10000, timeout - 20000));
     if (r.error) return { refs: null, portal: false, reason: `the page did not load (${r.error})` };
     if (r.timedOut) return { refs: null, portal: false, reason: 'the page did not finish loading in time' };
-    // A gateway that answers 401 or 403 wants a sign-in, like a portal that the page is sent to.
+    // A gateway that answers 401 or 403 wants a sign-in, like a portal that the page is sent to. Any
+    // other status is no verdict: a single-page app's deep link is often served with a 404 and
+    // renders all the same, so the page is read for what it loads.
     if (r.status === 401 || r.status === 403) return { refs: null, portal: true, reason: `the browser gets HTTP ${r.status}, so a sign-in is needed` };
-    if (r.status && r.status >= 400) return { refs: null, portal: false, reason: `the browser gets HTTP ${r.status}` };
     let host = null;
     try {
       host = new URL(r.finalUrl).host;
@@ -175,7 +177,8 @@ async function byBrowser(url, { args, cwd, timeout }) {
       }
       return lines.join('\\n');
     })()`, { awaitPromise: true });
-    return { refs: typeof refs === 'string' ? refs : null, portal: false, reason: typeof refs === 'string' ? null : 'the page loads no scripts or stylesheets' };
+    if (typeof refs === 'string' && refs) return { refs, portal: false, reason: null };
+    return { refs: null, portal: false, reason: `${r.status && r.status >= 400 ? `the browser gets HTTP ${r.status} and ` : ''}the page loads no scripts or stylesheets` };
   })();
   try {
     return await Promise.race([work, new Promise((r) => (timer = setTimeout(() => r({ refs: null, portal: false, reason: `the check ran out of time (${Math.round(timeout / 1000)} s)` }), timeout)))]);
@@ -191,7 +194,7 @@ async function byBrowser(url, { args, cwd, timeout }) {
 }
 
 // Resolves { signature, via, portal, reason }: reason says, in words, why there is no signature.
-export async function bundleSignature(url, { args = [], cwd = process.cwd(), timeout = 30000 } = {}) {
+export async function bundleSignature(url, { args = [], cwd = process.cwd(), timeout = 90000 } = {}) {
   const f = await byFetch(url);
   if (f.app) return { signature: f.signature, via: 'fetch', portal: false, reason: null };
   const b = await byBrowser(url, { args, cwd, timeout });
