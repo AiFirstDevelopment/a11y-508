@@ -70,7 +70,7 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
     @if (routes(); as rt) {
       <!-- Every route audited across the rounds, and why the crawl did not reach more: the one place to look. -->
       <details class="details" id="routes" data-testid="routes-crawled" [open]="routesOpen()" (toggle)="routesOpen.set($any($event.target).open)">
-        <summary data-testid="routes-summary">Routes crawled: {{ rt.routes.length }}@if (rt.rounds) { across {{ rt.rounds }} round{{ rt.rounds === 1 ? '' : 's' }} }</summary>
+        <summary data-testid="routes-summary">Routes crawled: {{ rt.routes.length }}{{ rt.rounds ? ' across ' + rt.rounds + (rt.rounds === 1 ? ' round' : ' rounds') : '' }}</summary>
         <h2 id="routes-h" tabindex="-1">Routes crawled</h2>
         @if (rt.coverage.warnings.length) {
           <div class="notice warn" role="status" data-testid="routes-coverage">
