@@ -174,6 +174,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       annotateRun(run, { diaryNoted: true });
     }
     if (run.status === 'running' || LOOP_KINDS.has(run.kind) || (run.kind === 'crawl' && run.status === 'interrupted')) runs.adopt(run);
+    // A live loop started by an earlier version of this dashboard: stopped, to start again with this one.
+    if (runs.current === run && run.status === 'running' && LOOP_KINDS.has(run.kind)) restartIfUpdated(run);
     // What the run that ended while no dashboard watched still has coming: a try again, or its continuation.
     if (runs.current === run && run.status === 'done') afterRun(run, { restored: true });
     // (once this server is fully set up: the continuation starts runs)
@@ -234,6 +236,24 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       if (runs.current === run && !runs.active) scheduleRetry(run, r.kind === 'wait' ? 'error' : r.kind, e.message, r.fire, { after: r.attempt });
     }
   }
+  // A live loop started by an earlier version of the dashboard: stopped, and started again from the
+  // ledger with this one (afterRun), saying so. Once per run.
+  function restartIfUpdated(run) {
+    const was = run.meta && run.meta.tool;
+    if (!was || was === TOOL_REVISION || (run.record && run.record.update)) return;
+    annotateRun(run, { update: { from: was, to: TOOL_REVISION, at: new Date().toISOString() } });
+    try {
+      runs.push(run, { type: 'info', message: `the dashboard was updated (${was} → ${TOOL_REVISION}): stopping this loop to start it again with the new version` });
+      runs.stop();
+    } catch {}
+  }
+  // The restart after an update: the unfinished attempt's changes discarded, then the same request
+  // again, continuing from the ledger.
+  const restartUpdated = (run) => async (r) => {
+    const request = (run.record && run.record.request) || {};
+    discardInterrupted(state.cwd, sourceDirs());
+    return startRun({ ...request, kind: run.kind, resume: run.kind === 'loop', signIn: request.signIn === true && !existsSync(sp().state), attempt: r.attempt, retryOf: run.id, preface: [{ type: 'retry', attempt: r.attempt, kind: r.kind, reason: r.reason, at: new Date().toISOString() }] });
+  };
   // Fixes committed and waiting for a deployment (the ledger's deploy record): how many.
   function pendingDeploy() {
     const file = ledgerPath(state.cwd);
@@ -273,6 +293,13 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     // Cancelled (Stop), or already started again.
     if (rec && (rec.cancelled || rec.firedAt)) return;
     if (run.kind === 'loop' && done.outcome === 'stopped') {
+      // Stopped by the dashboard for an update: started again with the new version.
+      const upd = run.record && run.record.update;
+      if (upd && !upd.restarted) {
+        annotateRun(run, { update: { ...upd, restarted: true } });
+        scheduleRetry(run, 'wait', `the dashboard was updated to ${upd.to}; the loop starts again with it`, restartUpdated(run), { at: restored && rec ? rec.at : null });
+        return;
+      }
       // Stop ends the fixing. Fixes that wait for a deployment go on being watched for, in a run of
       // their own: nothing is asked of anyone, and they are verified as soon as the new build is live.
       const pending = pendingDeploy();
