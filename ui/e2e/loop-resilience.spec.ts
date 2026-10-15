@@ -1,11 +1,11 @@
 // The fix loop never dead-ends: it continues on the branch in the way, and when it cannot start or
-// stops, the Fix step says so with the remedy and a Try again that continues from the same report
-// and the ledger. docs/plans/loop-resilience.md.
+// stops, the Fix step says so with the remedy, and the loop starts again by itself from the same
+// report and the ledger. docs/plans/loop-resilience.md, docs/plans/turnkey-loop.md.
 
 import { test, expect, type Page } from '@playwright/test';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { api, countsLine, dashboard, dirsOf, fixtureSite, gitRepo, moreOptions, nav, open, removeTemp, run, tempDir, BIN, ROOT, TOKEN, type Dash, type Site } from './harness';
+import { api, asksNothing, countsLine, dashboard, dirsOf, fixtureSite, gitRepo, moreOptions, nav, open, removeTemp, run, tempDir, BIN, ROOT, TOKEN, type Dash, type Site } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const QUICK = ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage'];
@@ -37,12 +37,13 @@ async function withToken(page: Page): Promise<void> {
   await expect(page.getByTestId('assistant-line')).toHaveText(/Fixing with/, { timeout: 60_000 });
 }
 
-test('loop-resilience: a set-up error shows "The fix loop could not start" with the remedy, and Try again runs the loop from the same report', async ({ page }) => {
+// docs/plans/turnkey-loop.md AC 5 / guard i: a loop that could not start says why and what clears it,
+// and starts by itself once it can; nobody presses Try again.
+test('loop-resilience, turnkey AC5 / guard i: a set-up error shows "The fix loop could not start" with the remedy, and the loop starts by itself once the remedy is done', async ({ page }) => {
   const site = await fixtureSite();
   const { cwd, g, report } = await appWithReport(site, 'a11y-508-cannot-start-', {});
-  const dash: Dash = await dashboard({ cwd });
+  const dash: Dash = await dashboard({ cwd, env: { A11Y_508_PRECONDITION_POLL: '2' } });
   try {
-    await api(dash, '/api/settings', { method: 'PUT', body: { rounds: 1 } });
     // An edit nobody committed: the loop must not start (its commits would carry it).
     writeFileSync(join(cwd, 'site', 'index.html'), readFileSync(join(cwd, 'site', 'index.html'), 'utf8') + '\n<!-- an edit in progress -->\n');
     await open(page, dash, '/fix-loop');
@@ -51,36 +52,38 @@ test('loop-resilience: a set-up error shows "The fix loop could not start" with 
 
     const problem = page.getByTestId('loop-problem');
     await expect(problem.getByRole('heading', { name: 'The fix loop could not start' })).toBeVisible({ timeout: 60_000 });
-    // The message and the remedy in the main view, not under Details.
+    // The message and the remedy in the main view, not under Details, and what happens next.
     await expect(page.getByTestId('problem-message')).toHaveText('uncommitted changes under site: site/index.html');
     await expect(page.getByTestId('problem-remedy')).toHaveText(/^Commit or stash them \(git stash --include-untracked\), then try again, .*: site\/index\.html$/);
+    await expect(page.getByTestId('problem-next')).toHaveText('The loop starts by itself once that is done.');
     expect(await problem.evaluate((el) => !!el.closest('details'))).toBe(false);
-    await expect(page.getByRole('button', { name: 'Try again' })).toBeEnabled();
+    // Stop is the only button.
+    await expect(page.getByTestId('loop-stop')).toBeVisible();
+    await asksNothing(page);
     // Never the words of a loop that ran.
     for (const words of ['Loop finished', 'fixed ·', 'pages found']) await expect(page.locator('body')).not.toContainText(words);
 
-    // The person follows the remedy, then Try again: a loop from the same report, no crawl.
-    g('commit', '-qam', 'finish the edit');
+    // The person follows the remedy: within seconds the loop starts by itself, from the same report, no crawl.
     const failed = (await api(dash, '/api/runs/current')).json;
     expect(failed.kind).toBe('loop');
-    await page.getByRole('button', { name: 'Try again' }).click();
-    // A new run, and it is a loop (never a crawl).
-    await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.id, { timeout: 30_000 }).not.toBe(failed.id);
+    g('stash');
+    await expect.poll(async () => {
+      const c = (await api(dash, '/api/runs/current')).json;
+      return c && c.status === 'running' ? c.id : failed.id;
+    }, { timeout: 10_000, intervals: [250] }).not.toBe(failed.id);
     const runNow = (await api(dash, '/api/runs/current')).json;
     expect(runNow.kind).toBe('loop');
     expect(runNow.meta.command).toContain('--from-report');
-    // While it runs the screen is the normal running view.
+    expect(runNow.meta.attempt).toBeGreaterThan(1);
+    // The step says it started, and shows the normal running view.
+    await expect(page.getByTestId('fix-origin')).toHaveText(/^The fix loop started by itself once it could \(attempt \d+\)\.$/, { timeout: 30_000 });
     await expect(page.getByTestId('loop-problem')).toHaveCount(0);
     await expect(page.getByTestId('loop-step')).toHaveText(/Loop finished/, { timeout: 200_000 });
     const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
     expect(ledger.rounds[0].source).toBe('report');
     expect(ledger.rounds[0].reportFinishedAt).toBe(report.finishedAt);
-    // No crawl ran: the report is the one the person saw, and nothing moved to history.
-    expect(JSON.parse(readFileSync(join(dirsOf(cwd).report, 'report.json'), 'utf8')).finishedAt).toBe(report.finishedAt);
-    expect(existsSync(dirsOf(cwd).history)).toBe(false);
-    // The crawl's old-style folder moved out of the repository when the dashboard started.
+    // No crawl ran first: the report is the one the person saw, and nothing moved to history.
     for (const d of ['a11y-508-report', 'a11y-508-work', 'a11y-508-history']) expect(existsSync(join(cwd, d)), d).toBe(false);
-    expect((await api(dash, '/api/runs/current')).json.id).toBe(runNow.id);
   } finally {
     await dash.stop();
     removeTemp(cwd);
@@ -88,38 +91,45 @@ test('loop-resilience: a set-up error shows "The fix loop could not start" with 
   }
 });
 
-test('loop-resilience: with a11y-508/fixes in the repository the Fix step and the loop use it; a loop that stops after a round says why, with its counts, Try again and Run again', async ({ page }) => {
+// docs/plans/turnkey-loop.md AC 5 / guard h: a loop that stops with an error tries again by itself,
+// after a wait it counts down; Stop cancels that.
+test('loop-resilience, turnkey AC5 / guard h: with a11y-508/fixes in the repository the loop uses it; a loop that stops on an error says why and tries again by itself', async ({ page }) => {
   const site = await fixtureSite();
   // push with no remote: the round commits its fixes, then the push fails and the loop stops.
   const { cwd, g } = await appWithReport(site, 'a11y-508-stopped-', { branch: 'a11y-508', push: true });
   g('branch', 'a11y-508/fixes');
-  const dash: Dash = await dashboard({ cwd });
+  const dash: Dash = await dashboard({ cwd, env: { A11Y_508_RETRY_DELAYS: '2,2' } });
   try {
-    await api(dash, '/api/settings', { method: 'PUT', body: { rounds: 1 } });
     await open(page, dash, '/fix-loop');
     await withToken(page);
     await expect(page.getByTestId('loop-plan')).toContainText('commits to branch a11y-508/fixes');
     await page.getByRole('button', { name: 'Fix the violations' }).click();
 
-    const problem = page.getByTestId('loop-problem');
-    // One plain sentence, the raw error under Details, Try again the one big button.
-    await expect(page.getByTestId('fix-status')).toHaveText('The fix loop stopped: push failed.', { timeout: 200_000 });
-    await expect(problem).toHaveCount(0);
+    // One plain sentence with the countdown, the raw error under Details, Stop the only button.
+    const status = page.getByTestId('fix-status');
+    await expect(status).toHaveText(/^Push failed\. Trying again in [0-2] s \(attempt 2\)\.$/, { timeout: 200_000 });
+    const first = (await api(dash, '/api/runs/current')).json;
+    await expect(page.getByTestId('loop-problem')).toHaveCount(0);
     await expect(page.getByTestId('why')).toBeVisible();
     await expect(page.getByTestId('problem-message')).toHaveText(/^push failed: /);
-    await expect(page.locator('main button.big:visible, main a.button.big:visible')).toHaveCount(1);
-    await expect(page.getByTestId('try-again')).toHaveClass(/\bbig\b/);
+    await asksNothing(page);
     // The real ledger counts.
     const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
-    const n = (s: string) => Object.values<any>(ledger.findings).filter((e) => e.status === s).length;
+    const n = (st: string) => Object.values<any>(ledger.findings).filter((e) => e.status === st).length;
     expect(n('pending')).toBeGreaterThan(0);
     await expect(page.getByTestId('fix-counts')).toHaveText(countsLine({ verified: n('verified'), pending: n('pending'), open: n('open') }));
-    await expect(page.getByRole('button', { name: 'Try again' })).toBeEnabled();
-    await expect(page.getByRole('button', { name: 'Run again' })).toBeEnabled();
     await expect(page.locator('body')).not.toContainText('Loop finished');
     // The round's fixes were committed on the branch the Fix step named.
     expect(g('rev-parse', '--abbrev-ref', 'HEAD')).toBe('a11y-508/fixes');
     expect(g('log', '--format=%s', 'main..a11y-508/fixes')).toMatch(/^a11y-508: /m);
+    // Within seconds the same request runs again, recorded as the second attempt of the first.
+    await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.id, { timeout: 10_000, intervals: [250] }).not.toBe(first.id);
+    const second = (await api(dash, '/api/runs/current')).json;
+    expect([second.kind, second.meta.attempt, second.meta.retryOf]).toEqual(['loop', 2, first.id]);
+    // The step follows the new run, which says why it runs. (Stop during a countdown: turnkey.spec.ts, AC 1.)
+    await expect(page.getByTestId('fix-origin')).toHaveText(/^Trying again \(attempt 2\) after: push failed\.$/i, { timeout: 30_000 });
+    await expect(page.getByTestId('loop-step')).toHaveText(/Loop finished/, { timeout: 200_000 });
+    await asksNothing(page);
   } finally {
     await dash.stop();
     removeTemp(cwd);
@@ -134,7 +144,6 @@ async function fromReportLoop(page: Page, prefix: string, config: Record<string,
   const marks = tempDir('a11y-508-fake-marks-');
   const dash: Dash = await dashboard({ cwd, env: Object.fromEntries(Object.entries(env).map(([k, v]) => [k, v.replace('MARKS', marks)])) });
   try {
-    await api(dash, '/api/settings', { method: 'PUT', body: { rounds: 1 } });
     await open(page, dash, '/fix-loop');
     await withToken(page);
     await page.getByRole('button', { name: 'Fix the violations' }).click();
@@ -175,7 +184,7 @@ test('loop-resilience AC11b: an assistant refused for rate limit shows the count
   await fromReportLoop(page, 'a11y-508-ratelimit-', { quotaDelays: [6000] }, { FAKE_AGENT_429_ONCE: join('MARKS', 'refused') }, async () => {
     await expect(page.getByTestId('fix-status')).toHaveText(/^The assistant is rate-limited; trying again in [1-6] s \(retry 1 of 1\)$/, { timeout: 60_000 });
     // The retry answers and the loop goes on to the end.
-    await expect(page.getByTestId('fix-status')).toHaveText(/^Done: (nothing left to fix|\d+ fixed(, \d+ left)?)\.$/, { timeout: 60_000 });
+    await expect(page.getByTestId('fix-status')).toHaveText(/^Done: (nothing left to fix\.|\d+ fixed\. \d+ findings? could not be fixed by the assistant; the people who use the app will find them\.)$/, { timeout: 120_000 });
     await expect(page.getByTestId('loop-step')).toHaveText('Loop finished.');
   });
 });
@@ -204,7 +213,6 @@ test('loop-resilience AC13-18: one pane log for the run, the gate and the commit
   g('commit', '-qm', 'the gate');
   const dash: Dash = await dashboard({ cwd, env: { FAKE_AGENT_DELAY_MS: '800' } });
   try {
-    await api(dash, '/api/settings', { method: 'PUT', body: { rounds: 1 } });
     await open(page, dash, '/fix-loop');
     await withToken(page);
     // Every rendered state of the pane and the counts, to see what the counts said when the next fix began.

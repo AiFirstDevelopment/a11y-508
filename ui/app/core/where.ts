@@ -25,8 +25,9 @@ export interface WhereLive {
   crawled: { done: number; discovered: number } | null;
   // The fix tasks in hand.
   task: { n: number; m: number } | null;
-  // Waiting for a deployment: the await-deploy event's facts.
-  waiting: { branch: string; intervalMs: number; until: number } | null;
+  // Waiting for a deployment: the await-deploy event's facts (until null: no limit; meanwhile: the
+  // remaining findings are being fixed from the ledger while it waits).
+  waiting: { branch: string; intervalMs: number; until: number | null; meanwhile?: number } | null;
   // The run's deployment event: arrived, still-old, unreachable, timeout, stopped-waiting, verify-anyway.
   deployment: string | null;
   // How many fixes the arrived deployment is verifying.
@@ -34,6 +35,8 @@ export interface WhereLive {
   loginWaiting: boolean;
   // Why it stopped, when it failed.
   reason: string | null;
+  // The try again the server scheduled after it (precondition, error, wait), when one is coming.
+  retrying?: { kind: string; attempt: number } | null;
 }
 
 export interface WhereInput {
@@ -52,6 +55,14 @@ export function timeLeft(ms: number): string {
   if (s >= 600) return `${Math.round(s / 60)} min left`;
   if (s >= 60) return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s left`;
   return `${s} s left`;
+}
+
+// "3:28 PM", in the viewer's time zone.
+export function clock(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const h = d.getHours();
+  return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
 // "every 30 s", "every 2 min".
@@ -89,10 +100,10 @@ export function whereYouAre(input: WhereInput): WhereLine[] {
   if (now_) lines.push({ kind: 'now', text: `Now: ${now_}`, link: null });
   const pending = counts['pending'] || 0;
   const open = counts['open'] || 0;
-  const signIn = !!live && !live.active && (live.kind === 'loop' || live.kind === 'dry-run') && (live.outcome === 'stopped' || live.outcome === 'error') && signInFailed([live.reason]);
-  const next = signIn ? 'sign in, and the loop goes on from where it was'
-    : pending
-    ? `verify the ${plural(pending, 'fix', 'fixes')} against the new build${open ? `, then fix the ${open} remaining` : ''}`
+  // What the tool does next, never what the person may choose.
+  const next = pending && open
+    ? `fix the ${open} remaining while your deployment is awaited, then verify the ${plural(pending, 'fix', 'fixes')} against the new build`
+    : pending ? `verify the ${plural(pending, 'fix', 'fixes')} as soon as the new build is live`
     : open ? `fix the ${open} remaining`
     : counts['review'] ? `ask the assistant about the ${plural(counts['review'], 'review item')}`
     : timeline ? 'nothing left to fix; run again after the next change to the app'
@@ -106,7 +117,8 @@ function nowLine(live: WhereLive | null, timeline: LoopTimeline | null, counts: 
   if (live && live.active) {
     if (!loop) return live.crawled && live.crawled.discovered ? `crawling the site (${live.crawled.done} of ${live.crawled.discovered} pages)` : `a ${live.kind || 'run'} is running`;
     if (live.loginWaiting) return 'waiting for you to sign in in the browser window';
-    if (live.waiting) return `waiting for your deployment of ${live.waiting.branch} (checks ${every(live.waiting.intervalMs)}, ${timeLeft(live.waiting.until - now)})`;
+    if (live.waiting && live.waiting.meanwhile) return `fixing the ${live.waiting.meanwhile} remaining while your deployment of ${live.waiting.branch} is awaited`;
+    if (live.waiting) return `waiting for your deployment of ${live.waiting.branch} (checks ${every(live.waiting.intervalMs)}${live.waiting.until !== null ? `, ${timeLeft(live.waiting.until - now)}` : ''})`;
     const r = live.round;
     if (!r) return 'starting the fix loop';
     if (live.step === 'await-deploy' || live.step === 'deploy') return `waiting for the new build of round ${r}'s fixes`;
@@ -121,8 +133,14 @@ function nowLine(live: WhereLive | null, timeline: LoopTimeline | null, counts: 
     return `round ${r}: working`;
   }
   if (live && loop && live.outcome) {
+    if (live.retrying && live.retrying.kind === 'precondition') return 'the fix loop could not start yet; it starts by itself once that is done';
+    if (live.retrying && live.retrying.kind === 'wait') return 'waiting for your deployment';
+    if (live.retrying && live.outcome !== 'interrupted') {
+      const said = plainReason(live.reason || 'the fix loop ended with an error').replace(/\.$/, '');
+      return `stopped: ${said.charAt(0).toLowerCase()}${said.slice(1)}; trying again by itself`;
+    }
     if (live.outcome === 'awaiting-deploy') return live.deployment === 'still-old' ? 'your deployment has not arrived yet — the site still serves the old build' : live.deployment === 'unreachable' ? "could not check the site's build" : 'your deployment has not arrived yet';
-    if (live.outcome === 'interrupted') return 'the fix loop was interrupted';
+    if (live.outcome === 'interrupted') return 'the fix loop was interrupted; continuing from there';
     if ((live.outcome === 'stopped' || live.outcome === 'error') && signInFailed([live.reason])) return 'nobody signed in, so the site was not checked';
     if (live.outcome === 'stopped') return 'stopped';
     if (live.outcome === 'error') {

@@ -3,8 +3,8 @@ import { Api } from './api';
 import { EnvInfo } from './types';
 
 // The dashboard resumes where it was (docs/plans/resume.md): it opens on the step the person was on
-// (stored server-side as lastStep), on a live run, or on an interrupted fix loop; only Start over
-// sends it back to Set up.
+// (stored server-side as lastStep), on a live run, or on an interrupted fix loop (which the server
+// continues by itself, docs/plans/turnkey-loop.md).
 
 // The path the page was opened at, before the router sends '' to Set up. The address the server
 // prints (and opens) is '/', which is where the stored step applies; a deep link is kept.
@@ -32,25 +32,6 @@ export function landing(e: Pick<EnvInfo, 'run' | 'lastStep'>): string | null {
   return e.lastStep && stepPath(e.lastStep) === e.lastStep ? e.lastStep : null;
 }
 
-export interface Interrupted {
-  at: string;
-  round: number | null;
-  n: number | null;
-  m: number | null;
-  kind: string;
-  attemptInProgress: boolean;
-  discard: string[];
-}
-
-export interface StartOverInfo {
-  report: boolean;
-  ledger: boolean;
-  rounds: number;
-  attempts: number;
-  history: number;
-  url: string | null;
-}
-
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 // "13 Oct 2026, 4:52 PM", in the viewer's time zone.
 export function when(iso: string): string {
@@ -60,20 +41,17 @@ export function when(iso: string): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
-export function interruptedText(i: Interrupted): string {
-  const where = i.n && i.m ? ` at fix ${i.n} of ${i.m}` : i.round ? ` in round ${i.round}` : '';
-  return `The fix loop was interrupted${where} on ${when(i.at)} (the dashboard was closed).`;
-}
-
-// "the report, the ledger with 8 attempts, and the history for this URL"
-export function startOverText(s: StartOverInfo): string {
-  const parts: string[] = [];
-  if (s.report) parts.push('the report');
-  if (s.ledger) parts.push(`the ledger with ${s.attempts} attempt${s.attempts === 1 ? '' : 's'}`);
-  if (s.history) parts.push('the history for this URL');
-  if (!parts.length) return 'nothing yet: there is no report, ledger or history for this URL';
-  if (parts.length === 1) return parts[0];
-  return `${parts.slice(0, -1).join(', ')}${parts.length > 2 ? ',' : ''} and ${parts[parts.length - 1]}`;
+// The interrupted fix loop the dashboard continued by itself, from its resume event: "The fix loop was
+// interrupted at fix 8 of 20 on 13 Oct 2026, 4:52 PM (the dashboard was closed); continuing from
+// there. The unfinished change to src/app/x.ts was discarded."
+export function continuingText(ev: Record<string, any>): string {
+  const n = ev['n'];
+  const m = ev['m'];
+  const where = n && m ? ` at fix ${n} of ${m}` : ev['round'] ? ` in round ${ev['round']}` : '';
+  const on = ev['interruptedAt'] ? ` on ${when(String(ev['interruptedAt']))}` : '';
+  const files: string[] = Array.isArray(ev['discarded']) ? ev['discarded'] : [];
+  const gone = files.length === 1 ? ` The unfinished change to ${files[0]} was discarded.` : files.length ? ` The unfinished changes to ${files.join(', ')} were discarded.` : '';
+  return `The fix loop was interrupted${where}${on} (the dashboard was closed); continuing from there.${gone}`;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -101,23 +79,6 @@ export class Resume {
   heartbeat(): void {
     if (this.beat) return;
     this.beat = setInterval(() => void this.api.get('/api/ping').catch(() => {}), 60000);
-  }
-
-  interrupted(): Promise<Interrupted | null> {
-    return this.api.get<Interrupted | null>('/api/runs/interrupted');
-  }
-
-  continueLoop(): Promise<unknown> {
-    return this.api.post('/api/runs/resume', {});
-  }
-
-  startOverInfo(): Promise<StartOverInfo> {
-    return this.api.get<StartOverInfo>('/api/start-over');
-  }
-
-  async startOver(): Promise<void> {
-    await this.api.post('/api/start-over', { confirm: true });
-    this.saved = null;
   }
 
   quit(stopRun: boolean): Promise<unknown> {

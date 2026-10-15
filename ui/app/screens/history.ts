@@ -31,20 +31,10 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
     @if (timeline(); as t) {
       <p data-testid="loop-summary">Fix loop: {{ t.total.rounds }} round{{ t.total.rounds === 1 ? '' : 's' }} · {{ t.total.of }} violations · {{ counts(t.total) }}</p>
     }
-    @if (earlier().length || timeline()) {
-      <div class="actions">
-        @if (earlier().length) {
-          <button type="button" class="secondary" (click)="clear()" data-testid="clear-history">Clear history</button>
-        }
-        @if (timeline()) {
-          <button type="button" class="secondary" (click)="clearLoop()" [disabled]="loopRunning()" data-testid="clear-loop-history">Clear fix-loop history</button>
-        }
-      </div>
-    }
     @if (list().length) {
       <table data-testid="history">
         <caption>Crawls and fix-loop rounds</caption>
-        <thead><tr><th scope="col">Event</th><th scope="col">Finished</th><th scope="col">Pages audited</th><th scope="col">Violations found</th><th scope="col">Review</th><th scope="col">Fixed</th><th scope="col">Remaining</th><th scope="col">Commits</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+        <thead><tr><th scope="col">Event</th><th scope="col">Finished</th><th scope="col">Pages audited</th><th scope="col">Violations found</th><th scope="col">Review</th><th scope="col">Fixed</th><th scope="col">Remaining</th><th scope="col">Commits</th></tr></thead>
         <tbody>
           @for (r of list(); track r.id) {
             @let lr = loopRound(r);
@@ -68,11 +58,6 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
                 }
               </td>
               <td data-testid="commits">{{ lr ? lr.commits : '—' }}</td>
-              <td>
-                @if (r.source === 'history') {
-                  <button type="button" class="secondary small" (click)="remove(r)" [attr.aria-label]="'Delete ' + name(r) + ', finished ' + local(r.finishedAt)">Delete</button>
-                }
-              </td>
             </tr>
           }
         </tbody>
@@ -133,12 +118,9 @@ export class HistoryScreen {
   private loads = 0;
   readonly error = signal('');
   readonly status = signal('');
-  // The earlier reports (history/), which Clear history and Delete remove.
-  readonly earlier = computed(() => this.list().filter((r) => r.source === 'history'));
   // The start URL for Run again: the latest crawl's, else the loop config's.
   private configUrl = signal('');
   readonly againUrl = computed(() => this.list().find((r) => r.source === 'latest')?.baseUrl || this.configUrl());
-  readonly loopRunning = computed(() => this.run.active() && ['loop', 'dry-run'].includes(this.run.kind() || ''));
   rowsOf(lr: LoopRound): ChangeRow[] {
     return (lr.changes || []).map((c) => ({ ...c, round: lr.round }));
   }
@@ -173,34 +155,6 @@ export class HistoryScreen {
 
   loopRound(r: ReportListEntry): LoopRound | null {
     return r.source === 'round' ? this.timeline()?.rounds.find((x) => x.round === r.round) || null : null;
-  }
-
-  async clear(): Promise<void> {
-    const n = this.earlier().length;
-    if (!confirm(`Remove ${n} earlier report${n === 1 ? '' : 's'} from History? The latest report and the loop's rounds stay. This cannot be undone.`)) return;
-    await this.del('/api/reports/history', (r) => `Removed ${r.removed} earlier report${r.removed === 1 ? '' : 's'}.`);
-  }
-
-  async clearLoop(): Promise<void> {
-    const n = this.timeline()?.total.rounds || 0;
-    if (!confirm(`Remove the fix loop's ${n} round${n === 1 ? '' : 's'} and its ledger? The next loop starts from round 1. This cannot be undone.`)) return;
-    await this.del('/api/loop/history', (r) => `Removed ${r.removed} fix-loop round${r.removed === 1 ? '' : 's'} and the ledger.`);
-  }
-
-  async remove(e: ReportListEntry): Promise<void> {
-    if (!confirm(`Delete the report of ${e.baseUrl} that finished ${localTime(e.finishedAt)}? This cannot be undone.`)) return;
-    await this.del(`/api/reports/${encodeURIComponent(e.id)}`, () => 'Report deleted.');
-  }
-
-  private async del(path: string, said: (r: { removed: number }) => string): Promise<void> {
-    this.error.set('');
-    try {
-      const r = await this.api.delete<{ removed: number }>(path);
-      this.status.set(said(r));
-    } catch (e: any) {
-      this.error.set(e.message);
-    }
-    await this.load();
   }
 
   // The pages audited, as "2" or "2 of 9" when some pages were crawled but not audited (an error, or

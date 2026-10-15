@@ -17,7 +17,7 @@ import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine } from './args.mjs';
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
-import { JOURNALED, LOOP_KINDS, annotateRun, discardInterrupted, interruptedDetails, latestRun, resolveRun, runsDir, startJournaled } from './run-journal.mjs';
+import { JOURNALED, LOOP_KINDS, annotateRun, discardInterrupted, interruptedDetails, latestRun, removeRun, resolveRun, runsDir, startJournaled } from './run-journal.mjs';
 import { loopDefaults } from './loop-defaults.mjs';
 import { stateBase as stateBaseOf, readGlobal, writeGlobal, paths as statePaths, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { matchSource } from './loop-match.mjs';
@@ -71,6 +71,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const done = [...(run.events || [])].reverse().find((e) => e.type === 'done');
     const outcome = (done && done.outcome) || (run.status === 'interrupted' ? 'interrupted' : null);
     if (outcome !== 'error' && outcome !== 'interrupted') return;
+    // A loop that still cannot start, tried again every 15 seconds: in the diary once, not each time.
+    if ((run.meta && run.meta.attempt > 1) && (run.events || []).some((e) => e.type === 'precondition')) return;
     const lastError = [...(run.events || [])].reverse().find((e) => e.type === 'error');
     // What it was doing, from its events (the run has ended, so read them as if it had not).
     const was = doingOf({ ...run, status: 'running' });
@@ -80,12 +82,25 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   // It is brought to the front once when the wait starts, and again by POST /api/sign-in/show.
   let signInTab = null;
   const onRunEvent = (run, e) => {
+    // "deployed": "enter" (a repository's config written for a terminal): the dashboard has no Enter
+    // to press and asks nobody, so it goes on at once, as "none" would.
+    if (e.type === 'await-deploy' && e.intervalMs === undefined && LOOP_KINDS.has(run.kind)) {
+      setTimeout(() => {
+        try {
+          if (runs.current === run && runs.active) runs.continue('continue');
+        } catch {}
+      }, 300);
+      return;
+    }
     if (e.type !== 'login-waiting') return;
     const where = signInTabOf(e, state.browserPort);
     signInTab = where ? { runId: run.id, ...where } : null;
     if (where) bringToFront(where).catch(() => {});
   };
-  const runs = new Runs({ onExit: (run) => noteRunEnd(run), onEvent: onRunEvent });
+  const runs = new Runs({ onExit: (run) => {
+    noteRunEnd(run);
+    afterRun(run);
+  }, onEvent: onRunEvent });
   async function showSignInTab() {
     // A run found again after a restart: its latest login-waiting, from the events read back.
     if (runs.active && (!signInTab || signInTab.runId !== runs.current.id)) {
@@ -152,8 +167,170 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       noteRunEnd(run);
       annotateRun(run, { diaryNoted: true });
     }
-    if (run.status === 'running' || LOOP_KINDS.has(run.kind)) runs.adopt(run);
+    if (run.status === 'running' || LOOP_KINDS.has(run.kind) || (run.kind === 'crawl' && run.status === 'interrupted')) runs.adopt(run);
+    // What the run that ended while no dashboard watched still has coming: a try again, or its continuation.
+    if (runs.current === run && run.status === 'done') afterRun(run, { restored: true });
+    // (once this server is fully set up: the continuation starts runs)
+    if (runs.current === run && run.status === 'interrupted') queueMicrotask(() => void continueInterrupted());
   };
+
+  // ---- The tool goes on by itself (docs/plans/turnkey-loop.md)
+  //
+  // A fix loop that could not start (a precondition: not a repository, uncommitted changes, a branch
+  // git refuses) is started again every 15 seconds until it starts; one that stopped with an error,
+  // after 1, 2 and 5 minutes, then every 10 minutes; one that ended waiting for a deployment (a
+  // repository's config with a time limit) waits again. The schedule is recorded on the run
+  // (retry: { attempt, at, reason, kind }), so a reload and a restart keep it; Stop cancels it.
+  // For tests, A11Y_508_RETRY_DELAYS (seconds, comma-separated; the last repeats) and
+  // A11Y_508_PRECONDITION_POLL (seconds) shorten the waits.
+  const RETRY_DELAYS = (() => {
+    const given = String(env.A11Y_508_RETRY_DELAYS || '').split(',').map(Number).filter((n) => n > 0);
+    return (given.length ? given : [60, 120, 300, 600]).map((n) => n * 1000);
+  })();
+  const PRECONDITION_POLL = (Number(env.A11Y_508_PRECONDITION_POLL) > 0 ? Number(env.A11Y_508_PRECONDITION_POLL) : 15) * 1000;
+  // The one schedule: { runId, cwd, attempt, at, reason, kind, timer, fire }.
+  let retry = null;
+  const clearRetry = () => {
+    if (retry && retry.timer) clearTimeout(retry.timer);
+    retry = null;
+  };
+  const lastOf = (run, type) => [...(run.events || [])].reverse().find((e) => e.type === type) || null;
+  // Schedules fire() for run, `kind` ('precondition' | 'error' | 'wait'), with the reason in its words.
+  // after: the attempt that just failed (the run's own, unless a try again did not even start).
+  function scheduleRetry(run, kind, reason, fire, { at = null, after = null } = {}) {
+    clearRetry();
+    const attempt = (after || (run.meta && run.meta.attempt) || 1) + 1;
+    const delay = kind === 'precondition' ? PRECONDITION_POLL : kind === 'wait' ? 1000 : RETRY_DELAYS[Math.min(attempt - 2, RETRY_DELAYS.length - 1)];
+    const when = at ? Math.max(Date.now(), Date.parse(at) || Date.now()) : Date.now() + delay;
+    const record = { attempt, at: new Date(when).toISOString(), reason: String(reason || '').slice(0, 2000), kind };
+    if (run.journal) annotateRun(run, { retry: record });
+    retry = { runId: run.id, cwd: state.cwd, ...record, fire, timer: null };
+    const mine = retry;
+    retry.timer = setTimeout(() => {
+      if (retry !== mine) return;
+      retry = null;
+      fireRetry(run, mine).catch(() => {});
+    }, Math.max(0, when - Date.now()));
+    if (retry.timer.unref) retry.timer.unref();
+  }
+  async function fireRetry(run, r) {
+    // A person's own run, or another folder, since: nothing to try again.
+    if (r.cwd !== state.cwd || runs.current !== run) return;
+    if (runs.active) return scheduleRetry(run, r.kind, r.reason, r.fire, { at: new Date(Date.now() + 5000).toISOString() });
+    // A loop that could not start for something the server can see for itself (uncommitted changes
+    // under the source folders, no repository): looked at again first, and tried only once it is gone.
+    if (r.kind === 'precondition' && stillBlocked(lastOf(run, 'precondition'))) return scheduleRetry(run, r.kind, r.reason, r.fire, { after: r.attempt - 1 });
+    if (run.journal) annotateRun(run, { retry: { attempt: r.attempt, at: r.at, reason: r.reason, kind: r.kind, firedAt: new Date().toISOString() } });
+    try {
+      await r.fire(r);
+    } catch (e) {
+      // It did not start (the server said why): the same schedule, with that reason.
+      if (runs.current === run && !runs.active) scheduleRetry(run, r.kind === 'wait' ? 'error' : r.kind, e.message, r.fire, { after: r.attempt });
+    }
+  }
+  function stillBlocked(pre) {
+    if (!pre) return false;
+    if (pre.code === 'not-a-repo') return !inGitRepo(state.cwd);
+    if (pre.code === 'dirty-tree') {
+      const r = spawnSync('git', ['status', '--porcelain', '--', ...sourceDirs()], { cwd: state.cwd, encoding: 'utf8', windowsHide: true });
+      return r.status === 0 && !!(r.stdout || '').trim();
+    }
+    return false;
+  }
+  // Starts the run's own request again, as the attempt after it.
+  const startAgain = (run, extra = {}) => async (r) => {
+    const request = (run.record && run.record.request) || {};
+    const previous = run;
+    const next = await startRun({ ...request, kind: run.kind, resume: false, signIn: request.signIn === true && !existsSync(sp().state), attempt: r.attempt, retryOf: run.id, ...extra, preface: [{ type: 'retry', attempt: r.attempt, kind: r.kind, reason: r.reason, at: new Date().toISOString() }] });
+    // A loop that still cannot start keeps only its latest attempt's record.
+    if (r.kind === 'precondition' && previous.meta && previous.meta.attempt > 1) removeRun(state.cwd, previous.id);
+    return next;
+  };
+  // What follows a run's end: a try again for a fix loop that could not start or stopped with an
+  // error; a sign-in and a crawl again for a crawl that could not get into the app.
+  function afterRun(run, { restored = false } = {}) {
+    if (run.cwd && resolve(run.cwd) !== state.cwd) return;
+    const done = lastOf(run, 'done');
+    if (!done || done.outcome === 'stopped' || done.outcome === 'interrupted') return;
+    const rec = (run.record && run.record.retry) || null;
+    // Cancelled (Stop), or already started again.
+    if (rec && (rec.cancelled || rec.firedAt)) return;
+    if (run.kind === 'loop') {
+      const pre = lastOf(run, 'precondition');
+      const errors = (run.events || []).filter((e) => e.type === 'error');
+      let kind = null;
+      let reason = null;
+      if (done.outcome === 'awaiting-deploy') [kind, reason] = ['wait', 'the new build has not arrived yet'];
+      else if (pre) [kind, reason] = ['precondition', pre.message];
+      else if (done.outcome === 'error' || errors.length) [kind, reason] = ['error', (errors.length ? errors[errors.length - 1].message : null) || done.reason || `the loop ended with exit code ${done.code}`];
+      if (!kind) return;
+      scheduleRetry(run, kind, reason, startAgain(run, kind === 'wait' ? { deploy: 'wait' } : {}), { at: restored && rec ? rec.at : null });
+      return;
+    }
+    if (run.kind === 'crawl' && !restored && !(run.meta && run.meta.signInAgain)) {
+      const summary = lastOf(run, 'summary');
+      const audited = summary && summary.summary ? summary.summary.audited : null;
+      const bounced = (run.events || []).some((e) => e.type === 'page' && (/redirected off-origin/.test(String(e.skipped || '')) || e.status === 401 || e.status === 403));
+      const request = (run.record && run.record.request) || {};
+      // Only a crawl with no way in, or with a saved session (expired): one given a token or cookies
+      // was refused for those, and a sign-in would not change that.
+      const mode = (request.auth && request.auth.mode) || 'none';
+      if (audited === 0 && bounced && (mode === 'none' || mode === 'state')) {
+        // At once, once: the sign-in opens and the crawl runs again in it.
+        setTimeout(() => {
+          if (runs.current !== run || runs.active) return;
+          startRun({ ...request, kind: 'crawl', auth: { mode: 'signin' }, signInAgain: true, preface: [{ type: 'sign-in-again', reason: 'expired', at: new Date().toISOString() }] }).catch(() => {});
+        }, 200);
+      }
+    }
+  }
+  // Stop while a try again is scheduled: it is cancelled, and recorded so.
+  function cancelRetry() {
+    if (!retry) return false;
+    const run = runs.current;
+    if (run && run.id === retry.runId && run.journal) annotateRun(run, { retry: { attempt: retry.attempt, at: retry.at, reason: retry.reason, kind: retry.kind, cancelled: true } });
+    clearRetry();
+    return true;
+  }
+
+  // A run whose process went away without finishing (the dashboard was closed): a fix loop goes on
+  // from where it was (Continue, as it was), a crawl runs again from its own request, a dry run is
+  // only marked resolved. Never while another run is active, never twice for one interruption.
+  let continuing = false;
+  async function continueInterrupted() {
+    const r = runs.current;
+    if (continuing || runs.active || !r || r.status !== 'interrupted' || !r.journal) return;
+    if (r.record && r.record.resolved) return;
+    continuing = true;
+    try {
+      if (r.kind === 'loop') await resume();
+      else if (r.kind === 'dry-run') {
+        resolveRun(r, 'resolved');
+        runs.forget();
+      } else if (r.kind === 'crawl') {
+        const request = (r.record && r.record.request) || {};
+        const where = interruptedDetails(state.cwd, r, []);
+        resolveRun(r, 'rerun');
+        try {
+          await startRun({ ...request, kind: 'crawl', preface: [{ type: 'rerun', reason: 'interrupted', interruptedAt: where.at, at: new Date().toISOString() }] });
+        } catch (e) {
+          annotateRun(r, { resolved: null });
+          if (!runs.active && runs.current !== r) runs.adopt(r);
+          throw e;
+        }
+      }
+    } catch (e) {
+      // It could not go on yet (a token held only in memory, say): tried again on the error schedule.
+      const cur = runs.current;
+      if (cur && cur.status === 'interrupted' && LOOP_KINDS.has(cur.kind)) scheduleRetry(cur, 'error', e.message, async () => {
+        annotateRun(cur, { resolved: null });
+        if (cur.record) delete cur.record.resolved;
+        await continueInterrupted();
+      });
+    } finally {
+      continuing = false;
+    }
+  }
   reattach();
 
   // A forced detection never reuses one that started before it was asked for. Tests can slow the
@@ -290,6 +467,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const cwd = state.cwd;
     if (!['crawl', 'troubleshoot', 'login', 'loop', 'dry-run'].includes(kind)) throw new BadRequest(`unknown run kind "${kind}"`);
     if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is already active`, 409);
+    // A run started now replaces any try again that was scheduled.
+    clearRetry();
     // The sign-in session lives in the dashboard's own directory, never in the repository.
     let auth = body.auth || { mode: 'none' };
     if (['state', 'signin'].includes(auth.mode) || kind === 'login') auth = { ...auth, file: sp().state };
@@ -300,6 +479,14 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     let meta;
     if (kind === 'loop' || kind === 'dry-run') {
       if (kind === 'loop') await detect();
+      // The dashboard's own config from before the wait had no limit: its 30 minutes becomes none, so a
+      // fix loop from here never ends waiting for a deployment (a repository's config is used as is).
+      if (kind === 'loop' && !repoConfig() && existsSync(sp().config)) {
+        try {
+          const own = JSON.parse(readFileSync(sp().config, 'utf8'));
+          if (own && own.writtenBy === WRITTEN_BY && own.deployed === 'bundle-change' && typeof own.deployTimeout === 'number' && own.deployTimeout > 0) writeJson(sp().config, { ...own, deployTimeout: 0 });
+        } catch {}
+      }
       const cfg = loadConfig(configPath(), cwd);
       const chosen = body.agent || cfg.agent || null;
       const resolved = kind === 'loop' ? agentCommand(chosen) : null;
@@ -328,7 +515,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       const deploy = ['verify', 'verify-anyway', 'from-ledger', 'wait'].includes(body.deploy) ? body.deploy : null;
       if (body.deploy !== undefined && !deploy) throw new BadRequest('deploy must be verify, verify-anyway, from-ledger or wait');
       const fromReport = deploy === 'from-ledger' ? true : latest && loopUrl && sameUrl(latest.baseUrl, loopUrl) ? join(latestDir(cwd), 'report.json') : null;
-      built = loopArgs({ kind, url: body.url, options: body.options, auth, maxRounds: body.maxRounds, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null, connect: state.browserPort || null, fromReport, resume: body.resume === true, deploy });
+      built = loopArgs({ kind, url: body.url, options: body.options, auth, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null, connect: state.browserPort || null, fromReport, resume: body.resume === true, deploy });
       // fromReport: 'ledger' (no crawl), the report file round 1 may start from, or null.
       meta = { agent: resolved, fromReport: fromReport === true ? 'ledger' : fromReport, deploy };
     } else {
@@ -342,13 +529,19 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (kind === 'crawl') moved = moveLatestToHistory(cwd);
     // The request as it can be made again (Continue), without its credentials (a token, cookies,
     // extra headers): those are never written to the run's record.
-    const { preface, ...asked } = body;
+    const { preface, attempt: _attempt, retryOf: _retryOf, signInAgain: _again, ...asked } = body;
     const request = { ...asked, auth: asked.auth && typeof asked.auth === 'object' ? { ...asked.auth, token: undefined, cookies: undefined } : asked.auth };
     if (request.options && typeof request.options === 'object') request.options = { ...request.options, header: undefined, 'token-header': undefined };
     const spec = {
       // A crawl's report goes to the tool's own folder for the repository, never into it.
       kind, file: process.execPath, args: [BIN, ...built.args, ...(kind === 'crawl' ? ['--out', latestDir(cwd)] : []), '--events'], env: runEnv, cwd, events: true, secrets: [...tokens(), ...credentialsIn(body)],
-      meta: { ...meta, command: commandLine({ cwd, args: built.args, token: built.token, shell: shellKind() }), url: body.url || null, movedToHistory: moved },
+      meta: {
+        ...meta, command: commandLine({ cwd, args: built.args, token: built.token, shell: shellKind() }), url: body.url || null, movedToHistory: moved,
+        // Which try this is (a run the server started again after one that could not start or failed), and of which run.
+        attempt: Number.isInteger(body.attempt) && body.attempt > 1 ? body.attempt : 1, ...(typeof body.retryOf === 'string' ? { retryOf: body.retryOf } : {}),
+        // A crawl started again, signed in, after one that could not get into the app (once).
+        ...(body.signInAgain === true ? { signInAgain: true } : {}),
+      },
       request, preface: Array.isArray(preface) ? preface : [],
     };
     // Detached and recorded on disk, so it outlives this server (run-journal.mjs).
@@ -451,7 +644,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       lastStep: STEPS.includes(readSettings(sp().settings).lastStep) ? readSettings(sp().settings).lastStep : null,
     };
   }
-  const runSummary = (r) => ({ id: r.id, kind: r.kind, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt || null, code: r.code, meta: r.meta });
+  // retry: the try again scheduled after it ({ attempt, at, reason, kind }, cancelled or firedAt once done).
+  const runSummary = (r) => ({ id: r.id, kind: r.kind, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt || null, code: r.code, meta: r.meta, retry: (r.record && r.record.retry) || null });
 
   function ledgerInfo() {
     const file = ledgerPath(state.cwd);
@@ -509,7 +703,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     }
     state.cwd = dir;
     settle();
-    // A finished run belongs to the directory it ran in.
+    // A finished run, and its try again, belong to the directory it ran in.
+    clearRetry();
     runs.forget();
     reattach();
     state.restored = false;
@@ -527,23 +722,24 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     return (Array.isArray(d.source) ? d.source : [d.source]).filter((x) => typeof x === 'string' && x);
   };
 
-  // Continue after an interruption: the attempt that was in progress is marked interrupted and its
-  // uncommitted changes under the source folders reverted (listed in the new run's pane); then the
-  // loop goes on from the ledger, with no crawl.
+  // Continuing after an interruption (by itself, continueInterrupted): the attempt that was in
+  // progress is marked interrupted and its uncommitted changes under the source folders reverted
+  // (listed in the new run's first event); then the loop goes on from the ledger, with no crawl.
   async function resume() {
     const r = runs.current;
     if (!r || r.status !== 'interrupted' || !LOOP_KINDS.has(r.kind)) throw new BadRequest('there is no interrupted fix loop to continue', 409);
     const request = (r.record && r.record.request) || {};
     const where = interruptedDetails(state.cwd, r, []);
     const discarded = discardInterrupted(state.cwd, sourceDirs());
+    // Stays the current run until the new one replaces it, so nothing reads "no run" meanwhile.
     resolveRun(r, 'continued');
-    runs.forget();
     const preface = [{ type: 'resume', discarded, n: where.n, m: where.m, round: where.round, interruptedAt: where.at, at: new Date().toISOString() }];
     try {
       return await startRun({ ...request, kind: r.kind, resume: r.kind === 'loop', signIn: request.signIn === true && !existsSync(sp().state), preface });
     } catch (e) {
-      // Not started: the interruption is offered again.
-      reattach();
+      // Not started: the interruption stays, to be continued again.
+      annotateRun(r, { resolved: null });
+      if (!runs.active && runs.current !== r) runs.adopt(r);
       throw e;
     }
   }
@@ -603,6 +799,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       return sendFile(res, file, { 'cache-control': 'no-store' });
     }
     if (m === 'GET' && path === '/api/env') {
+      // Whenever a step loads: an interrupted run goes on by itself.
+      void continueInterrupted();
       // Never waits for the assistants: the Set up dialog and the Crawl step need only the folder.
       const refresh = url.searchParams.get('refresh') === '1';
       const pending = detect(refresh);
@@ -632,7 +830,11 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       return;
     }
     if (m === 'POST' && path === '/api/sign-in/show') return send(res, 200, await showSignInTab());
-    if (m === 'POST' && path === '/api/runs/current/stop') return send(res, 200, { signal: runs.stop() });
+    if (m === 'POST' && path === '/api/runs/current/stop') {
+      // Between tries: Stop cancels the next one.
+      if (!runs.active && cancelRetry()) return send(res, 200, { signal: null, cancelled: true });
+      return send(res, 200, { signal: runs.stop() });
+    }
     if (m === 'POST' && path === '/api/runs/current/continue') {
       const body = await readBody(req).catch(() => ({}));
       runs.continue(body && typeof body.action === 'string' ? body.action : 'continue');

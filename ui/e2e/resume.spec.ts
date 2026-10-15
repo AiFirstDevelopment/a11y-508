@@ -1,12 +1,12 @@
 // The dashboard resumes where it was (docs/plans/resume.md): closing its window does not end it;
-// Quit does; reopening lands on the step the person was on, on the live run, or on an interrupted
-// fix loop with Continue and Start over; Start over asks first and is the only thing that resets.
+// Quit does; reopening lands on the step the person was on, or on the live run; an interrupted fix
+// loop or crawl goes on by itself (docs/plans/turnkey-loop.md).
 
 import { test, expect, chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { api, dashboard, dirsOf, fillRun, fixtureSite, gitRepo, open, removeTemp, run, startFromRun, stopTree, tempDir, BIN, MAIN, ROOT, TOKEN, type Dash, type Site } from './harness';
+import { REMOVED_BUTTONS, api, asksNothing, dashboard, dirsOf, fillRun, fixtureSite, gitRepo, open, removeTemp, run, startFromRun, stopTree, tempDir, BIN, MAIN, ROOT, TOKEN, type Dash, type Site } from './harness';
 
 // "13 Oct 2026, 4:52 PM" is 20:52 UTC in New York.
 test.use({ timezoneId: 'America/New_York' });
@@ -172,38 +172,32 @@ test('resume AC4 / guard 4: after a crawl, reloading and relaunching the dashboa
   }
 });
 
-test('resume AC5 / guards 5 and 6: an interrupted fix loop says where it stopped; Continue reverts only the unfinished fix and goes on with no crawl', async ({ page }) => {
+// docs/plans/turnkey-loop.md AC 4 / guard g: nothing is offered; the interruption is continued.
+test('resume AC5 / guards 5 and 6, turnkey AC4 / guard g: an interrupted fix loop goes on by itself: the Fix step says where it was and what it discarded, reverts only the unfinished fix, and continues with no crawl', async ({ page }) => {
   const site = await fixtureSite();
   const { cwd, report } = await appWithReport(site, 'a11y-508-intr-');
   await interruptedLoop(cwd, site, report);
-  // The resumed loop's first assistant call waits before it does anything, so what Continue left
-  // on disk is read before the loop's own work (which reverts stray changes after each fix).
+  // The resumed loop's first assistant call waits before it does anything, so what was discarded is
+  // read before the loop's own work (which reverts stray changes after each fix).
   const marks = tempDir('a11y-508-intr-marks-');
   const dash: Dash = await dashboard({ cwd, env: { FAKE_AGENT_SLOW_ONCE: join(marks, 'slow'), FAKE_AGENT_SLOW_MS: '20000' } });
   try {
-    // The Fix step: the interruption, where it was, Continue and Start over.
-    await open(page, dash, '/fix-loop');
-    const notice = page.getByTestId('interrupted');
-    await expect(page.getByTestId('interrupted-text')).toHaveText('The fix loop was interrupted at fix 8 of 20 on 13 Oct 2026, 4:52 PM (the dashboard was closed).');
-    await expect(notice.getByRole('button', { name: 'Continue' })).toBeVisible();
-    // Opened at its address, it lands there.
+    // Opened at its address, it lands on the Fix step, which says what happened and what it does now.
     await page.goto(`${dash.origin}/#secret=${dash.secret}`);
     await expect(page).toHaveURL(/\/fix-loop$/);
-    await expect(page.getByTestId('interrupted-text')).toBeVisible();
-    await expect(notice.getByRole('button', { name: 'Start over' })).toBeVisible();
+    await expect(page.getByTestId('fix-origin')).toHaveText('The fix loop was interrupted at fix 8 of 20 on 13 Oct 2026, 4:52 PM (the dashboard was closed); continuing from there. The unfinished changes to site/added.html, site/index.html were discarded.', { timeout: 60_000 });
+    await expect(page.getByTestId('loop-stop')).toBeVisible();
+    await expect(page.getByTestId('interrupted')).toHaveCount(0);
+    await asksNothing(page);
     for (const words of ['Loop finished', 'The fix loop stopped']) await expect(page.locator('body')).not.toContainText(words);
-    // What Continue discards: the unfinished fix's changes under site/, never the person's notes.
-    await expect(page.getByTestId('interrupted-discard').getByRole('listitem')).toHaveText(['site/added.html', 'site/index.html']);
-
-    await notice.getByRole('button', { name: 'Continue' }).click();
     await expect(page.getByTestId('agent-output')).toContainText('Discarded the unfinished change to site/index.html', { timeout: 30_000 });
     await expect(page.getByTestId('agent-output')).toContainText('Discarded the unfinished change to site/added.html');
     await expect(page.getByTestId('agent-output')).not.toContainText('NOTES.md');
-    // The unfinished edit is gone (the resumed loop's own fix may already be in the file).
+    // The unfinished edit is gone (the resumed loop's own fix may already be in the file); the person's notes stay.
     expect(readFileSync(join(cwd, 'site', 'index.html'), 'utf8')).not.toContain('half a fix');
     expect(existsSync(join(cwd, 'site', 'added.html'))).toBe(false);
     expect(readFileSync(join(cwd, 'NOTES.md'), 'utf8')).toBe('notes\nmy own edit\n');
-    // The interrupted loop's ledger and run journal moved out of the repository when the dashboard started; Continue used them.
+    // The interrupted loop's ledger and run journal moved out of the repository when the dashboard started; the continuation used them.
     expect(existsSync(join(cwd, 'a11y-508-work'))).toBe(false);
     const ledger = JSON.parse(readFileSync(join(dirsOf(cwd).work, 'ledger.json'), 'utf8'));
     expect(Object.values<any>(ledger.findings).flatMap((e) => e.attempts).find((a) => a.startedAt === '2026-10-13T20:52:00.000Z').outcome).toBe('interrupted');
@@ -221,72 +215,30 @@ test('resume AC5 / guards 5 and 6: an interrupted fix loop says where it stopped
   }
 });
 
-test('resume AC6 / guard 7: Start over names what it discards and asks first; a reload and a relaunch keep the ledger', async ({ page, browser }) => {
+// docs/plans/turnkey-loop.md AC 4: a crawl the dashboard's closing interrupted runs again by itself.
+test('resume AC6, turnkey AC4: an interrupted crawl runs again from its own request, and the Crawl step says so', async ({ page }) => {
   const site = await fixtureSite();
-  const { cwd, report } = await appWithReport(site, 'a11y-508-over-');
-  await interruptedLoop(cwd, site, report);
-  // An earlier crawl of the same URL in History.
-  mkdirSync(join(cwd, 'a11y-508-history', '2026-10-12T10-00-00'), { recursive: true });
-  writeFileSync(join(cwd, 'a11y-508-history', '2026-10-12T10-00-00', 'report.json'), JSON.stringify({ ...report, finishedAt: '2026-10-12T10:00:00.000Z' }));
-  // Seven earlier attempts on record, and the one in progress: 8.
-  const lf = join(cwd, 'a11y-508-work', 'ledger.json');
-  const l = JSON.parse(readFileSync(lf, 'utf8'));
-  const f: any = Object.values(l.findings).find((e: any) => e.attempts.length);
-  f.attempts = [...Array.from({ length: 7 }, () => ({ round: 1, files: [], note: 'x', outcome: 'no-change' })), ...f.attempts];
-  writeFileSync(lf, JSON.stringify(l));
-  const home = tempDir('a11y-508-overhome-');
-  // Where the ledger is once the dashboard has moved the old-style folders out of the repository.
-  const seeded = lf;
-  const lfNow = join(dirsOf(cwd, home).work, 'ledger.json');
-  let dash: Dash = await dashboard({ cwd, env: { A11Y_508_HOME: home } });
-  expect(existsSync(seeded)).toBe(false);
+  const cwd = tempDir('a11y-508-intr-crawl-');
+  gitRepo(cwd);
+  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
+  const id = '22222222-3333-4444-8555-777777777777';
+  const runs = join(cwd, 'a11y-508-work', 'runs');
+  mkdirSync(runs, { recursive: true });
+  const startedAt = new Date(Date.now() - 600_000).toISOString();
+  const request = { kind: 'crawl', url: site.base + 'about.html', options: { 'max-pages': '1', 'no-interact': true, 'no-zoom': true }, auth: { mode: 'env' } };
+  writeFileSync(join(runs, `${id}.run.json`), JSON.stringify({ id, kind: 'crawl', pid: await deadPid(), startedAt, cwd, url: request.url, args: [], meta: { url: request.url }, request }));
+  writeFileSync(join(runs, `${id}.events.ndjson`), [{ type: 'run', id, kind: 'crawl', at: startedAt, url: request.url }, { type: 'start', kind: 'crawl', at: startedAt }].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const dash: Dash = await dashboard({ cwd, env: { TOKEN } });
   try {
     await page.goto(`${dash.origin}/#secret=${dash.secret}`);
-    await expect(page).toHaveURL(/\/fix-loop$/);
-    // Nothing else resets: a reload, and a relaunch, keep the ledger and the interruption.
-    await page.reload();
-    await expect(page.getByTestId('interrupted-text')).toBeVisible();
-    await dash.stop();
-    dash = await dashboard({ cwd, env: { A11Y_508_HOME: home } });
-    const fresh = await browser.newContext({ timezoneId: 'America/New_York' });
-    const p2 = await fresh.newPage();
-    await p2.goto(`${dash.origin}/#secret=${dash.secret}`);
-    await expect(p2.getByTestId('interrupted-text')).toBeVisible();
-    await fresh.close();
-    expect(existsSync(lfNow)).toBe(true);
-    expect(Object.values<any>(JSON.parse(readFileSync(lfNow, 'utf8')).findings).flatMap((e) => e.attempts).length).toBe(8);
-
-    // Start over, on Set up: the confirmation names what it discards.
-    await open(page, dash, '/run');
-    await page.getByTestId('start-over-line').getByRole('button', { name: 'Start over' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Start over?' });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByTestId('start-over-text')).toHaveText('This discards the report, the ledger with 8 attempts, and the history for this URL. The dashboard starts again at Set up.');
-    // Cancel discards nothing.
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
-    expect(existsSync(lfNow)).toBe(true);
-    await page.getByTestId('start-over-line').getByRole('button', { name: 'Start over' }).click();
-    // Held while it works: the button shows a spinner and is disabled.
-    let release!: () => void;
-    const held = new Promise<void>((r) => (release = r));
-    await page.route('**/api/start-over', async (route) => {
-      if (route.request().method() === 'POST') await held;
-      await route.continue();
-    });
-    const yes = dialog.getByTestId('start-over-yes');
-    await yes.click();
-    await expect(yes).toBeDisabled();
-    await expect(yes.getByTestId('start-over-spinner')).toBeVisible();
-    release();
-    await expect(dialog).toBeHidden();
-    await page.unroute('**/api/start-over');
-    await expect.poll(() => existsSync(lfNow)).toBe(false);
-    expect(existsSync(join(dirsOf(cwd, home).report, 'report.json'))).toBe(false);
-    expect(existsSync(join(dirsOf(cwd, home).history, '2026-10-12T10-00-00'))).toBe(false);
-    expect((await api(dash, '/api/settings')).json.lastStep ?? '/run').toBe('/run');
-    // Opened again at its address: Set up.
-    await page.goto(`${dash.origin}/#secret=${dash.secret}`);
-    await expect(page).toHaveURL(/\/run$/);
+    await expect(page).toHaveURL(/\/live$/);
+    await expect(page.getByTestId('crawl-origin')).toHaveText('The crawl was interrupted (the dashboard was closed); running it again.', { timeout: 60_000 });
+    await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.id, { timeout: 30_000 }).not.toBe(id);
+    expect((await api(dash, '/api/runs/current')).json.kind).toBe('crawl');
+    await expect(page.getByRole('button', { name: REMOVED_BUTTONS })).toHaveCount(0);
+    // It finishes, and the wizard moves on to Results, as after any crawl.
+    await expect(page).toHaveURL(/\/report$/, { timeout: 120_000 });
+    expect((await api(dash, '/api/runs/current')).json.status).toBe('done');
   } finally {
     await dash.stop();
     site.close();

@@ -138,7 +138,7 @@ const forgetServerFile = () => {
   } catch {}
 };
 if (dash.runs.current && dash.runs.current.status === 'running') process.stdout.write(`a ${dash.runs.current.kind} run started earlier is still running; the dashboard shows it\n`);
-else if (dash.runs.current && dash.runs.current.status === 'interrupted') process.stdout.write(`the fix loop started earlier was interrupted; the Fix step offers to continue it\n`);
+else if (dash.runs.current && dash.runs.current.status === 'interrupted') process.stdout.write(`the fix loop started earlier was interrupted; continuing it from where it was\n`);
 
 function openBrowser(url) {
   // start's first quoted argument is a window title. Node writes an empty

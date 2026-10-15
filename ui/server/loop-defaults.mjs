@@ -12,7 +12,9 @@ import { resolveBranch } from '../../src/loop.mjs';
 export const PLACEHOLDER_TEST = /no test specified/i;
 const SOURCE_DIRS = ['src', 'app', 'lib', 'projects'];
 const SKIP = new Set(['node_modules', 'dist', 'build', '.git', 'a11y-508-work', 'a11y-508-report', 'a11y-508-history', 'coverage']);
-export const DEPLOY_TIMEOUT = 30 * 60 * 1000;
+// No limit: the dashboard's loop waits for the new build however long it takes (the CLI's own
+// default stays 30 minutes).
+export const DEPLOY_TIMEOUT = 0;
 
 const git = (cwd, args) => {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });

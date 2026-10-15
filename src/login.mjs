@@ -39,9 +39,10 @@ function waitForEnter() {
 const currentOrigin = (session) => session.evaluate('location.origin').catch(() => '');
 
 // Resolves once the tab has sat on the app's own origin, fully loaded, on a
-// non-login path, without navigating, for STABLE_SECONDS in a row.
-async function settledOnApp(session, origin, maxWait) {
-  const deadline = Date.now() + maxWait;
+// non-login path, without navigating, for STABLE_SECONDS in a row. maxWait 0: no limit.
+// tab(): the sign-in tab now; gone(): resolves true when that tab was closed (it is then opened again).
+async function settledOnApp(tab, origin, maxWait, gone) {
+  const deadline = maxWait > 0 ? Date.now() + maxWait : Infinity;
   let last = '';
   let stable = 0;
   while (Date.now() < deadline) {
@@ -51,8 +52,14 @@ async function settledOnApp(session, origin, maxWait) {
     let path = '';
     let ready = '';
     try {
-      [href, o, path, ready] = await session.evaluate('[location.href, location.origin, location.pathname, document.readyState]');
-    } catch {}
+      [href, o, path, ready] = await tab().evaluate('[location.href, location.origin, location.pathname, document.readyState]');
+    } catch {
+      if (gone && (await gone())) {
+        stable = 0;
+        last = '';
+        continue;
+      }
+    }
     stable = o === origin && ready === 'complete' && !LOGIN_PATH.test(path) && href === last ? stable + 1 : 0;
     last = href;
     if (stable >= STABLE_SECONDS) return;
@@ -60,30 +67,54 @@ async function settledOnApp(session, origin, maxWait) {
   throw new Error(`gave up after ${Math.round(maxWait / 60000)} minutes waiting for sign-in to finish`);
 }
 
+// maxWait: how long to wait for the sign-in (10 minutes in a terminal); 0 waits as long as it takes
+// (the dashboard's: the person signs in when they can), and a sign-in tab they close is opened again.
 export async function interactiveLogin({ browser, startUrl, origins, timeout, log, maxWait = 10 * 60 * 1000, keepOpen = false }) {
-  const session = await browser.newPage();
-  await session.send('Page.enable');
-  await session.send('Network.enable').catch(() => {});
-  const { frameTree } = await session.send('Page.getFrameTree');
-  const mainFrameId = frameTree.frame.id;
   const visited = new Set();
-  session.on('Page.frameNavigated', ({ frame }) => {
-    if (frame.id !== mainFrameId) return;
-    try {
-      visited.add(new URL(frame.url).origin);
-    } catch {}
-  });
-  await browser.cdp.send('Target.activateTarget', { targetId: session.targetId }).catch(() => {});
-  await session.send('Page.navigate', { url: startUrl });
+  // Opens the sign-in tab on the start page and says where it is (its browser's DevTools port and its
+  // target), so the dashboard can bring it to the front.
+  const openTab = async (reopened = false) => {
+    const tab = await browser.newPage();
+    await tab.send('Page.enable');
+    await tab.send('Network.enable').catch(() => {});
+    const { frameTree } = await tab.send('Page.getFrameTree');
+    const mainFrameId = frameTree.frame.id;
+    tab.on('Page.frameNavigated', ({ frame }) => {
+      if (frame.id !== mainFrameId) return;
+      try {
+        visited.add(new URL(frame.url).origin);
+      } catch {}
+    });
+    await browser.cdp.send('Target.activateTarget', { targetId: tab.targetId }).catch(() => {});
+    await tab.send('Page.navigate', { url: startUrl });
+    const port = browser.debugPort ? browser.debugPort() : null;
+    if (log.event) log.event('login-waiting', { url: startUrl, stableSeconds: STABLE_SECONDS, ...(port ? { port, targetId: tab.targetId } : {}), ...(reopened ? { reopened: true } : {}) });
+    return tab;
+  };
+  let session = await openTab();
   const startOrigin = new URL(startUrl).origin;
   const tty = !!process.stdin.isTTY;
   log.warn(`A browser window is open on ${startUrl}. Sign in there. The crawl continues by itself once the app has loaded and stayed put for ${STABLE_SECONDS} seconds${tty ? ', or press Enter here' : ''}.`);
-  // Where the sign-in tab is (its browser's DevTools port and its target), so the dashboard can bring it to the front.
-  const port = browser.debugPort ? browser.debugPort() : null;
-  if (log.event) log.event('login-waiting', { url: startUrl, stableSeconds: STABLE_SECONDS, ...(port ? { port, targetId: session.targetId } : {}) });
+  // With no limit, a closed sign-in tab is opened again (said once).
+  let saidReopened = false;
+  const gone = maxWait > 0 ? null : async () => {
+    let open = true;
+    try {
+      const { targetInfos } = await browser.cdp.send('Target.getTargets');
+      open = targetInfos.some((t) => t.targetId === session.targetId);
+    } catch {
+      return false;
+    }
+    if (open) return false;
+    session.detachAll();
+    session = await openTab(true);
+    if (!saidReopened) log.info('The sign-in tab was closed; opened it again.');
+    saidReopened = true;
+    return true;
+  };
   const enter = tty ? waitForEnter() : null;
   try {
-    await Promise.race([settledOnApp(session, startOrigin, maxWait), ...(enter ? [enter.promise] : [])]);
+    await Promise.race([settledOnApp(() => session, startOrigin, maxWait, gone), ...(enter ? [enter.promise] : [])]);
   } finally {
     if (enter) enter.cancel();
   }

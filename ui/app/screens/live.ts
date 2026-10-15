@@ -1,12 +1,10 @@
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
-import { Router, RouterLink } from '@angular/router';
-import { FormStore } from '../core/form.store';
+import { RouterLink } from '@angular/router';
 import { RunStore } from '../core/run.store';
 import { phaseText, resultWord, routeParts } from '../core/format';
 import { detailsOpen, setDetailsOpen } from '../core/details';
 import { RunView } from '../shared/run-view';
 import { SignInWait } from '../shared/sign-in-wait';
-import { SignInFlow } from '../core/sign-in';
 import { EnvStore } from '../core/env.store';
 import { Starter } from '../core/starter';
 import { SIGN_IN_HEADLINE, plainReason, signInFailed } from '../core/outcome';
@@ -21,6 +19,7 @@ import { SIGN_IN_HEADLINE, plainReason, signInFailed } from '../core/outcome';
     } @else {
       <!-- What it is doing, in one line; counts, not details. -->
       <p class="big-status" role="status" data-testid="crawl-status">{{ bigStatus() }}</p>
+      @if (originLine(); as o) { <p class="hint" data-testid="crawl-origin">{{ o }}</p> }
       @if (store.loginWaiting() && store.active()) {
         <app-sign-in-wait testId="crawl-login-waiting" />
       }
@@ -39,32 +38,17 @@ import { SIGN_IN_HEADLINE, plainReason, signInFailed } from '../core/outcome';
       @if (signInError()) {
         <div class="notice error" role="alert">{{ signInError() }}</div>
       }
-      <!-- One big button: Stop while it runs; afterwards the next step. -->
+      <!-- One big button: Stop while it runs; afterwards the step forward. -->
       <div class="actions">
         @if (store.active()) {
           <button type="button" class="big" (click)="stop()">Stop</button>
         } @else if (store.done()) {
           @switch (next()) {
-            @case ('results') { <a class="button" [class.big]="!store.cannotGetIn()" [class.secondary]="store.cannotGetIn()" routerLink="/report" data-testid="see-results">See the results</a> }
-            @case ('signin') { <button type="button" class="big" (click)="signIn()" data-testid="sign-in-continue">Sign in and continue</button> }
-            @case ('again') { <button type="button" class="big" (click)="again()" data-testid="crawl-try-again">{{ store.done()?.['outcome'] === 'stopped' ? 'Crawl again' : 'Try again' }}</button> }
+            @case ('results') { <a class="button big" routerLink="/report" data-testid="see-results">See the results</a> }
+            @case ('again') { <button type="button" class="big" (click)="again()" data-testid="crawl-run-again">Run again</button> }
           }
         }
       </div>
-      @if (store.cannotGetIn()) {
-        <div class="notice error" role="alert" data-notice="cannot-get-in">
-          <p>The crawler could not get into the app.</p>
-          @if (store.bouncedToSignIn()) {
-            <p>The app sent the crawler to a sign-in page. Sign in, and the crawl runs again in the signed-in window.</p>
-          }
-          <div class="actions">
-            @if (store.bouncedToSignIn()) {
-              <button type="button" (click)="signIn()">Sign in</button>
-            }
-            <button type="button" [class.secondary]="store.bouncedToSignIn()" (click)="troubleshoot()">Troubleshoot with these settings</button>
-          </div>
-        </div>
-      }
       <details class="details" data-testid="details" [open]="showDetails()" (toggle)="toggled($event)">
         <summary>Details<span class="visually-hidden"> of the crawl</span></summary>
         <p class="status" role="status" data-testid="run-status">{{ status() }}</p>
@@ -78,9 +62,6 @@ import { SIGN_IN_HEADLINE, plainReason, signInFailed } from '../core/outcome';
 })
 export class LiveScreen implements OnDestroy {
   readonly store = inject(RunStore);
-  private form = inject(FormStore);
-  private router = inject(Router);
-  private flow = inject(SignInFlow);
   private starter = inject(Starter);
   readonly env = inject(EnvStore);
   readonly signInError = signal('');
@@ -126,6 +107,7 @@ export class LiveScreen implements OnDestroy {
     const d = st.done();
     if (d) {
       if (d['outcome'] === 'stopped') return 'Stopped';
+      if (st.cannotGetIn() && !st.pages().some((p) => !p.error && !p.skipped)) return st.bouncedToSignIn() ? 'The crawler could not get into the app: it was sent to a sign-in page.' : 'The crawler could not get into the app.';
       const s = st.summary();
       if (s) {
         const sum = s['summary'] || {};
@@ -137,6 +119,7 @@ export class LiveScreen implements OnDestroy {
     }
     if (st.stopping()) return 'Stopping…';
     const since = st.loginWaitingSince();
+    if (st.loginWaiting() && since && st.origin()?.type === 'sign-in-again') return 'Your sign-in expired: sign in in the tab that opened, and the crawl runs again.';
     if (st.loginWaiting() && since) {
       const s = Math.max(0, Math.round((this.now() - since) / 1000));
       return this.env.env()?.signIn === 'tab' ? `Sign in in the tab that just opened · ${s} s` : `Waiting for you to sign in in the browser window · ${s} s`;
@@ -164,15 +147,22 @@ export class LiveScreen implements OnDestroy {
   readonly crawled = computed(() => !this.store.done() || this.store.pages().length > 0 || this.store.progress().discovered > 0);
   // The errors the CLI said, without the dashboard's own "The run failed" wrapper.
   private readonly errors = computed(() => this.store.notices().filter((n) => n.level === 'error' && !/^The run failed( \(exit code|: )/.test(n.message)).map((n) => n.message));
-  // The next step once the crawl has ended: its results, a sign-in, or another go (the cannot-get-in
-  // notice has its own buttons).
-  readonly next = computed<'results' | 'signin' | 'again' | null>(() => {
+  // The step forward once the crawl has ended: its results, or another crawl. (A crawl sent to a
+  // sign-in page signs in and runs again by itself; one interrupted runs again by itself.)
+  readonly next = computed<'results' | 'again' | null>(() => {
     const d = this.store.done();
-    if (!d) return null;
-    if (this.store.summary()) return 'results';
-    if (this.store.cannotGetIn()) return null;
-    if (signInFailed([...this.errors(), d['reason'] as string])) return 'signin';
+    if (!d || d['outcome'] === 'interrupted') return null;
+    if (this.store.summary() && !this.store.cannotGetIn()) return 'results';
     return 'again';
+  });
+  // How this crawl came to be when the tool started it by itself.
+  readonly originLine = computed(() => {
+    const o = this.store.origin();
+    if (this.store.done()?.['outcome'] === 'interrupted') return 'The crawl was interrupted (the dashboard was closed); running it again.';
+    if (!o) return '';
+    if (o.type === 'rerun') return 'The crawl was interrupted (the dashboard was closed); running it again.';
+    if (o.type === 'sign-in-again' && this.store.active() && !this.store.loginWaiting()) return 'Signed in again; crawling.';
+    return '';
   });
   async again(): Promise<void> {
     this.signInError.set('');
@@ -197,21 +187,5 @@ export class LiveScreen implements OnDestroy {
 
   async stop(): Promise<void> {
     await this.store.stop();
-  }
-
-  // A new run that signs in and crawls in the same window; this screen follows it.
-  async signIn(): Promise<void> {
-    this.signInError.set('');
-    try {
-      await this.flow.start();
-    } catch (e: any) {
-      this.signInError.set(e.message);
-    }
-  }
-
-  async troubleshoot(): Promise<void> {
-    await this.store.start(this.form.body('troubleshoot'));
-    this.form.clearToken();
-    await this.router.navigateByUrl('/troubleshoot');
   }
 }

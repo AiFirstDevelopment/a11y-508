@@ -107,7 +107,7 @@ Fix loop
                 Reads a11y-508.config.json (--config) in the current directory; state
                 lives in the ledger in the tool's own folder for the repository
                 (~/.a11y-508/repos/<name>-<hash>/work), so a stopped loop resumes where it was.
-    --max-rounds <n>   Rounds to run before stopping (default 20)
+    --max-rounds <n>   Rounds to run before stopping (default 20; 0 runs until nothing is left)
     --agent <spec>     claude | gemini | codex | a command with {promptFile} (overrides config)
     --dry-run          Crawl and update the ledger only; no agent, no commits
     --sign-in-first    Round 1 crawls in a visible window after you sign in (--login --stay),
@@ -268,7 +268,11 @@ export function splitLoopArgs(argv) {
       return v;
     };
     if (key === '--config') loop.config = val();
-    else if (key === '--max-rounds') loop.maxRounds = Math.max(1, parseInt(val(), 10) || 0);
+    // 0: no cap (the dashboard's); anything else not a number is 1, as before.
+    else if (key === '--max-rounds') {
+      const n = parseInt(val(), 10);
+      loop.maxRounds = Number.isInteger(n) && n >= 0 ? n : 1;
+    }
     else if (key === '--agent') loop.agent = val();
     else if (key === '--dry-run') loop.dryRun = true;
     else if (key === '--sign-in-first') loop.signInFirst = true;
@@ -452,7 +456,8 @@ async function run(argv) {
     process.once('SIGINT', onLoginSignal);
     process.once('SIGTERM', onLoginSignal);
     try {
-      opts.state = await interactiveLogin({ browser: headed, startUrl: startUrl.href, origins: [...origins], timeout: opts.timeout, log, keepOpen: opts.stay });
+      // With --events (the dashboard) the sign-in waits as long as it takes; in a terminal, 10 minutes.
+      opts.state = await interactiveLogin({ browser: headed, startUrl: startUrl.href, origins: [...origins], timeout: opts.timeout, log, keepOpen: opts.stay, ...(opts.events ? { maxWait: 0 } : {}) });
     } catch (e) {
       // The sign-in's browser went away under it (closed, killed or crashed): said plainly, and recorded.
       const d = headed.death ? headed.death() : null;

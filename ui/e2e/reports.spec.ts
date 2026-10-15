@@ -3,7 +3,7 @@
 import { test, expect } from '@playwright/test';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { moreOptions, dryRun, dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, nav, readReport, TOKEN, type Dash, type Site } from './harness';
+import { api, moreOptions, dryRun, dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, nav, readReport, TOKEN, type Dash, type Site } from './harness';
 
 let site: Site;
 let dash: Dash;
@@ -120,18 +120,14 @@ test('AC 15: History lists both crawls and the loop rounds; each opens on the Re
     }
   }
 
-  // Clear history, after a confirmation that says how many: the earlier reports go, the latest stays.
+  // Nothing on History deletes a report (docs/plans/turnkey-loop.md AC 7); the server's endpoint stays.
   await nav(page, 'History');
-  let asked = '';
-  page.once('dialog', (d) => {
-    asked = d.message();
-    void d.accept();
-  });
-  await page.getByRole('button', { name: 'Clear history' }).click();
-  await expect(page.getByTestId('history-status')).toHaveText('Removed 1 earlier report.');
-  expect(asked).toContain('Remove 1 earlier report from History?');
-  await expect(rows.and(page.locator('[data-source="history"]'))).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Clear history' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Delete\b/ })).toHaveCount(0);
+  const removed = await api(dash, '/api/reports/history', { method: 'DELETE' });
+  expect(removed.json.removed).toBe(1);
+  await page.reload();
+  await expect(rows.and(page.locator('[data-source="history"]'))).toHaveCount(0);
   expect(readdirSync(dash.dirs().history)).toEqual([]);
   expect(existsSync(join(dash.dirs().report, 'report.json'))).toBe(true);
 });

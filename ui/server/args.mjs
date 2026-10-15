@@ -93,7 +93,9 @@ export function crawlArgs({ kind = 'crawl', url, options, auth }) {
   return { args, token: a.token };
 }
 
-export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = false, config = null, stateFile = null, connect = null, fromReport = null, resume = false, deploy = null }) {
+// The fix loop from the dashboard has no round cap (--max-rounds 0): it ends when nothing is left to
+// fix, or when it is stopped. maxRounds is no longer read.
+export function loopArgs({ kind, url, options, auth, agent, signIn = false, config = null, stateFile = null, connect = null, fromReport = null, resume = false, deploy = null }) {
   const a = authArgs(auth);
   const args = ['loop'];
   if (url) args.push(validateUrl(url));
@@ -110,11 +112,7 @@ export function loopArgs({ kind, url, options, auth, maxRounds, agent, signIn = 
   if (deploy === 'wait' && kind === 'loop') args.push('--wait');
   // Continue after an interruption: the last round goes on from the ledger, with no crawl.
   if (resume && kind === 'loop') args.push('--resume');
-  if (maxRounds) {
-    const n = parseInt(maxRounds, 10);
-    if (!(n >= 1)) throw new BadRequest('maxRounds must be a positive number');
-    args.push('--max-rounds', String(n));
-  }
+  if (kind === 'loop') args.push('--max-rounds', '0');
   if (agent) args.push('--agent', agent);
   // The dashboard's config (kept out of the repository), when it is not the default file.
   if (config) args.push('--config', config);

@@ -10,7 +10,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { uptime } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -342,7 +342,19 @@ export function annotateRun(run, patch) {
   } catch {}
 }
 
-// Marks a run's record as dealt with (Continue, Start over), so a restart does not offer it again.
+// Removes a run's record, events and control file (a superseded attempt of a loop that could not
+// start). Only ids the journal writes; only files in the runs folder.
+export function removeRun(cwd, id) {
+  if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) return;
+  const f = filesOf(cwd, id);
+  for (const file of [f.run, f.events, f.control]) {
+    try {
+      rmSync(file, { force: true });
+    } catch {}
+  }
+}
+
+// Marks a run's record as dealt with (continued, started over), so a restart does not take it up again.
 export function resolveRun(run, how) {
   try {
     const r = readJson(run.files.run);

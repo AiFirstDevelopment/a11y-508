@@ -7,11 +7,10 @@ import { RunStore } from '../core/run.store';
 import { ageText } from '../core/format';
 import { SignInFlow } from '../core/sign-in';
 import { SetupForm } from '../shared/setup-form';
-import { StartOver } from '../shared/start-over';
 
 @Component({
   selector: 'app-run-screen',
-  imports: [RouterLink, SetupForm, StartOver],
+  imports: [RouterLink, SetupForm],
   template: `
     <h1>Set up</h1>
     @if (noBrowser()) {
@@ -23,10 +22,6 @@ import { StartOver } from '../shared/start-over';
     }
     <!-- Set up: the app's folder, its URL, and Start (shared with the setup dialog). -->
     <app-setup-form [extraOk]="browserOk()" />
-    <!-- The only way back to the beginning: reloading or relaunching opens where the person was. -->
-    @if (hasAnalysis()) {
-      <p class="hint" data-testid="start-over-line">The results, the fixes and the history so far are kept. To begin again from nothing: <app-start-over /></p>
-    }
     @if (run.active()) {
       <p class="hint">A run is active. <a routerLink="/live">Watch it</a>.</p>
     }
@@ -147,10 +142,6 @@ export class RunScreen implements OnInit {
   readonly env = inject(EnvStore);
   readonly run = inject(RunStore);
   private api = inject(Api);
-  readonly hasAnalysis = computed(() => {
-    const e = this.env.env();
-    return !!e && (!!e.report?.exists || !!e.cwdFacts?.ledger || (e.pastRuns || 0) > 0);
-  });
   private router = inject(Router);
   readonly flags = ADVANCED;
   readonly adv = computed(() => this.form.advanced() as Record<string, any>);

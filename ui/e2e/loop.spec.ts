@@ -75,7 +75,10 @@ test('AC 11: the settings at /fix-loop/settings save a config a11y-508 loop acce
     const { writtenBy, ...written } = JSON.parse(readFileSync(cfgFile, 'utf8'));
     expect(writtenBy).toBe('a11y-508-dashboard');
     // What was set, with the inferred branch, and the deployment watched silently (it happens outside this tool).
-    expect(written).toEqual({ url: 'http://127.0.0.1:9/', args: ['--max-pages', '1'], source: ['site'], check: 'npm test', branch: 'a11y-508', maxAttempts: 2, push: false, deployed: 'bundle-change', deployTimeout: 1800000 });
+    // deployTimeout 0: no limit (docs/plans/turnkey-loop.md AC 2).
+    expect(written).toEqual({ url: 'http://127.0.0.1:9/', args: ['--max-pages', '1'], source: ['site'], check: 'npm test', branch: 'a11y-508', maxAttempts: 2, push: false, deployed: 'bundle-change', deployTimeout: 0 });
+    // No round limit on the screen either (the loop from the dashboard has none).
+    await expect(page.getByLabel('Rounds per run')).toHaveCount(0);
     // No deploy settings on the screen at all.
     await expect(page.getByLabel('How the loop knows the new build is live')).toHaveCount(0);
     await expect(page.getByLabel('Deploy command')).toHaveCount(0);
@@ -90,7 +93,7 @@ test('AC 11: the settings at /fix-loop/settings save a config a11y-508 loop acce
   }
 });
 
-test('AC 14: dry run fills the ledger; Start runs a round that commits, with live progress, fix n of m, and Deployed — continue', async ({ page }) => {
+test('AC 14: dry run fills the ledger; Start runs a round that commits, with live progress, fix n of m, and goes on to the next round by itself', async ({ page }) => {
   const cwd = tempDir('a11y-508-loop-');
   const g = gitRepo(cwd);
   const { base, server } = await repoSite(cwd);
@@ -148,17 +151,12 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     await expect.poll(secs, { timeout: 10_000 }).toBeGreaterThan(first);
     await expect(page.getByTestId('agent-output')).toContainText('fake agent: reading the prompt');
     await expect(page.getByTestId('agent-output')).toHaveAttribute('role', 'log');
-    const cont = page.getByRole('button', { name: 'Deployed — continue' });
-    await expect(cont).toBeVisible({ timeout: 200_000 });
+    // "deployed": "enter" asks for an Enter in a terminal; from the dashboard nobody is asked: the
+    // loop goes on to round 3 by itself (docs/plans/turnkey-loop.md AC 1), and on to its end.
+    await expect(page.getByTestId('loop-step')).toHaveText(/^Round 3/, { timeout: 200_000 });
     expect(g('log', '--format=%s', `${head}..HEAD`)).toMatch(/^a11y-508: /m);
-    await cont.click();
-    await expect(page.getByTestId('loop-step')).toHaveText(/^Round 3/, { timeout: 60_000 });
-    // Round 3 may commit too and wait again; continue until the loop ends.
-    const step = page.getByTestId('loop-step');
-    await expect(async () => {
-      if (await cont.isVisible()) await cont.click();
-      await expect(step).toHaveText(/Loop finished/, { timeout: 2_000 });
-    }).toPass({ timeout: 200_000 });
+    await expect(page.getByTestId('loop-step')).toHaveText(/Loop finished/, { timeout: 200_000 });
+    await expect(page.getByRole('button', { name: 'Deployed — continue' })).toHaveCount(0);
 
     const samples: any[] = await page.evaluate(() => (window as any).__loop);
     // The round's crawl moved page by page, as a plain crawl does.
@@ -169,14 +167,12 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     // During the fixes a bar read "fix n of m".
     const fixes = [...new Set(samples.map((s) => s.fix).filter(Boolean))];
     expect(fixes.some((f) => /^fix [1-9]\d* of [1-9]\d*$/.test(f))).toBe(true);
-    expect(samples.some((s) => /^Round 2: waiting for deploy$/.test(s.step))).toBe(true);
     // The status line explains itself at each stage. (The dry run was round 1; this run starts at 2.)
     const said = (re: RegExp) => expect(samples.some((s) => re.test(s.status)), `${re}: ${[...new Set(samples.map((s) => s.status))].join(' | ')}`).toBe(true);
     said(/^Round 2: re-checking the site first \(\d+ of \d+ pages\) so fixes can be verified against it$/);
     said(/^Round 2: asking the assistant about \d+ review items · \d+ s$/);
     said(/^Round 2: fixing \d+ of \d+ · \d+\.[A-Z] .+ · \d+ s$/);
     said(/^Checking fix \d+ with .+ -e "setTimeout\(Boolean,1500\)" · \d+ s( \(the last check took \d+ s\))?$/);
-    said(/^Committed \d+ fix(es)? · waiting for the new build on 127\.0\.0\.1:\d+…$/);
     said(/^Round 3: re-checking the site \(\d+ of \d+ pages\)$/);
     // The triage call prints nothing until it ends: the pane, its heading line and its timer are there from its start.
     expect(samples.some((s) => /^Round 2: asking the assistant about/.test(s.status) && s.heading === s.status && /— Review items: asking about \d+ review items? —$/.test(s.output)), 'the pane runs before the first output').toBe(true);
@@ -208,9 +204,10 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     const local = await page.evaluate((ats: string[]) => ats.map((a) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(a))), ledger.rounds.map((r: any) => r.at));
     expect(rows.map((r) => r[3])).toEqual(local);
 
-    // The loop has ended: the Fix step's actions are See what changed and Run again.
+    // The loop has ended with nothing it can still fix: Run again is the one button; See what changed is a link.
     await expect(page.getByRole('link', { name: 'See what changed' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Run again' })).toBeEnabled();
+    await expect(page.getByTestId('fix-status')).toHaveText(/^Done: /);
 
     // History: one timeline; the last round's row matches `a11y-508 status` (found and fixed from its
     // round line, remaining from the open count), and the summary line above it.
@@ -227,12 +224,9 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     await expect(lastRow.getByTestId('remaining').locator('span').first()).toHaveText(String(counts.open || 0));
     await expect(page.getByTestId('history').locator('tr[data-source="round"]')).toHaveCount(ledger.rounds.length);
     await expect(page.getByTestId('loop-summary')).toHaveText(`Fix loop: ${ledger.rounds.length} rounds · ${(counts.verified || 0) + (counts.open || 0) + (counts.pending || 0)} violations · ${countsLine(counts)}`);
-    // Clear fix-loop history removes the rounds and the ledger, after a confirmation.
-    page.once('dialog', (d) => void d.accept());
-    await page.getByRole('button', { name: 'Clear fix-loop history' }).click();
-    await expect(page.getByTestId('history-status')).toHaveText(new RegExp(`^Removed ${ledger.rounds.length} fix-loop rounds and the ledger\\.$`));
-    await expect(page.getByTestId('history').locator('tr[data-source="round"]')).toHaveCount(0);
-    expect(existsSync(join(dirsOf(cwd).work, 'ledger.json'))).toBe(false);
+    // Nothing on History deletes the loop's rounds (docs/plans/turnkey-loop.md AC 7).
+    await expect(page.getByRole('button', { name: 'Clear fix-loop history' })).toHaveCount(0);
+    expect(existsSync(join(dirsOf(cwd).work, 'ledger.json'))).toBe(true);
 
     // Run again: a new crawl from the same set up; the wizard is back on Crawl, and Results, Fix
     // and History are not available until it finishes.
@@ -264,7 +258,6 @@ test('from the report: after a wizard crawl, Fix the violations starts with tria
   g('commit', '-q', '-m', 'fixture site');
   const dash: Dash = await dashboard({ cwd });
   try {
-    await api(dash, '/api/settings', { method: 'PUT', body: { rounds: 1 } });
     await open(page, dash, '/run');
     await fillRun(page, { url: base, token: TOKEN, maxPages: 3, advanced: { 'no-zoom': true } });
     await startFromRun(page);
@@ -311,7 +304,6 @@ test('tool-files AC5/guard 5: while a loop runs with grouped findings, the count
   g('commit', '-q', '-m', 'five images');
   const dash: Dash = await dashboard({ cwd, env: { FAKE_AGENT_DELAY_MS: '1500' } });
   try {
-    await api(dash, '/api/settings', { method: 'PUT', body: { rounds: 1 } });
     await open(page, dash, '/fix-loop');
     await setToken(page);
     await page.getByTestId('loop-start').click();

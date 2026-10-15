@@ -131,7 +131,7 @@ test('fix-click AC8–9: a reload 1–3 s after the click shows the live run, ne
   }
 });
 
-test('fix-click AC9 / guard 9a: a loop that could not start still says so after a reload and after a relaunch, with its remedy and Try again', async ({ page }) => {
+test('fix-click AC9 / guard 9a: a loop that could not start still says so after a reload and after a relaunch, with its remedy and that it starts by itself', async ({ page }) => {
   const site = await fixtureSite();
   const { cwd } = await appWithReport(site, 'a11y-508-click-pre-');
   let dash: Dash = await dashboard({ cwd, keepCwd: true });
@@ -149,7 +149,10 @@ test('fix-click AC9 / guard 9a: a loop that could not start still says so after 
       await expect(heading).toBeVisible({ timeout: 30_000 });
       await expect(page.getByTestId('problem-message')).toHaveText('uncommitted changes under site: site/index.html');
       await expect(page.getByTestId('problem-remedy')).toHaveText(/^Commit or stash them/);
-      await expect(page.getByTestId('try-again')).toBeEnabled();
+      // docs/plans/turnkey-loop.md AC 5: no Try again; it starts by itself, and Stop is the one button.
+      await expect(page.getByTestId('problem-next')).toHaveText('The loop starts by itself once that is done.');
+      await expect(page.getByTestId('loop-stop')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
       await expect(page.getByTestId('loop-start')).toHaveCount(0);
     };
     // A reload: the outcome, as it was.
@@ -174,7 +177,7 @@ test('fix-click AC9 / guard 9a: a loop that could not start still says so after 
   }
 });
 
-test('fix-click AC9 / guard 9b: after a finished loop, a reload with start=1 shows "Loop finished" with See what changed and starts nothing', async ({ page }) => {
+test('fix-click AC9 / guard 9b: after a stopped loop, a reload with start=1 shows "Loop finished" with Fix the violations and starts nothing', async ({ page }) => {
   const site = await fixtureSite();
   const { cwd } = await appWithReport(site, 'a11y-508-click-done-');
   const marks = tempDir('a11y-508-click-marks-');
@@ -188,12 +191,11 @@ test('fix-click AC9 / guard 9b: after a finished loop, a reload with start=1 sho
     const id = await runId(dash);
     await restore(page, dash);
     await expect(page.getByTestId('loop-step')).toHaveText('Loop finished (stopped).', { timeout: 30_000 });
-    // The headline says what happened in a person's words, with Continue as the one next step.
+    // The headline says what happened in a person's words, with Fix the violations as the one step forward.
     await expect(page.getByTestId('fix-status')).toHaveText('Stopped. Nothing was changed.');
-    await expect(page.getByTestId('loop-continue-next')).toHaveText('Continue');
+    await expect(page.getByTestId('loop-start')).toHaveText('Fix the violations');
     await expect(page.locator('main button.big:visible, main a.button.big:visible')).toHaveCount(1);
-    await expect(page.getByTestId('see-changes')).toBeVisible();
-    await expect(page.getByTestId('loop-start')).toHaveCount(0);
+    await expect(page.getByTestId('loop-continue-next')).toHaveCount(0);
     await sleep(3000);
     expect(await runId(dash)).toBe(id);
     expect((await api(dash, '/api/runs/current')).json.status).toBe('done');

@@ -88,11 +88,11 @@ test('run-simple (b): Start opens a window to sign in in and crawls there (--log
     expect(report.pages[0].title).toBe('Application - a11y-508 test site');
     expect(existsSync(sessionFile), 'the session file, saved for the fix loop').toBe(true);
     expect(existsSync(join(dash.cwd, 'a11y-508-state.json')), 'nothing in the working directory').toBe(false);
-    // Back on Set up: the analysis for this URL is done, so it reads Continue; Crawl again signs in afresh.
+    // Back on Set up: Start is the one button, also once this URL has been crawled (docs/plans/turnkey-loop.md AC 7).
     await nav(page, 'Run');
-    await expect(page.getByTestId('setup-start').first()).toHaveText(/^Continue/);
+    await expect(page.getByTestId('setup-start').first()).toHaveText('Start');
     await expect(page.getByTestId('setup-start').first()).toBeEnabled();
-    await expect(page.getByTestId('crawl-again').first()).toBeEnabled();
+    await expect(page.getByTestId('crawl-again')).toHaveCount(0);
     await expect(page.getByTestId('session-line')).toHaveCount(0);
   } finally {
     await dash.stop();
@@ -156,7 +156,7 @@ test('run-simple (c): with a saved session, Start still signs in afresh; the sav
   }
 });
 
-test('run-simple (d): a run bounced to a sign-in page on another origin offers Sign in on the Live screen, which signs in and crawls', async ({ page }) => {
+test('run-simple (d), turnkey AC3: a run bounced to a sign-in page on another origin signs in and crawls again by itself, on the Live screen', async ({ page }) => {
   const listen = async (s: Server) => {
     await new Promise<void>((ok) => s.listen(0, '127.0.0.1', ok));
     return `http://127.0.0.1:${(s.address() as any).port}`;
@@ -180,13 +180,13 @@ test('run-simple (d): a run bounced to a sign-in page on another origin offers S
     await page.getByLabel('No sign-in').check();
     await page.getByLabel('Maximum pages').fill('1');
     await startFromRun(page);
-    await waitFinished(page);
-    const notice = page.locator('[data-notice="cannot-get-in"]');
-    await expect(notice).toContainText('The crawler could not get into the app.');
-    await expect(notice).toContainText('sent the crawler to a sign-in page');
-    await expect(notice.getByRole('button', { name: 'Troubleshoot with these settings' })).toBeVisible();
-    await notice.getByRole('button', { name: 'Sign in', exact: true }).click();
-    // A new crawl that signs in and stays in the window; Live follows it.
+    const first = (await api(dash, '/api/runs/current')).json.id;
+    // No notice and no buttons: a new crawl that signs in and stays in the window; Live follows it.
+    await expect(page.getByTestId('crawl-status')).toHaveText('Your sign-in expired: sign in in the tab that opened, and the crawl runs again.', { timeout: 120_000 });
+    await expect(page.locator('[data-notice="cannot-get-in"]')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Troubleshoot with these settings' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0);
+    expect((await api(dash, '/api/runs/current')).json.id).not.toBe(first);
     await expect(page).toHaveURL(/\/live$/);
     await expect(page.getByTestId('run-status')).toHaveText(/^Sign in on the tab that opened in Chrome/, { timeout: 60_000 });
     // The wait says where, in one sentence, with a button that brings the sign-in tab to the front.

@@ -2,7 +2,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { Api } from './api';
 import { readSse } from './sse';
 import { CANNOT_GET_IN, Discovery, OFF_ORIGIN, PhaseEvent, Progress, cumulative, spoken } from './format';
-import { ByImpact, Remedy, RunEvent } from './types';
+import { ByImpact, Remedy, RetryInfo, RunEvent, RunInfo } from './types';
 import type { ChangeRow } from '../shared/changes-table';
 
 export interface PageRow {
@@ -68,7 +68,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
   'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit', 'changes', 'attempt', 'bisect',
-  'resume', 'deployment',
+  'resume', 'deployment', 'retry', 'rerun', 'sign-in-again',
 ]);
 
 // The current run, built from its event stream.
@@ -129,9 +129,23 @@ export class RunStore {
   readonly done = signal<RunEvent | null>(null);
   readonly stopping = signal(false);
   readonly connected = signal(false);
-  private continued = 0;
+  // How this run came to be when the tool started it by itself: a try again (retry), an interrupted
+  // fix loop continued (resume), an interrupted crawl run again (rerun), a crawl signed in again.
+  readonly origin = signal<RunEvent | null>(null);
+  // The sign-in this round opens because the crawl could not get in (step sign-in), and whether the
+  // sign-in tab was closed and opened again.
+  readonly signInAgain = signal(false);
+  readonly loginReopened = signal(false);
+  // The server's word on the current run once it has ended: the try again it scheduled, if any.
+  readonly retry = signal<RetryInfo | null>(null);
+  private watching: ReturnType<typeof setTimeout> | null = null;
 
   readonly active = computed(() => !!this.run() && !this.done());
+  // A try again is coming (not cancelled, not started yet): the step counts down, and Stop cancels it.
+  readonly retryPending = computed(() => {
+    const r = this.retry();
+    return !!r && !r.cancelled && !r.firedAt && !!this.done();
+  });
   readonly kind = computed(() => (this.run()?.['kind'] as string) || null);
   readonly totals = computed(() => cumulative(this.pages()));
   readonly remedies = computed(() => (this.done()?.['remedies'] as Remedy[]) || []);
@@ -182,6 +196,10 @@ export class RunStore {
     this.loginWaitingHost.set(null);
     this.done.set(null);
     this.stopping.set(false);
+    this.origin.set(null);
+    this.signInAgain.set(false);
+    this.loginReopened.set(false);
+    this.retry.set(null);
   }
 
   // Appends to the pane: text as it is, or a line of its own (started on a new line).
@@ -249,6 +267,7 @@ export class RunStore {
         this.inFlight.update((m) => ({ ...m, [ev['url']]: { url: ev['url'], phase: ev['phase'], detail: ev['detail'] ?? null, elapsedMs: ev['elapsedMs'] ?? 0, receivedAt: Date.now() } }));
         break;
       case 'login-waiting':
+        if (ev['reopened']) this.loginReopened.set(true);
         this.loginWaiting.set(true);
         this.loginWaitingSince.set(Date.parse(String(ev['at'])) || Date.now());
         try {
@@ -262,6 +281,7 @@ export class RunStore {
         this.sessionSaved.set(ev);
         break;
       case 'round':
+        this.signInAgain.set(false);
         this.round.set(ev['round']);
         if (this.firstRound() === null) this.firstRound.set(ev['round']);
         this.committed.set(0);
@@ -273,6 +293,11 @@ export class RunStore {
         this.progress.set({ done: 0, discovered: 0, limit: this.progress().limit, finished: false, result: null });
         break;
       case 'step': {
+        if (ev['step'] === 'sign-in') {
+          this.signInAgain.set(true);
+          this.pane(`— Round ${ev['round']}: the sign-in expired; signing in again, then the crawl runs again —`, true);
+          break;
+        }
         this.step.set(ev);
         const at = Date.parse(String(ev['at'])) || Date.now();
         // A triage batch ends when the next step (or the next batch) starts.
@@ -395,14 +420,24 @@ export class RunStore {
         break;
       // Continue after an interruption: the unfinished fix's changes it discarded, in the pane.
       case 'resume':
+        this.origin.set(ev);
         for (const f of (ev['discarded'] as string[]) || []) this.pane(`Discarded the unfinished change to ${f}`, true);
         this.pane(ev['n'] && ev['m'] ? `Continuing the fix loop interrupted at fix ${ev['n']} of ${ev['m']}, with no new crawl` : 'Continuing the interrupted fix loop, with no new crawl', true);
+        break;
+      case 'retry':
+        this.origin.set(ev);
+        this.pane(`Trying again (attempt ${ev['attempt']})${ev['reason'] ? `: ${ev['reason']}` : ''}`, true);
+        break;
+      case 'rerun':
+      case 'sign-in-again':
+        this.origin.set(ev);
         break;
       case 'stopping':
         this.stopping.set(true);
         break;
       case 'done':
         this.done.set(ev);
+        this.loginWaiting.set(false);
         this.inFlight.set({});
         this.awaitingDeploy.set(false);
         this.agentCall.update((c) => (c && !c.endedAt ? { ...c, endedAt: Date.parse(String(ev['at'])) || Date.now(), outcome: ev['outcome'] === 'stopped' ? 'stopped' : 'ended' } : c));
@@ -415,7 +450,8 @@ export class RunStore {
     }
   }
 
-  // Follows the current run's event stream from its first event.
+  // Follows the current run's event stream from its first event; once it has ended, watches for the
+  // run the tool starts next by itself (a try again, a continuation, a crawl signed in again).
   async connect(): Promise<void> {
     this.abort?.abort();
     const ctrl = new AbortController();
@@ -432,8 +468,35 @@ export class RunStore {
     } catch {
       // aborted or the server went away
     } finally {
-      if (this.abort === ctrl) this.connected.set(false);
+      if (this.abort === ctrl) {
+        this.connected.set(false);
+        if (this.done()) this.watch();
+      }
     }
+  }
+
+  // After a run's end: GET /api/runs/current every second, for its try again (the countdown) and for
+  // the next run the server starts (followed at once). For 15 s after the end, and for as long as a try
+  // again or a continuation is coming.
+  watch(until = Date.now() + 15_000): void {
+    if (this.watching) clearTimeout(this.watching);
+    let asked = 0;
+    const tick = async () => {
+      this.watching = null;
+      const id = this.run()?.['id'];
+      let cur: RunInfo | null = null;
+      try {
+        cur = await this.api.get<RunInfo | null>('/api/runs/current');
+      } catch {}
+      if (id !== this.run()?.['id'] || this.active()) return;
+      if (cur && cur.id !== id) return void this.connect();
+      if (cur && cur.id === id) this.retry.set(cur.retry || null);
+      // An interruption the server has not taken up yet: asking for the environment is what makes it go on.
+      if (cur && cur.status === 'interrupted' && ++asked % 3 === 1) void this.api.get('/api/env').catch(() => {});
+      const coming = (cur && cur.status === 'interrupted') || this.retryPending() || (!!this.retry()?.firedAt && !this.retry()?.cancelled);
+      if (coming || Date.now() < until) this.watching = setTimeout(tick, 1000);
+    };
+    this.watching = setTimeout(tick, 0);
   }
 
   // After a switch of directory: the finished run belonged to the old one.
@@ -462,14 +525,13 @@ export class RunStore {
     void this.connect();
   }
 
+  // Stop: the run, or, between tries, the try again that was coming.
   async stop(): Promise<void> {
-    await this.api.post('/api/runs/current/stop');
-  }
-
-  // action: 'continue' (the site is updated — verify now), 'fix-remaining' or 'stop-waiting'.
-  async continueAfterDeploy(action: 'continue' | 'fix-remaining' | 'stop-waiting' = 'continue'): Promise<void> {
-    this.awaitingDeploy.set(false);
-    this.continued++;
-    await this.api.post('/api/runs/current/continue', action === 'continue' ? {} : { action });
+    const r = await this.api.post<{ cancelled?: boolean } | null>('/api/runs/current/stop');
+    if (r && r.cancelled) {
+      const cur = this.retry();
+      if (cur) this.retry.set({ ...cur, cancelled: true });
+      this.watch(Date.now() + 2000);
+    }
   }
 }

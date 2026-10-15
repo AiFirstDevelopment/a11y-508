@@ -63,6 +63,18 @@ export interface RunInfo {
   finishedAt: string | null;
   code: number | null;
   meta: Record<string, unknown>;
+  // The try again the server scheduled after it (a fix loop that could not start, failed, or ended
+  // waiting for a deployment): when, which attempt, why; cancelled by Stop, firedAt once started.
+  retry?: RetryInfo | null;
+}
+
+export interface RetryInfo {
+  attempt: number;
+  at: string;
+  reason: string;
+  kind: 'precondition' | 'error' | 'wait';
+  cancelled?: boolean;
+  firedAt?: string;
 }
 
 // What a folder holds, as the picker's badges show it.
@@ -219,7 +231,7 @@ export interface LedgerInfo {
   line?: string;
   lists?: Record<string, LedgerItem[]>;
   // Fixes committed and waiting for a deployment (the loop's ledger.deploy).
-  deploy?: { round: number; branch: string; remote: string | null; pushed: boolean; host: string; since: string } | null;
+  deploy?: { round: number; branch: string; remote: string | null; pushed: boolean; host: string; since: string; pushedAt?: string | null } | null;
 }
 
 // GET /api/loop/timeline: the fix loop's rounds from the ledger, as History and "Where you are" show them.

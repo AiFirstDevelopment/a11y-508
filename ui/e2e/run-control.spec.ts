@@ -1,7 +1,7 @@
 // Notices, Stop, the run slot, and the way out when a crawl cannot get in.
 
 import { test, expect } from '@playwright/test';
-import { moreOptions, dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, nav, api, cliChromePids, status, TOKEN, type Dash, type Site } from './harness';
+import { REMOVED_BUTTONS, goInApp, moreOptions, dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, nav, api, cliChromePids, status, TOKEN, type Dash, type Site } from './harness';
 
 let site: Site;
 let dash: Dash;
@@ -62,13 +62,18 @@ test('AC 7: Stop ends a crawl within 10 seconds, its Chrome is gone, and the scr
   expect(alive, `the run's Chrome processes still running: ${alive.join(', ')}`).toEqual([]);
 });
 
-test('AC 8: a run that cannot get in offers Troubleshoot; the next step is a button that reruns with its flag', async ({ page }) => {
+// docs/plans/turnkey-loop.md AC 1: the Crawl step offers no Troubleshoot; the screen stays reachable by its address.
+test('AC 8, turnkey AC1: a run that cannot get in says so with Run again and no Troubleshoot; Troubleshoot by its address still explains it, and its next step reruns with its flag', async ({ page }) => {
   await open(page, dash, '/run');
   await fillRun(page, { url: site.base, token: 'wrong-token', maxPages: 2 });
   await startFromRun(page);
   await waitFinished(page);
-  await page.getByRole('button', { name: 'Troubleshoot with these settings' }).click();
-  await expect(page).toHaveURL(/\/troubleshoot$/);
+  await expect(page.getByTestId('crawl-status')).toHaveText('The crawler could not get into the app.');
+  await expect(page.getByRole('button', { name: 'Troubleshoot with these settings' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: REMOVED_BUTTONS })).toHaveCount(0);
+  await expect(page.getByTestId('crawl-run-again')).toHaveText('Run again');
+  await goInApp(page, '/troubleshoot');
+  await page.getByRole('button', { name: /^Troubleshoot / }).click();
   const hops = page.getByTestId('hops');
   await expect(hops).toContainText(`GET ${new URL(site.base).pathname}`, { timeout: 120_000 });
   await expect(hops).toContainText('HTTP 401');
@@ -81,7 +86,8 @@ test('AC 8: a run that cannot get in offers Troubleshoot; the next step is a but
   await fillRun(page, { url: site.base + 'app.html', token: TOKEN, maxPages: 1, advanced: { 'no-token-storage': true } });
   await startFromRun(page);
   await waitFinished(page);
-  await page.getByRole('button', { name: 'Troubleshoot with these settings' }).click();
+  await goInApp(page, '/troubleshoot');
+  await page.getByRole('button', { name: /^Troubleshoot / }).click();
   await expect(page.getByTestId('next')).toContainText('--token-storage access_token', { timeout: 120_000 });
   await expect(page.getByTestId('hops')).toContainText('The page script navigated to /login.html');
   await page.getByTestId('next-button').click();

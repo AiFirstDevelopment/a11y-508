@@ -1,5 +1,6 @@
 // The wrong-repository safeguard: GET /api/loop/match looks for the latest report's markup in the
-// folders the loop edits; when none of it is there, Fix the violations waits for "Start anyway".
+// folders the loop edits; when none of it is there, the Fix step says so in one line of information,
+// never a gate (docs/plans/turnkey-loop.md AC 1).
 
 import { test, expect, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
@@ -28,7 +29,7 @@ async function toFix(page: Page, url: string): Promise<void> {
   await expect(page.getByTestId('assistant-line')).toContainText('Fixing with Claude Code', { timeout: 60_000 });
 }
 
-test('wrong repository: a copy of a11y-508 holds none of the fixture report\'s markup; Fix waits for Start anyway', async ({ page }) => {
+test('wrong repository: a copy of a11y-508 holds none of the fixture report\'s markup; the Fix step says so, and Fix the violations is ready all the same', async ({ page }) => {
   const site = await fixtureSite();
   // The tool's own repository, as committed, in a directory of the test's (never the checkout itself).
   const cwd = tempDir('a11y-508-selfrepo-');
@@ -47,10 +48,10 @@ test('wrong repository: a copy of a11y-508 holds none of the fixture report\'s m
     await open(page, dash, '/run');
     await toFix(page, site.base);
     await expect(page.getByTestId('wrong-repo')).toContainText("This repository does not seem to contain the app's code: none of the findings' markup was found under src. Choose the app's repository on Set up.");
-    const fix = page.getByRole('button', { name: 'Fix the violations' });
-    await expect(fix).toBeDisabled();
-    await page.getByRole('button', { name: 'Start anyway' }).click();
-    await expect(fix).toBeEnabled();
+    // Information, not a question: no Start anyway, and the loop can start.
+    await expect(page.getByTestId('wrong-repo')).not.toHaveAttribute('role', 'alert');
+    await expect(page.getByRole('button', { name: 'Start anyway' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Fix the violations' })).toBeEnabled();
   } finally {
     await dash.stop();
     site.close();

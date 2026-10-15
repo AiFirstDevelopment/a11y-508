@@ -252,10 +252,8 @@ export async function fillRun(page: Page, f: CrawlForm): Promise<void> {
 export const QUICK = { maxPages: 5, advanced: { 'no-zoom': true } };
 
 export async function startFromRun(page: Page): Promise<void> {
-  // A report for this URL exists: Set up reads Continue, and Crawl again starts a new crawl.
-  const again = page.getByTestId('crawl-again').first();
-  if (await again.isVisible()) await again.click();
-  else await page.getByRole('button', { name: 'Start', exact: true }).click();
+  // Start is Set up's one button: it crawls (docs/plans/turnkey-loop.md AC 7).
+  await page.getByRole('button', { name: 'Start', exact: true }).click();
   await expect(page).toHaveURL(/\/live$/);
   // The Live screen can still show the previous run's "Finished" until the
   // store sees the new run, and waitFinished would accept that at once. A run
@@ -330,6 +328,35 @@ export function run(file: string, args: string[], opts: { cwd?: string; env?: No
       ok({ status, output, stdout });
     });
   });
+}
+
+// Every name of a button the dashboard no longer has (docs/plans/turnkey-loop.md AC 1 / guard a).
+export const REMOVED_BUTTONS = /Try again|Continue|Start over|verify now|Keep waiting|Verify anyway|Stop waiting|without waiting|Sign in and continue|Start anyway|Crawl again|Deployed|Clear history|Clear fix-loop history|Troubleshoot with these settings/;
+
+// The Fix step's state asks nothing: none of the removed buttons, and at most one button besides
+// Stop in its actions (the assistant picker's own buttons are not the step's).
+export async function asksNothing(page: Page): Promise<void> {
+  await expect(page.getByRole('button', { name: REMOVED_BUTTONS })).toHaveCount(0);
+  const forward = page.locator('main .actions:not(#agent-picker .actions) button:visible').filter({ hasNotText: /^Stop$/ });
+  expect(await forward.count(), (await forward.allTextContents()).join(' | ')).toBeLessThanOrEqual(1);
+}
+
+// The current run's events so far, from its stream (it replays them, then stays open while the run goes on).
+export async function runEvents(dash: Dash, ms = 2000): Promise<any[]> {
+  const ctrl = new AbortController();
+  const stop = setTimeout(() => ctrl.abort(), ms);
+  let text = '';
+  try {
+    const res = await fetch(dash.origin + '/api/runs/current/events', { headers: { [SECRET_HEADER]: dash.secret }, signal: ctrl.signal });
+    const reader = res.body!.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += Buffer.from(value).toString('utf8');
+    }
+  } catch {}
+  clearTimeout(stop);
+  return text.split('\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)));
 }
 
 // The loop's counts as the Fix step and History word them (docs/plans/loop-resilience.md AC 15).

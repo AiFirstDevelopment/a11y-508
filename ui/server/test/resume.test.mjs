@@ -159,23 +159,34 @@ export async function interruptedLoop(cwd, { n = 8, m = 20, at = '2026-10-13T16:
   return id;
 }
 
-test('resume AC3: a loop whose process is gone and whose events have no done is interrupted, with where it was', async () => {
+// docs/plans/turnkey-loop.md AC 4: the interruption is not offered, it is continued, once.
+test('resume AC3, turnkey AC4: a loop whose process is gone and whose events have no done is continued by itself, from where it was, once', async () => {
   const cwd = tmp('a11y-508-intr-');
   const id = await interruptedLoop(cwd);
-  const s = await startServer({ cwd, env: { A11Y_508_HOME: HOME } });
+  let s = await startServer({ cwd, env: { A11Y_508_HOME: HOME } });
   try {
-    const cur = (await s.call('GET', '/api/runs/current')).json;
-    assert.equal(cur.id, id);
-    assert.equal(cur.status, 'interrupted');
-    const evs = eventsOf((await s.call('GET', '/api/runs/current/events')).text);
-    const done = evs[evs.length - 1];
-    assert.equal(done.type, 'done');
-    assert.equal(done.outcome, 'interrupted');
-    assert.deepEqual([done.interrupted.n, done.interrupted.m, done.interrupted.at], [8, 20, '2026-10-13T16:52:00.000Z']);
-    const info = (await s.call('GET', '/api/runs/interrupted')).json;
-    assert.equal(info.n, 8);
-    assert.equal(info.m, 20);
-    assert.match(s.output(), /was interrupted; the Fix step offers to continue it/);
+    await until(() => /was interrupted; continuing it from where it was/.test(s.output()), 10000, 'the terminal to say it continues');
+    // A new run: the loop again with --resume, its first event saying where the interrupted one was.
+    const cur = await until(async () => {
+      const c = (await s.call('GET', '/api/runs/current')).json;
+      return c && c.id !== id ? c : null;
+    }, 30000, 'the continued run');
+    assert.equal(cur.kind, 'loop');
+    assert.match(cur.meta.command, / --resume\b/);
+    const evs = eventsOf(await streamFor(s, 1500));
+    const resume = evs.find((e) => e.type === 'resume');
+    assert.ok(resume, JSON.stringify(evs.slice(0, 4)));
+    assert.deepEqual([resume.n, resume.m, resume.interruptedAt], [8, 20, '2026-10-13T16:52:00.000Z']);
+    const old = records(cwd).find((r) => r.id === id);
+    assert.equal(old.resolved, 'continued');
+    // Never twice for one interruption: a restart does not continue it again.
+    await until(async () => (await s.call('GET', '/api/runs/current')).json?.status !== 'running', 30000, 'the continued run to end');
+    const ids = records(cwd).map((r) => r.id).sort();
+    await stopTree(s.proc);
+    s = await startServer({ cwd, env: { A11Y_508_HOME: HOME } });
+    await sleep(1500);
+    assert.deepEqual(records(cwd).map((r) => r.id).sort(), ids);
+    assert.doesNotMatch(s.output(), /was interrupted/);
   } finally {
     await s.stop();
   }

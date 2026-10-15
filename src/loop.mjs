@@ -46,7 +46,9 @@ export function normalizeConfig(c, overrides = {}, { interactive = !!process.std
     push: c.push !== false,
     deployed: c.deployed || (c.deploy ? 'command' : 'enter'),
     deploy: c.deploy || null,
-    deployTimeout: typeof c.deployTimeout === 'number' ? c.deployTimeout : 30 * 60 * 1000,
+    // 0: no limit (the dashboard's): the loop waits for the new build however long it takes and
+    // never ends with "has not arrived" (exit 4).
+    deployTimeout: typeof c.deployTimeout === 'number' && c.deployTimeout >= 0 ? c.deployTimeout : 30 * 60 * 1000,
     // How often "bundle-change" fetches the start page while it waits for the new build.
     deployPoll: typeof c.deployPoll === 'number' && c.deployPoll > 0 ? c.deployPoll : 30 * 1000,
     maxAttempts: typeof c.maxAttempts === 'number' ? c.maxAttempts : 3,
@@ -146,6 +148,14 @@ export function sessionArgs(cfg, passthrough = [], cwd = process.cwd()) {
   if (given) return [];
   const file = cfg.state || 'a11y-508-state.json';
   return existsSync(resolve(cwd, file)) ? ['--state', file] : [];
+}
+
+// A crawl that could not get into the app because of its sign-in: no page audited, and its pages
+// were sent off to another host (a sign-in portal) or refused (401, 403).
+export function bouncedToSignIn(report) {
+  if (!report || !report.summary || report.summary.audited) return false;
+  const pages = Array.isArray(report.pages) ? report.pages : [];
+  return pages.length > 0 && pages.some((p) => /redirected off-origin/.test(String(p.skipped || '')) || p.status === 401 || p.status === 403);
 }
 
 // Event types from a round's crawl that the loop passes on, tagged with the round.
@@ -518,25 +528,40 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     pending: byStatus(ledger, 'pending').length, open: openFindings(ledger).length,
     branch: (ledger.deploy && ledger.deploy.branch) || git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out || 'the current branch',
     remote: ledger.deploy ? ledger.deploy.remote : null, pushed: !!(ledger.deploy && ledger.deploy.pushed), host: hostOf(cfg.url),
+    pushedAt: (ledger.deploy && ledger.deploy.pushedAt) || null,
   });
+  // deployTimeout 0 (the dashboard's): the wait has no limit, a start against the old build waits
+  // instead of ending, and whatever is still open is fixed from the ledger while the build is awaited.
+  const forever = !(cfg.deployTimeout > 0);
+  // The wait's limit in ms; 0 is none.
+  const deployLimit = () => (cfg.deployTimeout > 0 ? cfg.deployTimeout : 0);
+  // Fixes waiting while the remaining findings are fixed from the ledger (no crawl): the same facts
+  // as the wait itself, so the dashboard says what it is waiting for while it fixes.
+  const meanwhileEvent = (round) => {
+    const facts = deployFacts();
+    ev('await-deploy', { round, committed: facts.pending, nextRound: round + 1, ...facts, intervalMs: cfg.deployPoll, timeoutMs: 0, until: null, meanwhile: true });
+  };
   // Waits for the start page's bundles to differ from the ones before the fixes, or for the
   // dashboard's word. Returns 'live', 'verify', 'fix-remaining', 'stop-waiting', 'timeout', 'unreachable'
-  // (the time ran out and no poll could read the build to compare) or 'stopped'.
+  // (the time ran out and no poll could read the build to compare) or 'stopped'. With no limit only
+  // 'live' or 'stopped' (or a word).
   const waitForDeploy = async (round) => {
-    const until = Date.now() + cfg.deployTimeout;
+    const limit = deployLimit();
+    const until = limit ? Date.now() + limit : Infinity;
     const facts = deployFacts();
-    log.info(`waiting for your deployment: ${deploySentence(facts)}; checking the start page every ${duration(cfg.deployPoll)} for up to ${duration(cfg.deployTimeout)}`);
+    log.info(`waiting for your deployment: ${deploySentence(facts)}; checking the start page every ${duration(cfg.deployPoll)}${limit ? ` for up to ${duration(limit)}` : ' until the new build is live'}`);
     const enter = events ? enterFromDashboard() : null;
     let said = null;
     if (enter) enter.promise.then((w) => (said = w));
-    ev('await-deploy', { round, committed: facts.pending, nextRound: round + 1, ...facts, intervalMs: cfg.deployPoll, timeoutMs: cfg.deployTimeout, until: new Date(until).toISOString() });
+    ev('await-deploy', { round, committed: facts.pending, nextRound: round + 1, ...facts, intervalMs: cfg.deployPoll, timeoutMs: limit, until: limit ? new Date(until).toISOString() : null });
     // compared: some poll could set the build against the one from before the fixes.
     let compared = false;
     try {
       while (Date.now() < until && !stopped()) {
         await Promise.race([sleep(Math.max(0, Math.min(cfg.deployPoll, until - Date.now()))), ...(enter ? [enter.promise] : [])]);
         if (said) return said;
-        const sig = await bundleSignature(cfg.url);
+        // With no limit an expired session is signed in again (a tab opens), so the wait can go on checking.
+        const sig = limit ? await bundleSignature(cfg.url) : await buildForVerify();
         if (said) return said;
         // Nothing to compare with when the build from before could not be read: the person's word decides.
         if (sig === null || ledger.deploy.signature == null) continue;
@@ -635,6 +660,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
 
   // The next round fixes from the ledger with no crawl (fix the remaining without waiting).
   let noCrawlNext = fromLedger;
+  // ...and it does so while the waiting fixes' build is awaited (no limit on the wait): it says so, and waits after.
+  let meanwhileNext = false;
   // Before any crawl that would verify fixes waiting for a deployment: are the start page's bundles
   // still the ones from before them? Then the crawl would count every such fix as not holding, so
   // the loop ends at once instead (--verify-anyway crawls all the same; --wait waits again).
@@ -651,6 +678,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       else if (w === 'verify') await buildForVerify();
       else if (w === 'live') {
         log.info('new build is live; giving it 10 seconds to settle');
+        // Said at once (no limit on the wait, the dashboard's): the next crawl verifies the fixes.
+        if (forever) ev('deployment', { state: 'arrived', round: ledger.rounds.length, ...deployFacts() });
         await sleep(10000);
       }
     } else if (verifyAnyway) {
@@ -658,30 +687,61 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       ev('deployment', { state: 'verify-anyway', round: ledger.rounds.length, ...deployFacts() });
     } else {
       const sig = await buildForVerify();
+      // With no limit on the wait, a start against the build from before the fixes (or one whose build
+      // cannot be read) waits for the new one the same way a round does, rather than ending.
+      let awaitBuild = false;
       if (ledger.deploy.signature == null) {
         // No build from before the fixes on record (an earlier run could not read the page), so there is
         // nothing to compare: the person's word stands, and nothing is said about a check that never was.
         log.info(`verifying ${byStatus(ledger, 'pending').length} fixes`);
         ev('deployment', { state: 'verify-anyway', reason: 'no-baseline', round: ledger.rounds.length, ...deployFacts() });
-      } else if (sig === null) {
+      } else if (sig === null && !forever) {
         // The page could not be read, so the build cannot be compared: the person said the site is updated.
         log.info('could not read the start page to check its build; going by your word that the site is updated');
         ev('deployment', { state: 'verify-anyway', reason: 'unreachable', round: ledger.rounds.length, ...deployFacts() });
-      } else if (sig === ledger.deploy.signature) return endAwaiting('still-old', ledger.rounds.length);
-      else {
+      } else if (sig === null || sig === ledger.deploy.signature) {
+        if (!forever) return endAwaiting('still-old', ledger.rounds.length);
+        awaitBuild = true;
+      } else {
         log.info(`Your deployment arrived: verifying ${byStatus(ledger, 'pending').length} fixes`);
         ev('deployment', { state: 'arrived', round: ledger.rounds.length, ...deployFacts() });
+      }
+      if (awaitBuild && openFindings(ledger).length) {
+        log.info(`the site still serves the build from before the ${byStatus(ledger, 'pending').length} waiting fixes; fixing the ${openFindings(ledger).length} remaining meanwhile, then waiting for the new build`);
+        noCrawlNext = true;
+        meanwhileNext = true;
+      } else if (awaitBuild) {
+        const w = await waitForDeploy(ledger.rounds.length);
+        if (w === 'stopped') {
+          log.warn(`stopped. ${summaryLine(ledger)} Rerun the same command to resume.`);
+          save();
+          return 1;
+        }
+        if (w === 'fix-remaining') noCrawlNext = true;
+        else if (w === 'verify') await buildForVerify();
+        else {
+          log.info('new build is live; giving it 10 seconds to settle');
+          // Said at once (no limit on the wait, the dashboard's): the next crawl verifies the fixes.
+          if (forever) ev('deployment', { state: 'arrived', round: ledger.rounds.length, ...deployFacts() });
+          await sleep(10000);
+        }
       }
     }
   }
   const firstCrawl = given || resuming || noCrawlNext ? startRound + 1 : startRound;
 
-  for (let round = startRound; round < startRound + maxRounds; round++) {
+  // When this run last pushed (the dashboard says "pushed to origin at 3:28 PM").
+  let pushedAt = null;
+  // --max-rounds 0 (the dashboard's): no cap; the loop ends when nothing is left to do, or is stopped.
+  const lastRound = maxRounds > 0 ? startRound + maxRounds : Infinity;
+  for (let round = startRound; round < lastRound; round++) {
     if (stopped()) break;
     log.info('');
     const resumed = resuming && round === startRound;
     const fromTheLedger = noCrawlNext && !resumed;
+    const meanwhile = fromTheLedger && meanwhileNext;
     noCrawlNext = false;
+    meanwhileNext = false;
     let signatureBefore = null;
     if (resumed) {
       signatureBefore = cfg.deployed === 'bundle-change' ? (awaitingDeploy() && ledger.deploy.signature != null ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
@@ -697,6 +757,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       log.info(`=== round ${round}: fixing the remaining findings from the ledger (no crawl) ===`);
       ev('round', { round, fromLedger: true });
       ev('step', { round, step: 'ledger', pending: byStatus(ledger, 'pending').length, open: openFindings(ledger).length });
+      if (meanwhile) meanwhileEvent(round);
       ledgerEvent();
     } else {
     log.info(`=== round ${round}: crawl ===`);
@@ -719,16 +780,39 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       crawl = { report: given };
     } else try {
       const first = signInFirst && round === firstCrawl && !signedInNow;
-      crawl = await crawlOnce({ cfg, cwd, round, log, passthrough: first ? passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') : passthrough, events, session: first ? signInArgs : session });
+      const once = () => crawlOnce({ cfg, cwd, round, log, passthrough: first ? passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') : passthrough, events, session: first ? signInArgs : session });
+      try {
+        crawl = await once();
+      } catch (e) {
+        // The saved session file is gone: sign in again, as for an expired one (below).
+        if (!(events && !first && /cannot read session file/.test(e.message))) throw e;
+        crawl = null;
+      }
       if (first) session = sessionArgs(cfg, passthrough, cwd);
+      // From the dashboard: a crawl that could not get into the app (the session expired or is gone,
+      // and every page was sent to the sign-in) signs in again in a visible tab, waiting as long as it
+      // takes, and crawls again; once per round.
+      if (events && !first && (!crawl || bouncedToSignIn(crawl.report))) {
+        log.info(`round ${round}: the crawl could not get into the app (the sign-in expired); opening ${connectArgs.length ? 'a tab in the dashboard\'s window' : 'a window'} to sign in, then crawling again`);
+        ev('step', { round, step: 'sign-in', reason: 'expired' });
+        const ok = await signInOnly({ cfg, cwd, log, events, stateFile, connectArgs, passthrough: passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') });
+        if (stopped()) break;
+        if (ok) {
+          signedInNow = true;
+          session = sessionArgs(cfg, passthrough, cwd);
+          ev('step', { round, step: 'crawl', first: round === startRound, again: true });
+          crawl = await crawlOnce({ cfg, cwd, round, log, passthrough, events, session });
+        } else if (!crawl) throw new Error('the saved session file is gone and no sign-in happened');
+      }
       // Behind a sign-in the build could not be read before this round signed in; the site has not
       // changed since, so it is read again now with the session just saved.
-      if (first && cfg.deployed === 'bundle-change' && signatureBefore === null) signatureBefore = await bundleSignature(cfg.url);
+      if ((first || signedInNow) && cfg.deployed === 'bundle-change' && signatureBefore === null) signatureBefore = await bundleSignature(cfg.url);
     } catch (e) {
       log.error(`crawl failed: ${e.message}`);
       save();
       return 2;
     }
+    if (stopped()) break;
     const { report } = crawl;
     const s = report.summary;
     if (!s.audited) {
@@ -1087,6 +1171,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         save();
         return 2;
       }
+      pushedAt = new Date().toISOString();
     }
 
     // What the round committed, where: the dashboard's "Where you are" reads it from the ledger.
@@ -1119,8 +1204,19 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           // A build on record stays; one never read (null) is replaced by this round's, so the check can work next time.
           round, signature: before && before.signature != null ? before.signature : signatureBefore, branch, remote: cfg.push ? 'origin' : null,
           pushed: !!cfg.push && (committed > 0 || !!(before && before.pushed)), host: hostOf(cfg.url), since: before ? before.since : new Date().toISOString(),
+          pushedAt: (committed > 0 && pushedAt) || (before && before.pushedAt) || null,
         };
         save();
+        // No limit on the wait: what is still open is fixed first, from the ledger with no crawl, while
+        // the new build is awaited (one such round, then the wait).
+        if (forever && !fromTheLedger && openFindings(ledger).length) {
+          log.info(`fixing the remaining ${openFindings(ledger).length} from the ledger while the new build is awaited`);
+          noCrawlNext = true;
+          meanwhileNext = true;
+          log.info(`round ${round} done. ${summaryLine(ledger)}`);
+          ledgerEvent();
+          continue;
+        }
         const w = await waitForDeploy(round);
         if (w === 'stopped') break;
         if (w === 'timeout' || w === 'unreachable' || w === 'stop-waiting') return endAwaiting(w === 'stop-waiting' ? 'stopped-waiting' : w, round);
@@ -1133,6 +1229,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         }
         else {
           log.info('new build is live; giving it 10 seconds to settle');
+          // Said at once (no limit on the wait, the dashboard's): the next crawl verifies the fixes.
+          if (forever) ev('deployment', { state: 'arrived', round: ledger.rounds.length, ...deployFacts() });
           await sleep(10000);
         }
       } else if (cfg.deployed === 'enter') {

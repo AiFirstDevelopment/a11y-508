@@ -73,9 +73,11 @@ export class WhereYouAre implements OnDestroy {
       kind: s.kind(), active: s.active(), outcome: done ? String(done['outcome'] || '') || null : null,
       round: s.round(), step, crawled: crawling || (s.kind() !== 'loop' && s.kind() !== 'dry-run') ? { done: p.done, discovered: p.discovered } : null,
       task: t && t.m ? { n: t.n, m: t.m } : null,
-      waiting: s.awaitingDeploy() && w && w['until'] ? { branch: String(w['branch'] || ''), intervalMs: Number(w['intervalMs']) || 30_000, until: Date.parse(String(w['until'])) || Date.now() } : null,
-      deployment: dep ? String(dep['state']) : null, verifying: dep && typeof dep['pending'] === 'number' ? dep['pending'] : null,
+      waiting: s.awaitingDeploy() && w && w['intervalMs'] ? { branch: String(w['branch'] || ''), intervalMs: Number(w['intervalMs']) || 30_000, until: w['until'] ? Date.parse(String(w['until'])) || Date.now() : null, meanwhile: w['meanwhile'] ? Number(w['open']) || 0 : 0 } : null,
+      // An arrival is this round's news only: the crawl right after it verifies the fixes.
+      deployment: dep && (dep['state'] !== 'arrived' || Number(dep['round']) + 1 === s.round()) ? String(dep['state']) : null, verifying: dep && typeof dep['pending'] === 'number' ? dep['pending'] : null,
       loginWaiting: s.loginWaiting(),
+      retrying: s.retryPending() ? { kind: s.retry()!.kind, attempt: s.retry()!.attempt } : null,
       reason: done && done['reason'] ? String(done['reason']) : s.notices().filter((n) => n.level === 'error' && !/^The run failed( \(exit code|: )/.test(n.message)).map((n) => n.message).pop() || s.notices().filter((n) => n.level === 'error').map((n) => n.message).pop() || null,
     };
   });

@@ -17,10 +17,10 @@ describe('how a run ended, in plain words', () => {
     expect(plainReason('The run failed: browser went away (exit code 2).')).toBe('Browser went away.');
     expect(plainReason('')).toBe('Something went wrong.');
   });
-  it('Where you are says it plainly, with the sign-in as the next step', () => {
+  it('Where you are says it plainly, and the next line is what the tool does, never a request to the person', () => {
     const lines = whereYouAre({ report: null, timeline: null, counts: { open: 5 }, live: live({ reason: RAW }), now: 0 });
     expect(lines.find((l) => l.kind === 'now')!.text).toBe(`Now: ${SIGN_IN_HEADLINE.charAt(0).toLowerCase()}${SIGN_IN_HEADLINE.slice(1, -1)}`);
-    expect(lines.find((l) => l.kind === 'next')!.text).toBe('Next: sign in, and the loop goes on from where it was');
+    expect(lines.find((l) => l.kind === 'next')!.text).toBe('Next: fix the 5 remaining');
     const push = whereYouAre({ report: null, timeline: null, counts: {}, live: live({ reason: 'push failed: no remote' }), now: 0 });
     expect(push.find((l) => l.kind === 'now')!.text).toBe('Now: stopped: push failed');
   });

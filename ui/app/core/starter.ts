@@ -16,8 +16,6 @@ export class Starter {
   // Asks the folder picker to open (Browse… in Set up), and whether it is open (aria-expanded).
   readonly browseRequests = signal(0);
   readonly pickerOpen = signal(false);
-  // The step after the crawl the person was last on (Results or Fix): Set up's Continue returns there.
-  readonly lastStep = signal<'/report' | '/fix-loop'>('/report');
 
   // url: the start URL when the form has none (Run again from Fix uses the loop's).
   async startCrawl(url = ''): Promise<void> {

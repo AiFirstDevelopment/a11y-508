@@ -1,10 +1,10 @@
-// Every state of the Fix step says what happened in one plain sentence and offers one next step;
+// Every state of the Fix step says what happened in one plain sentence and offers at most one step;
 // what does not help with that (the ledger, the raw error) is closed until the person opens it.
 
 import { test, expect, type Page } from '@playwright/test';
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { api, dashboard, fixtureSite, gitRepo, moreOptions, nav, open, removeTemp, run, tempDir, BIN, ROOT, TOKEN, type Dash, type Site } from './harness';
+import { REMOVED_BUTTONS, api, dashboard, fixtureSite, gitRepo, moreOptions, nav, open, removeTemp, run, tempDir, BIN, ROOT, TOKEN, type Dash, type Site } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const QUICK = ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots', '--no-follow-clicks', '--no-token-storage'];
@@ -55,22 +55,24 @@ async function signInTimedOut(cwd: string, site: Site, report: any): Promise<str
 
 const bigButtons = (page: Page) => page.locator('main button.big:visible, main a.button.big:visible');
 
-test('next step: a loop whose sign-in timed out says so plainly, offers only "Sign in and continue", and keeps the ledger and the raw error closed', async ({ page }) => {
+// docs/plans/turnkey-loop.md AC 5: a loop that ended with an error is tried again by itself; the step
+// says what happened and when, and Stop is its one button.
+test('next step: a loop that ended with an error says so plainly and when it tries again, offers only Stop, and keeps the ledger and the raw error closed', async ({ page }) => {
   const site = await fixtureSite();
   const { cwd, report } = await appWithReport(site, 'a11y-508-next-signin-');
   const id = await signInTimedOut(cwd, site, report);
-  const dash: Dash = await dashboard({ cwd });
+  const dash: Dash = await dashboard({ cwd, env: { A11Y_508_RETRY_DELAYS: '600' } });
   try {
     await open(page, dash, '/fix-loop', { details: false });
     const headline = page.getByTestId('fix-status');
-    await expect(headline).toHaveText('Nobody signed in, so the site was not checked.', { timeout: 30_000 });
+    await expect(headline).toHaveText(/^The site could not be checked: the crawl produced no report\. Trying again in (9 m \d\d s|10 min) \(attempt 2\)\.$/, { timeout: 30_000 });
     await expect(headline).toBeVisible();
-    await expect(page.getByTestId('where-now-text')).toHaveText('Now: nobody signed in, so the site was not checked');
-    await expect(page.getByTestId('where-next-text')).toHaveText('Next: sign in, and the loop goes on from where it was');
-    // Exactly one big button, and it is the next step.
+    await expect(page.getByTestId('where-now-text')).toHaveText('Now: stopped: the site could not be checked: the crawl produced no report; trying again by itself');
+    await expect(page.getByTestId('where-next-text')).toHaveText(/^Next: fix the \d+ remaining$/);
+    // Exactly one big button, and it is Stop.
     await expect(bigButtons(page)).toHaveCount(1);
-    await expect(bigButtons(page)).toHaveText('Sign in and continue');
-    await expect(page.getByTestId('try-again')).toHaveCount(0);
+    await expect(bigButtons(page)).toHaveText('Stop');
+    await expect(page.getByRole('button', { name: REMOVED_BUTTONS })).toHaveCount(0);
     await expect(page.getByTestId('run-again')).toHaveCount(0);
     // The raw CLI text is under a closed Details, not on the screen.
     await expect(page.getByTestId('loop-problem')).toHaveCount(0);
@@ -93,24 +95,27 @@ test('next step: a loop whose sign-in timed out says so plainly, offers only "Si
     await expect(page.locator('main')).not.toContainText('No page has finished yet');
     await expect(page.locator('main')).not.toContainText(/Finished: 0 of 0/);
     await expect(page.getByTestId('page-list')).toHaveCount(0);
-    // The person's choices are remembered: after a reload the ledger is still open.
+    // The person's choices are remembered: after a reload the ledger is still open, and the try again is still coming.
     await page.reload();
-    await expect(headline).toHaveText('Nobody signed in, so the site was not checked.', { timeout: 30_000 });
+    await expect(headline).toHaveText(/ Trying again in (9 m \d\d s|10 min) \(attempt 2\)\.$/, { timeout: 30_000 });
     await expect(page.getByTestId('ledger')).toHaveJSProperty('open', true);
 
-    // Sign in and continue starts the fix loop again (the way in chosen on Set up: a token, so no window opens here).
+    // Stop cancels the try again; Fix the violations is then the step forward, and starts the loop
+    // (the way in chosen on Set up: a token, so no window opens here).
+    await page.getByTestId('loop-stop').click();
+    await expect(headline).toHaveText('Stopped.', { timeout: 15_000 });
     await nav(page, 'Run');
     await moreOptions(page);
     await page.getByLabel('A token').check();
     await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
     await nav(page, 'Fix loop');
     await expect(page.getByTestId('assistant-line')).toHaveText(/Fixing with/, { timeout: 60_000 });
-    await page.getByTestId('sign-in-continue').click();
+    await page.getByTestId('loop-start').click();
     await expect.poll(async () => (await api(dash, '/api/runs/current')).json.id, { timeout: 60_000 }).not.toBe(id);
     expect((await api(dash, '/api/runs/current')).json.kind).toBe('loop');
     await expect(page.getByTestId('loop-stop')).toBeVisible({ timeout: 30_000 });
     await api(dash, '/api/runs/current/stop', { method: 'POST' });
-    await expect(page.getByTestId('loop-stop')).toHaveCount(0, { timeout: 60_000 });
+    await expect(page.getByTestId('loop-start')).toBeVisible({ timeout: 60_000 });
   } finally {
     await dash.stop();
     removeTemp(cwd);
@@ -118,7 +123,7 @@ test('next step: a loop whose sign-in timed out says so plainly, offers only "Si
   }
 });
 
-test('next step: a crawl whose sign-in timed out says so plainly on the Crawl step, with no empty page counts and one "Sign in and continue"', async ({ page }) => {
+test('next step: a crawl whose sign-in timed out says so plainly on the Crawl step, with no empty page counts and one "Run again"', async ({ page }) => {
   const cwd = tempDir('a11y-508-next-crawl-');
   gitRepo(cwd);
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
@@ -146,7 +151,8 @@ test('next step: a crawl whose sign-in timed out says so plainly on the Crawl st
     await open(page, dash, '/live', { details: false });
     await expect(page.getByTestId('crawl-status')).toHaveText('Nobody signed in, so the site was not checked.', { timeout: 30_000 });
     await expect(bigButtons(page)).toHaveCount(1);
-    await expect(bigButtons(page)).toHaveText('Sign in and continue');
+    await expect(bigButtons(page)).toHaveText('Run again');
+    await expect(page.getByRole('button', { name: REMOVED_BUTTONS })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
     await expect(page.getByTestId('crawl-pages')).toHaveCount(0);
     await expect(page.getByTestId('crawl-counts')).toHaveCount(0);

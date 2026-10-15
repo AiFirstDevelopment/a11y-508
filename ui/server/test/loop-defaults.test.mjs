@@ -26,7 +26,7 @@ test('loop defaults: build and test scripts, a source folder and a remote', asyn
     // ng test watches unless told otherwise (AC 19): the check runs it once, and says why.
     assert.deepEqual(r.json.package, { exists: true, build: 'npm run build', test: 'npm test -- --watch=false --browsers=ChromeHeadless', testHint: 'ng test watches for changes and never exits; the check runs it once' });
     assert.deepEqual(r.json.source, ['src']);
-    assert.deepEqual(r.json.suggested, { source: ['src'], check: 'npm run build && npm test -- --watch=false --browsers=ChromeHeadless', branch: 'a11y-508', push: true, deployed: 'bundle-change', deployTimeout: 1800000, maxAttempts: 3 });
+    assert.deepEqual(r.json.suggested, { source: ['src'], check: 'npm run build && npm test -- --watch=false --browsers=ChromeHeadless', branch: 'a11y-508', push: true, deployed: 'bundle-change', deployTimeout: 0, maxAttempts: 3 });
     assert.equal(r.json.configExists, false);
   } finally {
     await s.stop();

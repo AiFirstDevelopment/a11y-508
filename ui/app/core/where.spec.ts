@@ -13,13 +13,29 @@ const live = (over: Partial<WhereLive>): WhereLive => ({ kind: 'loop', active: t
 describe('where you are', () => {
   it('lists the crawl and the round from the ledger, then Now and Next, and nothing about a person', () => {
     const now = Date.parse('2026-10-13T20:50:00.000Z');
-    const lines = whereYouAre({ report: null, timeline, counts, live: live({ waiting: { branch: 'a11y-508', intervalMs: 30_000, until: now + 12 * 60_000 } }), now });
+    const lines = whereYouAre({ report: null, timeline, counts, live: live({ waiting: { branch: 'a11y-508', intervalMs: 30_000, until: null } }), now });
     expect(lines.map((l) => l.kind)).toEqual(['done', 'done', 'now', 'next']);
     expect(lines[0].text).toMatch(/^Crawled 33 pages on .+ — 34 findings$/);
     expect(lines[1].text).toBe('Round 1: 11 fixes committed on branch a11y-508 and pushed to origin');
-    expect(lines[2].text).toBe('Now: waiting for your deployment of a11y-508 (checks every 30 s, 12 min left)');
-    expect(lines[3].text).toBe('Next: verify the 11 fixes against the new build, then fix the 6 remaining');
+    expect(lines[2].text).toBe('Now: waiting for your deployment of a11y-508 (checks every 30 s)');
+    expect(lines[3].text).toBe('Next: fix the 6 remaining while your deployment is awaited, then verify the 11 fixes against the new build');
     expect(lines.map((l) => l.text).join(' ')).not.toMatch(/person/);
+    // A wait with a limit (a repository's own config) still counts down.
+    expect(whereYouAre({ report: null, timeline, counts, live: live({ waiting: { branch: 'a11y-508', intervalMs: 30_000, until: now + 12 * 60_000 } }), now })[2].text).toBe('Now: waiting for your deployment of a11y-508 (checks every 30 s, 12 min left)');
+  });
+  // docs/plans/turnkey-loop.md AC 8 / guard l: what the tool does, never what the person may choose.
+  it('turnkey AC8 / guard l: the Next line says what the tool does next, never a choice', () => {
+    const now = Date.parse('2026-10-13T20:50:00.000Z');
+    const meanwhile = whereYouAre({ report: null, timeline, counts: { pending: 4, open: 3 }, live: live({ step: 'fix', task: { n: 1, m: 3 }, waiting: { branch: 'a11y-508', intervalMs: 30_000, until: null, meanwhile: 3 } }), now });
+    expect(meanwhile.find((l) => l.kind === 'now')!.text).toBe('Now: fixing the 3 remaining while your deployment of a11y-508 is awaited');
+    expect(meanwhile.find((l) => l.kind === 'next')!.text).toBe('Next: fix the 3 remaining while your deployment is awaited, then verify the 4 fixes against the new build');
+    const waiting = whereYouAre({ report: null, timeline, counts: { pending: 4 }, live: live({ waiting: { branch: 'a11y-508', intervalMs: 30_000, until: null } }), now });
+    expect(waiting.find((l) => l.kind === 'next')!.text).toBe('Next: verify the 4 fixes as soon as the new build is live');
+    const retrying = whereYouAre({ report: null, timeline, counts: { pending: 4 }, live: live({ active: false, outcome: 'error', reason: 'push failed: no remote', retrying: { kind: 'error', attempt: 2 } }), now });
+    expect(retrying.find((l) => l.kind === 'now')!.text).toBe('Now: stopped: push failed; trying again by itself');
+    const blocked = whereYouAre({ report: null, timeline, counts: { open: 4 }, live: live({ active: false, outcome: 'error', retrying: { kind: 'precondition', attempt: 2 } }), now });
+    expect(blocked.find((l) => l.kind === 'now')!.text).toBe('Now: the fix loop could not start yet; it starts by itself once that is done');
+    for (const l of [...meanwhile, ...waiting, ...retrying, ...blocked]) expect(l.text).not.toMatch(/verify now|without waiting|Keep waiting|Try again|Continue|Start over|sign in, and/i);
   });
   it('says what the live run is doing, and how it ended', () => {
     const base = { report: null, timeline, counts, now: 0 };
