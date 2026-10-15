@@ -5,8 +5,8 @@
 // person stops it. State lives in the ledger, so Ctrl+C and resume are safe.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve, relative, dirname, isAbsolute } from 'node:path';
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { join, resolve, relative, dirname, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyReport, byStatus, isDone, loadLedger, openFindings, saveLedger, statusCounts } from './ledger.mjs';
 import { PRESET_INFO, QUOTA_DELAYS, agentLog, fixPrompt, resolveAgentCommand, runAgent, triagePrompt, writePrompt } from './agent.mjs';
@@ -17,6 +17,75 @@ import { killTree } from './chrome.mjs';
 import { bundleSignature as readBuild, hasHashes, sameBuild } from './deploy-check.mjs';
 
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
+
+// What the application is built with, from its package.json: "Angular 22.2 and Angular Material
+// 22.2, with PrimeNG 19; styles in SCSS". null when nothing known is found.
+export function frameworkLine(cwd) {
+  let pkg;
+  try {
+    pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+  const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  const ver = (name) => (deps[name] ? ` ${String(deps[name]).replace(/^[\^~>=<\s]+/, '').split('.').slice(0, 2).join('.')}` : null);
+  const known = [['@angular/core', 'Angular'], ['@angular/material', 'Angular Material'], ['primeng', 'PrimeNG'], ['react', 'React'], ['next', 'Next.js'], ['vue', 'Vue'], ['nuxt', 'Nuxt'], ['svelte', 'Svelte'], ['@mui/material', 'MUI'], ['bootstrap', 'Bootstrap'], ['tailwindcss', 'Tailwind CSS'], ['@ionic/angular', 'Ionic']];
+  const parts = known.filter(([n]) => deps[n]).map(([n, label]) => `${label}${ver(n) || ''}`);
+  if (!parts.length) return null;
+  const styles = deps.sass || deps['sass-embedded'] || deps['node-sass'] ? '; styles in SCSS' : deps.less ? '; styles in Less' : '';
+  return `${parts.join(', ')}${styles}`;
+}
+
+const SOURCE_EXT = /\.(html?|ts|tsx|js|jsx|mjs|vue|svelte|scss|sass|css|less|cshtml|razor|erb|jsp|php|hbs|njk|twig)$/i;
+const LIB_CLASS = /^(mat-|mdc-|cdk-|ng-|ngx-|p-|pi-|fa-|fas-|bi-|btn-|col-|row$|d-|m[tbxy]?-\d|p[tbxy]?-\d|text-|bg-|flex|justify-|align-|w-|h-)/;
+// The source files that mention the finding's element -- its ids, data-testids, aria-labels, class
+// names (an app's own, not a library's) and visible text -- most matches first, at most `max`.
+export function likelyFiles(cwd, sourceDirs, finding, max = 5) {
+  const html = String(finding.html || '');
+  const tokens = new Map(); // token -> weight
+  const add = (t, w) => {
+    const k = String(t || '').trim();
+    if (k.length >= 3 && !tokens.has(k)) tokens.set(k, w);
+  };
+  for (const m of html.matchAll(/\b(?:id|data-testid|data-test|name|formcontrolname|aria-label|routerlink|href)=["']([^"']{3,80})["']/gi)) add(m[1], 3);
+  for (const m of html.matchAll(/\bclass=["']([^"']+)["']/gi)) for (const c of m[1].split(/\s+/)) if (c && !LIB_CLASS.test(c) && !/^_?ng(content|host)/.test(c)) add(c, 1);
+  for (const m of String(finding.selector || '').matchAll(/#([\w-]{3,})/g)) add(m[1], 3);
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const phrase of text.split(/[.!?|·]+/).map((s) => s.trim()).filter((s) => s.length >= 8 && s.length <= 60).slice(0, 4)) add(phrase, 2);
+  for (const m of String(finding.message || '').matchAll(/"([^"]{4,60})"/g)) add(m[1], 2);
+  if (!tokens.size) return [];
+  const scores = new Map();
+  let seen = 0;
+  const walk = (dir, depth) => {
+    if (seen > 6000 || depth > 12) return;
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name === 'node_modules' || e.name === 'dist' || e.name === 'build' || e.name === 'coverage' || e.name.startsWith('.')) continue;
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walk(full, depth + 1);
+      else if (e.isFile() && SOURCE_EXT.test(e.name)) {
+        seen++;
+        let body;
+        try {
+          if (statSync(full).size > 1024 * 1024) continue;
+          body = readFileSync(full, 'utf8');
+        } catch {
+          continue;
+        }
+        let score = 0;
+        for (const [t, w] of tokens) if (body.includes(t)) score += w;
+        if (score) scores.set(relative(cwd, full).split(sep).join('/'), score);
+      }
+    }
+  };
+  for (const d of sourceDirs) walk(resolve(cwd, d), 0);
+  return [...scores.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, max).map(([f]) => f);
+}
 const BIN = join(TOOL_DIR, 'bin', 'a11y-508.mjs');
 
 export function loadConfig(file, cwd) {
@@ -666,6 +735,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     const ok = !!res.result;
     const message = ok ? null
       : res.timedOut ? `${agentName} did not answer within ${duration(cfg.agentTimeout)}; the loop goes on`
+      : res.circled ? `${agentName} repeated the same failing step over and over, so its call was ended; the loop goes on`
       : res.quota ? `${agentName} was still rate-limited after ${res.quotaRetries} ${res.quotaRetries === 1 ? 'retry' : 'retries'}; the loop goes on`
       : `${agentName} ended without an answer (exit code ${res.code}); the loop goes on`;
     ev('agent-result', { round, task, kind, ok, timedOut: !!res.timedOut, quota: !!res.quota, code: typeof res.code === 'number' ? res.code : null, message });
@@ -983,7 +1053,9 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       ev('task', { round, n: n + 1, m: tasks.length, test: entry.test, name: entry.name, impact: entry.impact, message: entry.message, elements: members(entry).length, state: 'start', timeoutMs: cfg.agentTimeout, quietMs: cfg.quietAfter });
       const promptFile = join(taskFolder, `prompt-r${round}-fix-${n}.md`);
       const resultFile = join(taskFolder, `result-r${round}-fix-${n}.json`);
-      writePrompt(promptFile, fixPrompt({ finding: entry, group: members(entry), sourceDirs, protectedDirs, resultFile, condition: testInfo(entry.test).condition }));
+      // What the app is built with, and where its element most likely lives: the assistant starts there.
+      const hints = { framework: frameworkLine(cwd), files: likelyFiles(cwd, sourceDirs, entry) };
+      writePrompt(promptFile, fixPrompt({ finding: entry, group: members(entry), sourceDirs, protectedDirs, resultFile, condition: testInfo(entry.test).condition, hints }));
       // The attempt is on record before the assistant starts: one with no outcome is in progress, so
       // after an interruption its uncommitted changes are known to be the loop's (the dashboard's Continue).
       const attempt = { round, startedAt: new Date().toISOString() };
@@ -1000,7 +1072,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         git(cwd, ['checkout', '--', ...strayChanges]);
         git(cwd, ['clean', '-fdq', '--', ...strayChanges]);
       }
-      const note = res.result && res.result.note ? String(res.result.note).slice(0, 300) : res.timedOut ? 'agent timed out' : res.quota ? `the assistant's provider refused the call for quota or rate limit (after ${res.quotaRetries} retries)` : `agent exit ${res.code}, no result file`;
+      const note = res.result && res.result.note ? String(res.result.note).slice(0, 300) : res.timedOut ? 'agent timed out' : res.circled ? 'the assistant repeated the same failing step over and over, so its call was ended' : res.quota ? `the assistant's provider refused the call for quota or rate limit (after ${res.quotaRetries} retries)` : `agent exit ${res.code}, no result file`;
       Object.assign(attempt, { n: n + 1, files: changed, note, outcome: 'pending', agentMs: res.durationMs ?? null });
       if (changed.length) ev('changes', { round, n: n + 1, m: tasks.length, files: changed });
       if (!changed.length) {

@@ -10,8 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { applyReport, loadLedger } from '../src/ledger.mjs';
-import { agentEnv, fixPrompt, triagePrompt } from '../src/agent.mjs';
-import { normalizeConfig, sessionArgs, splitCheck } from '../src/loop.mjs';
+import { agentEnv, fixPrompt, runAgent, triagePrompt } from '../src/agent.mjs';
+import { frameworkLine, likelyFiles, normalizeConfig, sessionArgs, splitCheck } from '../src/loop.mjs';
 import { bundleSignature, sameBuild } from '../src/deploy-check.mjs';
 import { splitLoopArgs } from '../src/cli.mjs';
 import { statusCounts } from '../src/ledger.mjs';
@@ -94,6 +94,11 @@ check('prompts contain the finding and the result path, and no token', () => {
   const p = fixPrompt({ finding, sourceDirs: ['src'], protectedDirs: ['tools/a11y-508'], resultFile: '/r.json', condition: 'c' });
   assert.ok(p.includes('/r.json') && p.includes('tools/a11y-508') && p.includes('Earlier attempts') && p.includes('tried alt=""'));
   assert.ok(p.includes('Do not search or read node_modules'), 'the fix prompt keeps the assistant out of installed packages');
+  assert.ok(p.includes('do not try the same replacement again'), 'the fix prompt says what to do when an edit tool finds no match');
+  assert.ok(!p.includes('Likely files'), 'no hints, no section');
+  const h = fixPrompt({ finding, sourceDirs: ['src'], protectedDirs: [], resultFile: '/r.json', condition: 'c', hints: { framework: 'Angular 22.2 and Angular Material 22.2; styles in SCSS', files: ['src/app/x.component.html', 'src/app/x.component.ts'] } });
+  assert.ok(h.includes('The application is built with Angular 22.2 and Angular Material 22.2; styles in SCSS.'), h);
+  assert.ok(h.includes('Likely files (the source files that mention this element\'s ids, class names or text, most matches first):\n\n- src/app/x.component.html\n- src/app/x.component.ts\n'), h);
   const t = triagePrompt({ items: [{ id: 'r1-0', test: '6.A', name: 'n', wcag: 'w', condition: 'c', message: 'm', selector: 'a', html: '<a>', pages: ['/a'] }], resultFile: '/t.json' });
   assert.ok(t.includes('r1-0') && t.includes('/t.json'));
 });
@@ -105,6 +110,30 @@ check('the fix prompt shows a " >>> " selector path whole, and the frame', () =>
   assert.ok(p.includes('Element selector: #fr-same >>> #ff-badge >>> img\nInside the same-origin frame: #fr-same\n'), p);
   assert.ok(p.includes('"selector": "#fr-same >>> #ff-badge >>> img",\n    "frame": "#fr-same"'), p);
 });
+// The hints the loop gives the assistant: the app's framework from package.json, and the files that
+// mention the element (an app's own class names and ids count; a UI library's do not).
+{
+  const dir = join(HOME, 'hints');
+  mkdirSync(join(dir, 'src', 'app', 'pages'), { recursive: true });
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { '@angular/core': '^22.2.2', '@angular/material': '~22.2.0' }, devDependencies: { sass: '1.80.0' } }));
+  writeFileSync(join(dir, 'src', 'app', 'pages', 'form-panel.component.html'), '<div class="mat-form-field quick-filters"><h2 id="quick-label">Search Verifiable Credentials</h2></div>');
+  writeFileSync(join(dir, 'src', 'app', 'pages', 'form-panel.component.ts'), "const x = 'quick-filters';");
+  writeFileSync(join(dir, 'src', 'app', 'other.component.html'), '<div class="mat-form-field"></div>');
+  check('hints: the framework line and the likely files, most matches first, never a library class alone', () => {
+    assert.equal(frameworkLine(dir), 'Angular 22.2, Angular Material 22.2; styles in SCSS');
+    assert.equal(frameworkLine(join(dir, 'src')), null);
+    const files = likelyFiles(dir, ['src'], { html: '<div class="mat-form-field quick-filters"><h2 id="quick-label">Search Verifiable Credentials</h2></div>', selector: '#quick-label', message: 'text "Search Verifiable Credentials" overlaps' });
+    assert.deepEqual(files, ['src/app/pages/form-panel.component.html', 'src/app/pages/form-panel.component.ts'], JSON.stringify(files));
+  });
+  // An assistant going in circles: the same failure line six times ends the call, as a non-answer.
+  const circleCmd = `${JSON.stringify(process.execPath)} -e "for (let i = 0; i < 12; i++) console.log('Failed to edit, 0 occurrences found for old_string in form-panel.component.scss'); setTimeout(() => {}, 5000)"`;
+  const circled = await runAgent({ command: circleCmd, promptFile: join(dir, 'p.md'), resultFile: join(dir, 'r.json'), cwd: dir, timeout: 20000 });
+  check('an assistant that repeats the same failure six times is ended, and gives no answer', () => {
+    assert.equal(circled.circled, true, JSON.stringify({ code: circled.code, timedOut: circled.timedOut, out: circled.stdout.slice(0, 200) }));
+    assert.equal(circled.result, null);
+    assert.equal(circled.timedOut, false);
+  });
+}
 check('config validation catches the common mistakes', () => {
   assert.ok(normalizeConfig({}).errors.some((e) => /no start URL/.test(e)));
   assert.ok(normalizeConfig({ url: 'http://x' }).errors.some((e) => /no agent/.test(e)));

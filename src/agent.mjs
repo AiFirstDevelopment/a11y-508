@@ -269,7 +269,10 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, ti
   let stderr = '';
   const keep = (s, d) => (s + d).slice(-20000);
   // A streaming assistant's JSON events reach onOutput as readable lines, as they arrive.
-  const decoder = streamDecoder((line) => onOutput && onOutput('stdout', `${line}\n`), { cwd, doneLine, ignore: [tasksDir] });
+  const decoder = streamDecoder((line) => {
+    if (onOutput) onOutput('stdout', `${line}\n`);
+    circling(line);
+  }, { cwd, doneLine, ignore: [tasksDir] });
   child.stdout.on('data', (d) => {
     stdout = keep(stdout, String(d));
     decoder.push(String(d));
@@ -279,13 +282,30 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, ti
     if (onOutput) onOutput('stderr', String(d));
   });
   let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    // On Windows the command runs under cmd.exe, and killing cmd.exe leaves the assistant running
-    // (it would keep retrying, and keep a CI step alive); taskkill /T ends the whole tree.
+  // On Windows the command runs under cmd.exe, and killing cmd.exe leaves the assistant running
+  // (it would keep retrying, and keep a CI step alive); taskkill /T ends the whole tree.
+  const end = () => {
     if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }).on('error', () => {});
     child.kill('SIGKILL');
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    end();
   }, timeout);
+  // An assistant going in circles (the same failure line six times in one call) is ended: it will
+  // not get anywhere, and every minute of it is a minute of the loop.
+  let circled = false;
+  const seen = new Map();
+  const circling = (line) => {
+    const key = line.trim();
+    if (key.length < 20 || !/fail|error|could not|cannot|unable/i.test(key)) return;
+    const n = (seen.get(key) || 0) + 1;
+    seen.set(key, n);
+    if (n >= 6 && !circled) {
+      circled = true;
+      end();
+    }
+  };
   const closed = new Promise((r) => child.on('close', r));
   const code = await new Promise((r) => child.on('exit', r));
   clearTimeout(timer);
@@ -308,7 +328,7 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, ti
   }
   // Without a result file, the answer at the end of what it said: its words, when it streamed events.
   if (!result) result = lastJson(decoder.recognized ? decoder.text : stdout);
-  return { code, timedOut, result, stdout, stderr, text: decoder.text };
+  return { code, timedOut, circled, result, stdout, stderr, text: decoder.text };
 }
 
 // What one agent call left behind, for the work folder: a JSON header line, then the tail of its
@@ -324,7 +344,9 @@ const block = (obj) => '```json\n' + JSON.stringify(obj, null, 2) + '\n```';
 // What keeps the assistant on the app's source and off the tool's own bookkeeping.
 export const FOCUS = "Everything you need is in this prompt. Do not read, search or edit anything outside the source folders listed above; in particular leave the tool's own folders alone.";
 
-export function fixPrompt({ finding, group = null, sourceDirs, protectedDirs, resultFile, condition }) {
+// hints: { framework, files } -- what the app is built with, and the source files that mention the
+// element (most matches first), so the assistant starts in the right place.
+export function fixPrompt({ finding, group = null, sourceDirs, protectedDirs, resultFile, condition, hints = null }) {
   const prior = finding.attempts.filter((a) => a.outcome && a.outcome !== 'pending');
   const many = Array.isArray(group) && group.length > 1 ? group : null;
   const elements = many ? `\n## The same problem on ${many.length} elements\n\nThese ${many.length} findings are the same problem on different elements; fix the cause once if there is one, otherwise fix each.\n\n${many.map((e, i) => `${i + 1}. Selector: ${e.selector || '(page level)'}${e.frame ? ` (inside the frame ${e.frame})` : ''}; seen on ${e.pages.slice(0, 5).join(', ')}${e.pages.length > 5 ? ', ...' : ''}\n\n\`\`\`html\n${(e.html || '').slice(0, 600)}\n\`\`\``).join('\n\n')}\n` : '';
@@ -336,6 +358,7 @@ You are working in this repository. Fix the finding below by editing the applica
 - ${protectedDirs && protectedDirs.length ? `Never edit anything under: ${protectedDirs.join(', ')}. ` : ''}Do not edit tests to make them pass, do not add or remove dependencies, do not commit, and do not run the accessibility crawler.
 - ${FOCUS}
 - Do not search or read node_modules or other installed dependencies: the fix belongs in the application's own source, and reading packages only costs time.
+- When an edit tool reports that the text to replace was not found, do not try the same replacement again: read the file again and match its exact text (files here may use Windows line endings and tabs), or write the changed block whole. The same text failing to match twice means the approach is wrong, not the file.
 - Make the smallest change that resolves this finding everywhere it appears. The same element is often rendered by one component or template used on many pages.
 - Do not change the page's behavior or visual design beyond what the fix requires.
 - Decide as the developer of this application would and fix it: pick sensible text, roles and markup from the context (what the page is for, nearby text, file and variable names, the image's file name and where it is used). Nobody reviews the finding after you, so a reasonable fix beats none.
@@ -356,7 +379,13 @@ ${(finding.html || '').slice(0, 2000)}
 \`\`\`
 ${elements}${prior.length ? `\n## Earlier attempts that did not work\n\n${prior.map((a) => `- Round ${a.round}: ${a.note || 'no note'} (files: ${(a.files || []).join(', ') || 'none'}; outcome: ${a.outcome})`).join('\n')}\n\nThe finding was still present after those changes, so try a different approach.\n` : ''}
 ## How to find it in the source
+${hints && hints.framework ? `
+The application is built with ${hints.framework}.
+` : ''}${hints && hints.files && hints.files.length ? `
+Likely files (the source files that mention this element's ids, class names or text, most matches first):
 
+${hints.files.map((f) => `- ${f}`).join('\n')}
+` : ''}
 Search the source folders for the class names, ids, attribute values, text and tag names in the rendered HTML. Framework templates (Angular, React, Vue) usually contain the same literals. If the HTML is generated from data, fix the component that renders it.
 
 ## When you are done
