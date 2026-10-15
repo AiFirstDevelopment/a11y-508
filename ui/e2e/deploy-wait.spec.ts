@@ -125,6 +125,15 @@ test('deploy-wait AC1/5/6/9, turnkey AC2 / guards b c d l: the wait says what it
     await expect(page.getByTestId('deploy-wait-next')).toHaveText(/^(Nothing else is left to fix\.|The \d+ remaining findings? (is|are) tried again once the new build is checked\.)$/, { timeout: 120_000 });
     expect((await seen(page, 'deploy-wait-next')).some((t) => /^Fixing the \d+ remaining findings? meanwhile\.$/.test(t)), (await seen(page, 'deploy-wait-next')).join(' | ')).toBe(true);
     expect(ledger().rounds.some((r: any) => r.source === 'ledger'), JSON.stringify(ledger().rounds.map((r: any) => r.source))).toBe(true);
+    // Guard b: the wait has no limit: seconds later it still waits, in the same run, and nothing has run out.
+    const waiting = (await api(dash, '/api/runs/current')).json.id;
+    await page.waitForTimeout(6000);
+    await expect(status).toHaveText(WAITING(String(pending)));
+    const still = (await api(dash, '/api/runs/current')).json;
+    expect([still.id, still.status]).toEqual([waiting, 'running']);
+    const evs = await runEvents(dash);
+    expect(evs.some((e) => e.type === 'deployment' || (e.type === 'done' && e.outcome === 'awaiting-deploy')), JSON.stringify(evs.filter((e) => e.type === 'deployment' || e.type === 'done'))).toBe(false);
+    await expect(page.locator('body')).not.toContainText(/has not arrived|still serves the old build/);
     // Stop is the only button.
     await expect(page.getByTestId('loop-stop')).toBeVisible();
     await asksNothing(page);
@@ -139,15 +148,6 @@ test('deploy-wait AC1/5/6/9, turnkey AC2 / guards b c d l: the wait says what it
     for (const t of await seen(page, 'where-next-text')) expect(t).not.toMatch(/verify now|without waiting|Keep waiting|sign in, and/i);
     await expect(page.getByTestId('where-you-are')).not.toContainText(/person|handed to you/i);
 
-    // Guard b: the wait has no limit: seconds later it still waits, in the same run, and nothing has run out.
-    const waiting = (await api(dash, '/api/runs/current')).json.id;
-    await page.waitForTimeout(6000);
-    await expect(status).toHaveText(WAITING(String(pending)));
-    const still = (await api(dash, '/api/runs/current')).json;
-    expect([still.id, still.status]).toEqual([waiting, 'running']);
-    const evs = await runEvents(dash);
-    expect(evs.some((e) => e.type === 'deployment' || (e.type === 'done' && e.outcome === 'awaiting-deploy')), JSON.stringify(evs.filter((e) => e.type === 'deployment' || e.type === 'done'))).toBe(false);
-    await expect(page.locator('body')).not.toContainText(/has not arrived|still serves the old build/);
     // History: the round is awaiting deployment, not a failure.
     await nav(page, 'History');
     await expect(page.getByTestId('history').locator('tr[data-id="round-1"]').getByTestId('round-state')).toHaveText('awaiting deployment');
@@ -164,7 +164,9 @@ test('deploy-wait AC1/5/6/9, turnkey AC2 / guards b c d l: the wait says what it
     await page.getByTestId('loop-start').click();
     await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.id, { timeout: 30_000 }).not.toBe(stoppedId);
     await expect(status).toHaveText(WAITING(String(count('pending'))), { timeout: 120_000 });
-    expect((await api(dash, '/api/runs/current')).json.status).toBe('running');
+    // The very run the click started waits (it did not end, to be started again by the dashboard).
+    const restarted = (await api(dash, '/api/runs/current')).json;
+    expect([restarted.status, restarted.meta.attempt, restarted.retry ?? null]).toEqual(['running', 1, null]);
     const again = await runEvents(dash);
     expect(again.some((e) => e.type === 'deployment' && e.state === 'still-old'), JSON.stringify(again.filter((e) => e.type === 'deployment'))).toBe(false);
     expect(again.some((e) => (e.type === 'step' && e.step === 'crawl') || e.type === 'page')).toBe(false);
