@@ -46,6 +46,11 @@ async function hashedLines(html, refs, base, headers) {
   return lines.join('\n');
 }
 
+// Whether a signature carries content hashes (one an earlier version wrote has names only).
+export function hasHashes(sig) {
+  return typeof sig === 'string' && /(^|\n)\S+ [0-9a-f]{64}(\n|$)/.test(sig);
+}
+
 // Whether two signatures are the same build. A reference whose hash is unknown on either side ("?",
 // or a names-only signature an earlier version recorded) compares by its name.
 export function sameBuild(a, b) {

@@ -14,7 +14,7 @@ import { loadConfig, normalizeConfig, summaryLine } from '../../src/loop.mjs';
 import { migrateRepo, migrationLines, tasksDir } from '../../src/home.mjs';
 import { readable } from '../../src/agent-stream.mjs';
 import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
-import { BIN, BadRequest, DEFAULT_STATE_FILE, crawlArgs, loopArgs, commandLine } from './args.mjs';
+import { BIN, BadRequest, DEFAULT_STATE_FILE, TOOL_DIR, crawlArgs, loopArgs, commandLine } from './args.mjs';
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
 import { JOURNALED, LOOP_KINDS, annotateRun, discardInterrupted, interruptedDetails, latestRun, removeRun, resolveRun, runsDir, startJournaled } from './run-journal.mjs';
@@ -31,6 +31,12 @@ import { bringToFront as bringTabToFront, signInTabOf } from './sign-in-tab.mjs'
 // The wizard's steps, as lastStep stores them.
 const STEPS = ['/run', '/live', '/report', '/fix-loop', '/history'];
 const pkg = JSON.parse(readFileSync(join(UI_DIR, '..', 'package.json'), 'utf8'));
+// Which code this dashboard runs: the tool's git commit, else its version. A loop started by an
+// earlier one is started again with this one, so an update never leaves old code running.
+const TOOL_REVISION = (() => {
+  const r = spawnSync('git', ['-C', TOOL_DIR, 'rev-parse', '--short=12', 'HEAD'], { encoding: 'utf8', windowsHide: true });
+  return (r.status === 0 && (r.stdout || '').trim()) || `v${pkg.version}`;
+})();
 export const SECRET_HEADER = 'x-a11y-508-secret';
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -560,7 +566,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       // A crawl's report goes to the tool's own folder for the repository, never into it.
       kind, file: process.execPath, args: [BIN, ...built.args, ...(kind === 'crawl' ? ['--out', latestDir(cwd)] : []), '--events'], env: runEnv, cwd, events: true, secrets: [...tokens(), ...credentialsIn(body)],
       meta: {
-        ...meta, command: commandLine({ cwd, args: built.args, token: built.token, shell: shellKind() }), url: body.url || null, movedToHistory: moved,
+        ...meta, command: commandLine({ cwd, args: built.args, token: built.token, shell: shellKind() }), url: body.url || null, movedToHistory: moved, tool: TOOL_REVISION,
         // Which try this is (a run the server started again after one that could not start or failed), and of which run.
         attempt: Number.isInteger(body.attempt) && body.attempt > 1 ? body.attempt : 1, ...(typeof body.retryOf === 'string' ? { retryOf: body.retryOf } : {}),
         // A crawl started again, signed in, after one that could not get into the app (once).

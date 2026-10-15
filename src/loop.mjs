@@ -14,7 +14,7 @@ import { testInfo } from './checks/catalog.mjs';
 import { migrateRepo, migrationLines, shortenHome, tasksDir, workDir } from './home.mjs';
 import { sleep } from './page.mjs';
 import { killTree } from './chrome.mjs';
-import { bundleSignature as readBuild, sameBuild } from './deploy-check.mjs';
+import { bundleSignature as readBuild, hasHashes, sameBuild } from './deploy-check.mjs';
 
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const BIN = join(TOOL_DIR, 'bin', 'a11y-508.mjs');
@@ -539,6 +539,9 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // Fixes committed and waiting for a new build of the site (deployed: bundle-change): ledger.deploy
   // holds the start page's bundles from before them, the branch and where it was pushed.
   const awaitingDeploy = () => cfg.deployed === 'bundle-change' && !!ledger.deploy && byStatus(ledger, 'pending').length > 0;
+  // The build from before the fixes, when it can be compared with: a record with names only (written
+  // by an earlier version) cannot tell a same-name deployment, so it counts as no record.
+  const baseline = () => (ledger.deploy && ledger.deploy.signature != null && hasHashes(ledger.deploy.signature) ? ledger.deploy.signature : null);
   const hostOf = (u) => {
     try {
       return new URL(u).host;
@@ -606,7 +609,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         const sig = limit ? await bundleSignature(cfg.url) : await buildForVerify();
         if (said) return said;
         // Each check on record (when, what the site served, read how, or why not), so the wait is never silent.
-        const result = sig === null ? 'unreadable' : ledger.deploy.signature == null ? 'no-baseline' : sameBuild(sig, ledger.deploy.signature) ? 'same' : 'changed';
+        const result = sig === null ? 'unreadable' : baseline() == null ? 'no-baseline' : sameBuild(sig, baseline()) ? 'same' : 'changed';
         const at = new Date();
         const reason = result === 'unreadable' && lastBuild && lastBuild.reason ? lastBuild.reason : null;
         ev('deploy-check', { round, at: at.toISOString(), result, forced: asked, via: buildVia || null, host: facts.host, pending: facts.pending, ...(reason ? { reason } : {}) });
@@ -614,8 +617,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         // Nothing to compare with when the build from before could not be read: the person's word decides.
         // No limit and no build from before the fixes on record: nothing can ever be compared, so the
         // first build that can be read is verified, as a start with no build on record does.
-        if (sig !== null && ledger.deploy.signature == null && !limit) return 'live';
-        if (sig === null || ledger.deploy.signature == null) continue;
+        if (sig !== null && baseline() == null && !limit) return 'live';
+        if (sig === null || baseline() == null) continue;
         compared = true;
         if (result === 'changed') return 'live';
       }
@@ -741,7 +744,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       // With no limit on the wait, a start against the build from before the fixes (or one whose build
       // cannot be read) waits for the new one the same way a round does, rather than ending.
       let awaitBuild = false;
-      if (ledger.deploy.signature == null) {
+      if (baseline() == null) {
         // No build from before the fixes on record (an earlier run could not read the page), so there is
         // nothing to compare: the person's word stands, and nothing is said about a check that never was.
         log.info(`verifying ${byStatus(ledger, 'pending').length} fixes`);
@@ -750,7 +753,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         // The page could not be read, so the build cannot be compared: the person said the site is updated.
         log.info('could not read the start page to check its build; going by your word that the site is updated');
         ev('deployment', { state: 'verify-anyway', reason: 'unreachable', round: ledger.rounds.length, ...deployFacts() });
-      } else if (sig === null || sameBuild(sig, ledger.deploy.signature)) {
+      } else if (sig === null || sameBuild(sig, baseline())) {
         if (!forever) return endAwaiting('still-old', ledger.rounds.length);
         awaitBuild = true;
       } else {
