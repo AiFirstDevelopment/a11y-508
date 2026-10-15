@@ -57,7 +57,7 @@ test('fix loop: the line says what it will do from the repository; the sign-in s
     expect(cfgFile.startsWith(cwd)).toBe(false);
     await expect.poll(() => existsSync(cfgFile)).toBe(true);
     expect(JSON.parse(readFileSync(cfgFile, 'utf8'))).toEqual({
-      url: 'http://127.0.0.1:9/', agent: 'claude', source: ['src'], check: 'npm run build && npm test -- --watch=false --browsers=ChromeHeadless', branch: 'a11y-508', push: true, maxAttempts: 3, deployed: 'bundle-change', deployTimeout: 1800000, writtenBy: 'a11y-508-dashboard',
+      url: 'http://127.0.0.1:9/', agent: 'claude', source: ['src'], check: 'npm run build && npm test -- --watch=false --browsers=ChromeHeadless', branch: 'a11y-508', push: true, maxAttempts: 3, deployed: 'bundle-change', deployTimeout: 0, writtenBy: 'a11y-508-dashboard',
     });
     expect(existsSync(join(cwd, 'a11y-508.config.json'))).toBe(false);
     // A token was chosen on Run, so the loop does not sign in first.
