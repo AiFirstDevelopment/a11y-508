@@ -151,14 +151,14 @@ export class LiveScreen implements OnDestroy {
   // sign-in page signs in and runs again by itself; one interrupted runs again by itself.)
   readonly next = computed<'results' | 'again' | null>(() => {
     const d = this.store.done();
-    if (!d || d['outcome'] === 'interrupted') return null;
+    if (!d) return null;
     if (this.store.summary() && !this.store.cannotGetIn()) return 'results';
     return 'again';
   });
   // How this crawl came to be when the tool started it by itself.
   readonly originLine = computed(() => {
     const o = this.store.origin();
-    if (this.store.done()?.['outcome'] === 'interrupted') return 'The crawl was interrupted (the dashboard was closed); running it again.';
+    if (this.store.done()?.['outcome'] === 'interrupted') return 'The crawl was interrupted (the dashboard was closed).';
     if (!o) return '';
     if (o.type === 'rerun') return 'The crawl was interrupted (the dashboard was closed); running it again.';
     if (o.type === 'sign-in-again' && this.store.active() && !this.store.loginWaiting()) return 'Signed in again; crawling.';

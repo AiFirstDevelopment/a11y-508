@@ -297,9 +297,12 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   // from where it was (Continue, as it was), a crawl runs again from its own request, a dry run is
   // only marked resolved. Never while another run is active, never twice for one interruption.
   let continuing = false;
+  // Crawls whose run again could not start (a token held only in memory, say): not tried on every
+  // load; the Crawl step offers Run again.
+  const crawlsNotRerun = new Set();
   async function continueInterrupted() {
     const r = runs.current;
-    if (continuing || runs.active || !r || r.status !== 'interrupted' || !r.journal) return;
+    if (continuing || runs.active || !r || r.status !== 'interrupted' || !r.journal || crawlsNotRerun.has(r.id)) return;
     if (r.record && r.record.resolved) return;
     continuing = true;
     try {
@@ -316,6 +319,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
         } catch (e) {
           annotateRun(r, { resolved: null });
           if (!runs.active && runs.current !== r) runs.adopt(r);
+          crawlsNotRerun.add(r.id);
           throw e;
         }
       }

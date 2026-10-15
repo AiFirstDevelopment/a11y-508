@@ -564,6 +564,9 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         const sig = limit ? await bundleSignature(cfg.url) : await buildForVerify();
         if (said) return said;
         // Nothing to compare with when the build from before could not be read: the person's word decides.
+        // No limit and no build from before the fixes on record: nothing can ever be compared, so the
+        // first build that can be read is verified, as a start with no build on record does.
+        if (sig !== null && ledger.deploy.signature == null && !limit) return 'live';
         if (sig === null || ledger.deploy.signature == null) continue;
         compared = true;
         if (sig !== ledger.deploy.signature) return 'live';
@@ -750,7 +753,9 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     } else if (fromTheLedger) {
       // A round with no crawl: the ledger's open findings, fixed while the earlier fixes still wait
       // for their deployment (they stay pending). Recorded as a round so its attempts are its own.
-      signatureBefore = cfg.deployed === 'bundle-change' ? (awaitingDeploy() && ledger.deploy.signature != null ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
+      // Fixing meanwhile (no limit on the wait): the build live now, which this round's fixes are not in;
+      // once they are pushed the wait compares with it, so a build of only the earlier push is not taken for theirs.
+      signatureBefore = cfg.deployed === 'bundle-change' ? (meanwhile ? await bundleSignature(cfg.url) : awaitingDeploy() && ledger.deploy.signature != null ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
       const prev = ledger.rounds[ledger.rounds.length - 1] || {};
       ledger.rounds.push({ round, at: new Date().toISOString(), source: 'ledger', pages: prev.pages || 0, audited: prev.audited || 0, violations: prev.violations || 0, reviews: prev.reviews || 0, coverage: null, diff: { new: 0, still: 0, failed: 0, verified: 0, gone: 0, reopened: 0, unchecked: 0, gaveUp: 0 } });
       save();
@@ -1202,7 +1207,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         const before = ledger.deploy;
         ledger.deploy = {
           // A build on record stays; one never read (null) is replaced by this round's, so the check can work next time.
-          round, signature: before && before.signature != null ? before.signature : signatureBefore, branch, remote: cfg.push ? 'origin' : null,
+          // A meanwhile round that committed waits for a build after its own push (see signatureBefore above).
+          round, signature: meanwhile && committed > 0 && signatureBefore != null ? signatureBefore : before && before.signature != null ? before.signature : signatureBefore, branch, remote: cfg.push ? 'origin' : null,
           pushed: !!cfg.push && (committed > 0 || !!(before && before.pushed)), host: hostOf(cfg.url), since: before ? before.since : new Date().toISOString(),
           pushedAt: (committed > 0 && pushedAt) || (before && before.pushedAt) || null,
         };
