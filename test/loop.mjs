@@ -1429,7 +1429,7 @@ rmSync(repo2, { recursive: true, force: true });
       assert.equal(first.status, 4, first.out);
       assert.ok(l1.deploy && l1.deploy.signature.includes('/bundle.1.js'), JSON.stringify(l1.deploy));
       assert.deepEqual(vEvents.problems, []);
-      assert.ok(vEvents.events.some((e) => e.type === 'info' && e.message === 'the start page sends the browser to its sign-in: opening a window to sign in'), verify.stdout);
+      assert.ok(vEvents.events.some((e) => e.type === 'info' && e.message === 'the start page asks for a sign-in: opening a window to sign in'), verify.stdout);
       assert.ok(vEvents.events.some((e) => e.type === 'login-waiting'), verify.stdout);
       assert.ok(vEvents.events.some((e) => e.type === 'session-saved'), verify.stdout);
       assert.ok(readFileSync(join(dir, 'a11y-508-state.json'), 'utf8').includes('renewed'));
@@ -1468,7 +1468,7 @@ rmSync(repo2, { recursive: true, force: true });
     rmSync(profile, { recursive: true, force: true, maxRetries: 10 });
     check('deploy check: with the dashboard\'s browser, the expired session\'s sign-in is a tab in that window, which stays up, and the crawl does not sign in again', () => {
       assert.ok(port, 'the test browser has a DevTools port');
-      assert.ok(vEvents.events.some((e) => e.type === 'info' && e.message === "the start page sends the browser to its sign-in: opening a tab in the dashboard's window to sign in"), verify.stdout);
+      assert.ok(vEvents.events.some((e) => e.type === 'info' && e.message === "the start page asks for a sign-in: opening a tab in the dashboard's window to sign in"), verify.stdout);
       assert.ok(vEvents.events.some((e) => e.type === 'session-saved'), verify.stdout);
       assert.ok(readFileSync(join(dir, 'a11y-508-state.json'), 'utf8').includes('renewed-in-tab'));
       assert.ok(alive, 'the dashboard\'s browser is still up');
