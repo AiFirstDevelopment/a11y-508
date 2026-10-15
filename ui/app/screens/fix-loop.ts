@@ -9,6 +9,9 @@ import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { prefersReducedMotion } from '../core/motion';
 import { fixedLine, localTime, spoken } from '../core/format';
+import { checkLine } from '../core/run.store';
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 import { AgentTest, LedgerInfo, LoopDefaults, LoopMatch, Preset } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
 import { RunView } from '../shared/run-view';
@@ -211,6 +214,9 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
         <!-- Fixes committed; the site is deployed by someone else. The loop watches for the new build. -->
         <p class="big-status" role="status" data-testid="fix-status">{{ waitSentence() }}</p>
         <p data-testid="deploy-wait-next">{{ waitNext() }}</p>
+        <!-- Every check on record, and one at once on request: the wait is never a mystery. -->
+        <p role="status" data-testid="deploy-check">{{ checkText() }}</p>
+        <div class="actions"><button type="button" class="secondary" (click)="checkNow()" [disabled]="checking()" data-testid="check-now">{{ checking() ? 'Checking…' : 'Check now' }}</button></div>
         @if (meanwhile() && store.task(); as t) {
           @if (t.m) {
             <div class="thin-progress">
@@ -494,7 +500,7 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     }
     if (r && !r.cancelled) {
       if (r.kind === 'precondition' && pre) return { kind: 'start', headline: 'The fix loop could not start', raw: String(pre['message'] || ''), remedy: String(pre['remedy'] || '') || null, next: null };
-      if (r.kind === 'wait') return { kind: 'continuing', headline: 'Waiting for your deployment; the loop goes on watching for the new build.', raw: '', remedy: null, next: null };
+      if (r.kind === 'wait') return { kind: 'continuing', headline: `${cap(plainReason(r.reason || 'the new build has not arrived yet')).replace(/\.$/, '')}. The loop goes on watching for it.`, raw: '', remedy: null, next: null };
       const said = plainReason(r.reason || last || reason || `the loop ended with exit code ${d['code']}`).replace(/\.$/, '');
       const secs = Math.max(0, Math.ceil(((Date.parse(r.at) || this.now()) - this.now()) / 1000));
       return { kind: 'retry', headline: `${said}. Trying again in ${spoken(secs * 1000)} (attempt ${r.attempt}).`, raw: raw || r.reason, remedy: null, next: null };
@@ -672,6 +678,28 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     const where = pushed ? ` (pushed to ${remote}${at ? ` at ${clock(String(at))}` : ''})` : '';
     return `Waiting for your deployment of branch ${branch}${where}. The site is checked ${every(Number(e['intervalMs']) || 30_000)}, and the ${n === 1 ? 'fix is' : `${n} fixes are`} verified as soon as the new build is live.`;
   });
+  // The last check of the site's build, in words; "Checking…" from Check now until its result arrives.
+  readonly checking = signal(false);
+  readonly checkText = computed(() => {
+    const c = this.store.deployCheck();
+    if (this.checking()) return 'Checking the site now…';
+    if (!c) return 'Not checked yet.';
+    return checkLine(c);
+  });
+  async checkNow(): Promise<void> {
+    if (this.checking()) return;
+    this.checking.set(true);
+    const before = this.store.deployCheck();
+    try {
+      await this.api.post('/api/runs/current/continue', { action: 'check' });
+      // Until that check's result arrives (or 20 s), the button and the line say so.
+      const until = Date.now() + 20_000;
+      while (Date.now() < until && this.store.deployCheck() === before) await new Promise((r) => setTimeout(r, 200));
+    } catch {
+    } finally {
+      this.checking.set(false);
+    }
+  }
   readonly waitNext = computed(() => {
     const e: Record<string, any> = this.store.deployWait() || {};
     const open = Number(e['open'] ?? this.openCount());

@@ -228,6 +228,17 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       if (runs.current === run && !runs.active) scheduleRetry(run, r.kind === 'wait' ? 'error' : r.kind, e.message, r.fire, { after: r.attempt });
     }
   }
+  // Fixes committed and waiting for a deployment (the ledger's deploy record): how many.
+  function pendingDeploy() {
+    const file = ledgerPath(state.cwd);
+    if (!existsSync(file)) return 0;
+    try {
+      const l = loadLedger(file);
+      return l.deploy ? statusCounts(l).pending || 0 : 0;
+    } catch {
+      return 0;
+    }
+  }
   function stillBlocked(pre) {
     if (!pre) return false;
     if (pre.code === 'not-a-repo') return !inGitRepo(state.cwd);
@@ -251,10 +262,19 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   function afterRun(run, { restored = false } = {}) {
     if (run.cwd && resolve(run.cwd) !== state.cwd) return;
     const done = lastOf(run, 'done');
-    if (!done || done.outcome === 'stopped' || done.outcome === 'interrupted') return;
+    if (!done || done.outcome === 'interrupted') return;
     const rec = (run.record && run.record.retry) || null;
     // Cancelled (Stop), or already started again.
     if (rec && (rec.cancelled || rec.firedAt)) return;
+    if (run.kind === 'loop' && done.outcome === 'stopped') {
+      // Stop ends the fixing. Fixes that wait for a deployment go on being watched for, in a run of
+      // their own: nothing is asked of anyone, and they are verified as soon as the new build is live.
+      const pending = pendingDeploy();
+      if (!pending) return;
+      scheduleRetry(run, 'wait', `the fixing was stopped; the ${pending === 1 ? 'fix still waits' : `${pending} fixes still wait`} for the new build`, startAgain(run, { deploy: 'wait' }), { at: restored && rec ? rec.at : null });
+      return;
+    }
+    if (done.outcome === 'stopped') return;
     if (run.kind === 'loop') {
       const pre = lastOf(run, 'precondition');
       const errors = (run.events || []).filter((e) => e.type === 'error');

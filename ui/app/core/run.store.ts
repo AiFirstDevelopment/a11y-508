@@ -68,7 +68,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
   'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit', 'changes', 'attempt', 'bisect',
-  'resume', 'deployment', 'retry', 'rerun', 'sign-in-again',
+  'resume', 'deployment', 'deploy-check', 'retry', 'rerun', 'sign-in-again',
 ]);
 
 // The current run, built from its event stream.
@@ -97,6 +97,8 @@ export class RunStore {
   // The wait for a deployment (its await-deploy event: branch, remote, host, counts, until, intervalMs),
   // and how the run ended about it (its deployment event: arrived, still-old, timeout, stopped-waiting).
   readonly deployWait = signal<RunEvent | null>(null);
+  // The last check of the site's build while fixes wait for a deployment (its deploy-check event).
+  readonly deployCheck = signal<RunEvent | null>(null);
   readonly deployment = signal<RunEvent | null>(null);
   // The loop could not start: a set-up error before its first round, with its remedy.
   readonly precondition = signal<RunEvent | null>(null);
@@ -178,6 +180,7 @@ export class RunStore {
     this.ledger.set(null);
     this.awaitingDeploy.set(false);
     this.deployWait.set(null);
+    this.deployCheck.set(null);
     this.deployment.set(null);
     this.precondition.set(null);
     this.crawlRound.set(null);
@@ -409,6 +412,10 @@ export class RunStore {
         this.deployWait.set(ev);
         if (typeof ev['committed'] === 'number') this.committed.set(ev['committed']);
         break;
+      case 'deploy-check':
+        this.deployCheck.set(ev);
+        this.pane(checkLine(ev), true);
+        break;
       case 'precondition':
         this.precondition.set(ev);
         break;
@@ -534,4 +541,16 @@ export class RunStore {
       this.watch(Date.now() + 2000);
     }
   }
+}
+
+// One check of the site's build while fixes wait for a deployment, in words: when, and what it saw.
+export function checkLine(ev: Record<string, unknown>): string {
+  const at = new Date(String(ev['at'] || ''));
+  const when = Number.isNaN(at.getTime()) ? 'just now' : at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  const how = ev['via'] === 'browser' ? ' (read through the browser with your sign-in)' : '';
+  const r = ev['result'];
+  if (r === 'changed') return `Checked at ${when}: a new build is live${how}. Verifying the fixes.`;
+  if (r === 'unreadable') return `Checked at ${when}: the start page could not be read (the site may be down, or behind a sign-in).`;
+  if (r === 'no-baseline') return `Checked at ${when}: no build from before the fixes is on record, so this one is verified${how}.`;
+  return `Checked at ${when}: still the build from before the fixes${how}.`;
 }

@@ -231,33 +231,34 @@ async function signInOnly({ cfg, cwd, log, events, stateFile, passthrough = [], 
   return code === 0;
 }
 
-// With --events, the dashboard's buttons during the wait write a line to stdin: an empty line (or
-// "verify") is "The site is updated — verify now", "fix-remaining" fixes what is open without
-// waiting, "stop-waiting" ends the wait. While the loop polls for a new build it listens for them,
-// so the buttons work whatever "deployed" says. Resolves with 'verify', 'fix-remaining' or 'stop-waiting'.
-function enterFromDashboard() {
+// With --events, the dashboard writes a word per line to stdin while the loop waits for a new build:
+// "check" has the site checked now; "fix-remaining" fixes what is open without waiting,
+// "stop-waiting" ends the wait, and any other line (an empty one) is "verify": the site is updated.
+// onWord is told each word; cancel() stops listening.
+function dashboardWords(onWord) {
   const stdin = process.stdin;
-  let onData;
   let buf = '';
-  const promise = new Promise((resolve) => {
-    onData = (chunk) => {
-      buf += String(chunk);
+  const onData = (chunk) => {
+    buf += String(chunk);
+    for (;;) {
       const nl = buf.search(/\r?\n/);
       if (nl < 0) return;
       const word = buf.slice(0, nl).trim();
-      resolve(word === 'fix-remaining' || word === 'stop-waiting' ? word : 'verify');
-    };
-    stdin.setEncoding('utf8');
-    stdin.on('data', onData);
-    if (stdin.ref) stdin.ref();
-    stdin.resume();
-  });
-  const cancel = () => {
-    stdin.off('data', onData);
-    stdin.pause();
-    if (stdin.unref) stdin.unref();
+      buf = buf.slice(nl).replace(/^\r?\n/, '');
+      onWord(word === 'check' || word === 'fix-remaining' || word === 'stop-waiting' ? word : 'verify');
+    }
   };
-  return { promise, cancel };
+  stdin.setEncoding('utf8');
+  stdin.on('data', onData);
+  if (stdin.ref) stdin.ref();
+  stdin.resume();
+  return {
+    cancel: () => {
+      stdin.off('data', onData);
+      stdin.pause();
+      if (stdin.unref) stdin.unref();
+    },
+  };
 }
 
 function waitForEnter(message, prompt) {
@@ -516,6 +517,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // when it gave no answer (what happens to the work it was given, and that the loop goes on).
   const agentName = (PRESET_INFO[cfg.agent] && PRESET_INFO[cfg.agent].label) || 'The assistant';
   const duration = (ms) => (ms < 60000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60000)} min`);
+  const clock = (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 
   // Fixes committed and waiting for a new build of the site (deployed: bundle-change): ledger.deploy
   // holds the start page's bundles from before them, the branch and where it was pushed.
@@ -553,29 +555,46 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     const until = limit ? Date.now() + limit : Infinity;
     const facts = deployFacts();
     log.info(`waiting for your deployment: ${deploySentence(facts)}; checking the start page every ${duration(cfg.deployPoll)}${limit ? ` for up to ${duration(limit)}` : ' until the new build is live'}`);
-    const enter = events ? enterFromDashboard() : null;
+    // The dashboard's words while the wait goes on: "check" has the site checked at once.
     let said = null;
-    if (enter) enter.promise.then((w) => (said = w));
+    let forced = false;
+    let wake = null;
+    const words = events ? dashboardWords((w) => {
+      if (w === 'check') forced = true;
+      else said = w;
+      if (wake) wake();
+    }) : null;
     ev('await-deploy', { round, committed: facts.pending, nextRound: round + 1, ...facts, intervalMs: cfg.deployPoll, timeoutMs: limit, until: limit ? new Date(until).toISOString() : null });
     // compared: some poll could set the build against the one from before the fixes.
     let compared = false;
     try {
       while (Date.now() < until && !stopped()) {
-        await Promise.race([sleep(Math.max(0, Math.min(cfg.deployPoll, until - Date.now()))), ...(enter ? [enter.promise] : [])]);
+        await Promise.race([sleep(Math.max(0, Math.min(cfg.deployPoll, until - Date.now()))), new Promise((r) => {
+          wake = r;
+          if (said || forced) r();
+        })]);
+        wake = null;
         if (said) return said;
+        const asked = forced;
+        forced = false;
         // With no limit an expired session is signed in again (a tab opens), so the wait can go on checking.
         const sig = limit ? await bundleSignature(cfg.url) : await buildForVerify();
         if (said) return said;
+        // Each check on record (when, what the site served, read how), so the wait is never silent.
+        const result = sig === null ? 'unreadable' : ledger.deploy.signature == null ? 'no-baseline' : sameBuild(sig, ledger.deploy.signature) ? 'same' : 'changed';
+        const at = new Date();
+        ev('deploy-check', { round, at: at.toISOString(), result, forced: asked, via: buildVia || null, host: facts.host, pending: facts.pending });
+        log.info(`checked ${facts.host} at ${clock(at)}: ${result === 'same' ? 'still the build from before the fixes' : result === 'changed' ? 'a new build is live' : result === 'unreadable' ? 'the start page could not be read' : 'no build from before the fixes on record, so this one is verified'}`);
         // Nothing to compare with when the build from before could not be read: the person's word decides.
         // No limit and no build from before the fixes on record: nothing can ever be compared, so the
         // first build that can be read is verified, as a start with no build on record does.
         if (sig !== null && ledger.deploy.signature == null && !limit) return 'live';
         if (sig === null || ledger.deploy.signature == null) continue;
         compared = true;
-        if (!sameBuild(sig, ledger.deploy.signature)) return 'live';
+        if (result === 'changed') return 'live';
       }
     } finally {
-      if (enter) enter.cancel();
+      if (words) words.cancel();
     }
     return stopped() ? 'stopped' : compared ? 'timeout' : 'unreachable';
   };

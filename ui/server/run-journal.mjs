@@ -24,7 +24,7 @@ export const RUN_CHILD = join(dirname(fileURLToPath(import.meta.url)), 'run-chil
 export const RUNS_DIR = 'runs';
 // Kinds whose run is journaled; an assistant's install stays a child of the server.
 // The words the control file carries to a run (run-child.mjs passes them on to the CLI's stdin).
-export const CONTROL_WORDS = new Set(['continue', 'fix-remaining', 'stop-waiting']);
+export const CONTROL_WORDS = new Set(['continue', 'check', 'fix-remaining', 'stop-waiting']);
 export const JOURNALED = new Set(['crawl', 'troubleshoot', 'login', 'loop', 'dry-run']);
 const LOOP_KINDS = new Set(['loop', 'dry-run']);
 

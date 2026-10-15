@@ -134,9 +134,17 @@ test('deploy-wait AC1/5/6/9, turnkey AC2 / guards b c d l: the wait says what it
     const evs = await runEvents(dash);
     expect(evs.some((e) => e.type === 'deployment' || (e.type === 'done' && e.outcome === 'awaiting-deploy')), JSON.stringify(evs.filter((e) => e.type === 'deployment' || e.type === 'done'))).toBe(false);
     await expect(page.locator('body')).not.toContainText(/has not arrived|still serves the old build/);
-    // Stop is the only button.
+    // Stop, and Check now: every check is on record (when, and what the site served), and Check now
+    // has the site checked at once.
     await expect(page.getByTestId('loop-stop')).toBeVisible();
     await asksNothing(page);
+    const check = page.getByTestId('deploy-check');
+    await expect(check).toHaveText(/^Checked at \d{1,2}:\d\d:\d\d [AP]M: still the build from before the fixes\.$/, { timeout: 15_000 });
+    const checksBefore = (await runEvents(dash)).filter((e) => e.type === 'deploy-check').length;
+    expect(checksBefore).toBeGreaterThan(0);
+    await page.getByTestId('check-now').click();
+    await expect.poll(async () => (await runEvents(dash)).filter((e) => e.type === 'deploy-check' && e.forced === true).length, { timeout: 20_000 }).toBeGreaterThan(0);
+    await expect(check).toHaveText(/^Checked at \d{1,2}:\d\d:\d\d [AP]M: still the build from before the fixes\.$/);
     // AC 9: what the assistant did, with only what it committed under it.
     await expect(page.getByTestId('round-headline')).toHaveText(/^Round 1: fixed \d+ findings? in 1 file, committed on branch a11y-508 and pushed to origin$/);
     await expect(page.getByTestId('changes').locator('tbody tr:not([data-outcome="committed"])')).toHaveCount(0);
@@ -155,18 +163,16 @@ test('deploy-wait AC1/5/6/9, turnkey AC2 / guards b c d l: the wait says what it
 
     // Guard d: stopped and started again while the old build is still live, the loop waits again
     // (no "still serves the old build", no crawl).
-    await page.getByTestId('loop-stop').click();
-    await expect(status).toHaveText(/^Stopped\. \d+ fix(es are| is) committed\.$/, { timeout: 30_000 });
-    await expect(page.getByTestId('loop-start')).toHaveText('Fix the violations');
-    await asksNothing(page);
+    // Stop ends the fixing only: the fixes still wait for the build, and the watch for it goes on by
+    // itself in a run of its own, with nothing asked of anyone.
     const rounds = ledger().rounds.length;
     const stoppedId = (await api(dash, '/api/runs/current')).json.id;
-    await page.getByTestId('loop-start').click();
+    await page.getByTestId('loop-stop').click();
     await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.id, { timeout: 30_000 }).not.toBe(stoppedId);
     await expect(status).toHaveText(WAITING(String(count('pending'))), { timeout: 120_000 });
-    // The very run the click started waits (it did not end, to be started again by the dashboard).
+    await asksNothing(page);
     const restarted = (await api(dash, '/api/runs/current')).json;
-    expect([restarted.status, restarted.meta.attempt, restarted.retry ?? null]).toEqual(['running', 1, null]);
+    expect(restarted.status).toBe('running');
     const again = await runEvents(dash);
     expect(again.some((e) => e.type === 'deployment' && e.state === 'still-old'), JSON.stringify(again.filter((e) => e.type === 'deployment'))).toBe(false);
     expect(again.some((e) => (e.type === 'step' && e.step === 'crawl') || e.type === 'page')).toBe(false);
