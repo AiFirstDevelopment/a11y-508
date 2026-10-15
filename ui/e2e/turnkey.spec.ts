@@ -258,7 +258,6 @@ test('turnkey AC6 / guard j: from the dashboard the loop has no round cap; it en
     await setToken(page);
     await page.getByTestId('loop-start').click();
     await expect(page.getByTestId('loop-stop')).toBeVisible({ timeout: 60_000 });
-    expect((await current(dash)).meta.command).toMatch(/ --max-rounds 0\b/);
     const status = page.getByTestId('fix-status');
     await expect(status).toHaveText(/^Done: (nothing left to fix\.|\d+ fixed\. \d+ findings? could not be fixed by the assistant; the people who use the app will find them\.)$/, { timeout: 400_000 });
     // Round 1 committed; round 2 crawled to verify, and found the rest the assistant could not fix.
@@ -268,6 +267,7 @@ test('turnkey AC6 / guard j: from the dashboard the loop has no round cap; it en
     await expect(page.locator('body')).not.toContainText(/reached --max-rounds|Done: \d+ fixed, \d+ left/);
     await expect(page.getByTestId('run-again')).toBeVisible();
     await asksNothing(page);
+    expect((await current(dash)).meta.command).toMatch(/ --max-rounds 0\b/);
   } finally {
     await dash.stop();
     a.close();
