@@ -142,6 +142,7 @@ test('deploy-wait AC1/5/6/9, turnkey AC2 / guards b c d l: the wait says what it
     await expect(check).toHaveText(/^Checked at \d{1,2}:\d\d:\d\d [AP]M: still the build from before the fixes\.$/, { timeout: 15_000 });
     const checksBefore = (await runEvents(dash)).filter((e) => e.type === 'deploy-check').length;
     expect(checksBefore).toBeGreaterThan(0);
+    await expect(page.getByTestId('sign-in-now')).toHaveText('Sign in');
     await page.getByTestId('check-now').click();
     await expect.poll(async () => (await runEvents(dash)).filter((e) => e.type === 'deploy-check' && e.forced === true).length, { timeout: 20_000 }).toBeGreaterThan(0);
     await expect(check).toHaveText(/^Checked at \d{1,2}:\d\d:\d\d [AP]M: still the build from before the fixes\.$/);

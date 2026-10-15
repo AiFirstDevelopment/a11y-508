@@ -76,7 +76,7 @@ const control = setInterval(() => {
     for (const l of buf.toString('utf8').split('\n')) {
       const word = l.trim();
       if (word === 'continue') child.stdin.write('\n');
-      else if (word === 'check' || word === 'fix-remaining' || word === 'stop-waiting') child.stdin.write(`${word}\n`);
+      else if (word === 'check' || word === 'sign-in' || word === 'fix-remaining' || word === 'stop-waiting') child.stdin.write(`${word}\n`);
     }
   } catch {
   } finally {

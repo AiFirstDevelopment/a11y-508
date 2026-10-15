@@ -550,7 +550,7 @@ export function checkLine(ev: Record<string, unknown>): string {
   const how = ev['via'] === 'browser' ? ' (read through the browser with your sign-in)' : '';
   const r = ev['result'];
   if (r === 'changed') return `Checked at ${when}: a new build is live${how}. Verifying the fixes.`;
-  if (r === 'unreadable') return `Checked at ${when}: the start page could not be read (the site may be down, or behind a sign-in).`;
+  if (r === 'unreadable') return `Checked at ${when}: the start page could not be read (${String(ev['reason'] || 'the site may be down, or behind a sign-in')}).`;
   if (r === 'no-baseline') return `Checked at ${when}: no build from before the fixes is on record, so this one is verified${how}.`;
   return `Checked at ${when}: still the build from before the fixes${how}.`;
 }

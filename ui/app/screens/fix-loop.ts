@@ -216,7 +216,10 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
         <p data-testid="deploy-wait-next">{{ waitNext() }}</p>
         <!-- Every check on record, and one at once on request: the wait is never a mystery. -->
         <p role="status" data-testid="deploy-check">{{ checkText() }}</p>
-        <div class="actions"><button type="button" class="secondary" (click)="checkNow()" [disabled]="checking()" data-testid="check-now">{{ checking() ? 'Checking…' : 'Check now' }}</button></div>
+        <div class="actions">
+          <button type="button" class="secondary" (click)="checkNow()" [disabled]="checking()" data-testid="check-now">{{ checking() ? 'Checking…' : 'Check now' }}</button>
+          <button type="button" class="secondary" (click)="signInNow()" [disabled]="checking()" data-testid="sign-in-now">Sign in</button>
+        </div>
         @if (meanwhile() && store.task(); as t) {
           @if (t.m) {
             <div class="thin-progress">
@@ -686,12 +689,16 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     if (!c) return 'Not checked yet.';
     return checkLine(c);
   });
-  async checkNow(): Promise<void> {
+  // Sign in: the sign-in opens (a tab in the dashboard's window), and the site is checked again after.
+  signInNow(): Promise<void> {
+    return this.checkNow('sign-in');
+  }
+  async checkNow(action: 'check' | 'sign-in' = 'check'): Promise<void> {
     if (this.checking()) return;
     this.checking.set(true);
     const before = this.store.deployCheck();
     try {
-      await this.api.post('/api/runs/current/continue', { action: 'check' });
+      await this.api.post('/api/runs/current/continue', { action });
       // Until that check's result arrives (or 20 s), the button and the line say so.
       const until = Date.now() + 20_000;
       while (Date.now() < until && this.store.deployCheck() === before) await new Promise((r) => setTimeout(r, 200));

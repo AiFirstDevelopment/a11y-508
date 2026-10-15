@@ -337,7 +337,7 @@ export const REMOVED_BUTTONS = /Try again|Continue|Start over|verify now|Keep wa
 // Stop in its actions (the assistant picker's own buttons are not the step's).
 export async function asksNothing(page: Page): Promise<void> {
   await expect(page.getByRole('button', { name: REMOVED_BUTTONS })).toHaveCount(0);
-  const forward = page.locator('main .actions:not(#agent-picker .actions) button:visible').filter({ hasNotText: /^Stop$/ });
+  const forward = page.locator('main .actions:not(#agent-picker .actions) button:visible').filter({ hasNotText: /^(Stop|Check now|Checking…|Sign in)$/ });
   expect(await forward.count(), (await forward.allTextContents()).join(' | ')).toBeLessThanOrEqual(1);
 }
 

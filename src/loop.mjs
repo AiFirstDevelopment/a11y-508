@@ -245,7 +245,7 @@ function dashboardWords(onWord) {
       if (nl < 0) return;
       const word = buf.slice(0, nl).trim();
       buf = buf.slice(nl).replace(/^\r?\n/, '');
-      onWord(word === 'check' || word === 'fix-remaining' || word === 'stop-waiting' ? word : 'verify');
+      onWord(word === 'check' || word === 'sign-in' || word === 'fix-remaining' || word === 'stop-waiting' ? word : 'verify');
     }
   };
   stdin.setEncoding('utf8');
@@ -463,11 +463,24 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // the crawl's way in when the page is behind a sign-in. null when neither could read it. Says
   // which way only when that changes, so a poll stays quiet.
   let buildVia;
+  let lastBuild = null;
   const checkBuild = async (url) => {
     const r = await readBuild(url, { args: [...(cfg.args || []), ...passthrough, ...session], cwd });
-    if (r.via !== buildVia) log.info(r.via === 'browser' ? 'read the start page\'s build through the browser with the saved session' : r.via === 'fetch' ? 'read the start page\'s build with a plain request' : 'could not read the start page\'s build');
+    if (r.via !== buildVia) log.info(r.via === 'browser' ? 'read the start page\'s build through the browser with the saved session' : r.via === 'fetch' ? 'read the start page\'s build with a plain request' : `could not read the start page's build${r.reason ? ` (${r.reason})` : ''}`);
     buildVia = r.via;
+    lastBuild = r;
     return r;
+  };
+  // Opens the sign-in (a tab in the dashboard's window, or a window) and, once someone has signed in,
+  // takes that session for the checks and the crawls. why: said in the log.
+  const openSignIn = async (why) => {
+    log.info(`${why}: opening ${connectArgs.length ? 'a tab in the dashboard\'s window' : 'a window'} to sign in`);
+    const ok = await signInOnly({ cfg, cwd, log, events, stateFile, connectArgs, passthrough: passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') });
+    if (!ok) return false;
+    // Signed in just now: the crawl uses that session instead of signing in again (--sign-in-first).
+    signedInNow = true;
+    session = sessionArgs(cfg, passthrough, cwd);
+    return true;
   };
   const bundleSignature = async (url) => (await checkBuild(url)).signature;
   // Before verifying: when even the browser with the saved session ends on the sign-in portal (the
@@ -478,12 +491,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   const buildForVerify = async () => {
     const r = await checkBuild(cfg.url);
     if (!r.portal) return r.signature;
-    log.info(`the start page sends the browser to its sign-in: opening ${connectArgs.length ? 'a tab in the dashboard\'s window' : 'a window'} to sign in`);
-    const ok = await signInOnly({ cfg, cwd, log, events, stateFile, connectArgs, passthrough: passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') });
-    if (!ok) return null;
-    // Signed in just now: the crawl uses that session instead of signing in again (--sign-in-first).
-    signedInNow = true;
-    session = sessionArgs(cfg, passthrough, cwd);
+    if (!(await openSignIn('the start page asks for a sign-in'))) return null;
     return bundleSignature(cfg.url);
   };
   if (signInFirst && fromReport) log.info(`the first round that crawls signs in first in a visible window; the later rounds crawl with the saved session ${stateFile}`);
@@ -558,9 +566,11 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     // The dashboard's words while the wait goes on: "check" has the site checked at once.
     let said = null;
     let forced = false;
+    let signIn = false;
     let wake = null;
     const words = events ? dashboardWords((w) => {
       if (w === 'check') forced = true;
+      else if (w === 'sign-in') signIn = forced = true;
       else said = w;
       if (wake) wake();
     }) : null;
@@ -577,14 +587,21 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         if (said) return said;
         const asked = forced;
         forced = false;
+        // Sign in, as asked: the tab opens whatever the check thinks of the page.
+        if (signIn) {
+          signIn = false;
+          await openSignIn('sign-in asked for');
+          if (said) return said;
+        }
         // With no limit an expired session is signed in again (a tab opens), so the wait can go on checking.
         const sig = limit ? await bundleSignature(cfg.url) : await buildForVerify();
         if (said) return said;
-        // Each check on record (when, what the site served, read how), so the wait is never silent.
+        // Each check on record (when, what the site served, read how, or why not), so the wait is never silent.
         const result = sig === null ? 'unreadable' : ledger.deploy.signature == null ? 'no-baseline' : sameBuild(sig, ledger.deploy.signature) ? 'same' : 'changed';
         const at = new Date();
-        ev('deploy-check', { round, at: at.toISOString(), result, forced: asked, via: buildVia || null, host: facts.host, pending: facts.pending });
-        log.info(`checked ${facts.host} at ${clock(at)}: ${result === 'same' ? 'still the build from before the fixes' : result === 'changed' ? 'a new build is live' : result === 'unreadable' ? 'the start page could not be read' : 'no build from before the fixes on record, so this one is verified'}`);
+        const reason = result === 'unreadable' && lastBuild && lastBuild.reason ? lastBuild.reason : null;
+        ev('deploy-check', { round, at: at.toISOString(), result, forced: asked, via: buildVia || null, host: facts.host, pending: facts.pending, ...(reason ? { reason } : {}) });
+        log.info(`checked ${facts.host} at ${clock(at)}: ${result === 'same' ? 'still the build from before the fixes' : result === 'changed' ? 'a new build is live' : result === 'unreadable' ? `the start page could not be read${reason ? ` (${reason})` : ''}` : 'no build from before the fixes on record, so this one is verified'}`);
         // Nothing to compare with when the build from before could not be read: the person's word decides.
         // No limit and no build from before the fixes on record: nothing can ever be compared, so the
         // first build that can be read is verified, as a start with no build on record does.

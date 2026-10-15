@@ -89,9 +89,10 @@ async function byFetch(url) {
       }
     })();
     const app = res.ok && sameHost && refs.length > 0;
-    return { ok: res.ok && sameHost, signature: app ? await hashedLines(html, refs, res.url || url, headers) : refs.join('\n'), app };
-  } catch {
-    return { ok: false, signature: null, app: false };
+    const reason = !sameHost ? `a plain request is sent to ${new URL(res.url || url).host}` : !res.ok ? `a plain request gets HTTP ${res.status}` : null;
+    return { ok: res.ok && sameHost, signature: app ? await hashedLines(html, refs, res.url || url, headers) : refs.join('\n'), app, reason };
+  } catch (e) {
+    return { ok: false, signature: null, app: false, reason: `a plain request fails (${e && e.message ? e.message : e})` };
   }
 }
 
@@ -137,13 +138,17 @@ async function byBrowser(url, { args, cwd, timeout }) {
     const page = new Page(session, opts.page);
     await page.init();
     const r = await page.goto(url, timeout);
-    if (r.error || (r.status && r.status >= 400)) return { refs: null, portal: false };
+    if (r.error) return { refs: null, portal: false, reason: `the page did not load (${r.error})` };
+    if (r.timedOut) return { refs: null, portal: false, reason: 'the page did not finish loading in time' };
+    // A gateway that answers 401 or 403 wants a sign-in, like a portal that the page is sent to.
+    if (r.status === 401 || r.status === 403) return { refs: null, portal: true, reason: `the browser gets HTTP ${r.status}, so a sign-in is needed` };
+    if (r.status && r.status >= 400) return { refs: null, portal: false, reason: `the browser gets HTTP ${r.status}` };
     let host = null;
     try {
       host = new URL(r.finalUrl).host;
     } catch {}
     // Still on the sign-in portal: its build is not the app's.
-    if (host !== new URL(url).host) return { refs: null, portal: true };
+    if (host !== new URL(url).host) return { refs: null, portal: true, reason: `the browser is sent to ${host || 'another host'} (a sign-in portal)` };
     // The same lines as the fetch path, read in the page (its session and headers apply to the fetches).
     const refs = await page.evaluate(`(async () => {
       const els = [...document.querySelectorAll('script[src], link[href]')];
@@ -170,12 +175,12 @@ async function byBrowser(url, { args, cwd, timeout }) {
       }
       return lines.join('\\n');
     })()`, { awaitPromise: true });
-    return { refs: typeof refs === 'string' ? refs : null, portal: false };
+    return { refs: typeof refs === 'string' ? refs : null, portal: false, reason: typeof refs === 'string' ? null : 'the page loads no scripts or stylesheets' };
   })();
   try {
-    return await Promise.race([work, new Promise((r) => (timer = setTimeout(() => r({ refs: null, portal: false }), timeout)))]);
-  } catch {
-    return { refs: null, portal: false };
+    return await Promise.race([work, new Promise((r) => (timer = setTimeout(() => r({ refs: null, portal: false, reason: `the check ran out of time (${Math.round(timeout / 1000)} s)` }), timeout)))]);
+  } catch (e) {
+    return { refs: null, portal: false, reason: `the browser could not check it (${e && e.message ? e.message : e})` };
   } finally {
     clearTimeout(timer);
     work.catch(() => {});
@@ -185,12 +190,13 @@ async function byBrowser(url, { args, cwd, timeout }) {
   }
 }
 
+// Resolves { signature, via, portal, reason }: reason says, in words, why there is no signature.
 export async function bundleSignature(url, { args = [], cwd = process.cwd(), timeout = 30000 } = {}) {
   const f = await byFetch(url);
-  if (f.app) return { signature: f.signature, via: 'fetch', portal: false };
+  if (f.app) return { signature: f.signature, via: 'fetch', portal: false, reason: null };
   const b = await byBrowser(url, { args, cwd, timeout });
-  if (b.refs !== null) return { signature: b.refs, via: 'browser', portal: false };
+  if (b.refs !== null) return { signature: b.refs, via: 'browser', portal: false, reason: null };
   // The page answered on its own host but loads no scripts or styles: that is its build.
-  if (f.ok) return { signature: f.signature, via: 'fetch', portal: false };
-  return { signature: null, via: null, portal: b.portal };
+  if (f.ok) return { signature: f.signature, via: 'fetch', portal: false, reason: null };
+  return { signature: null, via: null, portal: b.portal, reason: [b.reason, f.reason].filter(Boolean).join('; ') || null };
 }
