@@ -104,8 +104,6 @@ if (want('search')) {
     // The page's own audit is its state before the search: no result-area finding without the label.
     assert.ok(!page.findings.some((f) => /result-icon/.test(f.html) && f.state !== 'after searching the last 3 months'));
     assert.ok(page.search.skipped.some((s) => /Delete filtered records/.test(s.name)), JSON.stringify(page.search.skipped));
-    // ... and the coverage notes say so.
-    assert.ok(r.summary.coverage.notes.includes('Search form on /search.html was not submitted: its button "Delete filtered records" looks like an action.'), JSON.stringify(r.summary.coverage.notes));
   });
   check('events: a "search" progress phase, and the page event counts searches and results', () => {
     const p = events.find((e) => e.type === 'progress' && e.phase === 'search');
@@ -249,9 +247,9 @@ if (want('quick')) {
 }
 if (want('quickload')) {
   const q = await crawl('quickload', ['--quiet', '--json', '--max-pages', '1', '--no-follow-clicks'], 'search-quick.html');
-  check('quickload: setting the range on load submits nothing, and the note is still written once', () => {
+  check('quickload: setting the range on load submits nothing by itself (the one search is the search pass\'s own, with the range already set), and the note is still written once', () => {
     assert.ok(q.report, q.stderr);
-    assert.deepEqual(q.searches, []);
+    assert.deepEqual(q.searches.map((s) => [s.form, s.preset]), [['quick-click', 'Last 6 months']], JSON.stringify(q.searches));
     assert.deepEqual(rangeNotes(q.report, '/search-quick.html'), [QUICK_NOTE], JSON.stringify(notes(q.report)));
     assert.deepEqual(pageOf(q.report, '/search-quick.html').ranges.forms.map((f) => [f.selector, f.preset]), [['#quick-filters', 'Last 6 months']]);
   });

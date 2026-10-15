@@ -95,9 +95,6 @@ export function coverage(pages, crawl, opts) {
     else notes.push(`${where}: submitted with no date range (no preset or date field found).`);
   }
   if (searched.length > 10) notes.push(`${searched.length - 10} more searched form(s) are listed in report.json under pages[].search.forms.`);
-  // A form that looks like a search but whose one way to submit is a control named like an action.
-  const unsubmitted = pages.flatMap((p) => ((p.search && p.search.skipped) || []).map((f) => ({ p, f })));
-  for (const { p, f } of unsubmitted.slice(0, 10)) notes.push(`Search form on ${short(p.finalUrl || p.url)} was not submitted: its button "${f.name}" looks like an action.`);
   // The date range set on every load of a page with a search or filter form, once per form.
   const ranged = pages.flatMap((p) => ((p.ranges && p.ranges.forms) || []).map((f) => ({ p, f })));
   const span = `the last ${opts.searchMonths} month${opts.searchMonths === 1 ? '' : 's'}`;
