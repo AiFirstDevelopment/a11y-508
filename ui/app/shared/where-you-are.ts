@@ -4,7 +4,7 @@ import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
 import { LoopTimeline } from '../core/types';
-import { WhereLive, whereYouAre } from '../core/where';
+import { WhereLive, notHoldingLine, tallyLine, whereYouAre } from '../core/where';
 
 // "Where you are": what has happened for this URL and what comes next, at the top of the Fix step
 // and of History. Always visible; it follows the live run and reads the ledger again as it changes.
@@ -14,6 +14,9 @@ import { WhereLive, whereYouAre } from '../core/where';
   template: `
     <section class="where" aria-labelledby="where-h" data-testid="where-you-are">
       <h2 id="where-h">Where you are</h2>
+      <!-- The whole run so far in a few numbers, and the one thing to change when fixes keep not holding. -->
+      @if (tally(); as t) { <p class="tally" data-testid="tally">{{ t }}</p> }
+      @if (notHolding(); as n) { <p class="notice warn" role="status" data-testid="not-holding">{{ n }}</p> }
       <ul class="plain where-list">
         @for (l of lines(); track $index) {
           <li [attr.data-kind]="l.kind" [attr.data-testid]="'where-' + l.kind">
@@ -33,6 +36,14 @@ export class WhereYouAre implements OnDestroy {
   private store = inject(RunStore);
   readonly timeline = signal<LoopTimeline | null>(null);
   readonly now = signal(Date.now());
+  readonly tally = computed(() => {
+    const t = this.timeline()?.total?.tally;
+    return t ? tallyLine(t, this.now(), this.store.active()) : '';
+  });
+  readonly notHolding = computed(() => {
+    const t = this.timeline()?.total?.tally;
+    return t ? notHoldingLine(t) : null;
+  });
   private ticker = setInterval(() => this.now.set(Date.now()), 1000);
   private loads = 0;
 

@@ -194,4 +194,6 @@ test('loop timeline: a group of findings fixed by one task is one row and one co
   assert.equal(t.rounds[0].changes.length, 1);
   assert.equal(t.rounds[0].changes[0].elements, 4);
   assert.equal(t.rounds[0].changes[0].commit, 'abc1234');
+  // The tally: every finding, every assistant call, every commit once, and what held after a deployment.
+  assert.deepEqual([t.total.tally.found, t.total.tally.calls, t.total.tally.agentMs, t.total.tally.commits, t.total.tally.didNotHold, t.total.tally.verifiedTotal, t.total.tally.startedAt], [4, 4, 40, 1, 0, 0, '2026-10-13T10:00:00Z']);
 });

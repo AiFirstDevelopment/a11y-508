@@ -258,8 +258,29 @@ export interface TimelineRound {
   label?: string | null;
   changes?: any[];
 }
+// The whole run so far in a few numbers (GET /api/loop/timeline, total.tally).
+export interface Tally {
+  rounds: number;
+  startedAt: string | null;
+  lastAt: string | null;
+  found: number;
+  verified: number;
+  pending: number;
+  open: number;
+  skipped: number;
+  adequate: number;
+  gone: number;
+  review: number;
+  commits: number;
+  calls: number;
+  agentMs: number;
+  didNotHold: number;
+  verifiedTotal: number;
+  branch: string | null;
+}
+
 export interface LoopTimeline {
   rounds: TimelineRound[];
   deploy?: LedgerInfo['deploy'];
-  total: { rounds: number; fixed: number; pending?: number; of: number; remaining: number };
+  total: { rounds: number; fixed: number; pending?: number; of: number; remaining: number; tally?: Tally };
 }

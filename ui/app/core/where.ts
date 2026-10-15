@@ -1,5 +1,5 @@
 import { localTime } from './format';
-import type { LoopTimeline } from './types';
+import type { Tally, LoopTimeline } from './types';
 import { plainReason, signInFailed } from './outcome';
 
 // "Where you are" (docs/plans/deploy-wait.md criteria 6 and 8): what has happened for this URL and
@@ -151,4 +151,36 @@ function nowLine(live: WhereLive | null, timeline: LoopTimeline | null, counts: 
   }
   if (timeline?.deploy && counts['pending']) return `your fixes wait for a deployment of ${timeline.deploy.branch}`;
   return 'nothing is running';
+}
+
+// A span in the words a person uses: "2 h 41 min", "41 min", "50 s".
+function span(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s} s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+// The whole run so far in one line. live: the loop is running, so the time runs to now.
+export function tallyLine(t: Tally, now: number, live: boolean): string {
+  const start = t.startedAt ? Date.parse(t.startedAt) : NaN;
+  const end = live ? now : t.lastAt ? Date.parse(t.lastAt) : NaN;
+  const time = Number.isFinite(start) && Number.isFinite(end) && end > start ? ` in ${span(end - start)}` : '';
+  const parts = [`${t.rounds} round${t.rounds === 1 ? '' : 's'}${time}`, `${t.found} found`, `${t.verified} verified fixed`];
+  if (t.pending) parts.push(`${t.pending} awaiting verification`);
+  if (t.open) parts.push(`${t.open} open`);
+  if (t.skipped) parts.push(`${t.skipped} could not be fixed`);
+  if (t.adequate) parts.push(`${t.adequate} judged fine`);
+  if (t.calls) parts.push(`${t.calls} assistant call${t.calls === 1 ? '' : 's'}, ${span(t.agentMs / t.calls)} each on average`);
+  if (t.didNotHold) parts.push(`${t.didNotHold} fix${t.didNotHold === 1 ? '' : 'es'} did not hold after a deployment`);
+  return parts.join(' · ');
+}
+
+// When fixes keep failing to hold after deployments and almost none verify, the builds the site
+// serves most likely do not include the loop's branch: said once, with the one thing that changes it.
+export function notHoldingLine(t: Tally): string | null {
+  if (t.didNotHold < 2 || t.didNotHold <= t.verifiedTotal) return null;
+  const b = t.branch || "the loop's branch";
+  return `${t.didNotHold} fixes counted as not holding after your deployments, and ${t.verifiedTotal} verified: the builds the site serves do not seem to include branch ${b}. Merge it into the branch your pipeline builds; until then the fixes are tried again against builds without them.`;
 }

@@ -224,6 +224,8 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     await expect(lastRow.getByTestId('remaining').locator('span').first()).toHaveText(String(counts.open || 0));
     await expect(page.getByTestId('history').locator('tr[data-source="round"]')).toHaveCount(ledger.rounds.length);
     await expect(page.getByTestId('loop-summary')).toHaveText(`Fix loop: ${ledger.rounds.length} rounds · ${(counts.verified || 0) + (counts.open || 0) + (counts.pending || 0)} violations · ${countsLine(counts)}`);
+    // The tally: the whole run in one line, on History as on the Fix step.
+    await expect(page.getByTestId('tally')).toHaveText(new RegExp(`^${ledger.rounds.length} rounds in .+ · ${Object.keys(ledger.findings).length} found · ${counts.verified || 0} verified fixed`));
     // Nothing on History deletes the loop's rounds (docs/plans/turnkey-loop.md AC 7).
     await expect(page.getByRole('button', { name: 'Clear fix-loop history' })).toHaveCount(0);
     expect(existsSync(join(dirsOf(cwd).work, 'ledger.json'))).toBe(true);
