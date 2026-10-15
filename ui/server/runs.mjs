@@ -5,6 +5,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { BadRequest } from './args.mjs';
+import { CONTROL_WORDS } from './run-journal.mjs';
 import { protectedPids, recordKill, refuseKill } from '../../src/kills.mjs';
 
 // What an exit code means to a person. Exit 1 from a crawl is a finding
@@ -237,10 +238,11 @@ export class Runs {
     return sig;
   }
 
-  // action: 'continue' (Enter), 'fix-remaining' or 'stop-waiting' (the deployment wait's buttons).
+  // action: 'continue' (Enter), or a word for the deployment wait: 'check' (check the site now),
+  // 'sign-in' (open the sign-in, then check), 'fix-remaining', 'stop-waiting'.
   continue(action = 'continue') {
     if (!this.active) throw new BadRequest('no run is active', 409);
-    if (!['continue', 'fix-remaining', 'stop-waiting'].includes(action)) throw new BadRequest('action must be continue, fix-remaining or stop-waiting');
+    if (!CONTROL_WORDS.has(action)) throw new BadRequest(`action must be one of ${[...CONTROL_WORDS].join(', ')}`);
     if (this.current.journal) return this.current.continue(action);
     this.current.child.stdin.write(action === 'continue' ? '\n' : `${action}\n`);
   }
