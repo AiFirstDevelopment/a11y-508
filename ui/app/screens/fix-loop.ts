@@ -60,7 +60,7 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
       @if (env.env()?.detecting) {
         <span role="status">Detecting assistants…</span>
       } @else if (assistantLabel(); as label) {
-        Fixing with <strong>{{ label }}</strong>@if (assistantVersion(); as v) { <span> ({{ v }})</span> }
+        Fixing with <strong>{{ label }}</strong>@if (assistantVersion(); as v) { <span> ({{ v }})</span> }@if (runTool(); as t) { <span class="hint" data-testid="run-revision"> · loop started with build {{ t }}{{ t !== env.env()?.revision ? ' (this dashboard is ' + env.env()?.revision + ')' : '' }}</span> }
         <button type="button" class="link" (click)="pickerOpen.set(!pickerOpen())" [attr.aria-expanded]="showPicker()" aria-controls="agent-picker">change<span class="visually-hidden"> the assistant</span></button>
       } @else if (env.env()) {
         No assistant is installed yet. Install one below.
@@ -401,6 +401,8 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   readonly env = inject(EnvStore);
+  // The commit the current run's loop was started with (its meta.tool), when the run has one.
+  readonly runTool = computed(() => String((this.store.run()?.['meta'] as Record<string, unknown> | undefined)?.['tool'] || '') || null);
   readonly store = inject(RunStore);
   private form = inject(FormStore);
   readonly confirmDialog = viewChild<ElementRef<HTMLDialogElement>>('confirm');

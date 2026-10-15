@@ -674,7 +674,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     }
     const latest = readReport(cwd, 'latest');
     return {
-      cwd, cwdFacts: factsOf(cwd), inGitRepo: inGitRepo(cwd), launchDir: state.launchDir, version: pkg.version, platform, browser,
+      cwd, cwdFacts: factsOf(cwd), inGitRepo: inGitRepo(cwd), launchDir: state.launchDir, version: pkg.version, revision: TOOL_REVISION, platform, browser,
       config: { exists: existsSync(configPath()), file: configPath(), repository: !!repoConfig() },
       stateDir: sp().dir,
       // Files the dashboard may have left in the repository before; asked about once.

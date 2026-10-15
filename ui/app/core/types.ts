@@ -111,6 +111,8 @@ export interface EnvInfo {
   inGitRepo: boolean;
   launchDir: string;
   version: string;
+  // The code this dashboard runs: the tool's git commit, else its version.
+  revision?: string;
   platform: string;
   browser: { found: boolean; path: string | null; error?: string };
   config: { exists: boolean; file: string; repository?: boolean };

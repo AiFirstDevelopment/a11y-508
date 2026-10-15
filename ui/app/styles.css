@@ -16,6 +16,7 @@ header.top a:focus { outline-color: #ffffff; }
 .brand { font-weight: 700; font-size: 1.15rem; margin: 0 0 6px; }
 .brand span { font-weight: 400; }
 .brand .small-link { font-weight: 400; font-size: 0.8rem; margin-left: 10px; color: #e8ecf5; }
+.brand .build { font-weight: 400; font-size: 0.8rem; margin-left: 10px; color: #c9d2e3; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 18px; }
 nav a[aria-current="page"] { font-weight: 700; text-decoration-thickness: 3px; }
 .context { margin: 6px 0 0; font-size: 0.85rem; color: #e8ecf5; overflow-wrap: anywhere; }

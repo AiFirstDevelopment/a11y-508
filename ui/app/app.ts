@@ -54,7 +54,7 @@ export function stepOf(url: string): number {
   template: `
     <a class="skip" href="#main">Skip to main content</a>
     <header class="top">
-      <p class="brand">a11y-508 <span>dashboard</span> <a class="small-link" routerLink="/diagnostics" data-testid="diagnostics-link">Diagnostics</a></p>
+      <p class="brand">a11y-508 <span>dashboard</span> <a class="small-link" routerLink="/diagnostics" data-testid="diagnostics-link">Diagnostics</a>@if (env.env()?.revision; as rev) { <span class="build" data-testid="build-revision" title="The commit this dashboard runs">build {{ rev }}</span> }</p>
       <nav aria-label="Steps" data-testid="steps">
         <ol class="steps">
           @for (s of steps; track s.n) {

@@ -2,7 +2,8 @@
 // left off even in a browser that remembers nothing (the dashboard's own new Chrome profile).
 
 import { test, expect } from '@playwright/test';
-import { api, dashboard, gitRepo, goInApp, tempDir } from './harness';
+import { spawnSync } from 'node:child_process';
+import { api, dashboard, gitRepo, goInApp, open, tempDir, ROOT } from './harness';
 
 test('startup: with a 20 s assistant lookup the Set up dialog is up within 2 s, and the Fix step says it is detecting, then shows the result', async ({ page }) => {
   const dash = await dashboard({ env: { A11Y_508_DETECT_DELAY_MS: '20000' } });
@@ -79,6 +80,19 @@ test('startup: while the server is slow the page says Loading…, then what it w
     hold = false;
     await page.getByTestId('startup-retry').click();
     await expect(page.getByRole('dialog', { name: 'Set up' })).toBeVisible({ timeout: 10_000 });
+  } finally {
+    await dash.stop();
+  }
+});
+
+// The build the dashboard runs is on every screen, so two versions at once can be seen at a glance.
+test('startup: the header names the commit the dashboard runs', async ({ page }) => {
+  const dash = await dashboard();
+  try {
+    await open(page, dash, '/run');
+    const git = spawnSync('git', ['-C', ROOT, 'rev-parse', '--short=12', 'HEAD'], { encoding: 'utf8' });
+    const rev = git.status === 0 ? git.stdout.trim() : '';
+    await expect(page.getByTestId('build-revision')).toHaveText(rev ? `build ${rev}` : /^build v\d/);
   } finally {
     await dash.stop();
   }
