@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cases, slowly - a11y-508 test site</title>
+<style>.row { margin: 12px 0; } [role="progressbar"] { width: 120px; height: 8px; background: #ccd; }</style>
+</head>
+<body>
+<main>
+<h1>Cases, slowly</h1>
+<p>Like a search screen with a slow API: the date fields, a Search button beside a Clear and an Export button, a progress bar shown while the results load, and the results two seconds later. The crawler must press Search (never Clear or Export) and wait for the rows.</p>
+<div class="filters" id="slow-filters">
+  <div class="row"><label for="slow-from">From</label> <input id="slow-from" type="text" placeholder="MM/DD/YYYY" size="10">
+    <label for="slow-to">To</label> <input id="slow-to" type="text" placeholder="MM/DD/YYYY" size="10"></div>
+  <div class="row">
+    <button type="button" id="slow-search">Search</button>
+    <button type="button" id="slow-clear">Clear</button>
+    <button type="button" id="slow-export">Export</button>
+  </div>
+</div>
+<div id="slow-results" aria-live="polite"></div>
+</main>
+<script>
+  const results = document.getElementById('slow-results');
+  const mdy = (s) => /^\d{2}\/\d{2}\/\d{4}$/.test(s);
+  document.getElementById('slow-clear').addEventListener('click', () => {
+    document.getElementById('slow-from').value = '';
+    document.getElementById('slow-to').value = '';
+    results.innerHTML = '<p>Cleared.</p>';
+  });
+  document.getElementById('slow-export').addEventListener('click', () => (results.innerHTML = '<p>Exported.</p>'));
+  document.getElementById('slow-search').addEventListener('click', () => {
+    const from = document.getElementById('slow-from').value;
+    const to = document.getElementById('slow-to').value;
+    results.innerHTML = '<div role="progressbar" aria-label="Loading cases"></div>';
+    setTimeout(() => {
+      const [mm, dd, yy] = from.split('/');
+      const wide = mdy(from) && mdy(to) && Date.now() - new Date(+yy, +mm - 1, +dd).getTime() >= 59 * 24 * 3600 * 1000;
+      results.innerHTML = wide ? '<ul><li><a href="/result-64.html">Case 64</a> <img src="/img/case.png" class="slow-icon" width="16" height="16"></li></ul>' : '<p>No cases found.</p>';
+    }, 2000);
+  });
+</script>
+</body>
+</html>

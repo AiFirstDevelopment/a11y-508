@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
-const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset'];
+const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow'];
 if (only && !GROUPS.includes(only)) throw new Error(`--only takes one of ${GROUPS.join(', ')}`);
 const want = (group) => !only || only === group;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-search-')));
@@ -238,17 +238,18 @@ if (want('quick')) {
   check('quick (d): the coverage notes say once for the form that its range was set before every search', () => {
     assert.deepEqual(rangeNotes(q.report, '/search-quick.html'), [QUICK_NOTE], JSON.stringify(notes(q.report)));
   });
-  check('quick: the search pass still leaves the form alone (it has a Clear button) and its notes are unchanged', () => {
+  check('quick: the search pass submits the form by its Search button (the Clear button beside it is no reason to leave it alone) and says what it chose', () => {
     const pg = pageOf(q.report, '/search-quick.html');
-    assert.ok(pg.search && pg.search.skipped.some((s) => s.name === 'Clear'), JSON.stringify(pg.search));
-    assert.ok(!notes(q.report).some((n) => n.startsWith('Search form on /search-quick.html: chose')));
+    assert.ok(pg.search && !pg.search.skipped.length, JSON.stringify(pg.search));
+    assert.deepEqual(pg.search.forms.map((f) => [f.name, f.preset, f.navigated]), [['Search', 'Last 6 months', true]], JSON.stringify(pg.search.forms));
+    assert.ok(notes(q.report).includes("Search form on /search-quick.html: chose 'Last 6 months'."), JSON.stringify(notes(q.report)));
   });
 }
 if (want('quickload')) {
   const q = await crawl('quickload', ['--quiet', '--json', '--max-pages', '1', '--no-follow-clicks'], 'search-quick.html');
-  check('quickload: setting the range on load submits nothing, and the note is still written once', () => {
+  check('quickload: setting the range on load submits nothing by itself (the one search is the search pass\'s own, with the range already set), and the note is still written once', () => {
     assert.ok(q.report, q.stderr);
-    assert.deepEqual(q.searches, []);
+    assert.deepEqual(q.searches.map((s) => [s.form, s.preset]), [['quick-click', 'Last 6 months']], JSON.stringify(q.searches));
     assert.deepEqual(rangeNotes(q.report, '/search-quick.html'), [QUICK_NOTE], JSON.stringify(notes(q.report)));
     assert.deepEqual(pageOf(q.report, '/search-quick.html').ranges.forms.map((f) => [f.selector, f.preset]), [['#quick-filters', 'Last 6 months']]);
   });
@@ -286,3 +287,17 @@ if (want('reset')) {
 rmSync(tmp, { recursive: true, force: true });
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
 process.exitCode = failures ? 1 : 0;
+
+// A slow API: the results arrive two seconds after a progress bar; the crawler waits for them.
+if (want('slow')) {
+  const sl = await crawl('slow', ['--quiet', '--json', '--max-pages', '3'], 'search-slow.html');
+  check('slow: Search is pressed (never Clear or Export), the crawler waits for the rows behind the progress bar, and the result page is audited', () => {
+    assert.ok(sl.report, sl.stderr);
+    const pg = pageOf(sl.report, '/search-slow.html');
+    assert.deepEqual(pg.search.skipped, []);
+    assert.deepEqual(pg.discovery.forms, { filled: 1, submitted: 1, results: 1 }, JSON.stringify(pg.search));
+    const res = pageOf(sl.report, '/result-64.html');
+    assert.ok(res && !res.error && res.foundBy === 'form', JSON.stringify(sl.report.pages.map((p) => [path(p.url), p.foundBy, p.error])));
+    assert.ok(pg.findings.some((f) => f.test === '7.A' && /slow-icon/.test(f.html) && f.state === 'after searching the last 3 months'), JSON.stringify(pg.findings.map((f) => [f.test, f.state])));
+  });
+}
