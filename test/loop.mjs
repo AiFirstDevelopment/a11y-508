@@ -166,6 +166,9 @@ check('the fix prompt shows a " >>> " selector path whole, and the frame', () =>
 }
 check('config validation catches the common mistakes', () => {
   assert.ok(normalizeConfig({}).errors.some((e) => /no start URL/.test(e)));
+  // Review items are left out unless the config asks for triage.
+  assert.equal(normalizeConfig({ url: 'http://x', agent: 'claude' }).cfg.reviews, 'ignore');
+  assert.equal(normalizeConfig({ url: 'http://x', agent: 'claude', reviews: 'triage' }).cfg.reviews, 'triage');
   assert.ok(normalizeConfig({ url: 'http://x' }).errors.some((e) => /no agent/.test(e)));
   assert.ok(normalizeConfig({ url: 'http://x', agent: 'claude', deployed: 'command' }).errors.some((e) => /no "deploy"/.test(e)));
   const { cfg, errors } = normalizeConfig({ url: 'http://x', agent: 'gemini', deploy: 'npm run deploy' });
@@ -262,6 +265,7 @@ writeFileSync(join(repo, 'a11y-508.config.json'), JSON.stringify({
   deploy: `${JSON.stringify(process.execPath)} -e 0`,
   push: false,
   maxAttempts: 3,
+  reviews: 'triage',
 }, null, 2));
 g('add', '-A');
 g('commit', '-q', '-m', 'fixture site');
