@@ -307,3 +307,16 @@ export interface CrawledRoutes {
   discovered: number;
   coverage: { complete: boolean; warnings: string[]; notes: string[] };
 }
+
+// GET /api/loop/journal: what the tool did, as dated sentences, newest first.
+export interface JournalEntry {
+  at: string | null;
+  kind: string;
+  text: string;
+  count?: number;
+  until?: string | null;
+}
+export interface Journal {
+  entries: JournalEntry[];
+  runs: number;
+}

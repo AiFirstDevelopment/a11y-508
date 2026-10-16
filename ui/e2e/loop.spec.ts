@@ -233,6 +233,21 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     await expect(routes).toHaveJSProperty('open', true);
     await expect(routes.getByTestId('routes-coverage')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Routes crawled', level: 2 })).toBeFocused();
+    // What happened: the run's story, newest first, opened from the tally; each finding's story under its row;
+    // and the findings the assistant gave up on, with its reasons.
+    await page.getByTestId('tally-journal').click();
+    await expect(page).toHaveURL(/\/history#journal$/);
+    await expect(page.getByTestId('journal')).toHaveJSProperty('open', true);
+    await expect(page.getByRole('heading', { name: 'What happened', level: 2 })).toBeFocused();
+    await expect(page.getByTestId('journal-list').locator('li').filter({ hasText: /Round 1: fixed / }).first()).toBeAttached();
+    await expect(page.getByTestId('journal-list').locator('li').filter({ hasText: /Fix loop started|Dry run started/ }).first()).toBeAttached();
+    await expect(page.locator('[data-testid="change-story"]').first()).toContainText(/^found round 1 on /);
+    if (counts.skipped) {
+      await expect(page.getByTestId('tally-given-up')).toHaveText(`why ${counts.skipped} could not be fixed`);
+      await expect(page.getByTestId('given-up-list').locator('li')).toHaveCount(counts.skipped);
+    } else {
+      await expect(page.getByTestId('given-up')).toHaveCount(0);
+    }
     // The tally: the whole run in one line, on History as on the Fix step.
     await expect(page.getByTestId('tally')).toHaveText(new RegExp(`^${ledger.rounds.length} rounds in .+ · ${Object.keys(ledger.findings).length} found · ${counts.verified || 0} verified fixed`));
     // Nothing on History deletes the loop's rounds (docs/plans/turnkey-loop.md AC 7).

@@ -10,3 +10,4 @@ import './startup.test.mjs';
 import './resume.test.mjs';
 import './diary.test.mjs';
 import './sign-in-tab.test.mjs';
+import './journal.test.mjs';

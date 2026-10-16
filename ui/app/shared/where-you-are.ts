@@ -15,7 +15,7 @@ import { WhereLive, notHoldingLine, tallyLine, whereYouAre } from '../core/where
     <section class="where" aria-labelledby="where-h" data-testid="where-you-are">
       <h2 id="where-h">Where you are</h2>
       <!-- The whole run so far in a few numbers, and the one thing to change when fixes keep not holding. -->
-      @if (tally(); as t) { <p class="tally" data-testid="tally">{{ t }}@if (routesCount(); as n) { · <a routerLink="/history" fragment="routes" data-testid="tally-routes">{{ n }} route{{ n === 1 ? '' : 's' }} crawled</a> }</p> }
+      @if (tally(); as t) { <p class="tally" data-testid="tally">{{ t }}@if (routesCount(); as n) { · <a routerLink="/history" fragment="routes" data-testid="tally-routes">{{ n }} route{{ n === 1 ? '' : 's' }} crawled</a> } · <a routerLink="/history" fragment="journal" data-testid="tally-journal">what happened</a>@if (skipped(); as k) { · <a routerLink="/history" fragment="given-up" data-testid="tally-given-up">why {{ k }} could not be fixed</a> }</p> }
       @if (notHolding(); as n) { <p class="notice warn" role="status" data-testid="not-holding">{{ n }}</p> }
       <ul class="plain where-list">
         @for (l of lines(); track $index) {
@@ -37,6 +37,7 @@ export class WhereYouAre implements OnDestroy {
   readonly timeline = signal<LoopTimeline | null>(null);
   readonly now = signal(Date.now());
   readonly routesCount = signal(0);
+  readonly skipped = computed(() => this.timeline()?.total?.tally?.skipped || 0);
   readonly tally = computed(() => {
     const t = this.timeline()?.total?.tally;
     return t ? tallyLine(t, this.now(), this.store.active()) : '';

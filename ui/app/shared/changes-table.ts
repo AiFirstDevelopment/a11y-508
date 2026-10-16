@@ -16,6 +16,8 @@ export interface ChangeRow {
   gateMs: number | null;
   gateCode: number | null;
   gateTail: string | null;
+  // The finding's whole story in a line (History's rows): found, fixed, did not hold, verified, given up.
+  story?: string | null;
 }
 
 // The "Changes this run" list (and History's per round): one row per fix attempt.
@@ -27,7 +29,7 @@ export interface ChangeRow {
       <tbody>
         @for (r of rows(); track $index) {
           <tr [attr.data-outcome]="r.outcome">
-            <th scope="row" class="wrap">{{ r.test }} {{ r.message }}@if (r.elements && r.elements > 1) { <span class="hint"> ({{ r.elements }} elements)</span> }</th>
+            <th scope="row" class="wrap">{{ r.test }} {{ r.message }}@if (r.elements && r.elements > 1) { <span class="hint"> ({{ r.elements }} elements)</span> }@if (r.story) { <div class="hint" data-testid="change-story">{{ r.story }}</div> }</th>
             <td class="wrap" data-testid="change-files">
               @if (r.files.length) {
                 <ul class="plain">@for (f of r.files; track f) { <li><code>{{ f }}</code></li> }</ul>

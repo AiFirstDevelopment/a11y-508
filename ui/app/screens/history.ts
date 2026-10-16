@@ -7,7 +7,7 @@ import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
 import { fixedLine, resultWord, localTime, shortUrl } from '../core/format';
 import { prefersReducedMotion } from '../core/motion';
-import { CrawledRoutes, ReportListEntry } from '../core/types';
+import { CrawledRoutes, Journal, LedgerInfo, LedgerItem, ReportListEntry } from '../core/types';
 import { foundText, skippedText } from '../core/format';
 import { ChartPanel } from '../shared/chart-panel';
 import { WhereYouAre } from '../shared/where-you-are';
@@ -66,6 +66,30 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
       </table>
     } @else {
       <p>No reports yet. <a routerLink="/run">Run a crawl</a>.</p>
+    }
+    @if (journal(); as j) {
+      <!-- Everything the tool did, as dated sentences, newest first: the one story of the run. -->
+      <details class="details" id="journal" data-testid="journal" [open]="journalOpen()" (toggle)="journalOpen.set($any($event.target).open)">
+        <summary data-testid="journal-summary">What happened ({{ j.entries.length }} entr{{ j.entries.length === 1 ? 'y' : 'ies' }})</summary>
+        <h2 id="journal-h" tabindex="-1">What happened</h2>
+        <div class="actions"><button type="button" class="secondary small" (click)="copyJournal()" data-testid="copy-journal">{{ copied() ? 'Copied' : 'Copy as text' }}</button></div>
+        <ol class="plain journal" data-testid="journal-list">
+          @for (e of j.entries; track $index) {
+            <li [attr.data-kind]="e.kind"><time [attr.datetime]="e.at">{{ local(e.at) }}</time> {{ e.text }}@if (e.count && e.count > 1) { <span class="hint"> ({{ e.count }} times, until {{ local(e.until || null) }})</span> }</li>
+          }
+        </ol>
+      </details>
+    }
+    @if (givenUp().length) {
+      <!-- The findings the assistant gave up on, each with its last word: why they could not be fixed. -->
+      <details class="details" id="given-up" data-testid="given-up" [open]="givenUpOpen()" (toggle)="givenUpOpen.set($any($event.target).open)">
+        <summary data-testid="given-up-summary">Could not be fixed ({{ givenUp().length }})</summary>
+        <h2 id="given-up-h" tabindex="-1">Could not be fixed</h2>
+        <p class="hint">What the assistant gave up on, with its last word on each. The people who use the app will find these.</p>
+        <ul class="ledger-list" data-testid="given-up-list">
+          @for (e of givenUp(); track $index) { <li>{{ e.test }} {{ e.impact }}: {{ e.message }} — {{ e.reason || 'no reason recorded' }} <span class="hint">({{ e.pages }} page{{ e.pages === 1 ? '' : 's' }}, {{ e.attempts }} attempt{{ e.attempts === 1 ? '' : 's' }})</span></li> }
+        </ul>
+      </details>
     }
     @if (routes(); as rt) {
       <!-- Every route audited across the rounds, and why the crawl did not reach more: the one place to look. -->
@@ -151,6 +175,24 @@ export class HistoryScreen {
   readonly timeline = signal<LoopTimeline | null>(null);
   readonly routes = signal<CrawledRoutes | null>(null);
   readonly routesOpen = signal(false);
+  readonly journal = signal<Journal | null>(null);
+  readonly journalOpen = signal(false);
+  readonly givenUp = signal<LedgerItem[]>([]);
+  readonly givenUpOpen = signal(false);
+  readonly copied = signal(false);
+  // The journal as plain text, newest first, for a status note.
+  async copyJournal(): Promise<void> {
+    const j = this.journal();
+    if (!j) return;
+    const text = j.entries.map((e) => `${e.at ? localTime(e.at) : ''}  ${e.text}${e.count && e.count > 1 ? ` (${e.count} times)` : ''}`).join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      this.copied.set(true);
+      setTimeout(() => this.copied.set(false), 2000);
+    } catch (e: any) {
+      this.error.set(`Could not copy: ${e?.message || e}`);
+    }
+  }
   readonly found = foundText;
   readonly skipped = skippedText;
   private injector = inject(Injector);
@@ -182,13 +224,17 @@ export class HistoryScreen {
       this.env.cwd();
       untracked(() => void this.load());
     });
+    // /history#routes, #journal, #given-up (the tally's links): that section open, its heading focused.
     effect(() => {
-      const wanted = this.fragment() === 'routes' && !!this.routes();
-      if (!wanted) return;
+      const f = this.fragment();
+      const ready = f === 'routes' ? !!this.routes() : f === 'journal' ? !!this.journal() : f === 'given-up' ? this.givenUp().length > 0 : false;
+      if (!ready) return;
       untracked(() => {
-        this.routesOpen.set(true);
+        if (f === 'routes') this.routesOpen.set(true);
+        else if (f === 'journal') this.journalOpen.set(true);
+        else this.givenUpOpen.set(true);
         afterNextRender(() => {
-          const h = document.getElementById('routes-h');
+          const h = document.getElementById(`${f}-h`);
           if (!h) return;
           h.scrollIntoView({ block: 'start' });
           h.focus({ preventScroll: true });
@@ -202,12 +248,19 @@ export class HistoryScreen {
     let l: ReportListEntry[] = [];
     let t: LoopTimeline | null = null;
     let rt: CrawledRoutes | null = null;
+    let j: Journal | null = null;
+    let lg: LedgerInfo | null = null;
     try {
-      [l, t, rt] = await Promise.all([this.api.get<ReportListEntry[]>('/api/reports'), this.api.get<LoopTimeline | null>('/api/loop/timeline'), this.api.get<CrawledRoutes>('/api/loop/routes').catch(() => null)]);
+      [l, t, rt, j, lg] = await Promise.all([
+        this.api.get<ReportListEntry[]>('/api/reports'), this.api.get<LoopTimeline | null>('/api/loop/timeline'), this.api.get<CrawledRoutes>('/api/loop/routes').catch(() => null),
+        this.api.get<Journal>('/api/loop/journal').catch(() => null), this.api.get<LedgerInfo>('/api/ledger').catch(() => null),
+      ]);
     } catch {}
     if (n !== this.loads) return;
     this.list.set(l);
     this.routes.set(rt && rt.routes.length ? rt : null);
+    this.journal.set(j && j.entries.length ? j : null);
+    this.givenUp.set((lg && lg.exists && lg.lists && lg.lists['skipped']) || []);
     this.api.get<{ config: Record<string, any> }>('/api/config').then((c) => this.configUrl.set(String(c?.config?.['url'] || ''))).catch(() => {});
     this.timeline.set(t);
   }

@@ -21,6 +21,7 @@ import { JOURNALED, LOOP_KINDS, annotateRun, discardInterrupted, interruptedDeta
 import { loopDefaults } from './loop-defaults.mjs';
 import { stateBase as stateBaseOf, readGlobal, writeGlobal, paths as statePaths, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { matchSource } from './loop-match.mjs';
+import { journal } from './journal.mjs';
 import { carryAnalysis, crawledRoutes, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, sameStartUrl, latestDir, ledgerPath } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
@@ -708,10 +709,12 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const file = ledgerPath(state.cwd);
     if (!existsSync(file)) return { exists: false };
     const ledger = loadLedger(file);
-    const pick = (status) => byStatus(ledger, status).map((e) => ({ test: e.test, impact: e.impact, message: e.message, pages: e.pages.length, attempts: e.attempts.length, reason: e.reason || null, selector: e.selector }));
+    // reason: the ledger's, else what the assistant said last (why a finding it gave up on could not be fixed).
+    const lastNote = (e) => [...(e.attempts || [])].reverse().map((a) => a && a.note).find(Boolean) || null;
+    const pick = (status) => byStatus(ledger, status).map((e) => ({ test: e.test, impact: e.impact, message: e.message, pages: e.pages.length, attempts: e.attempts.length, reason: e.reason || lastNote(e), selector: e.selector }));
     return {
       exists: true, rounds: ledger.rounds, counts: statusCounts(ledger), line: summaryLine(ledger), deploy: ledger.deploy || null,
-      lists: { open: pick('open'), pending: pick('pending'), review: pick('review') },
+      lists: { open: pick('open'), pending: pick('pending'), review: pick('review'), skipped: pick('skipped') },
     };
   }
 
@@ -931,6 +934,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (m === 'POST' && path === '/api/start-over') return send(res, 200, startOver(await readBody(req)));
     if (m === 'GET' && path === '/api/reports') return send(res, 200, listReports(state.cwd));
     if (m === 'GET' && path === '/api/loop/routes') return send(res, 200, crawledRoutes(state.cwd));
+    if (m === 'GET' && path === '/api/loop/journal') return send(res, 200, journal(state.cwd));
     if (m === 'GET' && path === '/api/loop/timeline') {
       const file = ledgerPath(state.cwd);
       if (!existsSync(file)) return send(res, 200, null);

@@ -115,6 +115,33 @@ export function deleteHistoryEntry(cwd, id) {
   return { status: 200, body: { removed: 1 } };
 }
 
+// One finding's whole story in a line: "found round 1 on /layout/home → fixed round 2 (a1b2c3), did not
+// hold → fixed round 4 (d4e5f6), verified round 5".
+export function storyOf(e) {
+  const short = (u) => {
+    try {
+      const x = new URL(u);
+      return `${x.pathname}${x.search}`;
+    } catch {
+      return String(u || '');
+    }
+  };
+  const parts = [`found round ${e.firstSeenRound || 1}${e.pages && e.pages[0] && e.pages[0] !== 'site' ? ` on ${short(e.pages[0])}` : ''}`];
+  for (const a of e.attempts || []) {
+    if (!a) continue;
+    if (a.commit && a.outcome === 'verified') parts.push(`fixed round ${a.round} (${a.commit}), verified${e.verifiedRound ? ` round ${e.verifiedRound}` : ''}`);
+    else if (a.commit && a.outcome === 'still-present') parts.push(`fixed round ${a.round} (${a.commit}), did not hold`);
+    else if (a.commit) parts.push(`fixed round ${a.round} (${a.commit})${a.outcome === 'pending' ? ', awaiting verification' : ''}`);
+    else if (a.outcome === 'failed-gate') parts.push(`a fix broke the build round ${a.round}, reverted`);
+    else if (a.outcome === 'interrupted') parts.push(`interrupted round ${a.round}`);
+    else if (a.note === 'agent timed out') parts.push(`the assistant ran out of time round ${a.round}`);
+    else if (a.outcome === 'no-change') parts.push(`no change round ${a.round}${a.note ? ` (${String(a.note).slice(0, 80)})` : ''}`);
+  }
+  if (e.status === 'skipped') parts.push(`given up${e.reason ? ` (${e.reason})` : ''}`);
+  else if (e.status === 'gone') parts.push(`gone on its own${e.goneRound ? ` round ${e.goneRound}` : ''}`);
+  return parts.join(' → ');
+}
+
 // The fix loop's rounds as a timeline: per round, from the ledger, the violations its crawl found,
 // the earlier fixes verified gone at that crawl, the commits it made, and what remained after it
 // (for the last round, the ledger's open count; before that, found less committed).
@@ -146,7 +173,7 @@ export function loopTimeline(ledger, counts) {
         same.elements = (same.elements || 1) + 1;
         continue;
       }
-      list.push({ elements: 1,
+      list.push({ elements: 1, story: storyOf(e),
         n: a.n ?? null, test: e.test, message: e.message, files: Array.isArray(a.files) ? a.files : [], outcome, commit: a.commit || null, note: a.note || null,
         agentMs: a.agentMs ?? null, gateMs: a.gateMs ?? null, gateCode: a.gateCode ?? null,
         gateTail: a.gateOutput ? String(a.gateOutput).split('\n').filter((l) => l.trim()).slice(-15).join('\n') : null,
