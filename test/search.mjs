@@ -381,6 +381,7 @@ if (want('also')) {
   const rep = existsSync(join(out, 'report.json')) ? JSON.parse(readFileSync(join(out, 'report.json'), 'utf8')) : null;
   check('--also: the page is audited right after the start page, as it is, and marked so; another origin is left out', () => {
     assert.ok(rep, r.stderr);
-    assert.deepEqual(rep.pages.map((p) => [path(p.url), p.foundBy || null]), [['/search-nameless.html', null], ['/menu-page-2.html', 'also']], JSON.stringify(rep.pages.map((p) => p.url)));
+    // Two tabs audit the start page and the --also page side by side, so their order in the report varies.
+    assert.deepEqual(rep.pages.map((p) => [path(p.url), p.foundBy || null]).sort(), [['/menu-page-2.html', 'also'], ['/search-nameless.html', null]], JSON.stringify(rep.pages.map((p) => p.url)));
   });
 }
