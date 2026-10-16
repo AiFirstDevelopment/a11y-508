@@ -842,8 +842,19 @@ export async function searchPass(page, add, fingerprints, opts, reload, origin) 
       found.push(u.href);
     };
     const href = await here();
-    const navigated = href && href !== startHref;
-    // A form that navigates (a GET form): its result page is queued itself.
+    // The same screen with the search in its query (an app that keeps ?from=…&to=… in the URL, with
+    // times that move on every minute) is not a new page: its results are re-checked in place, and
+    // only a different route is queued as a result page.
+    const routeOf = (u) => {
+      try {
+        const x = new URL(u);
+        return `${x.origin}${x.pathname.replace(/\/$/, '')}${x.hash.split('?')[0]}`;
+      } catch {
+        return u;
+      }
+    };
+    const navigated = href && href !== startHref && routeOf(href) !== routeOf(startHref);
+    // A form that navigates to another page (a GET form to /results): its result page is queued itself.
     if (navigated) note(href);
     let res = { links: [], candidates: [] };
     try {
@@ -866,7 +877,7 @@ export async function searchPass(page, add, fingerprints, opts, reload, origin) 
     // Result rows and controls without links: clicked one by one, the search redone in between.
     for (const [i, c] of res.candidates.entries()) {
       if (clicks <= 0) break;
-      if (i > 0 || (await here()) !== (navigated ? href : startHref)) {
+      if (i > 0 || (await here()) !== href) {
         try {
           if (!(await run(f))) break;
         } catch {
