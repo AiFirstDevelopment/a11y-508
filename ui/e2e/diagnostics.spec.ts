@@ -108,7 +108,7 @@ test('guard 4, AC4: the own browser goes away: the notice says why, Reopen the w
     await expect(page.getByTestId('browser-notice-text')).toBeVisible();
     await page.getByTestId('browser-details').click();
     await expect(page).toHaveURL(/\/diagnostics$/);
-    await expect(page.getByRole('heading', { level: 1, name: 'Diagnostics' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Log' })).toBeVisible();
     await page.getByTestId('browser-dismiss').click();
     await expect(page.getByTestId('browser-notice')).toHaveCount(0);
   } finally {

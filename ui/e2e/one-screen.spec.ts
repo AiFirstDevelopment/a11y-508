@@ -117,10 +117,11 @@ test('one screen AC1, guard d: the name and build, the folder and URL, one sente
   }
 });
 
-test('one screen AC2, AC3, AC7, AC8, guards a b c: one Start crawls, fixes, pushes, waits for the build, verifies and finishes; the sentence follows every step; one button throughout; what could not be fixed is a link to why, where and the element', async ({ page }) => {
+test('one screen AC2, AC3, AC7, AC8, AC9, AC10, guards a b c: one Start crawls, fixes, pushes, waits for the build, verifies and finishes; the sentence follows every step; one button throughout; what could not be fixed is a link to why, where and the element', async ({ page }) => {
   test.setTimeout(600_000);
   const a = await app('a11y-508-one-');
-  const dash: Dash = await dashboard({ cwd: a.cwd });
+  // Each assistant call takes a while, as a real one does, so its output can be opened while it works.
+  const dash: Dash = await dashboard({ cwd: a.cwd, env: { FAKE_AGENT_DELAY_MS: '2500' } });
   try {
     // A crawl of the same URL already on record: Start still crawls first (AC 2), never fixes from it.
     expect((await api(dash, '/api/runs', { method: 'POST', body: { kind: 'crawl', url: a.base, options: { 'max-pages': '1', 'no-zoom': true }, auth: { mode: 'token', token: TOKEN } } })).status).toBe(202);
@@ -145,6 +146,13 @@ test('one screen AC2, AC3, AC7, AC8, guards a b c: one Start crawls, fixes, push
     expect((await api(dash, '/api/runs/current')).json.meta.command).not.toContain('--from-report');
     // Guard b: one click goes on past the crawl to the fixing, with no second click.
     await expect.poll(async () => (await seen(page)).some((t) => /^Fixing /.test(t)), { timeout: 240_000 }).toBe(true);
+    // AC9: while the assistant works, its name in the sentence opens what it is printing.
+    await page.getByTestId('output-link').click({ timeout: 60_000 });
+    const out = page.getByTestId('output-panel');
+    await expect(out).toBeVisible();
+    await expect(out.getByTestId('output-text')).toContainText('fake agent:', { timeout: 30_000 });
+    await page.getByTestId('output-close').click();
+    await expect(out).toBeHidden();
     await expect(now(page)).toHaveText(WAITING, { timeout: 240_000 });
     expect(a.ledger().rounds.length).toBeGreaterThan(0);
     expect(spawnSync('git', ['rev-parse', '--verify', 'a11y-508'], { cwd: a.origin }).status, 'pushed to origin').toBe(0);
@@ -196,6 +204,18 @@ test('one screen AC2, AC3, AC7, AC8, guards a b c: one Start crawls, fixes, push
     await page.getByTestId('unfixed-close').click();
     await expect(panel).toBeHidden();
     await asksNothing(page);
+    // AC10: Start over, at the bottom of the Log, forgets the rounds, fixes and log; the screen is a first run again.
+    await expect(page.getByTestId('diagnostics-link')).toHaveText('Log');
+    await page.getByTestId('diagnostics-link').click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Log' })).toBeVisible();
+    page.once('dialog', (d) => d.accept());
+    await page.getByTestId('start-over').click();
+    await expect(page).toHaveURL(`${dash.origin}/`);
+    await expect(now(page)).toHaveText(/^Ready to crawl 127\.0\.0\.1:\d+ and fix what it finds\.$/, { timeout: 30_000 });
+    await expect(page.getByTestId('counts')).toHaveCount(0);
+    expect(existsSync(join(dirsOf(a.cwd).work, 'ledger.json'))).toBe(false);
+    expect(existsSync(a.cwd), 'the app folder stays').toBe(true);
+    expect(spawnSync('git', ['rev-parse', '--verify', 'a11y-508'], { cwd: a.cwd }).status, 'the commits stay').toBe(0);
   } finally {
     await api(dash, '/api/runs/current/stop', { method: 'POST' }).catch(() => {});
     await dash.stop();
@@ -253,7 +273,7 @@ test('one screen AC6: the README\'s dashboard section describes the one screen a
   expect(start).toBeGreaterThan(0);
   const prose = readme.slice(start, end).replace(/```[\s\S]*?```/g, '');
   expect(prose.split(/\s+/).filter(Boolean).length).toBeLessThan(200);
-  for (const words of ['**Start**', '**Stop**', '**Diagnostics**', '**Copy diagnostics**', '**Download diagnostics**', '**Change folder or URL**', '**Advanced**']) expect(prose, words).toContain(words);
+  for (const words of ['**Start**', '**Stop**', '**Log**', '**Copy diagnostics**', '**Download diagnostics**', '**Change folder or URL**', '**Advanced**']) expect(prose, words).toContain(words);
   // Nothing of the wizard, anywhere in the README.
   for (const gone of ['wizard', 'Fix step', 'Results step', 'History', 'Where you are', 'Run again', 'Fix the violations', 'Check now', 'Copy summary', '/run/advanced', '/fix-loop/settings', 'Report screen', 'Test assistant', 'Crawl step', 'lastStep']) expect(readme, gone).not.toContain(gone);
 });

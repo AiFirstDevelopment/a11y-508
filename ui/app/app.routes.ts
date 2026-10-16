@@ -7,7 +7,7 @@ const old = (segments: UrlSegment[]) => (segments.length && OLD.includes(segment
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', title: 'a11y-508', loadComponent: () => import('./screens/home').then((m) => m.HomeScreen) },
-  { path: 'diagnostics', title: 'Diagnostics - a11y-508', loadComponent: () => import('./screens/diagnostics').then((m) => m.DiagnosticsScreen) },
+  { path: 'diagnostics', title: 'Log - a11y-508', loadComponent: () => import('./screens/diagnostics').then((m) => m.DiagnosticsScreen) },
   // Linked only from the bottom of Diagnostics: the assistant, the crawl's and the loop's settings.
   { path: 'advanced', title: 'Advanced - a11y-508', loadComponent: () => import('./screens/advanced').then((m) => m.AdvancedScreen) },
   { matcher: old, redirectTo: '/' },

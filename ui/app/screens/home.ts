@@ -32,7 +32,7 @@ function short(text: string, max = 72): string {
         <span data-testid="url"><span class="visually-hidden">URL: </span>{{ driver.url() || 'no URL yet' }}</span>
       </p>
     }
-    <p class="big-status" role="status" data-testid="now">@for (seg of nowParts(); track $index) {@if (seg.link) {<a href="#pages-so-far" [attr.data-testid]="seg.link" (click)="openPages($event)">{{ seg.text }}</a>} @else {{{ seg.text }}}}</p>
+    <p class="big-status" role="status" data-testid="now">@for (seg of nowParts(); track $index) {@if (seg.link) {<a [href]="seg.link === 'output-link' ? '#assistant-output' : '#pages-so-far'" [attr.data-testid]="seg.link" (click)="seg.link === 'output-link' ? openOutput($event) : openPages($event)">{{ seg.text }}</a>} @else {{{ seg.text }}}}</p>
     @if (counts().length) {
       <p data-testid="counts">@for (c of counts(); track c.key) {@if (!$first) {<span aria-hidden="true"> · </span>}@if (c.key === 'unfixed') {<a href="#could-not-be-fixed" data-testid="unfixed-link" (click)="openUnfixed($event)">{{ c.text }}</a>} @else {<span>{{ c.text }}</span>}}</p>
     }
@@ -47,7 +47,20 @@ function short(text: string, max = 72): string {
       }
     </div>
     @if (driver.error() || missed()) { <p class="notice error" role="alert" data-testid="start-error">{{ driver.error() || missed() }}</p> }
-    <p class="diagnostics-link"><a routerLink="/diagnostics" data-testid="diagnostics-link">Diagnostics</a></p>
+    <p class="diagnostics-link"><a routerLink="/diagnostics" data-testid="diagnostics-link">Log</a></p>
+    <!-- What the assistant is printing, as it prints it. -->
+    <dialog #outputPanel class="pane" id="assistant-output" aria-labelledby="output-title" data-testid="output-panel" (close)="outputOpen.set(false)">
+      @if (outputOpen()) {
+        <div class="pane-head">
+          <h2 id="output-title">What {{ assistantName() }} is doing</h2>
+          <button type="button" class="secondary" data-testid="output-close" (click)="closeOutput()">Close</button>
+        </div>
+        @if (store.agentCall(); as c) {
+          <p data-testid="output-task">{{ c.kind === 'fix' ? 'Fixing' : 'Judging' }} {{ c.label }}@if (c.endedAt) { (finished)}</p>
+          <pre #outputText class="output" data-testid="output-text" tabindex="0" aria-live="off">{{ c.text || 'Nothing printed yet.' }}</pre>
+        } @else { <p>The assistant is not working right now.</p> }
+      }
+    </dialog>
     <!-- The pages crawled so far: each one's route, title and findings. -->
     <dialog #pagesPanel class="pane" id="pages-so-far" aria-labelledby="pages-title" data-testid="pages-panel" (close)="pagesOpen.set(false)">
       @if (pagesOpen()) {
@@ -110,6 +123,7 @@ function short(text: string, max = 72): string {
     .pane li { margin: 0 0 18px; }
     .pane li p { margin: 2px 0; overflow-wrap: anywhere; }
     .pane ul { padding-left: 18px; margin: 4px 0 0; }
+    .pane pre.output { max-height: calc(100vh - 140px); overflow: auto; font-size: 0.8rem; }
     .pane ul li { margin: 0 0 4px; overflow-wrap: anywhere; }
     .pane .label { color: var(--muted); }
     .pane pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; background: #f4f4f4; padding: 6px 8px; margin: 4px 0 0; border-radius: 4px; }
@@ -124,6 +138,10 @@ export class HomeScreen implements OnDestroy {
   readonly missed = signal('');
   readonly unfixedOpen = signal(false);
   readonly pagesOpen = signal(false);
+  readonly outputOpen = signal(false);
+  private outputPanel = viewChild.required<ElementRef<HTMLDialogElement>>('outputPanel');
+  private outputText = viewChild<ElementRef<HTMLPreElement>>('outputText');
+  readonly assistantName = computed(() => this.assistant() || 'the assistant');
   private pagesPanel = viewChild.required<ElementRef<HTMLDialogElement>>('pagesPanel');
   private unfixedPanel = viewChild.required<ElementRef<HTMLDialogElement>>('unfixedPanel');
   readonly plural = plural;
@@ -131,6 +149,12 @@ export class HomeScreen implements OnDestroy {
   private ticker = setInterval(() => this.tick.set(Date.now()), 1000);
 
   constructor() {
+    // The output follows the assistant: scrolled to its latest line as it prints.
+    effect(() => {
+      this.store.agentCall()?.text;
+      const el = this.outputText()?.nativeElement;
+      if (el) setTimeout(() => (el.scrollTop = el.scrollHeight));
+    });
     // Nothing known to crawl: Set up, as on a first visit.
     effect(() => {
       const missing = !this.driver.pending() && !this.driver.url() && !this.store.run() && !this.env.env()?.run;
@@ -196,6 +220,13 @@ export class HomeScreen implements OnDestroy {
   // The sentence, with "6 pages" and "24 findings" as links to the pages panel while there are pages to show.
   readonly nowParts = computed<{ text: string; link?: string }[]>(() => {
     const text = this.now();
+    // While the assistant works, its name is a link to what it is printing.
+    const c = this.store.agentCall();
+    const who = this.assistant();
+    if (c && !c.endedAt && who) {
+      const at = text.search(new RegExp(`(?<=^Asking | with )${who.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+      if (at >= 0) return [{ text: text.slice(0, at) }, { text: who, link: 'output-link' }, { text: text.slice(at + who.length) }].filter((x) => x.text);
+    }
     if (!this.store.pages().length || !/^(Crawling |Done: crawled )/.test(text)) return [{ text }];
     const out: { text: string; link?: string }[] = [];
     let last = 0;
@@ -207,6 +238,17 @@ export class HomeScreen implements OnDestroy {
     if (last < text.length) out.push({ text: text.slice(last) });
     return out;
   });
+  openOutput(ev?: Event): void {
+    ev?.preventDefault();
+    this.outputOpen.set(true);
+    const d = this.outputPanel().nativeElement;
+    if (!d.open) d.showModal();
+  }
+  closeOutput(): void {
+    const d = this.outputPanel().nativeElement;
+    if (d.open) d.close();
+    this.outputOpen.set(false);
+  }
   openPages(ev?: Event): void {
     ev?.preventDefault();
     this.pagesOpen.set(true);

@@ -11,7 +11,7 @@ import { extname, join, resolve, sep } from 'node:path';
 import { findChrome } from '../../src/chrome.mjs';
 import { PRESETS, installRemedies, runAgent, agentEnv, agentEnvFor, runnableCommand } from '../../src/agent.mjs';
 import { loadConfig, normalizeConfig, summaryLine } from '../../src/loop.mjs';
-import { migrateRepo, migrationLines, tasksDir } from '../../src/home.mjs';
+import { migrateRepo, migrationLines, tasksDir, repoHome } from '../../src/home.mjs';
 import { readable } from '../../src/agent-stream.mjs';
 import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, TOOL_DIR, crawlArgs, loopArgs, commandLine } from './args.mjs';
@@ -922,6 +922,33 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (m === 'POST' && path === '/api/own-browser/dismiss') {
       own.dismissed = true;
       return send(res, 200, ownBrowserInfo());
+    }
+    // Start over: stops any run, cancels any try again, and forgets this app's rounds, fixes, reports and
+    // log (the tool's own folders for the repository, nothing else). The sign-in session, the settings
+    // and the commits already made in the repository stay.
+    if (m === 'POST' && path === '/api/reset') {
+      clearRetry();
+      if (runs.active) {
+        try {
+          runs.stop();
+        } catch {}
+        for (let i = 0; i < 300 && runs.active; i++) await new Promise((r) => setTimeout(r, 100));
+        if (runs.active) return send(res, 409, { error: 'the run did not stop; try again' });
+      }
+      clearRetry();
+      if (runs.current) runs.forget();
+      const home = repoHome(state.cwd, env, platform);
+      const removed = [];
+      for (const d of [home.work, home.report, home.history]) {
+        // Only the tool's own folders for this repository, under <state base>/repos/.
+        if (!d.startsWith(home.dir + sep) || !home.dir.includes(`${sep}repos${sep}`)) continue;
+        if (existsSync(d)) {
+          rmSync(d, { recursive: true, force: true });
+          removed.push(d);
+        }
+      }
+      signInTab = null;
+      return send(res, 200, { ok: true, removed });
     }
     // The dashboard's Quit: with a run active, only once the person confirmed stopping it.
     if (m === 'POST' && path === '/api/quit') {
