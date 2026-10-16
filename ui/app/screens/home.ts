@@ -60,14 +60,14 @@ function short(text: string, max = 72): string {
           @for (e of unfixed(); track $index) {
             <li data-testid="unfixed-item">
               <p class="what"><strong>{{ e.test }}</strong> {{ e.impact }}: {{ e.message }}</p>
-              <p data-testid="unfixed-why"><span class="label">Why:</span> {{ e.why || e.reason || 'no reason was recorded' }}</p>
-              <p data-testid="unfixed-where"><span class="label">Where:</span>
+              <p data-testid="unfixed-why"><span class="label">Why: </span>{{ e.why || e.reason || 'no reason was recorded' }}</p>
+              <p data-testid="unfixed-where"><span class="label">Where: </span>
                 @for (r of routesOf(e); track r; let last = $last) {
                   @if (r === 'site') { the whole site } @else { <a [href]="r" target="_blank" rel="noopener" [title]="r">{{ pathOf(r) }}</a> }@if (!last) {, }
                 }
                 @if (!routesOf(e).length) { not recorded }
               </p>
-              <p data-testid="unfixed-element"><span class="label">Element:</span> <code>{{ e.selector || 'the page' }}</code></p>
+              <p data-testid="unfixed-element"><span class="label">Element: </span><code>{{ e.selector || 'the page' }}</code></p>
               @if (e.html) { <pre><code>{{ e.html }}</code></pre> }
             </li>
           }
