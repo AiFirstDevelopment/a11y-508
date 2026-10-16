@@ -74,10 +74,23 @@ export function siteChecks(pages) {
   let dupTitles = 0;
   for (const [title, urls] of byTitle) {
     if (urls.length < 2 || dupTitles >= 20) continue;
-    const distinctUrls = Array.from(new Set(urls.map((u) => u.replace(/\/$/, ''))));
+    // One page per route: query variants of a route (a search's ?from=…&to=…) are the same page, and
+    // may share its title. The message names no count, so the finding keeps its identity from one
+    // crawl to the next however many pages a crawl happened to reach.
+    const route = (u) => {
+      try {
+        const x = new URL(u);
+        return `${x.origin}${x.pathname.replace(/\/$/, '')}${x.hash}`;
+      } catch {
+        return u.replace(/\/$/, '');
+      }
+    };
+    const byRoute = new Map();
+    for (const u of urls) if (!byRoute.has(route(u))) byRoute.set(route(u), u);
+    const distinctUrls = Array.from(byRoute.values());
     if (distinctUrls.length < 2) continue;
     dupTitles++;
-    add({ test: '12.B', impact: 'serious', selector: 'head > title', message: `${distinctUrls.length} pages share the title "${title}", so the title does not identify the page.`, pages: distinctUrls.slice(0, 10) });
+    add({ test: '12.B', impact: 'serious', selector: 'head > title', message: `Different pages share the title "${title}", so the title does not identify the page.`, pages: distinctUrls.slice(0, 10) });
   }
   const titles = audited.map((p) => ({ url: p.finalUrl, title: p.title })).slice(0, 200);
   add({ test: '12.B', level: 'review', impact: 'minor', selector: 'head > title', message: `Page titles for ${titles.length} page(s). Confirm each identifies its page's content or purpose.`, details: { titles } });

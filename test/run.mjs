@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { Page } from '../src/page.mjs';
 import { saveState, loadState } from '../src/login.mjs';
+import { siteChecks } from '../src/site-checks.mjs';
 import { shouldFail } from '../src/report.mjs';
 import { normalizeUrl } from '../src/crawler.mjs';
 import { CATALOG } from '../src/checks/catalog.mjs';
@@ -1261,6 +1262,24 @@ const stubbed = (outcomes) => {
     assert.equal(statSync(file).mode & 0o777, 0o600);
   });
   rmSync(dir, { recursive: true, force: true });
+}
+
+{
+  // 12.B: query variants of one route are one page; the message keeps no count, so the finding is the
+  // same finding however many pages a crawl reached.
+  const pg = (u, title = 'Cargo Traceability | Home') => ({ url: u, finalUrl: u, title, info: { links: [] } });
+  const b = (pages) => siteChecks(pages).findings.filter((f) => f.test === '12.B');
+  check('12.B: search variants of one route sharing its title are not a duplicate title', () => {
+    assert.equal(b([pg('https://x.gov/app/layout/default?from=1&to=2'), pg('https://x.gov/app/layout/default?from=3&to=4'), pg('https://x.gov/app/layout/default/')]).length, 0);
+  });
+  check('12.B: two routes sharing a title are one finding whose message names no count', () => {
+    const two = b([pg('https://x.gov/app/a?q=1'), pg('https://x.gov/app/a?q=2'), pg('https://x.gov/app/b')]);
+    const three = b([pg('https://x.gov/app/a'), pg('https://x.gov/app/b'), pg('https://x.gov/app/c')]);
+    assert.equal(two.length, 1);
+    assert.deepEqual(two[0].pages, ['https://x.gov/app/a?q=1', 'https://x.gov/app/b']);
+    assert.equal(two[0].message, three[0].message);
+    assert.equal(two[0].message, 'Different pages share the title "Cargo Traceability | Home", so the title does not identify the page.');
+  });
 }
 
 console.log(failures ? `\n${failures} assertion(s) failed` : only ? `\nall ${ran} assertion(s) that read ${only} passed` : '\nall assertions passed');
