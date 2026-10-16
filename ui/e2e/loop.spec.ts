@@ -239,7 +239,11 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     await expect(page).toHaveURL(/\/history#journal$/);
     await expect(page.getByTestId('journal')).toHaveJSProperty('open', true);
     await expect(page.getByRole('heading', { name: 'What happened', level: 2 })).toBeFocused();
-    await expect(page.getByTestId('journal-list').locator('li').filter({ hasText: /Round 1: fixed / }).first()).toBeAttached();
+    await expect(page.getByTestId('journal-list').locator('li').filter({ hasText: /Round \d+: fixed / }).first()).toBeAttached();
+    // Copy summary: a status note on the clipboard, the tally first.
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: dash.origin });
+    await page.getByTestId('copy-summary').click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText()), { timeout: 10_000 }).toMatch(/^a11y-508 status, .+\n\d+ rounds? in /);
     await expect(page.getByTestId('journal-list').locator('li').filter({ hasText: /Fix loop started|Dry run started/ }).first()).toBeAttached();
     await expect(page.locator('[data-testid="change-story"]').first()).toContainText(/^found round 1 on /);
     if (counts.skipped) {

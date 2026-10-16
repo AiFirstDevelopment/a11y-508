@@ -11,3 +11,4 @@ import './resume.test.mjs';
 import './diary.test.mjs';
 import './sign-in-tab.test.mjs';
 import './journal.test.mjs';
+import './git-web.test.mjs';

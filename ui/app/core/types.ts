@@ -113,6 +113,8 @@ export interface EnvInfo {
   version: string;
   // The code this dashboard runs: the tool's git commit, else its version.
   revision?: string;
+  // The repository's web address (its origin), for links to commits and the branch; null without one.
+  remoteWeb?: string | null;
   platform: string;
   browser: { found: boolean; path: string | null; error?: string };
   config: { exists: boolean; file: string; repository?: boolean };

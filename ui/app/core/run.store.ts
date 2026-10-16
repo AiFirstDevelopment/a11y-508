@@ -270,6 +270,7 @@ export class RunStore {
         this.inFlight.update((m) => ({ ...m, [ev['url']]: { url: ev['url'], phase: ev['phase'], detail: ev['detail'] ?? null, elapsedMs: ev['elapsedMs'] ?? 0, receivedAt: Date.now() } }));
         break;
       case 'login-waiting':
+        if (!this.loginWaiting()) notify('Sign in needed', `Sign in in the tab that opened for ${String(ev['url'] || 'the app')}; the loop continues by itself once you have.`);
         if (ev['reopened']) this.loginReopened.set(true);
         this.loginWaiting.set(true);
         this.loginWaitingSince.set(Date.parse(String(ev['at'])) || Date.now());
@@ -321,6 +322,7 @@ export class RunStore {
           this.pane(`— Review items${(ev['batches'] ?? 1) > 1 ? `, batch ${ev['batch']} of ${ev['batches']}` : ''}: asking about ${ev['count']} review item${ev['count'] === 1 ? '' : 's'} —`, true);
         }
         if (ev['step'] === 'push') this.pane(`Pushing ${ev['committed']} fix${ev['committed'] === 1 ? '' : 'es'}`, true);
+        if (ev['step'] === 'push') notify(`Round ${ev['round']}: ${ev['committed']} fix${ev['committed'] === 1 ? '' : 'es'} pushed`, 'Waiting for the deployment next; the loop goes on by itself.');
         if (ev['step'] === 'deploy' || ev['step'] === 'await-deploy') this.pane('Waiting for the new build to go live', true);
         if (typeof ev['committed'] === 'number') this.committed.set(ev['committed']);
         if (ev['step'] === 'report') this.reportRound.set(ev['round']);
@@ -413,6 +415,7 @@ export class RunStore {
         if (typeof ev['committed'] === 'number') this.committed.set(ev['committed']);
         break;
       case 'deploy-check':
+        if (ev['result'] === 'changed') notify('Deployment arrived', `Verifying ${ev['pending']} fix${ev['pending'] === 1 ? '' : 'es'} against the new build.`);
         this.deployCheck.set(ev);
         this.pane(checkLine(ev), true);
         break;
@@ -423,10 +426,12 @@ export class RunStore {
         this.pane(`Opening the sign-in in ${ev['how'] === 'tab' ? 'a tab of this window' : 'a window'} (${String(ev['why'] || '')})`, true);
         break;
       case 'sign-in-failed':
+        notify('The sign-in did not happen', String(ev['reason'] || ''));
         this.pane(`The sign-in did not happen: ${String(ev['reason'] || '')}`, true);
         this.notices.update((n) => [...n, { level: 'error', message: `The sign-in did not happen: ${String(ev['reason'] || '')}` }]);
         break;
       case 'precondition':
+        notify('The fix loop could not start', `${String(ev['message'] || '')} ${String(ev['remedy'] || '')}`.trim());
         this.precondition.set(ev);
         break;
       case 'deployment':
@@ -453,6 +458,7 @@ export class RunStore {
         this.stopping.set(true);
         break;
       case 'done':
+        notify(doneTitle(ev), doneBody(ev));
         this.done.set(ev);
         this.loginWaiting.set(false);
         this.inFlight.set({});
@@ -566,4 +572,40 @@ export function checkLine(ev: Record<string, unknown>): string {
   if (r === 'no-baseline') return `Checked at ${when}: no build from before the fixes is on record, so this one is verified${how}.`;
   if (expected) return `Checked at ${when}: still a build without this round's marker ${expected}${served ? ` (it serves ${served})` : ''}${how}.`;
   return `Checked at ${when}: still the build from before the fixes${how}.`;
+}
+
+// A desktop notification, only when this tab is not in front (someone watching the page needs none)
+// and only once the person has allowed them (asked when the loop is started).
+export function notify(title: string, body: string): void {
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus()) return;
+    const n = new Notification(`a11y-508: ${title}`, { body, tag: `a11y-508-${title}` });
+    n.onclick = () => {
+      try {
+        window.focus();
+        n.close();
+      } catch {}
+    };
+  } catch {}
+}
+export function askToNotify(): void {
+  try {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') void Notification.requestPermission();
+  } catch {}
+}
+function doneTitle(ev: Record<string, unknown>): string {
+  const o = ev['outcome'];
+  if (o === 'ok') return 'Fix loop finished: nothing left to fix';
+  if (o === 'findings') return 'Fix loop finished';
+  if (o === 'stopped') return 'Fix loop stopped';
+  if (o === 'awaiting-deploy') return 'Fix loop waiting for your deployment';
+  if (o === 'interrupted') return 'Fix loop interrupted';
+  return 'Fix loop ended with an error';
+}
+function doneBody(ev: Record<string, unknown>): string {
+  const o = ev['outcome'];
+  if (o === 'error') return String(ev['reason'] || `exit code ${ev['code']}`);
+  if (o === 'findings') return 'Nothing more the assistant could fix this time.';
+  return '';
 }

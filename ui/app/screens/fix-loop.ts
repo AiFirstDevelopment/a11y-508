@@ -9,7 +9,7 @@ import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { prefersReducedMotion } from '../core/motion';
 import { fixedLine, localTime, spoken } from '../core/format';
-import { checkLine } from '../core/run.store';
+import { askToNotify, checkLine } from '../core/run.store';
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 import { AgentTest, LedgerInfo, LoopDefaults, LoopMatch, Preset } from '../core/types';
@@ -1084,6 +1084,8 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   // starts the loop or says why it cannot. reread: Try again reads the repository again first (the
   // remedy may have changed it).
   async fix(reread = false): Promise<void> {
+    // Desktop notifications from here on (a sign-in needed, a round pushed, the loop ended): asked once, on this click.
+    askToNotify();
     if (this.starting() || this.store.active()) return;
     this.starting.set(true);
     this.runError.set('');

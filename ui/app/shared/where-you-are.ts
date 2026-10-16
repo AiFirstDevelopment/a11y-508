@@ -5,6 +5,8 @@ import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
 import { CrawledRoutes, LoopTimeline } from '../core/types';
 import { WhereLive, notHoldingLine, tallyLine, whereYouAre } from '../core/where';
+import { branchUrl } from '../core/git-links';
+import { localTime } from '../core/format';
 
 // "Where you are": what has happened for this URL and what comes next, at the top of the Fix step
 // and of History. Always visible; it follows the live run and reads the ledger again as it changes.
@@ -15,7 +17,8 @@ import { WhereLive, notHoldingLine, tallyLine, whereYouAre } from '../core/where
     <section class="where" aria-labelledby="where-h" data-testid="where-you-are">
       <h2 id="where-h">Where you are</h2>
       <!-- The whole run so far in a few numbers, and the one thing to change when fixes keep not holding. -->
-      @if (tally(); as t) { <p class="tally" data-testid="tally">{{ t }}@if (routesCount(); as n) { · <a routerLink="/history" fragment="routes" data-testid="tally-routes">{{ n }} route{{ n === 1 ? '' : 's' }} crawled</a> } · <a routerLink="/history" fragment="journal" data-testid="tally-journal">what happened</a>@if (skipped(); as k) { · <a routerLink="/history" fragment="given-up" data-testid="tally-given-up">why {{ k }} could not be fixed</a> }</p> }
+      @if (tally(); as t) { <p class="tally" data-testid="tally">{{ t }}@if (routesCount(); as n) { · <a routerLink="/history" fragment="routes" data-testid="tally-routes">{{ n }} route{{ n === 1 ? '' : 's' }} crawled</a> } · <a routerLink="/history" fragment="journal" data-testid="tally-journal">what happened</a>@if (skipped(); as k) { · <a routerLink="/history" fragment="given-up" data-testid="tally-given-up">why {{ k }} could not be fixed</a> }@if (branchLink(); as b) { · <a [href]="b.href" target="_blank" rel="noopener" data-testid="tally-branch">branch {{ b.branch }} on {{ b.host }}</a> }</p>
+      <div class="actions"><button type="button" class="secondary small" (click)="copySummary()" data-testid="copy-summary">{{ copied() ? 'Copied' : 'Copy summary' }}</button></div> }
       @if (notHolding(); as n) { <p class="notice warn" role="status" data-testid="not-holding">{{ n }}</p> }
       <ul class="plain where-list">
         @for (l of lines(); track $index) {
@@ -37,6 +40,31 @@ export class WhereYouAre implements OnDestroy {
   readonly timeline = signal<LoopTimeline | null>(null);
   readonly now = signal(Date.now());
   readonly routesCount = signal(0);
+  readonly copied = signal(false);
+  // The branch the loop commits to, on the repository's web host.
+  readonly branchLink = computed(() => {
+    const t = this.timeline();
+    const branch = t?.deploy?.branch || t?.total?.tally?.branch || null;
+    const href = branchUrl(this.env.env()?.remoteWeb, branch);
+    if (!href) return null;
+    let host = '';
+    try {
+      host = new URL(href).host;
+    } catch {}
+    return { href, branch: String(branch), host };
+  });
+  // A status note: the tally, where you are, and the branch, as plain text.
+  async copySummary(): Promise<void> {
+    const url = this.store.run()?.['url'] || this.env.env()?.config?.file || '';
+    const lines = [`a11y-508 status, ${localTime(new Date().toISOString())}${url ? ` — ${url}` : ''}`, this.tally(), ...this.lines().map((l) => `${l.kind === 'done' ? '✓' : l.kind === 'now' ? '●' : '○'} ${l.text}`)];
+    const b = this.branchLink();
+    if (b) lines.push(`Branch ${b.branch}: ${b.href}`);
+    try {
+      await navigator.clipboard.writeText(lines.filter(Boolean).join('\n'));
+      this.copied.set(true);
+      setTimeout(() => this.copied.set(false), 2000);
+    } catch {}
+  }
   readonly skipped = computed(() => this.timeline()?.total?.tally?.skipped || 0);
   readonly tally = computed(() => {
     const t = this.timeline()?.total?.tally;

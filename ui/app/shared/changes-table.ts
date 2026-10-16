@@ -1,4 +1,6 @@
-import { Component, input } from '@angular/core';
+import { Component, inject, input } from '@angular/core';
+import { EnvStore } from '../core/env.store';
+import { commitUrl } from '../core/git-links';
 import { spoken } from '../core/format';
 
 // One fix attempt of the loop: the finding, the files the working tree showed changed, what became
@@ -36,7 +38,9 @@ export interface ChangeRow {
               } @else { — }
             </td>
             <td data-testid="change-outcome">
-              @if (r.outcome === 'failed-gate') {
+              @if (r.outcome === 'committed' && link(r.commit); as href) {
+                committed <a [href]="href" target="_blank" rel="noopener" data-testid="commit-link">{{ r.commit }}</a>
+              } @else if (r.outcome === 'failed-gate') {
                 <details><summary>reverted: check failed{{ r.gateCode !== null ? ' (exit ' + r.gateCode + ')' : '' }}</summary><pre tabindex="0">{{ r.gateTail || '(no output)' }}</pre></details>
               } @else {
                 {{ outcomeText(r) }}
@@ -51,6 +55,10 @@ export interface ChangeRow {
   `,
 })
 export class ChangesTable {
+  private env = inject(EnvStore);
+  link(sha: string | null): string | null {
+    return commitUrl(this.env.env()?.remoteWeb, sha);
+  }
   readonly rows = input<ChangeRow[]>([]);
   readonly label = input('Changes');
   time(ms: number): string {

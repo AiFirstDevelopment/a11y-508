@@ -22,6 +22,7 @@ import { loopDefaults } from './loop-defaults.mjs';
 import { stateBase as stateBaseOf, readGlobal, writeGlobal, paths as statePaths, legacyFiles, moveLegacy, readSettings, writeJson, WRITTEN_BY, REPO_CONFIG } from './state-dir.mjs';
 import { matchSource } from './loop-match.mjs';
 import { journal } from './journal.mjs';
+import { remoteWeb } from './git-web.mjs';
 import { carryAnalysis, crawledRoutes, listReports, readReport, confinedFile, moveLatestToHistory, deleteHistoryEntry, clearHistory, clearLoopHistory, loopTimeline, sameStartUrl, latestDir, ledgerPath } from './reports.mjs';
 import { UI_DIR, freshness } from './build-info.mjs';
 import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
@@ -676,6 +677,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const latest = readReport(cwd, 'latest');
     return {
       cwd, cwdFacts: factsOf(cwd), inGitRepo: inGitRepo(cwd), launchDir: state.launchDir, version: pkg.version, revision: TOOL_REVISION, platform, browser,
+      // The repository's web address (its origin), for links to commits and the branch; null without one.
+      remoteWeb: inGitRepo(cwd) ? remoteWeb(cwd) : null,
       config: { exists: existsSync(configPath()), file: configPath(), repository: !!repoConfig() },
       stateDir: sp().dir,
       // Files the dashboard may have left in the repository before; asked about once.
