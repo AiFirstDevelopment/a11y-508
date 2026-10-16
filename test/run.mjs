@@ -1,12 +1,13 @@
 // End-to-end test: serves the fixture site, requires a bearer token on every
 // request, runs the CLI against it, and asserts on report.json.
 
-import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, rmSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { Page } from '../src/page.mjs';
+import { saveState, loadState } from '../src/login.mjs';
 import { shouldFail } from '../src/report.mjs';
 import { normalizeUrl } from '../src/crawler.mjs';
 import { CATALOG } from '../src/checks/catalog.mjs';
@@ -1246,6 +1247,20 @@ const stubbed = (outcomes) => {
     assert.equal(r.retries, 3);
     assert.equal(attempts.length, 4);
   });
+}
+
+{
+  // The sign-in's session is saved into a folder that does not exist yet (the dashboard's folder for a
+  // repository is made on the first run there).
+  const dir = join(here, '.state-new');
+  rmSync(dir, { recursive: true, force: true });
+  const file = join(dir, 'deep', 'state.json');
+  check('a session is saved into a folder that does not exist yet', () => {
+    saveState(file, { cookies: [], storage: {} });
+    assert.deepEqual(loadState(file), { cookies: [], storage: {} });
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+  });
+  rmSync(dir, { recursive: true, force: true });
 }
 
 console.log(failures ? `\n${failures} assertion(s) failed` : only ? `\nall ${ran} assertion(s) that read ${only} passed` : '\nall assertions passed');

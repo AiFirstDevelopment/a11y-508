@@ -6,7 +6,8 @@
 // apps that re-check the SSO session on every load need the portal's cookie
 // as much as their own.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { sleep } from './page.mjs';
 
 const STATE_VERSION = 1;
@@ -162,7 +163,10 @@ export function stateSummary(state) {
   return `${(state.cookies || []).length} cookie(s), ${items} web storage item(s) for ${(state.origins || Object.keys(state.storage || {})).join(', ')}`;
 }
 
+// The folder is made first: the dashboard keeps the session in its own folder for the repository,
+// which does not exist before the first run there.
 export function saveState(file, state) {
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   writeFileSync(file, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
 }
 
