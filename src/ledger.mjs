@@ -24,6 +24,8 @@ export function loadLedger(file) {
     if (e && e.status === 'needs-human') e.status = 'skipped';
     // A review item the assistant once left for a person ("unsure") is a problem to fix now.
     if (e && e.status === 'skipped' && e.triage && e.triage.decision !== 'adequate' && !(e.attempts || []).length) e.status = 'open';
+    // A review item whose committed fix was called "did not hold" (it is emitted on every crawl): fixed.
+    if (e && e.level === 'review' && ['open', 'skipped'].includes(e.status) && (e.attempts || []).some((a) => a && a.commit && a.outcome === 'still-present')) e.status = 'verified';
   }
   return l;
 }
@@ -63,7 +65,17 @@ export function applyReport(ledger, report, round, { maxAttempts = 3 } = {}) {
     if (cur) {
       entry.lastSeenRound = round;
       entry.pages = [...cur.pages];
-      if (entry.status === 'pending') {
+      // A review item is a reminder the checks emit on every crawl, whatever the code says: once its fix
+      // is committed and deployed it counts as fixed, and seeing it again changes nothing.
+      if (entry.level === 'review' && (entry.status === 'pending' || entry.status === 'verified')) {
+        if (entry.status === 'pending') {
+          const last = entry.attempts[entry.attempts.length - 1];
+          if (last) last.outcome = 'deployed';
+          entry.status = 'verified';
+          entry.verifiedRound = round;
+          diff.verified.push(entry);
+        }
+      } else if (entry.status === 'pending') {
         const last = entry.attempts[entry.attempts.length - 1];
         if (last) last.outcome = 'still-present';
         entry.status = 'open';

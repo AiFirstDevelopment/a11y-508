@@ -1632,5 +1632,43 @@ rmSync(HOME, { recursive: true, force: true, maxRetries: 10 });
   });
 }
 
+{
+  // A review item (a reminder the checks emit on every crawl) whose fix is deployed counts as fixed;
+  // seen again on later crawls it stays fixed. A violation still present after its fix did not hold.
+  const rev = { test: '5.B', level: 'review', impact: 'minor', selector: 'form fields', message: '8 labelled field(s) on this page. Confirm each label describes the input sufficiently.' };
+  const vio = { test: '7.A', level: 'violation', impact: 'serious', selector: 'img', message: 'Image has no alt text.' };
+  const report = (findings) => ({ finishedAt: new Date().toISOString(), pages: [{ url: 'https://x.gov/a', finalUrl: 'https://x.gov/a', findings }], site: { findings: [] }, summary: { pages: 1, audited: 1, violations: 1, reviews: 1 } });
+  const l = { version: 1, rounds: [], findings: {} };
+  applyReport(l, report([rev, vio]), 1);
+  for (const e of Object.values(l.findings)) {
+    e.status = 'pending';
+    e.attempts.push({ round: 1, commit: 'abc1234', files: ['src/a.html'], outcome: 'pending' });
+  }
+  const d2 = applyReport(l, report([rev, vio]), 2);
+  const byTest = (t) => Object.values(l.findings).find((e) => e.test === t);
+  const after2 = [byTest('5.B').status, byTest('7.A').status];
+  applyReport(l, report([rev]), 3);
+  check('a deployed fix of a review item counts as fixed and stays fixed; a violation still there did not hold', () => {
+    assert.deepEqual(after2, ['verified', 'open']);
+    assert.deepEqual([d2.verified.length, d2.failed.length], [1, 1]);
+    assert.equal(byTest('5.B').status, 'verified');
+  });
+}
+{
+  // A ledger where a review item's committed fix was called "did not hold" is repaired as it loads.
+  const { writeFileSync: wf, rmSync: rm } = await import('node:fs');
+  const d = realHome(mkdtempHome(join(tmpHome(), 'a11y-508-ledger-review-')));
+  const file = join(d, 'ledger.json');
+  wf(file, JSON.stringify({ version: 1, rounds: [], findings: {
+    r: { fingerprint: 'r', level: 'review', status: 'open', attempts: [{ commit: 'abc', outcome: 'still-present' }] },
+    v: { fingerprint: 'v', level: 'violation', status: 'open', attempts: [{ commit: 'abc', outcome: 'still-present' }] },
+  } }));
+  const l = loadLedger(file);
+  rm(d, { recursive: true, force: true });
+  check('a review item called "did not hold" is repaired to fixed as the ledger loads; a violation is not', () => {
+    assert.deepEqual([l.findings.r.status, l.findings.v.status], ['verified', 'open']);
+  });
+}
+
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
 process.exitCode = failures ? 1 : 0;
