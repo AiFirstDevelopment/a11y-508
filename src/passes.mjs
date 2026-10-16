@@ -248,7 +248,7 @@ export async function redismissModal(page) {
 }
 
 export async function disclosurePass(page, add, fingerprints, opts, reload) {
-  const out = { candidates: 0, activated: 0, revealedFindings: 0 };
+  const out = { candidates: 0, activated: 0, revealedFindings: 0, urls: [] };
   // The top document first, then each same-origin frame's (found after the top document's
   // activations, which may have reloaded the page), within one budget of --max-activations.
   let budget = opts.maxActivations;
@@ -272,6 +272,27 @@ export async function disclosurePass(page, add, fingerprints, opts, reload) {
 async function disclosureScope(page, add, fingerprints, reload, fr, max, out, opts) {
   let ctx = fr ? fr.contextId : undefined;
   const ev = (expr) => page.evaluate(expr, { contextId: ctx });
+  // Links an activation brings in (a menu rendered on demand) are pages found: the top document's.
+  const known = new Set(fr ? [] : await ev('window.__a11y508.allLinks()').catch(() => []));
+  const revealedLinks = async () => {
+    if (fr) return;
+    let origin = null;
+    let now = [];
+    try {
+      [origin, now] = await ev('[location.origin, window.__a11y508.allLinks()]');
+    } catch {
+      return;
+    }
+    for (const raw of now) {
+      if (known.has(raw)) continue;
+      known.add(raw);
+      try {
+        const u = new URL(raw);
+        u.hash = '';
+        if (u.origin === origin && !out.urls.includes(u.href)) out.urls.push(u.href);
+      } catch {}
+    }
+  };
   const wrap = (sel) => (fr && sel ? `${fr.path} >>> ${sel}` : sel);
   const put = (f) => add(fr ? { ...f, selector: wrap(f.selector), frame: fr.path } : f);
   // After a reload the frame's context is new: find the frame again by its path.
@@ -329,6 +350,7 @@ async function disclosureScope(page, add, fingerprints, reload, fr, max, out, op
       continue;
     }
     out.activated++;
+    await revealedLinks();
     if (st.dialog) {
       if (!st.focusInDialog) put({ test: '4.G', level: 'violation', impact: 'serious', selector: st.dialog, message: `Dialog opened by "${c.name}" but keyboard focus did not move into it (focus is on ${st.activeSelector || 'body'}).` });
       await page.press('Escape');
@@ -365,9 +387,35 @@ async function disclosureScope(page, add, fingerprints, reload, fr, max, out, op
 export async function routeDiscoveryPass(page, meta, opts, reload, origin) {
   const startHref = await page.evaluate('location.href');
   const { candidates, skipped, capped } = await page.evaluate(`window.__a11y508.navCandidates(${opts.maxClicks}, ${JSON.stringify(meta.pointerCandidates || [])})`);
-  const out = { candidates: candidates.length, clicked: 0, urls: [], offOrigin: 0, skipped: skipped.slice(0, 20), skippedCount: skipped.length, capped, routes: [] };
+  const out = { candidates: candidates.length, clicked: 0, urls: [], offOrigin: 0, skipped: skipped.slice(0, 20), skippedCount: skipped.length, capped, routes: [], revealed: 0 };
   const found = new Set();
   const here = async () => page.evaluate('location.href').catch(() => null);
+  // The links the page had before any click: a click that stays on the page but brings in links
+  // (a menu rendered on demand) has found pages too.
+  const known = new Set(await page.evaluate('window.__a11y508.allLinks()').catch(() => []));
+  const revealedLinks = async () => {
+    let now = [];
+    try {
+      now = await page.evaluate('window.__a11y508.allLinks()');
+    } catch {
+      return;
+    }
+    for (const raw of now) {
+      if (known.has(raw)) continue;
+      known.add(raw);
+      let u;
+      try {
+        u = new URL(raw);
+      } catch {
+        continue;
+      }
+      u.hash = '';
+      if (u.origin !== origin || u.href === startHref || found.has(u.href)) continue;
+      found.add(u.href);
+      out.urls.push(u.href);
+      out.revealed++;
+    }
+  };
   for (const [i, c] of candidates.entries()) {
     if (page.progress) page.progress('discovery', { clicked: i, of: candidates.length });
     if ((await here()) !== startHref) await reload();
@@ -395,7 +443,10 @@ export async function routeDiscoveryPass(page, meta, opts, reload, origin) {
       await sleep(500); // a full-page navigation may still be loading
       href = await here();
     }
-    if (!href || href === startHref) continue;
+    if (!href || href === startHref) {
+      await revealedLinks();
+      continue;
+    }
     let u;
     try {
       u = new URL(href);

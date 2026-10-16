@@ -3,7 +3,9 @@
 (() => {
   const A = window.__a11y508;
 
-  A.pageInfo = () => {
+  // Every link's address (http or https), in page order, hidden ones included: what the crawl
+  // follows, and what a pass compares to see which links a click or an activation brought in.
+  A.allLinks = () => {
     const links = [];
     for (const a of A.all('a[href], area[href]')) {
       const href = a.getAttribute('href');
@@ -13,6 +15,10 @@
         if (u.protocol === 'http:' || u.protocol === 'https:') links.push(u.href);
       } catch {}
     }
+    return links;
+  };
+  A.pageInfo = () => {
+    const links = A.allLinks();
     const navSig = (sel) => {
       const out = [];
       const seen = new Set();

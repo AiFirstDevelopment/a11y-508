@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
-const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow'];
+const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal'];
 if (only && !GROUPS.includes(only)) throw new Error(`--only takes one of ${GROUPS.join(', ')}`);
 const want = (group) => !only || only === group;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-search-')));
@@ -299,5 +299,23 @@ if (want('slow')) {
     const res = pageOf(sl.report, '/result-64.html');
     assert.ok(res && !res.error && res.foundBy === 'form', JSON.stringify(sl.report.pages.map((p) => [path(p.url), p.foundBy, p.error])));
     assert.ok(pg.findings.some((f) => f.test === '7.A' && /slow-icon/.test(f.html) && f.state === 'after searching the last 3 months'), JSON.stringify(pg.findings.map((f) => [f.test, f.state])));
+  });
+}
+
+// Links a click or a disclosure brings into the page (a menu rendered on demand) are pages found.
+if (want('reveal')) {
+  const rv = await crawl('reveal', ['--quiet', '--json', '--max-pages', '6'], 'menu-reveal.html', { interact: true });
+  check('reveal: the pages behind a menu rendered on click and a disclosure are found by clicking, audited, and counted', () => {
+    assert.ok(rv.report, rv.stderr);
+    const audited = rv.report.pages.filter((p) => !p.error && !p.skipped);
+    for (const n of [1, 2, 3]) {
+      const pg = audited.find((p) => path(p.url) === `/menu-page-${n}.html`);
+      assert.ok(pg, `/menu-page-${n}.html in ${audited.map((p) => path(p.url))}`);
+      assert.equal(pg.foundBy, 'click', JSON.stringify([pg.url, pg.foundBy]));
+      assert.ok(pg.findings.some((f) => f.test === '7.A'), `planted 7.A on ${pg.url}`);
+    }
+    const start = pageOf(rv.report, '/menu-reveal.html');
+    assert.equal(start.discovery.revealed, 3, JSON.stringify(start.discovery));
+    assert.ok(notes(rv.report).some((n) => /^3 link\(s\) appeared only after a control was clicked or opened/.test(n)), JSON.stringify(notes(rv.report)));
   });
 }

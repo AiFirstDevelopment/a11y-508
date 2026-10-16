@@ -104,6 +104,8 @@ export function coverage(pages, crawl, opts) {
   }
   if (ranged.length > 10) notes.push(`${ranged.length - 10} more form(s) had their date range set on every load; they are listed in report.json under pages[].ranges.forms.`);
   if (opts.forms === false) notes.push('Search-form discovery was off (--no-forms); result pages behind search and filter forms were not looked for.');
+  const revealed = pages.reduce((a, p) => a + ((p.discovery && p.discovery.revealed) || 0), 0);
+  if (revealed) notes.push(`${revealed} link(s) appeared only after a control was clicked or opened (a menu rendered on demand); the pages behind them were found that way and audited.`);
   if (crawl.clickOnly) notes.push(`${crawl.clickOnly} page(s) were reachable only by clicking a control with no link (href); they were found by clicking and audited. Screen reader users cannot discover these destinations as links (check WCAG 2.1.1, 4.1.2).`);
   return { complete: warnings.length === 0, warnings, notes };
 }
@@ -363,6 +365,7 @@ export function discoveryFacts(p) {
     // Search-form discovery: forms submitted and the result pages they led to (null when none ran).
     searched: d && d.forms ? d.forms.submitted : null,
     searchResults: d && d.forms ? d.forms.results : null,
+    revealed: d ? d.revealed || 0 : 0,
     skippedActions: d ? (d.skipped || []).map((x) => x.name || x.selector || '').filter(Boolean) : [],
     skippedActionsCount: d ? d.skippedCount || 0 : 0,
   };

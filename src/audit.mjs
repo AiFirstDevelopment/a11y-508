@@ -335,6 +335,18 @@ async function auditPageIn(page, url, ctx) {
         result.errors.push(`route discovery: ${e.message}`);
       }
     }
+    // Links the disclosure pass brought in (a menu rendered on activation) are pages found, like click discovery's.
+    const revealed = result.passes && result.passes.disclosure && Array.isArray(result.passes.disclosure.urls) ? result.passes.disclosure.urls : [];
+    if (revealed.length) {
+      const d = result.discovery || { candidates: 0, clicked: 0, urls: [], offOrigin: 0, skipped: [], skippedCount: 0, capped: 0, routes: [], revealed: 0 };
+      const had = new Set(d.urls || []);
+      for (const u of revealed) if (!had.has(u)) {
+        had.add(u);
+        d.urls = [...(d.urls || []), u];
+        d.revealed = (d.revealed || 0) + 1;
+      }
+      result.discovery = d;
+    }
     if (result.search && result.search.submitted) result.discovery = { ...(result.discovery || {}), forms: { filled: result.search.filled, submitted: result.search.submitted, results: result.search.results } };
   } catch (e) {
     result.error = `audit failed: ${e.message}`;

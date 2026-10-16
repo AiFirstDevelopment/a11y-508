@@ -105,6 +105,8 @@ export interface Discovery {
   clickedNew: number | null;
   skippedActions: string[];
   skippedActionsCount: number;
+  // Links a click or an activation brought in (a menu rendered on demand).
+  revealed?: number;
   // Search-form discovery: forms submitted, and the result pages they led to (absent when none ran).
   searched?: number | null;
   searchResults?: number | null;
@@ -114,7 +116,8 @@ export function foundText(d: Discovery): string {
   const links = `${d.links} link${d.links === 1 ? '' : 's'}`;
   const clicks = d.clicked === null || d.clicked === undefined ? '' : ` · ${d.clicked} clicked → ${d.clickedNew ?? 0} new`;
   const search = d.searched ? ` · ${d.searched} search${d.searched === 1 ? '' : 'es'} → ${d.searchResults ?? 0} result${d.searchResults === 1 ? '' : 's'}` : '';
-  return links + clicks + search;
+  const revealed = d.revealed ? ` · ${d.revealed} link${d.revealed === 1 ? '' : 's'} revealed by a click` : '';
+  return links + clicks + search + revealed;
 }
 
 // The controls discovery left alone: "Delete", "Sign out" and 3 more.
@@ -125,12 +128,13 @@ export function skippedText(d: Discovery): string {
 }
 
 // The same facts from a page in report.json (info.links, discovery).
-export function discoveryOf(p: { info?: { links?: unknown[] } | null; discovery?: { clicked?: number; urls?: unknown[]; skipped?: { name?: string; selector?: string }[]; skippedCount?: number; forms?: { submitted: number; results: number } } | null }): Discovery {
+export function discoveryOf(p: { info?: { links?: unknown[] } | null; discovery?: { clicked?: number; urls?: unknown[]; skipped?: { name?: string; selector?: string }[]; skippedCount?: number; revealed?: number; forms?: { submitted: number; results: number } } | null }): Discovery {
   const d = p.discovery || null;
   return {
     links: p.info && Array.isArray(p.info.links) ? p.info.links.length : 0,
     clicked: d && d.clicked !== undefined ? d.clicked || 0 : null,
     clickedNew: d && d.clicked !== undefined ? (d.urls || []).length : null,
+    ...(d && d.revealed ? { revealed: d.revealed } : {}),
     ...(d && d.forms ? { searched: d.forms.submitted, searchResults: d.forms.results } : {}),
     skippedActions: d ? (d.skipped || []).map((x) => x.name || x.selector || '').filter(Boolean) : [],
     skippedActionsCount: d ? d.skippedCount || 0 : 0,

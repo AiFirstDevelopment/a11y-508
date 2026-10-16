@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Menu rendered on demand - a11y-508 test site</title>
+<style>#menu-btn { cursor: pointer; }</style>
+</head>
+<body>
+<header>
+  <h1>Menu rendered on demand</h1>
+  <button type="button" id="menu-btn">Menu</button>
+</header>
+<main>
+  <p>The header's Menu button renders its links only when clicked, and the More pages disclosure renders one when opened: none of them is in the page until then. The crawler finds all three pages by clicking.</p>
+  <button type="button" id="more-btn" aria-expanded="false" aria-controls="more">More pages</button>
+  <div id="more"></div>
+  <p><a href="/about.html">Back to the fixture list</a></p>
+</main>
+<script>
+  document.getElementById('menu-btn').addEventListener('click', () => {
+    if (document.getElementById('menu')) return;
+    const nav = document.createElement('nav');
+    nav.id = 'menu';
+    nav.setAttribute('aria-label', 'Site');
+    nav.innerHTML = '<ul><li><a href="/menu-page-1.html">Shipments</a></li><li><a href="/menu-page-2.html">Reports</a></li></ul>';
+    document.querySelector('header').appendChild(nav);
+  });
+  const more = document.getElementById('more-btn');
+  more.addEventListener('click', () => {
+    const open = more.getAttribute('aria-expanded') === 'true';
+    more.setAttribute('aria-expanded', open ? 'false' : 'true');
+    document.getElementById('more').innerHTML = open ? '' : '<p><a href="/menu-page-3.html">Settings</a></p>';
+  });
+</script>
+</body>
+</html>
