@@ -42,7 +42,7 @@ test('AC 16: the token is in no file, API response, event, or part of the page a
     } catch {}
   });
   try {
-    await open(page, dash, '/run');
+    await open(page, dash);
     await fillRun(page, { url: site.base, token: TOKEN, maxPages: 3, advanced: { 'no-zoom': true } });
     await startFromRun(page);
     // After submission the token is nowhere in the page, including field values.
@@ -50,7 +50,7 @@ test('AC 16: the token is in no file, API response, event, or part of the page a
     expect(await pageText()).not.toContain(TOKEN);
     await waitFinished(page);
     expect(site.unauthorized).toEqual([]); // the token really was sent to the site
-    for (const screen of ['/run', '/live', '/report', '/fix-loop', '/history', '/troubleshoot', '/sign-in']) {
+    for (const screen of ['/', '/diagnostics', '/advanced']) {
       await page.goto(dash.origin + screen);
       await expect(page.locator('h1')).toBeVisible();
       expect(await pageText(), screen).not.toContain(TOKEN);
@@ -126,8 +126,9 @@ test('AC 17: 401 without the secret, 403 for a foreign Host, 404 for a report pa
       '/api/reports/latest/screenshots/p1-1.png',
     ]) expect(await raw(port, p, ok), p).toBe(404);
     // The app itself works with the secret it was opened with.
-    await open(page, dash, '/run');
-    await expect(page.locator('h1')).toHaveText('Set up');
+    await open(page, dash, '/', { url: 'http://127.0.0.1:9/' });
+    await expect(page.locator('h1')).toHaveText(/^a11y-508/);
+    await expect(page.getByTestId('now')).toHaveText(/^Ready to crawl/);
   } finally {
     await dash.stop();
   }

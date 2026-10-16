@@ -1,15 +1,14 @@
 // docs/plans/checks-shadow-frames.md AC 11: a finding inside a web component in a same-origin frame
-// is shown in the Report screen's finding detail with its whole " >>> " selector path and the frame
-// it is in.
+// is shown in Diagnostics with its whole " >>> " selector path and the frame it is in.
 
 import { test, expect } from '@playwright/test';
-import { dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, readReport, nav, TOKEN } from './harness';
+import { dashboard, fixtureSite, goInApp, open, fillRun, startFromRun, waitFinished, readReport, TOKEN } from './harness';
 
-test('checks-shadow-frames AC 11: the finding detail shows a " >>> " selector and the frame', async ({ page }) => {
+test('checks-shadow-frames AC 11: Diagnostics shows the finding\'s " >>> " selector and the frame', async ({ page }) => {
   const site = await fixtureSite();
   const dash = await dashboard();
   try {
-    await open(page, dash, '/run');
+    await open(page, dash);
     await fillRun(page, { url: site.base + 'checks-frames.html', token: TOKEN, maxPages: 1, advanced: { 'no-zoom': true } });
     await startFromRun(page);
     await waitFinished(page);
@@ -20,13 +19,10 @@ test('checks-shadow-frames AC 11: the finding detail shows a " >>> " selector an
     const badge = findings.find((f: any) => f.test === '7.A' && /badge\.png/.test(f.html || ''));
     expect(badge, JSON.stringify(findings.map((f: any) => f.selector))).toBeTruthy();
 
-    await nav(page, 'Report');
-    await page.getByLabel('Text', { exact: true }).fill('badge.png');
-    await page.getByTestId('finding-row').filter({ hasText: badge.message }).first().getByRole('button', { name: /Details/ }).click();
-    const detail = page.getByTestId('detail');
-    await expect(detail.getByTestId('detail-selector')).toHaveText('#fr-same >>> #ff-badge >>> img');
-    await expect(detail.getByTestId('detail-frame')).toHaveText('#fr-same');
-    await expect(detail.getByTestId('detail-selector-hint')).toContainText('shadow root of a web component or the document of a frame');
+    // Diagnostics: the finding with its whole " >>> " selector path and the frame it is in.
+    await goInApp(page, '/diagnostics');
+    const row = page.getByTestId('d-finding').filter({ hasText: badge.message }).filter({ hasText: '#fr-same >>> #ff-badge >>> img' });
+    await expect(row.getByTestId('d-finding-selector')).toHaveText('#fr-same >>> #ff-badge >>> img (in frame #fr-same)');
   } finally {
     await dash.stop();
     site.close();

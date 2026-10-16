@@ -3,7 +3,23 @@ import { Api } from './api';
 import { readSse } from './sse';
 import { CANNOT_GET_IN, Discovery, OFF_ORIGIN, PhaseEvent, Progress, cumulative, spoken } from './format';
 import { ByImpact, Remedy, RetryInfo, RunEvent, RunInfo } from './types';
-import type { ChangeRow } from '../shared/changes-table';
+
+// One fix attempt of the loop: the finding, the files changed, what became of them, and how long the
+// assistant and the check took.
+export interface ChangeRow {
+  round: number;
+  n: number | null;
+  test: string;
+  message: string;
+  elements?: number | null;
+  files: string[];
+  outcome: string;
+  commit: string | null;
+  agentMs: number | null;
+  gateMs: number | null;
+  gateCode: number | null;
+  gateTail: string | null;
+}
 
 export interface PageRow {
   url: string;
@@ -140,6 +156,8 @@ export class RunStore {
   readonly loginReopened = signal(false);
   // The server's word on the current run once it has ended: the try again it scheduled, if any.
   readonly retry = signal<RetryInfo | null>(null);
+  // The fallback assistant taking a fix (its fallback event): which fix, and by whom.
+  readonly fallback = signal<{ round: number; n: number; assistant: string } | null>(null);
   private watching: ReturnType<typeof setTimeout> | null = null;
 
   readonly active = computed(() => !!this.run() && !this.done());
@@ -203,6 +221,7 @@ export class RunStore {
     this.signInAgain.set(false);
     this.loginReopened.set(false);
     this.retry.set(null);
+    this.fallback.set(null);
   }
 
   // Appends to the pane: text as it is, or a line of its own (started on a new line).
@@ -420,6 +439,7 @@ export class RunStore {
         this.pane(checkLine(ev), true);
         break;
       case 'fallback':
+        this.fallback.set({ round: Number(ev['round']) || 0, n: Number(ev['n']) || 0, assistant: String(ev['assistant'] || '') });
         this.pane(`Fix ${ev['n']} of ${ev['m']}: ${String(ev['assistant'])} this time, after ${ev['after']} tries that made no fix that held`, true);
         break;
       case 'marker':

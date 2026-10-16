@@ -32,24 +32,26 @@ test('own browser: the dashboard opens in Chrome of its own, and a crawl runs as
     await expect(dialog).toBeVisible({ timeout: 30_000 });
     // Once the working directory is remembered it is not.
     await dash.evaluate((dir) => localStorage.setItem('a11y508.cwd', dir), cwd);
+    // The URL (Set up, through Diagnostics), the page limit under Advanced, then Start.
+    await dash.evaluate((u) => localStorage.setItem('a11y508.startUrl', u), site.base + 'app.html');
     await dash.reload();
-    await expect(dash.locator('h1')).toBeVisible();
-    await expect(dialog).toBeHidden();
-    // The URL, then the page limit at /run/advanced, then Start.
-    await dash.getByLabel('Start URL').fill(site.base + 'app.html');
+    await expect(dash.getByTestId('url')).toContainText(site.base + 'app.html');
     await dash.evaluate(() => {
-      history.pushState(null, '', '/run/advanced');
+      history.pushState(null, '', '/advanced');
       dispatchEvent(new PopStateEvent('popstate', { state: null }));
     });
     await dash.getByLabel('Maximum pages').fill('1');
+    await dash.evaluate(() => {
+      history.pushState(null, '', '/');
+      dispatchEvent(new PopStateEvent('popstate', { state: null }));
+    });
     const pagesBefore = context.pages().length;
-    await dash.getByRole('button', { name: 'Start', exact: true }).click();
+    await dash.getByTestId('go').click();
     // The sign-in and the crawl: a tab in this window.
     await expect.poll(() => context.pages().length, { timeout: 30_000 }).toBe(pagesBefore + 1);
-    await expect(dash.getByTestId('run-command')).toContainText(`--connect ${port} --login`);
-    await expect(dash.getByTestId('crawl-status')).toHaveText(/^(Sign in in the tab that just opened|Analyzing|Loading|Taking|Starting|Done)/);
-    // Done: the tab is closed, the dashboard's stays and moves on to Results.
-    await expect(dash).toHaveURL(/\/report$/, { timeout: 180_000 });
+    await expect(dash.getByTestId('now')).toHaveText(/^(Sign in in the tab that opened|Crawling|Starting|Done)/);
+    // Done: the tab is closed, the dashboard's stays.
+    await expect(dash.getByTestId('now')).toHaveText(/^Done: crawled 1 page/, { timeout: 180_000 });
     await expect.poll(() => context.pages().length, { timeout: 30_000 }).toBe(pagesBefore);
     const report = JSON.parse(readFileSync(join(dirsOf(cwd, home).report, 'report.json'), 'utf8'));
     expect(report.options.connected).toBe(true);

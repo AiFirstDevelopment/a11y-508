@@ -1,10 +1,10 @@
-// The fixing-assistant picker, Test assistant, and Install, with the harness
+// The fixing-assistant picker under Advanced, and the assistant a loop runs, with the harness
 // controlling PATH, the shell, and npm through stub executables.
 
 import { test, expect, type Page } from '@playwright/test';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { moreOptions, openPicker, dashboard, fixtureSite, gitRepo, open, stub, tempDir, api, ROOT, TOKEN, type Dash, WIN, exePath, loginShell, msysPath, npmBin, quote, shPath, stubScript, systemPath, nav, removeTemp } from './harness';
+import { openPicker, dashboard, fixtureSite, gitRepo, go, goInApp, now, open, stub, tempDir, api, useToken, type Dash, loginShell, npmBin, shPath, stubScript, systemPath, removeTemp } from './harness';
 
 const PRESETS = {
   claude: 'claude -p --permission-mode acceptEdits --add-dir "{tasksDir}" --output-format stream-json --verbose "Read the file {promptFile} and do exactly what it says."',
@@ -75,7 +75,7 @@ const entry = (page: Page, name: string) => page.getByTestId('picker').locator(`
 // The dashboard's loop config (kept in its own directory, not the repository).
 const config = async (dash: Dash) => (await api(dash, '/api/config')).json.config;
 
-test('AC 12: the picker lists every preset, live or greyed as installed, saves the choice, and tests the assistant', async ({ page }) => {
+test('AC 12: the picker under Advanced lists every preset, live or greyed as installed, and saves the choice; the first installed one runs when nothing is chosen', async ({ page }) => {
   const r = rig();
   const claude = cliStub(r, r.pathBin, 'claude');
   const gemini = cliStub(r, r.npmBin, 'gemini'); // only in npm prefix -g's bin directory
@@ -91,13 +91,16 @@ test('AC 12: the picker lists every preset, live or greyed as installed, saves t
     mkdirSync(dirname(sessionFile), { recursive: true });
     writeFileSync(sessionFile, JSON.stringify({ version: 1, origins: ['http://127.0.0.1:9'], cookies: [], storage: {} }));
     expect((await api(dash, '/api/config', { method: 'PUT', body: { config: { url: 'http://127.0.0.1:9/', check: 'true' } } })).status).toBe(200);
-    await open(page, dash, '/fix-loop');
-    // Claude Code is installed, so it is the one preselected; the picker opens with "change".
-    await expect(page.getByTestId('assistant-line')).toContainText('Fixing with Claude Code (9.9.9 (stub claude))', { timeout: 60_000 });
+    await open(page, dash);
+    // Claude Code is installed, so it is the one the loop runs; nothing asks.
+    await expect(now(page)).toHaveText(/^Ready to crawl 127\.0\.0\.1:9 and fix what it finds\.$/, { timeout: 60_000 });
+    await goInApp(page, '/diagnostics');
+    await expect(page.getByTestId('d-assistant')).toHaveText(/^Runs: Claude Code \(claude\) · fallback: Gemini CLI$/, { timeout: 60_000 });
     await openPicker(page);
     await expect(page.getByTestId('picker').locator('.preset label')).toHaveCount(4);
     const names = await page.getByTestId('picker').locator('.preset label').allTextContents();
     expect(names).toEqual(['Claude Code', 'Gemini CLI', 'Codex', 'Custom command']);
+    await expect(entry(page, 'claude').getByRole('radio')).toBeChecked();
 
     await expect(entry(page, 'claude')).toHaveAttribute('data-found', 'true');
     await expect(entry(page, 'claude').getByTestId('version')).toHaveText('9.9.9 (stub claude)');
@@ -121,27 +124,19 @@ test('AC 12: the picker lists every preset, live or greyed as installed, saves t
     await expect(entry(page, 'codex')).toHaveClass(/missing/);
     await expect(entry(page, 'codex')).toContainText('not installed');
 
-    const start = page.getByTestId('loop-start');
+    // A choice is saved, and the one screen says what it means.
     await entry(page, 'gemini').getByRole('radio').check();
     await expect.poll(async () => (await config(dash)).agent).toBe('gemini');
-    await expect(start).toBeEnabled();
+    expect((await api(dash, '/api/settings')).json.agent).toBe('gemini');
     await entry(page, 'codex').getByRole('radio').check();
     await expect.poll(async () => (await config(dash)).agent).toBe('codex');
-    await expect(start).toBeDisabled();
+    await goInApp(page, '/');
+    await expect(now(page)).toHaveText(/^Ready to crawl 127\.0\.0\.1:9; nothing will be fixed: Codex is not installed\.$/);
+    await openPicker(page);
     await entry(page, 'claude').getByRole('radio').check();
     await expect.poll(async () => (await config(dash)).agent).toBe('claude');
-    await expect(start).toBeEnabled();
-
-    // Test assistant: the fake agent answers; an agent that writes nothing fails with its output.
-    await entry(page, 'custom').getByRole('radio').check();
-    const fake = `${quote(process.execPath)} ${quote(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
-    await page.getByLabel(/^Command \(must contain/).fill(fake);
-    await page.getByRole('button', { name: 'Test assistant' }).click();
-    await expect(page.getByTestId('test-status')).toHaveText(/^ready/, { timeout: 60_000 });
-    await page.getByLabel(/^Command \(must contain/).fill(`${quote(process.execPath)} -e "console.log('please sign in first')" {promptFile}`);
-    await page.getByRole('button', { name: 'Test assistant' }).click();
-    await expect(page.getByTestId('test-status')).toHaveText('not signed in or failed', { timeout: 60_000 });
-    await expect(page.getByTestId('test-output')).toContainText('please sign in first');
+    await goInApp(page, '/');
+    await expect(now(page)).toHaveText(/^Ready to crawl 127\.0\.0\.1:9 and fix what it finds\.$/);
   } finally {
     await dash.stop();
     removeTemp(cwd);
@@ -152,7 +147,7 @@ test('AC 12: the picker lists every preset, live or greyed as installed, saves t
   const gemini2 = cliStub(r2, r2.pathBin, 'gemini');
   const dash2 = await dashboard({ env: r2.env });
   try {
-    await open(page, dash2, '/fix-loop');
+    await open(page, dash2, '/', { url: 'http://127.0.0.1:9/' });
     await openPicker(page);
     await expect(entry(page, 'gemini')).toContainText('found on PATH');
     await expect(entry(page, 'gemini').getByTestId('where')).toHaveText(gemini2);
@@ -176,107 +171,17 @@ test('AC 12: a preset found only in npm prefix -g is run by that path when the l
   g('commit', '-q', '-m', 'init');
   const dash = await dashboard({ cwd, env: { ...r.env, PATH: `${r.env.PATH}${delimiter}${dirname(process.execPath)}` } });
   try {
-    await open(page, dash, '/run');
-    await moreOptions(page);
-    await page.getByLabel('A token').check();
-    await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
-    await page.getByLabel('Start URL').fill(site.base + 'about.html');
-    await nav(page, 'Fix loop');
+    await open(page, dash);
+    await useToken(page);
     await openPicker(page);
     await expect(entry(page, 'gemini')).toHaveAttribute('data-found', 'true');
-    await page.getByTestId('loop-start').click();
-    await expect(page.getByTestId('loop-step')).toHaveText(/Loop finished/, { timeout: 240_000 });
+    await goInApp(page, '/');
+    await go(page).click();
+    await expect(now(page)).toHaveText(/^Done: /, { timeout: 240_000 });
     const calls = readFileSync(join(r.root, 'gemini-calls.txt'), 'utf8');
     expect(calls.split('\n')[0].startsWith(gemini + ' --approval-mode auto_edit --include-directories ')).toBe(true);
   } finally {
     await dash.stop();
     site.close();
-  }
-});
-
-test('AC 13: Install shows the command and shell, runs only after confirmation, streams output, and explains failures', async ({ page }) => {
-  const r = rig();
-  const dash = await dashboard({ env: r.env });
-  const calls = () => (existsSync(r.record) ? readFileSync(r.record, 'utf8').trim().split('\n').filter(Boolean) : []);
-  try {
-    await open(page, dash, '/fix-loop');
-    await openPicker(page);
-    await entry(page, 'codex').getByRole('radio').check();
-    const panel = page.getByTestId('install-panel');
-    await expect(panel.getByTestId('install-command')).toHaveText('npm install -g @openai/codex');
-    await expect(panel.getByTestId('shell-name')).toHaveText(r.shellName);
-    expect(calls()).toEqual([]);
-    await panel.getByRole('button', { name: 'Install' }).click();
-    const dialog = page.getByTestId('install-confirm');
-    await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText('npm install -g @openai/codex');
-    await expect(dialog).toContainText(r.shellName);
-    expect(calls()).toEqual([]);
-    await dialog.getByRole('button', { name: 'Run the install' }).click();
-    await expect(page.getByTestId('install-output')).toContainText('npm install output for @openai/codex');
-    await expect(page.getByTestId('install-result')).toContainText('Installed');
-    await expect(entry(page, 'codex')).toHaveAttribute('data-found', 'true');
-    await expect(entry(page, 'codex').getByTestId('where')).toHaveText(exePath(r.npmBin, 'codex'));
-    expect(calls()).toEqual(['install -g @openai/codex']);
-
-    // EACCES: stays greyed, shows the exit code and the permission remedy for this shell.
-    writeFileSync(r.mode, 'eacces');
-    await entry(page, 'gemini').getByRole('radio').check();
-    await page.getByTestId('install-panel').getByRole('button', { name: 'Install' }).click();
-    await page.getByTestId('install-confirm').getByRole('button', { name: 'Run the install' }).click();
-    await expect(page.getByTestId('install-code')).toHaveText('1');
-    await expect(entry(page, 'gemini')).toHaveAttribute('data-found', 'false');
-    const remedy = page.locator('[data-remedy="permission"]');
-    await expect(remedy).toBeVisible();
-    // npm's global bin is the prefix itself on Windows, so no /bin there.
-    await expect(remedy.getByTestId('remedy-command')).toHaveText(`npm config set prefix ~/.npm-global && echo 'export PATH="$HOME/.npm-global${WIN ? '' : '/bin'}:$PATH"' >> ~/.bashrc`);
-    // Retry runs the same install again.
-    writeFileSync(r.mode, 'silent');
-    await page.getByTestId('install-panel').getByRole('button', { name: 'Retry' }).click();
-    await page.getByTestId('install-confirm').getByRole('button', { name: 'Run the install' }).click();
-    await expect(page.getByTestId('install-code')).toHaveText('0');
-    expect(calls()).toEqual(['install -g @openai/codex', 'install -g @google/gemini-cli', 'install -g @google/gemini-cli']);
-    // Exit 0 without the executable: not-on-path, with the real npm prefix -g path.
-    const np = page.locator('[data-remedy="not-on-path"]');
-    await expect(np.getByTestId('remedy-command')).toHaveText(`echo 'export PATH="${msysPath(r.npmBin)}:$PATH"' >> ~/.bashrc`);
-    await expect(entry(page, 'gemini')).toHaveAttribute('data-found', 'false');
-
-    // The install command never comes from the request.
-    const marker = join(r.root, 'pwned');
-    for (const body of [{ agent: 'gemini', command: `touch ${marker}` }, { agent: `touch ${marker}` }, { command: `touch ${marker}` }, { agent: 'gemini; touch ' + marker }]) {
-      const res = await api(dash, '/api/agent/install', { method: 'POST', body });
-      expect(res.status, JSON.stringify(body)).toBe(400);
-    }
-    expect(existsSync(marker)).toBe(false);
-    expect(calls().length).toBe(3);
-  } finally {
-    await dash.stop();
-  }
-});
-
-// checks-rule-packs AC 11: with two remedies on screen, the tool's own checks (the in-page bundle the
-// crawler injects) find no landmark-uniqueness item for the remedy command regions: each region is
-// named after its remedy.
-test('checks-rule-packs AC 11: remedy command regions have unique names, so the landmark check has nothing to report', async ({ page }) => {
-  const r = rig();
-  const dash = await dashboard({ env: r.env });
-  try {
-    await open(page, dash, '/fix-loop');
-    await openPicker(page);
-    await entry(page, 'codex').getByRole('radio').check();
-    writeFileSync(r.mode, 'eacces-network');
-    await page.getByTestId('install-panel').getByRole('button', { name: 'Install' }).click();
-    await page.getByTestId('install-confirm').getByRole('button', { name: 'Run the install' }).click();
-    await expect(page.locator('[data-remedy="permission"]').getByTestId('remedy-command')).toBeVisible();
-    await expect(page.locator('[data-remedy="network"]').getByTestId('remedy-command')).toBeVisible();
-    const dir = join(ROOT, 'src', 'checks', 'browser');
-    const bundle = readdirSync(dir).filter((f) => f.endsWith('.js')).sort().map((f) => readFileSync(join(dir, f), 'utf8')).join('\n;\n');
-    await page.evaluate(bundle);
-    const run = await page.evaluate(() => (window as any).__a11y508.run());
-    expect(run.findings.length, 'the checks ran').toBeGreaterThan(0);
-    const remedyLandmarks = run.findings.filter((f: any) => f.test === '9.A' && /remedy-command/.test(f.html));
-    expect(remedyLandmarks.map((f: any) => `${f.level} ${f.message} [${f.selector}]`)).toEqual([]);
-  } finally {
-    await dash.stop();
   }
 });

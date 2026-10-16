@@ -4,7 +4,7 @@
 import { test, expect } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dashboard, fixtureSite, gitRepo, open, moreOptions, nav, ROOT, TOKEN, type Dash, type Site } from './harness';
+import { dashboard, fixtureSite, gitRepo, go, open, useToken, ROOT, type Dash, type Site } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 
@@ -43,12 +43,10 @@ test('notifications: with permission given and the tab in the background, a push
   const g = gitRepo(dash.cwd);
   g('add', '-A');
   g('commit', '-q', '-m', 'app');
-  await open(page, dash, '/run');
-  await moreOptions(page);
-  await page.getByLabel('A token').check();
-  await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
-  await nav(page, 'Fix loop');
-  await page.getByTestId('loop-start').click();
+  await open(page, dash);
+  await useToken(page);
+  // Asked on Start.
+  await go(page).click();
   await expect.poll(async () => (await page.evaluate(() => (window as any).__notifications)).map((n: any) => n.title), { timeout: 240_000 }).toContainEqual(expect.stringMatching(/^a11y-508: Fix loop (finished|stopped|ended)/));
   const titles: string[] = (await page.evaluate(() => (window as any).__notifications)).map((n: any) => n.title);
   expect(titles.some((t) => /^a11y-508: Fix loop/.test(t)), titles.join(' | ')).toBe(true);

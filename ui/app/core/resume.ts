@@ -1,36 +1,9 @@
 import { Injectable, inject } from '@angular/core';
 import { Api } from './api';
-import { EnvInfo } from './types';
 
-// The dashboard resumes where it was (docs/plans/resume.md): it opens on the step the person was on
-// (stored server-side as lastStep), on a live run, or on an interrupted fix loop (which the server
-// continues by itself, docs/plans/turnkey-loop.md).
-
-// The path the page was opened at, before the router sends '' to Set up. The address the server
-// prints (and opens) is '/', which is where the stored step applies; a deep link is kept.
-export const INITIAL_PATH = typeof location !== 'undefined' ? location.pathname : '/';
-// Its query: /fix-loop?start=1 at load is a reload or a tab Chrome restored, never a fresh click.
-export const INITIAL_SEARCH = typeof location !== 'undefined' ? location.search : '';
-
-// The step a route belongs to, as lastStep stores it.
-export function stepPath(url: string): string | null {
-  const p = url.split(/[?#]/)[0];
-  if (p === '/run' || p.startsWith('/run/') || p.startsWith('/sign-in')) return '/run';
-  if (p.startsWith('/live') || p.startsWith('/troubleshoot')) return '/live';
-  if (p.startsWith('/report')) return '/report';
-  if (p.startsWith('/fix-loop')) return '/fix-loop';
-  if (p.startsWith('/history')) return '/history';
-  return null;
-}
-
-// Where the dashboard opens: a live run's step, an interrupted fix loop's Fix step, else the step
-// the person was on.
-export function landing(e: Pick<EnvInfo, 'run' | 'lastStep'>): string | null {
-  const r = e.run;
-  if (r && (r.status === 'running' || r.status === 'interrupted') && r.kind !== 'install') return ['loop', 'dry-run'].includes(r.kind) ? '/fix-loop' : '/live';
-  // A step stored by an older build for a screen that no longer exists (e.g. /review) is ignored.
-  return e.lastStep && stepPath(e.lastStep) === e.lastStep ? e.lastStep : null;
-}
+// The dashboard resumes where it was (docs/plans/resume.md, simple-screen.md): it always opens on the
+// one screen, which shows a live run, or the last one's outcome; an interrupted fix loop is continued
+// by the server by itself (docs/plans/turnkey-loop.md).
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 // "13 Oct 2026, 4:52 PM", in the viewer's time zone.
@@ -57,23 +30,7 @@ export function continuingText(ev: Record<string, any>): string {
 @Injectable({ providedIn: 'root' })
 export class Resume {
   private api = inject(Api);
-  // Steps are stored only once the dashboard has decided where to open (the router's first
-  // redirect to Set up is not the person's choice).
-  private started = false;
-  private saved: string | null = null;
   private beat: ReturnType<typeof setInterval> | null = null;
-
-  begin(current: string | null, stored: string | null): void {
-    this.saved = stored;
-    this.started = true;
-    if (current) this.saveStep(current);
-  }
-
-  saveStep(path: string | null): void {
-    if (!this.started || !path || path === this.saved) return;
-    this.saved = path;
-    this.api.put('/api/settings', { lastStep: path }).catch(() => (this.saved = null));
-  }
 
   // An open page says so once a minute, so an idle dashboard is never ended under it.
   heartbeat(): void {

@@ -8,7 +8,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { api, dashboard, fixtureSite, run, BIN, TOKEN, SECRET_HEADER, tempDir } from './harness';
 
-const ROUTES = ['/run', '/live', '/report', '/troubleshoot', '/sign-in', '/fix-loop', '/history'];
+const ROUTES = ['/', '/diagnostics', '/advanced'];
 
 test('AC 20: every screen is audited and none has a critical or serious violation', async () => {
   test.setTimeout(540_000);
@@ -43,18 +43,16 @@ test('AC 20: every screen is audited and none has a critical or serious violatio
     const r = await run(
       process.execPath,
       // With the WCAG 2.2 profile on (docs/plans/checks-beyond-508.md): the dashboard passes its own rules beyond Section 508 too.
-      [BIN, dash.origin + '/run', '--token-header', SECRET_HEADER, '--token-storage', 'a11y508.secret', '--no-follow-clicks', '--max-pages', '30', '--wcag', '2.2', '--out', out, '--json'],
+      [BIN, dash.origin + '/', '--token-header', SECRET_HEADER, '--token-storage', 'a11y508.secret', '--no-follow-clicks', '--max-pages', '30', '--wcag', '2.2', '--out', out, '--json'],
       // In CI, the core's debug log, so a page that never finishes is named.
       { env: { ...process.env, TOKEN: dash.secret, ...(process.env.CI ? { A11Y_508_DEBUG: '1' } : {}) }, timeout: 200_000 }
     );
     phase(`self crawl exit ${r.status}`);
     if (!existsSync(join(out, 'report.json'))) throw new Error(`the self crawl wrote no report (exit ${r.status}):\n${r.output.slice(-6000)}\n--- dashboard ---\n${dash.output().slice(-3000)}`);
     const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
-    // Routes nothing links to here: /sign-in (the Run screen signs in in place), and the Fix step,
-    // which the wizard offers only in the app's repository (this dashboard's directory is not
-    // one). Each is audited by a one-page crawl of its own (docs/plans/run-simple.md).
+    // Advanced, which only Diagnostics links to, is also audited by a one-page crawl of its own.
     const outputs: string[] = [r.output];
-    for (const route of ['/sign-in', '/fix-loop']) {
+    for (const route of ['/advanced']) {
       const outN = tempDir('a11y-508-self-extra-');
       const rN = await run(
         process.execPath,

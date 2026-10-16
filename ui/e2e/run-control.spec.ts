@@ -1,7 +1,7 @@
-// Notices, Stop, the run slot, and the way out when a crawl cannot get in.
+// Stop, the run slot, and a crawl that cannot get in, on the one screen.
 
 import { test, expect } from '@playwright/test';
-import { REMOVED_BUTTONS, goInApp, moreOptions, dashboard, fixtureSite, open, fillRun, startFromRun, waitFinished, nav, api, cliChromePids, status, TOKEN, type Dash, type Site } from './harness';
+import { REMOVED_BUTTONS, asksNothing, dashboard, fixtureSite, go, now, open, fillRun, startFromRun, waitFinished, api, cliChromePids, TOKEN, type Dash, type Site } from './harness';
 
 let site: Site;
 let dash: Dash;
@@ -14,43 +14,21 @@ test.afterEach(async () => {
   site.close();
 });
 
-test('AC 3: warnings and errors are separate notices during and after a run; raw output only on request', async ({ page }) => {
-  await open(page, dash, '/run');
-  await fillRun(page, { url: site.base, maxPages: 2 });
-  await moreOptions(page);
-  await page.getByLabel('No sign-in').check();
-  await startFromRun(page);
-  const warn = page.locator('[data-notice="warn"]');
-  const error = page.locator('[data-notice="error"]');
-  // During the run: the TOKEN warning is a notice of its own, and no raw output is on screen.
-  await expect(warn).toContainText('TOKEN is not set');
-  await expect(status(page)).toHaveText(/^Running/);
-  await expect(page.getByTestId('raw-output')).toHaveCount(0);
-  await waitFinished(page);
-  // After: the error is a separate notice; the warning is still there and not inside it.
-  await expect(error).toContainText('the start page could not be audited: HTTP 401');
-  await expect(warn).toContainText('TOKEN is not set');
-  await expect(error).not.toContainText('TOKEN is not set');
-  await expect(page.getByTestId('raw-output')).toHaveCount(0);
-  await page.getByText('Show raw output').click();
-  await expect(page.getByTestId('raw-output')).toBeVisible();
-  await expect(page.getByTestId('raw-output')).toContainText('"type":"warn"');
-});
-
-test('AC 7: Stop ends a crawl within 10 seconds, its Chrome is gone, and the screen says Stopped', async ({ page }) => {
+test('AC 7: Stop ends a crawl within 10 seconds, its Chrome is gone, and the sentence says Stopped', async ({ page }) => {
   const before = new Set(cliChromePids());
-  await open(page, dash, '/run');
+  await open(page, dash);
   await fillRun(page, { url: site.base, token: TOKEN, maxPages: 50 });
   await startFromRun(page);
-  await expect(page.locator('#crawl-progress-label')).toHaveText(/pages found/, { timeout: 120_000 });
+  await expect(now(page)).toHaveText(/^Crawling 127\.0\.0\.1:\d+: [1-9]\d* pages? so far/, { timeout: 120_000 });
   const ours = cliChromePids().filter((p) => !before.has(p));
   expect(ours.length).toBeGreaterThan(0);
   const t0 = Date.now();
-  await page.getByRole('button', { name: 'Stop', exact: true }).click();
-  await expect(status(page)).toHaveText('Stopped', { timeout: 10_000 });
+  await go(page).click();
+  await expect(now(page)).toHaveText('Stopped', { timeout: 10_000 });
   const took = Date.now() - t0;
   console.log(`AC 7: Stopped ${took} ms after Stop`);
   expect(took).toBeLessThan(10_000);
+  await expect(go(page)).toHaveText('Start');
   const alive = ours.filter((pid) => {
     try {
       process.kill(pid, 0);
@@ -62,54 +40,28 @@ test('AC 7: Stop ends a crawl within 10 seconds, its Chrome is gone, and the scr
   expect(alive, `the run's Chrome processes still running: ${alive.join(', ')}`).toEqual([]);
 });
 
-// docs/plans/turnkey-loop.md AC 1: the Crawl step offers no Troubleshoot; the screen stays reachable by its address.
-test('AC 8, turnkey AC1: a run that cannot get in says so with Run again and no Troubleshoot; Troubleshoot by its address still explains it, and its next step reruns with its flag', async ({ page }) => {
-  await open(page, dash, '/run');
+// docs/plans/turnkey-loop.md AC 1: a crawl that cannot get in says so, and offers nothing to decide.
+test('AC 8, turnkey AC1: a run that cannot get in says so, with Start and nothing else', async ({ page }) => {
+  await open(page, dash);
   await fillRun(page, { url: site.base, token: 'wrong-token', maxPages: 2 });
   await startFromRun(page);
   await waitFinished(page);
-  await expect(page.getByTestId('crawl-status')).toHaveText('The crawler could not get into the app.');
-  await expect(page.getByRole('button', { name: 'Troubleshoot with these settings' })).toHaveCount(0);
+  await expect(now(page)).toHaveText(/^Could not get into 127\.0\.0\.1:\d+$/);
   await expect(page.getByRole('button', { name: REMOVED_BUTTONS })).toHaveCount(0);
-  await expect(page.getByTestId('crawl-run-again')).toHaveText('Run again');
-  await goInApp(page, '/troubleshoot');
-  await page.getByRole('button', { name: /^Troubleshoot / }).click();
-  const hops = page.getByTestId('hops');
-  await expect(hops).toContainText(`GET ${new URL(site.base).pathname}`, { timeout: 120_000 });
-  await expect(hops).toContainText('HTTP 401');
-  await expect(page.getByTestId('verdict')).toHaveText('The start URL answered HTTP 401.');
-  await expect(page.getByTestId('next')).toContainText('the server rejected it');
-  await expect(page.getByTestId('header-went-out')).toContainText('Authorization header was sent');
-
-  // An app that reads its token from a web storage key the crawler did not seed.
-  await nav(page, 'Run');
-  await fillRun(page, { url: site.base + 'app.html', token: TOKEN, maxPages: 1, advanced: { 'no-token-storage': true } });
-  await startFromRun(page);
-  await waitFinished(page);
-  await goInApp(page, '/troubleshoot');
-  await page.getByRole('button', { name: /^Troubleshoot / }).click();
-  await expect(page.getByTestId('next')).toContainText('--token-storage access_token', { timeout: 120_000 });
-  await expect(page.getByTestId('hops')).toContainText('The page script navigated to /login.html');
-  await page.getByTestId('next-button').click();
-  await expect(page).toHaveURL(/\/live$/);
-  await expect(page.getByTestId('run-command')).toContainText('--token-storage access_token');
-  await waitFinished(page);
+  await asksNothing(page);
 });
 
-test('AC 18: while a run is active, Start is disabled and POST /api/runs returns 409', async ({ page }) => {
-  await open(page, dash, '/run');
+test('AC 18: while a run is active, Start is Stop and POST /api/runs returns 409', async ({ page }) => {
+  await open(page, dash);
   await fillRun(page, { url: site.base, token: TOKEN, maxPages: 50 });
   await startFromRun(page);
-  await nav(page, 'Run');
-  await page.getByLabel('Start URL').fill(site.base + 'about.html');
-  await expect(page.getByRole('button', { name: 'Start', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Start', exact: true })).toHaveCount(0);
   const r = await api(dash, '/api/runs', { method: 'POST', body: { kind: 'crawl', url: site.base, options: {}, auth: { mode: 'none' } } });
   expect(r.status).toBe(409);
   const t = await api(dash, '/api/runs', { method: 'POST', body: { kind: 'troubleshoot', url: site.base, options: {}, auth: { mode: 'none' } } });
   expect(t.status).toBe(409);
   await api(dash, '/api/runs/current/stop', { method: 'POST' });
-  await nav(page, 'Live run');
-  await expect(status(page)).toHaveText('Stopped', { timeout: 15_000 });
-  await nav(page, 'Run');
-  await expect(page.getByRole('button', { name: 'Start', exact: true })).toBeEnabled();
+  await expect(now(page)).toHaveText('Stopped', { timeout: 15_000 });
+  await expect(go(page)).toHaveText('Start');
+  await expect(go(page)).toBeEnabled();
 });

@@ -1,12 +1,12 @@
-// The dashboard resumes where it was (docs/plans/resume.md): closing its window does not end it;
-// Quit does; reopening lands on the step the person was on, or on the live run; an interrupted fix
-// loop or crawl goes on by itself (docs/plans/turnkey-loop.md).
+// The dashboard resumes where it was (docs/plans/resume.md, simple-screen.md): closing its window
+// does not end it; Quit (on Diagnostics) does; reopening shows the live run or the last one's outcome
+// on the one screen; an interrupted fix loop or crawl goes on by itself (docs/plans/turnkey-loop.md).
 
 import { test, expect, chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { REMOVED_BUTTONS, api, asksNothing, dashboard, dirsOf, fillRun, fixtureSite, gitRepo, open, removeTemp, run, startFromRun, stopTree, tempDir, BIN, MAIN, ROOT, TOKEN, type Dash, type Site } from './harness';
+import { REMOVED_BUTTONS, api, asksNothing, dashboard, dirsOf, fillRun, fixtureSite, gitRepo, go, goInApp, now, open, record, removeTemp, run, seen, startFromRun, stopTree, tempDir, waitFinished, BIN, MAIN, ROOT, TOKEN, type Dash, type Site } from './harness';
 
 // "13 Oct 2026, 4:52 PM" is 20:52 UTC in New York.
 test.use({ timezoneId: 'America/New_York' });
@@ -120,7 +120,7 @@ test('resume AC1: Quit asks first while a run is active, then ends the dashboard
   try {
     const r = await api(dash, '/api/runs', { method: 'POST', body: { kind: 'crawl', url: `http://127.0.0.1:${(hang.address() as any).port}/`, options: { timeout: '120000' }, auth: { mode: 'none' } } });
     expect(r.status).toBe(202);
-    await open(page, dash, '/live');
+    await open(page, dash, '/diagnostics');
     await page.getByRole('button', { name: 'Quit the dashboard' }).click();
     const dialog = page.getByRole('dialog', { name: 'Quit while the crawl runs?' });
     await expect(dialog).toBeVisible();
@@ -141,28 +141,29 @@ test('resume AC1: Quit asks first while a run is active, then ends the dashboard
   }
 });
 
-test('resume AC4 / guard 4: after a crawl, reloading and relaunching the dashboard open on Results, not Set up', async ({ page, browser }) => {
+test('resume AC4 / guard 4: after a crawl, a reload shows its outcome, and a relaunch the one screen with what was found, not Set up', async ({ page, browser }) => {
   const site = await fixtureSite();
   const cwd = tempDir('a11y-508-land-');
   const home = tempDir('a11y-508-landhome-');
   let dash: Dash = await dashboard({ cwd, env: { A11Y_508_HOME: home } });
   try {
-    await open(page, dash, '/run', { details: false });
+    await open(page, dash);
     await fillRun(page, { url: site.base + 'about.html', token: TOKEN, maxPages: 1 });
     await startFromRun(page);
-    await expect(page).toHaveURL(/\/report$/, { timeout: 180_000 });
-    await expect.poll(async () => (await api(dash, '/api/settings')).json.lastStep).toBe('/report');
+    const done = await waitFinished(page, 180_000);
+    expect(done).toMatch(/^Done: crawled 1 page, /);
     // A reload at the address the dashboard printed.
     await page.goto(`${dash.origin}/#secret=${dash.secret}`);
-    await expect(page).toHaveURL(/\/report$/);
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText(/Results|report/i);
+    await expect(now(page)).toHaveText(done);
+    await expect(go(page)).toHaveText('Start');
     // The dashboard started again, its window a new one (nothing remembered in the browser).
     await dash.stop();
     dash = await dashboard({ cwd, env: { A11Y_508_HOME: home } });
     const fresh = await browser.newContext();
     const p2 = await fresh.newPage();
     await p2.goto(`${dash.origin}/#secret=${dash.secret}`);
-    await expect(p2).toHaveURL(/\/report$/);
+    await expect(p2.getByTestId('now')).toHaveText(/^Ready to crawl 127\.0\.0\.1:\d+/);
+    await expect(p2.getByTestId('counts')).toHaveText(/^\d+ found$/);
     await expect(p2.getByRole('dialog', { name: 'Set up' })).toBeHidden();
     await fresh.close();
   } finally {
@@ -173,7 +174,7 @@ test('resume AC4 / guard 4: after a crawl, reloading and relaunching the dashboa
 });
 
 // docs/plans/turnkey-loop.md AC 4 / guard g: nothing is offered; the interruption is continued.
-test('resume AC5 / guards 5 and 6, turnkey AC4 / guard g: an interrupted fix loop goes on by itself: the Fix step says where it was and what it discarded, reverts only the unfinished fix, and continues with no crawl', async ({ page }) => {
+test('resume AC5 / guards 5 and 6, turnkey AC4 / guard g: an interrupted fix loop goes on by itself: the sentence says where it was and what it discarded, reverts only the unfinished fix, and continues with no crawl', async ({ page }) => {
   const site = await fixtureSite();
   const { cwd, report } = await appWithReport(site, 'a11y-508-intr-');
   await interruptedLoop(cwd, site, report);
@@ -182,17 +183,18 @@ test('resume AC5 / guards 5 and 6, turnkey AC4 / guard g: an interrupted fix loo
   const marks = tempDir('a11y-508-intr-marks-');
   const dash: Dash = await dashboard({ cwd, env: { FAKE_AGENT_SLOW_ONCE: join(marks, 'slow'), FAKE_AGENT_SLOW_MS: '20000' } });
   try {
-    // Opened at its address, it lands on the Fix step, which says what happened and what it does now.
+    // Opened at its address, the one screen says what happened and what it does now.
     await page.goto(`${dash.origin}/#secret=${dash.secret}`);
-    await expect(page).toHaveURL(/\/fix-loop$/);
-    await expect(page.getByTestId('fix-origin')).toHaveText('The fix loop was interrupted at fix 8 of 20 on 13 Oct 2026, 4:52 PM (the dashboard was closed); continuing from there. The unfinished changes to site/added.html, site/index.html were discarded.', { timeout: 60_000 });
-    await expect(page.getByTestId('loop-stop')).toBeVisible();
-    await expect(page.getByTestId('interrupted')).toHaveCount(0);
+    await record(page);
+    await expect.poll(async () => (await seen(page)).includes('The fix loop was interrupted at fix 8 of 20 on 13 Oct 2026, 4:52 PM (the dashboard was closed); continuing from there. The unfinished changes to site/added.html, site/index.html were discarded.'), { timeout: 60_000 }).toBe(true);
+    await expect(go(page)).toHaveText('Stop');
     await asksNothing(page);
-    for (const words of ['Loop finished', 'The fix loop stopped']) await expect(page.locator('body')).not.toContainText(words);
-    await expect(page.getByTestId('agent-output')).toContainText('Discarded the unfinished change to site/index.html', { timeout: 30_000 });
-    await expect(page.getByTestId('agent-output')).toContainText('Discarded the unfinished change to site/added.html');
-    await expect(page.getByTestId('agent-output')).not.toContainText('NOTES.md');
+    for (const words of ['Done', 'Stopped']) await expect(now(page)).not.toHaveText(new RegExp(`^${words}`));
+    // Diagnostics has the run's output: what was discarded, and nothing of the person's own.
+    await goInApp(page, '/diagnostics');
+    await expect(page.getByTestId('d-output-text')).toContainText('Discarded the unfinished change to site/index.html', { timeout: 30_000 });
+    await expect(page.getByTestId('d-output-text')).toContainText('Discarded the unfinished change to site/added.html');
+    await expect(page.getByTestId('d-output-text')).not.toContainText('NOTES.md');
     // The unfinished edit is gone (the resumed loop's own fix may already be in the file); the person's notes stay.
     expect(readFileSync(join(cwd, 'site', 'index.html'), 'utf8')).not.toContain('half a fix');
     expect(existsSync(join(cwd, 'site', 'added.html'))).toBe(false);
@@ -216,7 +218,7 @@ test('resume AC5 / guards 5 and 6, turnkey AC4 / guard g: an interrupted fix loo
 });
 
 // docs/plans/turnkey-loop.md AC 4: a crawl the dashboard's closing interrupted runs again by itself.
-test('resume AC6, turnkey AC4: an interrupted crawl runs again from its own request, and the Crawl step says so', async ({ page }) => {
+test('resume AC6, turnkey AC4: an interrupted crawl runs again from its own request, and the sentence says so', async ({ page }) => {
   const site = await fixtureSite();
   const cwd = tempDir('a11y-508-intr-crawl-');
   gitRepo(cwd);
@@ -231,13 +233,13 @@ test('resume AC6, turnkey AC4: an interrupted crawl runs again from its own requ
   const dash: Dash = await dashboard({ cwd, env: { TOKEN } });
   try {
     await page.goto(`${dash.origin}/#secret=${dash.secret}`);
-    await expect(page).toHaveURL(/\/live$/);
-    await expect(page.getByTestId('crawl-origin')).toHaveText('The crawl was interrupted (the dashboard was closed); running it again.', { timeout: 60_000 });
+    await record(page);
+    await expect.poll(async () => (await seen(page)).some((t) => /^The crawl was interrupted \(the dashboard was closed\); running it again$/.test(t)), { timeout: 60_000 }).toBe(true);
     await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.id, { timeout: 30_000 }).not.toBe(id);
     expect((await api(dash, '/api/runs/current')).json.kind).toBe('crawl');
     await expect(page.getByRole('button', { name: REMOVED_BUTTONS })).toHaveCount(0);
-    // It finishes, and the wizard moves on to Results, as after any crawl.
-    await expect(page).toHaveURL(/\/report$/, { timeout: 120_000 });
+    // It finishes, and says so.
+    await expect(now(page)).toHaveText(/^Done: crawled 1 page, /, { timeout: 120_000 });
     expect((await api(dash, '/api/runs/current')).json.status).toBe('done');
   } finally {
     await dash.stop();

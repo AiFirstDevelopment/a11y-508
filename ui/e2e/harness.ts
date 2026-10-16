@@ -133,46 +133,77 @@ export async function api(dash: Dash, path: string, init: { method?: string; bod
 }
 
 // Opens the dashboard as a returning viewer: the working directory is remembered (no setup
-// dialog) and every step's Details is open (the full views the specs check). { fresh: true } opens
-// it as a first visit, with nothing remembered.
-export async function open(page: Page, dash: Dash, path = '/run', opts: { fresh?: boolean; details?: boolean } = {}): Promise<void> {
+// dialog). { fresh: true } opens it as a first visit, with nothing remembered; { url } puts a start
+// URL in this browser's memory first.
+export async function open(page: Page, dash: Dash, path = '/', opts: { fresh?: boolean; url?: string } = {}): Promise<void> {
   if (!opts.fresh) {
-    const details = opts.details !== false;
     // The server's working directory (it may have been started with --dir).
     const cwd = (await api(dash, '/api/env')).json.cwd;
-    await page.addInitScript(([cwd, details, origin]) => {
+    await page.addInitScript(([cwd, url, origin]) => {
       // Only for this dashboard: a page can open several (each its own origin).
       if (location.origin !== origin) return;
       try {
         if (!localStorage.getItem('a11y508.cwd')) localStorage.setItem('a11y508.cwd', cwd);
-        // A returning viewer who looks at the Crawl step after a crawl: it stays there when the
-        // crawl finishes (the wizard's own move to Results is tested with details: false).
-        if (details && localStorage.getItem('a11y508.stayOnCrawl') === null) localStorage.setItem('a11y508.stayOnCrawl', '1');
-        for (const k of ['crawl', 'results', 'fix', 'output', 'history', 'ledger', 'changes', 'why']) if (localStorage.getItem(`a11y508.details.${k}`) === null) localStorage.setItem(`a11y508.details.${k}`, details ? '1' : '0');
+        if (url) localStorage.setItem('a11y508.startUrl', url);
       } catch {}
-    }, [cwd, details, dash.origin] as [string, boolean, string]);
+    }, [cwd, opts.url || '', dash.origin] as [string, string, string]);
   }
   await page.goto(`${dash.origin}${path}#secret=${dash.secret}`);
   await expect(page.locator('h1')).toBeVisible();
 }
 
-// The wizard's steps, by the names the specs used for the old nav tabs.
-const STEP_OF: Record<string, [string, string]> = {
-  Run: ['Set up', '/run'], 'Set up': ['Set up', '/run'],
-  'Live run': ['Crawl', '/live'], Crawl: ['Crawl', '/live'],
-  Report: ['Results', '/report'], Results: ['Results', '/report'],
-  'Fix loop': ['Fix', '/fix-loop'], Fix: ['Fix', '/fix-loop'],
-  History: ['History', '/history'],
-  Troubleshoot: ['', '/troubleshoot'],
-};
+// In-app navigation to a route (the app keeps its state, as a click on a link would).
+export async function goInApp(page: Page, path: string): Promise<void> {
+  if (new URL(page.url()).pathname === path) return;
+  await page.evaluate((p) => {
+    history.pushState(null, '', p);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+  }, path);
+  await expect(page).toHaveURL(new RegExp(`${path.replace(/[/]/g, '\\/')}$`));
+}
 
-// Navigates inside the app through the stepper's real links; a step that is not available yet
-// (or a screen that is not a step, Troubleshoot) is opened by its address, in-app.
-export async function nav(page: Page, label: string): Promise<void> {
-  const [step, path] = STEP_OF[label] || [label, ''];
-  const link = step ? page.getByRole('navigation', { name: 'Steps' }).getByRole('link', { name: new RegExp(`^\\W*\\d?\\s*${step}\\b`) }) : null;
-  if (link && (await link.count())) await link.first().click();
-  else await goInApp(page, path);
+// The one screen, in-app.
+export const home = (page: Page): Promise<void> => goInApp(page, '/');
+
+// Advanced (the bottom of Diagnostics): the crawl's settings beyond the URL, the assistant, the loop's settings.
+export async function moreOptions(page: Page): Promise<void> {
+  await goInApp(page, '/advanced');
+  await expect(page.getByTestId('more-options')).toBeVisible();
+}
+export async function loopOptions(page: Page): Promise<void> {
+  await goInApp(page, '/advanced');
+  await expect(page.getByTestId('loop-more')).toBeVisible();
+}
+// The assistant picker, under Advanced, once the assistants are detected.
+export async function openPicker(page: Page): Promise<void> {
+  await goInApp(page, '/advanced');
+  await expect(page.getByTestId('picker')).toBeVisible({ timeout: 60_000 });
+}
+
+// The way in: a token, chosen under Advanced; then back to the one screen.
+export async function useToken(page: Page, token = TOKEN): Promise<void> {
+  await moreOptions(page);
+  await page.getByLabel('A token').check();
+  await page.getByLabel(/^Token \(sent as/).fill(token);
+  await home(page);
+}
+
+// The folder and URL through Change folder or URL on Diagnostics (the setup dialog), without
+// starting: the URL is typed and the dialog closed with Escape.
+export async function setUrl(page: Page, url: string): Promise<void> {
+  await goInApp(page, '/diagnostics');
+  await page.getByTestId('change-setup').click();
+  const dialog = page.getByRole('dialog', { name: 'Set up' });
+  await expect(dialog).toBeVisible();
+  const field = dialog.getByLabel('Start URL');
+  await expect(async () => {
+    await field.fill(url);
+    await expect(field).toHaveValue(url, { timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
+  await field.blur();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await home(page);
 }
 
 export interface CrawlForm {
@@ -183,107 +214,86 @@ export interface CrawlForm {
   advanced?: Record<string, string | boolean>;
 }
 
-// In-app navigation to a route nothing links to (the app keeps its state, as a click on a link would).
-export async function goInApp(page: Page, path: string): Promise<void> {
-  if (new URL(page.url()).pathname === path) return;
-  await page.evaluate((p) => {
-    history.pushState(null, '', p);
-    window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
-  }, path);
-  await expect(page).toHaveURL(new RegExp(`${path.replace(/[/]/g, '\\/')}$`));
-}
-
-// The Run screen's settings beyond the start URL (auth choices, Advanced, the command line), at
-// /run/advanced, which nothing links to.
-export async function moreOptions(page: Page): Promise<void> {
-  await goInApp(page, '/run/advanced');
-  await expect(page.getByTestId('more-options')).toBeVisible();
-}
-
-// The Fix loop's settings (every loop setting, and the dry run), at /fix-loop/settings.
-export async function loopOptions(page: Page): Promise<void> {
-  await goInApp(page, '/fix-loop/settings');
-  await expect(page.getByTestId('loop-more')).toBeVisible();
-}
-
-// The Fix loop's assistant picker, behind "change" once an assistant is installed.
-export async function openPicker(page: Page): Promise<void> {
-  const picker = page.getByTestId('picker');
-  // Once the assistants are detected the line says which one fixes, or that none is installed.
-  await expect(page.getByTestId('assistant-line')).toHaveText(/Fixing with|No assistant/, { timeout: 60_000 });
-  if (await picker.isVisible()) return;
-  await page.getByRole('button', { name: 'change the assistant' }).click();
-  await expect(picker).toBeVisible();
-}
-
-// A dry run, from the Fix loop's More options.
-export async function dryRun(page: Page): Promise<void> {
-  await loopOptions(page);
-  await page.getByRole('button', { name: 'Record findings without fixing' }).click();
-}
-
+// The URL, and the crawl's settings under Advanced; back on the one screen after.
 export async function fillRun(page: Page, f: CrawlForm): Promise<void> {
-  // The Run screen can still be re-rendering the previous run's settings when the field is
-  // filled, which left both URLs in it once ("…about.html…tables.html"): fill until it holds this one.
-  const url = page.getByLabel('Start URL');
-  await expect(async () => {
-    await url.fill(f.url);
-    await expect(url).toHaveValue(f.url, { timeout: 1000 });
-  }).toPass({ timeout: 15_000 });
-  if (f.token !== undefined || f.maxPages || f.failOn || (f.advanced && Object.keys(f.advanced).length)) await moreOptions(page);
-  if (f.token !== undefined) {
-    await page.getByLabel('A token').check();
-    await page.getByLabel(/^Token \(sent as/).fill(f.token);
-  }
-  if (f.maxPages) await page.getByLabel('Maximum pages').fill(String(f.maxPages));
-  if (f.failOn) await page.getByLabel('Fail on impacts').fill(f.failOn);
-  if (f.advanced && Object.keys(f.advanced).length) {
-    const adv = page.locator('details.advanced');
-    if (!(await adv.evaluate((d: HTMLDetailsElement) => d.open))) await adv.locator('summary').click();
-    for (const [flag, v] of Object.entries(f.advanced)) {
+  await setUrl(page, f.url);
+  if (f.token !== undefined || f.maxPages || f.failOn || (f.advanced && Object.keys(f.advanced).length)) {
+    await moreOptions(page);
+    if (f.token !== undefined) {
+      await page.getByLabel('A token').check();
+      await page.getByLabel(/^Token \(sent as/).fill(f.token);
+    }
+    if (f.maxPages) await page.getByLabel('Maximum pages').fill(String(f.maxPages));
+    if (f.failOn) await page.getByLabel('Fail on impacts').fill(f.failOn);
+    for (const [flag, v] of Object.entries(f.advanced || {})) {
       const el = page.locator(`#adv-${flag}`);
       if (typeof v === 'boolean') await el.setChecked(v);
       else await el.fill(v);
     }
+    await home(page);
   }
 }
 
 // The fixture crawl most tests use: small.
 export const QUICK = { maxPages: 5, advanced: { 'no-zoom': true } };
 
+// The one sentence, the one line of numbers, the one button.
+export const now = (page: Page) => page.getByTestId('now');
+export const go = (page: Page) => page.getByTestId('go');
+export const status = now;
+
+// Start, on the one screen: the button becomes Stop once the run is the page's.
 export async function startFromRun(page: Page): Promise<void> {
-  // Start is Set up's one button: it crawls (docs/plans/turnkey-loop.md AC 7).
-  await page.getByRole('button', { name: 'Start', exact: true }).click();
-  await expect(page).toHaveURL(/\/live$/);
-  // The Live screen can still show the previous run's "Finished" until the
-  // store sees the new run, and waitFinished would accept that at once. A run
-  // cannot finish before this is observed: the browser alone takes seconds.
-  await expect(status(page)).toHaveText(/^(Running|Stopping)/, { timeout: 60_000 });
+  await home(page);
+  await expect(go(page)).toHaveText('Start');
+  await go(page).click();
+  await expect(go(page)).toHaveText('Stop', { timeout: 60_000 });
+  // The server has the run: the sentence is the run's, not the click's.
+  await expect(now(page)).not.toHaveText('Starting…', { timeout: 60_000 });
 }
+export const start = startFromRun;
 
-export const status = (page: Page) => page.getByTestId('run-status');
+// How a run ends, in the sentence.
+export const ENDED = /^(Done\b|Stopped|The crawl failed|Could not get into)/;
 
-// A finished crawl moves the wizard on to Results; the specs look at the Crawl step afterwards,
-// so this comes back to it (in-app, as the stepper's Crawl link does).
+// Until the run has ended (the button is Start again and the sentence says how); the sentence.
 export async function waitFinished(page: Page, timeout = 280_000): Promise<string> {
-  await expect
-    .poll(async () => {
-      if (new URL(page.url()).pathname.startsWith('/report')) return 'moved';
-      const t = (await status(page).textContent({ timeout: 500 }).catch(() => '')) || '';
-      return /^(Finished|Stopped|Failed)/.test(t) ? 'done' : 'running';
-    }, { timeout, intervals: [250] })
-    .not.toBe('running');
-  if (new URL(page.url()).pathname.startsWith('/report')) await goInApp(page, '/live');
-  await expect(status(page)).toHaveText(/^(Finished|Stopped|Failed)/, { timeout: 15_000 });
-  return (await status(page).textContent()) || '';
+  await home(page);
+  await expect(now(page)).toHaveText(ENDED, { timeout });
+  await expect(go(page)).toHaveText('Start', { timeout: 30_000 });
+  return (await now(page).textContent()) || '';
 }
 
-// Opens the current step's Details disclosure (the full view), if it is closed.
-export async function details(page: Page): Promise<void> {
-  const d = page.getByTestId('details').first();
-  if (!(await d.evaluate((x: HTMLDetailsElement) => x.open))) await d.locator('> summary').click();
-  await expect(d).toHaveJSProperty('open', true);
+// Every distinct text the sentence (and other test ids) showed, recorded in the page from now on,
+// with the main buttons on screen at the time.
+export async function record(page: Page, testids: string[] = ['now']): Promise<void> {
+  await page.evaluate((ids) => {
+    const w = window as any;
+    w.__seen = Object.fromEntries(ids.map((id: string) => [id, [] as string[]]));
+    w.__buttons = [] as { now: string; buttons: string[] }[];
+    const sample = () => {
+      for (const id of ids) {
+        for (const el of document.querySelectorAll(`[data-testid="${id}"]`)) {
+          const t = el.textContent!.replace(/\s+/g, ' ').trim();
+          const list = w.__seen[id];
+          if (t && list[list.length - 1] !== t) list.push(t);
+        }
+      }
+      const n = document.querySelector('[data-testid="now"]');
+      if (n) {
+        const visible = (b: Element) => !!((b as HTMLElement).offsetWidth || (b as HTMLElement).offsetHeight || (b as HTMLElement).getClientRects().length);
+        const buttons = [...document.querySelectorAll('main button')].filter(visible).filter((b) => (b as HTMLElement).dataset['testid'] !== 'show-sign-in-tab').map((b) => b.textContent!.trim());
+        const last = w.__buttons[w.__buttons.length - 1];
+        const t = n.textContent!.trim();
+        if (!last || last.now !== t || last.buttons.join('|') !== buttons.join('|')) w.__buttons.push({ now: t, buttons });
+      }
+    };
+    sample();
+    new MutationObserver(sample).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+  }, testids);
 }
+export const seen = (page: Page, id = 'now'): Promise<string[]> => page.evaluate((i) => (window as any).__seen?.[i] || [], id);
+export const buttonsSeen = (page: Page): Promise<{ now: string; buttons: string[] }[]> => page.evaluate(() => (window as any).__buttons || []);
 
 // The latest report for a dashboard's working directory, from the tool's own folder for it.
 export const readReport = (cwd: string, home?: string) => JSON.parse(readFileSync(join(dirsOf(cwd, home).report, 'report.json'), 'utf8'));
@@ -331,15 +341,16 @@ export function run(file: string, args: string[], opts: { cwd?: string; env?: No
 }
 
 // Every name of a button the dashboard no longer has (docs/plans/turnkey-loop.md AC 1 / guard a).
-export const REMOVED_BUTTONS = /Try again|Continue|Start over|verify now|Keep waiting|Verify anyway|Stop waiting|without waiting|Sign in and continue|Start anyway|Crawl again|Deployed|Clear history|Clear fix-loop history|Troubleshoot with these settings/;
+export const REMOVED_BUTTONS = /Try again|Continue|Start over|verify now|Keep waiting|Verify anyway|Stop waiting|without waiting|Sign in and continue|Start anyway|Crawl again|Deployed|Clear history|Clear fix-loop history|Troubleshoot with these settings|Run again|Fix the violations|Check now|Copy summary/;
 
-// The Fix step's state asks nothing: none of the removed buttons, and at most one button besides
-// Stop in its actions (the assistant picker's own buttons are not the step's).
+// The one screen asks nothing (docs/plans/simple-screen.md guard a): one button (Start or Stop),
+// apart from Show the sign-in tab; no steps; none of the removed buttons.
 export async function asksNothing(page: Page): Promise<void> {
+  await expect(page.getByRole('navigation', { name: 'Steps' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: REMOVED_BUTTONS })).toHaveCount(0);
-  // Stop, and the actions that decide nothing (a check or a sign-in now, a copy), are not choices.
-  const forward = page.locator('main .actions:not(#agent-picker .actions) button:visible').filter({ hasNotText: /^(Stop|Check now|Checking…|Opening the sign-in…|Sign in|Copy summary|Copied|Copy as text)$/ });
-  expect(await forward.count(), (await forward.allTextContents()).join(' | ')).toBeLessThanOrEqual(1);
+  const buttons = page.locator('main button:visible:not([data-testid="show-sign-in-tab"])');
+  expect(await buttons.count(), (await buttons.allTextContents()).join(' | ')).toBe(1);
+  await expect(go(page)).toHaveText(/^(Start|Stop)$/);
 }
 
 // The current run's events so far, from its stream (it replays them, then stays open while the run goes on).
@@ -358,11 +369,4 @@ export async function runEvents(dash: Dash, ms = 2000): Promise<any[]> {
   } catch {}
   clearTimeout(stop);
   return text.split('\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)));
-}
-
-// The loop's counts as the Fix step and History word them (docs/plans/loop-resilience.md AC 15).
-export function countsLine(c: Record<string, number | undefined>): string {
-  const v = c['verified'] || 0;
-  const p = c['pending'] || 0;
-  return [v ? `${v} verified fixed` : '', p ? `${p} fixed, awaiting verification` : '', !v && !p ? '0 fixed' : '', `${c['open'] || 0} remaining`].filter(Boolean).join(' · ');
 }

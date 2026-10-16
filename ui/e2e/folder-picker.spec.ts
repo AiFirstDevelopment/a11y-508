@@ -1,23 +1,39 @@
-// The folder picker: the app's repository folder on Set up (Browse…), the dialog that browses the
-// machine's folders, the line under the stepper that names the folder on the later steps, and the
-// switch that every screen follows.
+// The folder picker: the app's repository folder in Set up (Browse…; Change folder or URL on
+// Diagnostics), the dialog that browses the machine's folders, the folder named on the one screen,
+// and the switch that every screen follows.
 
 import { test, expect, type Page } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { goInApp, moreOptions, dryRun, loopOptions, api, dashboard, fillRun, fixtureSite, nav, open, startFromRun, waitFinished, MAIN, QUICK, TOKEN, WIN, tempDir, type Dash, removeTemp } from './harness';
+import { goInApp, go, home, moreOptions, loopOptions, now, api, dashboard, fillRun, fixtureSite, open, startFromRun, waitFinished, MAIN, QUICK, TOKEN, WIN, tempDir, type Dash, removeTemp } from './harness';
 // @ts-ignore -- plain JS shared with the server's node:test suite
 import { mergeEnv, unreadableDir } from '../server/test/platform.mjs';
 
 const NAME = "Choose the app's repository folder";
+const URL0 = 'http://127.0.0.1:9/';
 const dialog = (page: Page) => page.getByRole('dialog', { name: NAME });
-const change = (page: Page) => page.getByTestId('browse').first();
-// The folder: the Set up field on Set up, the line under the stepper on every later step.
+const setup = (page: Page) => page.getByRole('dialog', { name: 'Set up' });
+const change = (page: Page) => setup(page).getByTestId('browse');
+// Set up, opened from Diagnostics (Change folder or URL).
+async function openSetup(page: Page): Promise<void> {
+  if (await setup(page).isVisible()) return;
+  await goInApp(page, '/diagnostics');
+  await page.getByTestId('change-setup').click();
+  await expect(setup(page)).toBeVisible();
+}
+async function closeSetup(page: Page): Promise<void> {
+  if (!(await setup(page).isVisible())) return;
+  await page.keyboard.press('Escape');
+  await expect(setup(page)).toBeHidden();
+}
+// The folder: the Set up field while Set up is open; the one screen's folder; Diagnostics' Folder.
 async function expectCwd(page: Page, path: string): Promise<void> {
-  if (new URL(page.url()).pathname.startsWith('/run')) await expect(page.getByTestId('setup-folder').first()).toHaveValue(path);
-  else await expect(page.getByTestId('cwd')).toHaveAttribute('title', path);
+  if (await setup(page).isVisible()) return void (await expect(setup(page).getByTestId('setup-folder')).toHaveValue(path));
+  if (new URL(page.url()).pathname === '/diagnostics') return void (await expect(page.getByTestId('d-folder')).toHaveText(path));
+  if (new URL(page.url()).pathname === '/advanced') return void (await expect(page.getByTestId('command-cwd')).toHaveText(path));
+  await expect(page.getByTestId('folder')).toHaveAttribute('title', path);
 }
 const options = (page: Page) => dialog(page).getByRole('option');
 const listLabel = (page: Page) => dialog(page).locator('#picker-list-label');
@@ -43,7 +59,7 @@ function writeLedger(dir: string): void {
 }
 
 async function openPicker(page: Page): Promise<void> {
-  if (!new URL(page.url()).pathname.startsWith('/run')) await nav(page, 'Run');
+  await openSetup(page);
   await change(page).click();
   await expect(dialog(page)).toBeVisible();
   await expect(listLabel(page)).toHaveText(/^Folders in /);
@@ -57,8 +73,8 @@ async function browseTo(page: Page, path: string): Promise<void> {
   await expect(listLabel(page)).toHaveText(`Folders in ${path}`);
 }
 
-// Chooses a folder on Set up (Browse…), then returns to the screen it was called from, which
-// follows the switch.
+// Chooses a folder in Set up (Browse…), closes Set up, and is back on the screen it was called
+// from, which follows the switch.
 async function chooseDir(page: Page, path: string): Promise<void> {
   const from = new URL(page.url()).pathname;
   await openPicker(page);
@@ -66,7 +82,8 @@ async function chooseDir(page: Page, path: string): Promise<void> {
   await dialog(page).getByRole('button', { name: 'Choose this folder' }).click();
   await expect(dialog(page)).toBeHidden();
   await expectCwd(page, path);
-  if (!from.startsWith('/run')) await goInApp(page, from);
+  await closeSetup(page);
+  await goInApp(page, from);
   await expectCwd(page, path);
 }
 
@@ -91,22 +108,13 @@ test.afterEach(async () => {
   dirs = [];
 });
 
-test('AC 1: Set up shows the folder with Browse…; every later step names it under the stepper, linking back; Browse… opens a named modal dialog with focus inside; Escape closes it and returns focus', async ({ page }) => {
+test('AC 1: the one screen names the folder; Set up (Change folder or URL) shows it with Browse…; Browse… opens a named modal dialog with focus inside; Escape closes it and returns focus', async ({ page }) => {
   const dash = await start();
-  await open(page, dash, '/run');
-  await expect(page.getByTestId('setup-folder').first()).toHaveValue(dash.cwd);
-  await expect(page.getByTestId('context')).toHaveCount(0);
-  // Sign in is no longer in the nav (the Run screen signs in); its route is opened directly.
-  for (const label of ['Live run', 'Report', 'Troubleshoot', 'Fix loop', 'History']) {
-    await nav(page, label);
-    await expect(page.getByTestId('cwd'), label).toHaveAttribute('title', dash.cwd);
-    // The full path is the accessible text; the visible text is the folder's name.
-    await expect(page.getByTestId('cwd').locator('.visually-hidden')).toHaveText(`App's repository folder: ${dash.cwd}`);
-    await expect(page.getByTestId('cwd').locator('[aria-hidden="true"]')).toHaveText(dash.cwd.split(/[\\/]/).pop()!);
-  }
-  // The folder links back to Set up.
-  await page.getByTestId('cwd').click();
-  await expect(page).toHaveURL(/\/run$/);
+  await open(page, dash, '/', { url: URL0 });
+  await expect(page.getByTestId('folder')).toHaveAttribute('title', dash.cwd);
+  await expect(page.getByTestId('folder')).toContainText(dash.cwd);
+  await openSetup(page);
+  await expect(setup(page).getByTestId('setup-folder')).toHaveValue(dash.cwd);
   await expect(change(page)).toBeEnabled();
   await change(page).click();
   await expect(dialog(page)).toBeVisible();
@@ -130,7 +138,7 @@ test('AC 2: the dialog lists subdirectories by name, no files, hidden ones only 
   mkdirSync(join(launch, 'Alpha', '.git'));
   writeReport(join(launch, 'beta'), 'http://beta.example/');
   const dash = await start({ cwd: launch });
-  await open(page, dash, '/run');
+  await open(page, dash, '/', { url: URL0 });
   await openPicker(page);
   await expect(listLabel(page)).toHaveText(`Folders in ${launch}`);
   const names = options(page).locator('.dir-name');
@@ -158,7 +166,7 @@ test('AC 3: opening a row browses in and the breadcrumbs grow; a breadcrumb brow
   mkdirSync(join(launch, 'one', 'two', 'three'), { recursive: true });
   mkdirSync(join(launch, 'other'));
   const dash = await start({ cwd: launch });
-  await open(page, dash, '/run');
+  await open(page, dash, '/', { url: URL0 });
   await openPicker(page);
   const n = await crumbs(page).count();
   // Double-click opens a row.
@@ -208,7 +216,7 @@ test('AC 4: a typed path browses there, ~ is home; a missing path or a file show
   mkdirSync(join(target, 'inside'));
   writeFileSync(join(target, 'file.txt'), 'x');
   const dash = await start({ cwd: launch });
-  await open(page, dash, '/run');
+  await open(page, dash, '/', { url: URL0 });
   await openPicker(page);
   await browseTo(page, target);
   await expect(dialog(page).getByLabel('Path', { exact: true })).toHaveValue(target);
@@ -240,7 +248,7 @@ test('AC 4: a typed path browses there, ~ is home; a missing path or a file show
   await expectCwd(page, launch);
 });
 
-test('AC 5: Choose switches the server, the header, the Report screen, the Fix-loop config and the ledger', async ({ page }) => {
+test('AC 5: Choose switches the server, the one screen, Diagnostics (its report, config and ledger) and Advanced', async ({ page }) => {
   const launch = dir('a11y-508-pick-launch-');
   writeReport(launch, 'http://launch.example/');
   const a = dir('a11y-508-pick-a-');
@@ -249,39 +257,37 @@ test('AC 5: Choose switches the server, the header, the Report screen, the Fix-l
   writeLedger(a);
   const b = dir('a11y-508-pick-b-');
   const dash = await start({ cwd: launch });
-  await open(page, dash, '/report');
-  await expect(page.getByText('http://launch.example/ · finished', { exact: false })).toBeVisible();
-  // Switching while the Report screen is open re-reads it in place.
+  await open(page, dash, '/diagnostics', { url: URL0 });
+  await expect(page.getByTestId('diagnostics-page')).toContainText('http://launch.example/');
+  // Switching while Diagnostics is open reads it again in place.
   await chooseDir(page, a);
   expect(await cwdNow(dash)).toBe(a);
-  await expectCwd(page, a);
-  await expect(page.getByText('http://a.example/ · finished', { exact: false })).toBeVisible();
-  await expect(page.getByTestId('finding-row')).toHaveText([/image without alt on http:\/\/a\.example\//]);
-  await nav(page, 'Fix loop');
+  await expect(page.getByTestId('d-finding')).toHaveText([/image without alt on http:\/\/a\.example\//]);
+  await expect(page.getByTestId('d-config')).toContainText('"url": "http://a.example/start"');
+  await expect(page.getByTestId('d-config')).toContainText('"check": "npm test"');
+  await expect(page.getByTestId('d-counts-line')).toHaveText('1 found');
   await loopOptions(page);
   await expect(page.getByLabel('Start URL')).toHaveValue('http://a.example/start');
   await expect(page.getByLabel('Check command (build and test)')).toHaveValue('npm test');
-  await expect(page.getByTestId('ledger-line')).toHaveText('1 open.');
   // An edit in progress is discarded by a switch, with no prompt.
   await page.getByLabel('Check command (build and test)').fill('edited, never saved');
   await chooseDir(page, b);
   await expect(page.getByLabel('Start URL')).toHaveValue('');
   await expect(page.getByLabel('Check command (build and test)')).toHaveValue('');
-  await expect(page.getByText('No ledger yet.', { exact: false })).toBeVisible();
-  await expect(page.getByTestId('not-git')).toContainText(`${b} is not a git repository`);
+  await home(page);
+  await expect(now(page)).toHaveText(/nothing will be fixed: fixing needs the app's git repository, and this folder is not one\.$/);
   // A subfolder of a repository is inside one, as the loop sees it.
   mkdirSync(join(b, '.git'));
   mkdirSync(join(b, 'packages', 'web'), { recursive: true });
   await chooseDir(page, join(b, 'packages', 'web'));
-  await expect(page.getByTestId('not-git')).toHaveCount(0);
+  await expect(now(page)).not.toHaveText(/this folder is not one/);
   await chooseDir(page, b);
-  await nav(page, 'Report');
-  await expect(page.getByText('No report yet.', { exact: false })).toBeVisible();
-  await nav(page, 'History');
-  await expect(page.getByText('No reports yet.', { exact: false })).toBeVisible();
+  await goInApp(page, '/diagnostics');
+  await expect(page.getByTestId('diagnostics-page')).toContainText('No report yet.');
+  await expect(page.getByTestId('diagnostics-page')).toContainText('No rounds yet.');
 });
 
-test('AC 6: after a switch a crawl writes its report in the new directory only, the Run screen names it, and a dry run uses its config and ledger', async ({ page }) => {
+test('AC 6: after a switch a crawl writes its report in the new directory only, and Advanced names it and reads its config', async ({ page }) => {
   test.setTimeout(420_000);
   const site = await fixtureSite();
   try {
@@ -289,30 +295,18 @@ test('AC 6: after a switch a crawl writes its report in the new directory only, 
     const b = dir('a11y-508-pick-b-');
     writeFileSync(join(b, 'a11y-508.config.json'), JSON.stringify({ url: site.base + 'about.html', args: ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots'] }));
     const dash = await start({ cwd: launch });
-    await open(page, dash, '/run');
+    await open(page, dash, '/', { url: URL0 });
     await chooseDir(page, b);
     await fillRun(page, { url: site.base, token: TOKEN, ...QUICK });
+    await moreOptions(page);
     await expect(page.getByTestId('command-cwd')).toHaveText(b);
     await expect(page.getByTestId('command')).toContainText(site.base);
+    await expect(page.getByLabel('Start URL')).toHaveValue(site.base + 'about.html');
     await startFromRun(page);
     await waitFinished(page);
     expect(existsSync(join(dash.dirs(b).report, 'report.json')), 'report.json in the new directory\'s own folder').toBe(true);
     expect(existsSync(dash.dirs(launch).report), 'nothing in the old one').toBe(false);
     for (const d of [b, launch]) expect(existsSync(join(d, 'a11y-508-report')), `nothing of the tool's in ${d}`).toBe(false);
-    // The dry run reads the new directory's config and writes its ledger there.
-    await nav(page, 'Run');
-    await moreOptions(page);
-    await page.getByLabel('A token').check();
-    await page.getByLabel(/^Token \(sent as/).fill(TOKEN);
-    await nav(page, 'Fix loop');
-    await loopOptions(page);
-    await expect(page.getByLabel('Start URL')).toHaveValue(site.base + 'about.html');
-    await dryRun(page);
-    await expect(page.getByTestId('loop-step')).toHaveText(/Dry run finished/, { timeout: 200_000 });
-    expect(existsSync(join(dash.dirs(b).work, 'ledger.json')), 'the ledger in the new directory\'s own folder').toBe(true);
-    expect(existsSync(join(dash.dirs(launch).work, 'ledger.json')), 'no ledger in the old one').toBe(false);
-    for (const d of [b, launch]) expect(existsSync(join(d, 'a11y-508-work')), `nothing of the tool's in ${d}`).toBe(false);
-    await expect(page.getByTestId('ledger-line')).toBeVisible();
   } finally {
     site.close();
   }
@@ -326,13 +320,11 @@ test('AC 7: while a run is active Browse… is disabled with a reason and PUT /a
     const launch = dir('a11y-508-pick-launch-');
     const other = dir('a11y-508-pick-b-');
     const dash = await start({ cwd: launch });
-    await open(page, dash, '/run');
-    await page.getByLabel('Start URL').fill(`http://127.0.0.1:${(hang.address() as any).port}/`);
+    await open(page, dash, '/', { url: `http://127.0.0.1:${(hang.address() as any).port}/` });
     await moreOptions(page);
     await page.getByLabel('No sign-in').check();
-    await page.getByRole('button', { name: 'Start', exact: true }).click();
-    await expect(page).toHaveURL(/\/live$/);
-    await nav(page, 'Run');
+    await startFromRun(page);
+    await openSetup(page);
     await expect(change(page)).toBeDisabled();
     await expect(change(page)).toHaveAttribute('title', /run is active/);
     await expect(change(page)).toHaveAccessibleDescription(/run is active/);
@@ -340,10 +332,11 @@ test('AC 7: while a run is active Browse… is disabled with a reason and PUT /a
     expect(r.status).toBe(409);
     expect(r.json.error).toMatch(/run is active/);
     expect(await cwdNow(dash)).toBe(launch);
-    await nav(page, 'Live run');
-    await page.getByRole('button', { name: 'Stop' }).click();
-    await expect(page.getByTestId('run-status')).toHaveText('Stopped', { timeout: 30_000 });
-    await nav(page, 'Run');
+    await closeSetup(page);
+    await home(page);
+    await go(page).click();
+    await expect(now(page)).toHaveText('Stopped', { timeout: 30_000 });
+    await openSetup(page);
     await expect(change(page)).toBeEnabled();
     await chooseDir(page, other);
     expect(await cwdNow(dash)).toBe(other);
@@ -353,12 +346,11 @@ test('AC 7: while a run is active Browse… is disabled with a reason and PUT /a
   }
 });
 
-test('AC 8: after a switch there is no current run, and Live run says so instead of showing the old directory\'s run', async ({ page }) => {
+test('AC 8: after a switch there is no current run, and the one screen is ready in the new folder instead of showing the old directory\'s run', async ({ page }) => {
   const launch = dir('a11y-508-pick-launch-');
   const other = dir('a11y-508-pick-b-');
   const dash = await start({ cwd: launch });
-  await open(page, dash, '/run');
-  await page.getByLabel('Start URL').fill('http://127.0.0.1:9/');
+  await open(page, dash, '/', { url: URL0 });
   await moreOptions(page);
   await page.getByLabel('No sign-in').check();
   await page.getByLabel('Maximum pages').fill('1');
@@ -367,11 +359,11 @@ test('AC 8: after a switch there is no current run, and Live run says so instead
   expect((await api(dash, '/api/runs/current')).json).not.toBe(null);
   await chooseDir(page, other);
   expect((await api(dash, '/api/runs/current')).json).toBe(null);
-  await expect(page.getByTestId('no-run')).toHaveText('No run in this directory yet. Start one.');
-  await expect(page.getByTestId('run-status')).toHaveCount(0);
+  await expect(now(page)).toHaveText(/^Ready to crawl 127\.0\.0\.1:9/);
+  await expect(go(page)).toHaveText('Start');
   // A fresh page asks the server, and the server has forgotten it too.
   await page.reload();
-  await expect(page.getByTestId('no-run')).toBeVisible();
+  await expect(now(page)).toHaveText(/^Ready to crawl 127\.0\.0\.1:9/);
 });
 
 test('AC 9: recent directories survive a reload, most recent first, each one activation away; a deleted one is marked missing', async ({ page }) => {
@@ -381,7 +373,7 @@ test('AC 9: recent directories survive a reload, most recent first, each one act
   const c = dir('a11y-508-pick-c-');
   mkdirSync(join(a, 'in-a'));
   const dash = await start({ cwd: launch });
-  await open(page, dash, '/run');
+  await open(page, dash, '/', { url: URL0 });
   await chooseDir(page, c);
   await chooseDir(page, a);
   await chooseDir(page, b);
@@ -430,22 +422,22 @@ test('AC 10: --dir starts in that directory, relative to the launch directory; a
   const dash = await start({ cwd: parent, args: ['--dir', 'repo'] });
   const repo = join(parent, 'repo');
   expect(await cwdNow(dash)).toBe(repo);
-  await open(page, dash, '/report');
+  await open(page, dash, '/diagnostics', { url: URL0 });
   await expectCwd(page, repo);
-  await expect(page.getByText('http://repo.example/ · finished', { exact: false })).toBeVisible();
+  await expect(page.getByTestId('diagnostics-page')).toContainText('http://repo.example/');
   await openPicker(page);
   await expect(dialog(page).getByRole('button', { name: 'Back to where I started' })).toHaveCount(0);
   await page.keyboard.press('Escape');
+  await closeSetup(page);
   await chooseDir(page, other);
-  await goInApp(page, '/report');
-  await expect(page.getByText('No report yet.', { exact: false })).toBeVisible();
+  await expect(page.getByTestId('diagnostics-page')).toContainText('No report yet.');
   await openPicker(page);
   await dialog(page).getByRole('button', { name: 'Back to where I started' }).click();
   await expect(dialog(page)).toBeHidden();
   expect(await cwdNow(dash)).toBe(repo);
   await expectCwd(page, repo);
-  await goInApp(page, '/report');
-  await expect(page.getByText('http://repo.example/ · finished', { exact: false })).toBeVisible();
+  await closeSetup(page);
+  await expect(page.getByTestId('diagnostics-page')).toContainText('http://repo.example/');
 });
 
 test('AC 11: /api/dirs and /api/cwd need the secret and a local Host; an unreadable directory is refused with a message and the server keeps serving', async ({ page }) => {
@@ -479,7 +471,7 @@ test('AC 11: /api/dirs and /api/cwd need the secret and a local Host; an unreada
     expect(r.json.error).toMatch(WIN ? /ENOENT/ : /EACCES|EPERM/);
     expect((await api(dash, '/api/env')).status, 'the server keeps serving').toBe(200);
     // The same through the dialog: the message inline, the server still answering.
-    await open(page, dash, '/run');
+    await open(page, dash, '/', { url: URL0 });
     await openPicker(page);
     await dialog(page).getByLabel('Path', { exact: true }).fill(locked.path);
     await dialog(page).getByLabel('Path', { exact: true }).press('Enter');

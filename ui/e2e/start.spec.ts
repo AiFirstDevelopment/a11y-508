@@ -56,8 +56,8 @@ test('AC 1: npm run ui from a clean copy, no install, serves on 127.0.0.1 and op
     expect(Number(/^v(\d+)/.exec(version)![1])).toBeGreaterThanOrEqual(18);
     test.info().annotations.push({ type: 'node', description: version });
     await page.goto(url);
-    await expect(page.locator('h1')).toHaveText('Set up');
-    await expect(page.getByLabel("App's repository folder").first()).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Set up' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Set up' }).getByLabel("App's repository folder")).toBeVisible();
     expect(page.url()).not.toContain('secret='); // moved out of the address bar
   } finally {
     await stopTree(proc, 'SIGINT', { group: !WIN });

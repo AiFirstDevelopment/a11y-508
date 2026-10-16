@@ -3,10 +3,12 @@ import { EnvStore } from '../core/env.store';
 import { FormStore } from '../core/form.store';
 import { RunStore } from '../core/run.store';
 import { Starter } from '../core/starter';
+import { Driver } from '../core/driver';
+import { Router } from '@angular/router';
 
-// Set up: the app's repository folder, the app's URL, and Start. On the Set up step (/run) and
-// in the setup dialog on a first visit. A crawl needs neither git nor a package.json, so those
-// are a warning line, not a block.
+// Set up: the app's repository folder, the app's URL, and Start, in the setup dialog (a first visit,
+// or Change folder or URL on Diagnostics). A crawl needs neither git nor a package.json, so those are
+// a warning line, not a block.
 @Component({
   selector: 'app-setup-form',
   template: `
@@ -34,7 +36,7 @@ import { Starter } from '../core/starter';
       <div class="notice error" role="alert" data-notice="setup-error">{{ error() }}</div>
     }
     <div class="actions">
-      <!-- Start is the one button: it crawls. (The wizard already opens on the step the person was on.) -->
+      <!-- Start is the one button: it does the whole thing (docs/plans/simple-screen.md). -->
       <button type="button" class="big" (click)="start()" [disabled]="!canStart()" data-testid="setup-start">Start</button>
       @if (run.active()) {
         <p class="hint">A run is active.</p>
@@ -52,6 +54,8 @@ export class SetupForm {
   readonly form = inject(FormStore);
   readonly run = inject(RunStore);
   readonly starter = inject(Starter);
+  private driver = inject(Driver);
+  private router = inject(Router);
   readonly folder = signal('');
   readonly reason = 'A run is active; the folder can change once it has finished.';
   readonly error = signal('');
@@ -77,7 +81,7 @@ export class SetupForm {
     const noPkg = !!e.cwdFacts && e.cwdFacts.package === false;
     if (!noGit && !noPkg) return '';
     const what = noGit && noPkg ? 'is not a git repository and has no package.json' : noGit ? 'is not a git repository' : 'has no package.json';
-    return `This folder ${what}: a crawl works, but the fix loop needs the app's repository.`;
+    return `This folder ${what}: Start crawls it, but fixing needs the app's repository.`;
   });
   readonly canStart = computed(() => !!this.form.url().trim() && !!this.folder().trim() && !this.run.active() && !this.busy() && this.extraOk());
 
@@ -89,7 +93,7 @@ export class SetupForm {
     this.starter.browseRequests.update((n) => n + 1);
   }
 
-  // Saves both (the folder through a switch that carries the analysis, the URL), then the crawl.
+  // Saves both (the folder through a switch that carries the analysis, the URL), then Start on the one screen.
   async start(): Promise<void> {
     if (!this.canStart()) return;
     this.error.set('');
@@ -103,7 +107,8 @@ export class SetupForm {
       }
       this.form.rememberUrl();
       this.started.emit();
-      await this.starter.startCrawl();
+      await this.router.navigateByUrl('/');
+      await this.driver.start();
     } catch (e: any) {
       this.error.set(e.message);
     } finally {
