@@ -1416,6 +1416,8 @@ rmSync(repo2, { recursive: true, force: true });
   };
   // A repository whose crawl and build check use a saved session (what --login writes) with sid=ok.
   const ssoRepo = async (prefix, config) => {
+    // The site is shared by these tests: each starts with nothing deployed (no build marker served).
+    site.deployed = false;
     const { dir, g } = appRepo(prefix, config);
     const site = await ssoSite(dir);
     writeFileSync(join(dir, 'a11y-508-state.json'), JSON.stringify({ version: 1, capturedAt: new Date().toISOString(), origins: [site.url.slice(0, -1)], cookies: [{ name: 'sid', value: 'ok', domain: '127.0.0.1', path: '/' }], storage: {} }));
