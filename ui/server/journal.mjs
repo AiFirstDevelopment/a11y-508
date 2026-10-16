@@ -47,6 +47,21 @@ function doneWords(ev) {
 
 // One run's events, narrated. Consecutive checks with the same result become one entry with a
 // count; so do repeated identical lines (the sign-in wait's, every few seconds).
+// Whether a crawl's search ran: forms it pressed Search on, the result pages those led to, and the
+// pages it found by clicking and by revealed menus. Nothing when the crawl had no page events.
+export function searchLine(pages) {
+  if (!pages.length) return '';
+  const sum = (k) => pages.reduce((a, p) => a + (Number(p[k]) || 0), 0);
+  const ran = pages.some((p) => p.searched !== null && p.searched !== undefined);
+  const searched = sum('searched');
+  const results = sum('searchResults');
+  const clicked = sum('clickedNew');
+  const revealed = sum('revealed');
+  const search = !ran ? 'search was not run' : !searched ? 'no search form was pressed (none found)' : `pressed Search on ${n(searched, 'form')}: ${results ? `${n(results, 'result page')} found` : 'no results came back'}`;
+  const more = [clicked ? `${n(clicked, 'page')} found by clicking` : '', revealed ? `${n(revealed, 'link')} revealed by menus` : ''].filter(Boolean).join(', ');
+  return `${search}${more ? `; ${more}` : ''}`;
+}
+
 export function narrate(events) {
   const out = [];
   const add = (ev, text, kind = 'info') => {
@@ -58,8 +73,13 @@ export function narrate(events) {
     }
     out.push({ at: ev.at || null, kind, text });
   };
+  // A crawl's pages, until its summary: whether its search ran, and what it found.
+  let crawled = [];
   for (const ev of events) {
     switch (ev.type) {
+      case 'page':
+        crawled.push(ev);
+        break;
       case 'retry':
         add(ev, `Trying again (attempt ${ev.attempt})${ev.reason ? `: ${ev.reason}` : ''}`);
         break;
@@ -70,7 +90,12 @@ export function narrate(events) {
         add(ev, ev.fromLedger ? `Round ${ev.round}: fixing the remaining findings from the ledger (no crawl)` : ev.resumed ? `Round ${ev.round}: continuing where it was interrupted` : `Round ${ev.round}: re-checking the site`);
         break;
       case 'summary':
-        if (ev.summary) add(ev, `${ev.round ? `Round ${ev.round}: ` : ''}crawled ${n(ev.summary.audited || 0, 'page')}: ${n(ev.summary.violations || 0, 'violation')}, ${ev.summary.reviews || 0} to review${ev.summary.coverage && ev.summary.coverage.complete === false ? ' (coverage incomplete)' : ''}`);
+        if (ev.summary) {
+          add(ev, `${ev.round ? `Round ${ev.round}: ` : ''}crawled ${n(ev.summary.audited || 0, 'page')}: ${n(ev.summary.violations || 0, 'violation')}, ${ev.summary.reviews || 0} to review${ev.summary.coverage && ev.summary.coverage.complete === false ? ' (coverage incomplete)' : ''}`);
+          const s = searchLine(crawled);
+          if (s) add(ev, `${ev.round ? `Round ${ev.round}: ` : ''}${s}`);
+        }
+        crawled = [];
         break;
       case 'step':
         if (ev.step === 'triage') add(ev, `Round ${ev.round}: asked the assistant to judge ${n(ev.count || 0, 'review item')}`);

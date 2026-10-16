@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { narrate, timeOf } from '../journal.mjs';
+import { narrate, searchLine, timeOf } from '../journal.mjs';
 
 // "What happened": events become dated sentences; repeated checks with the same result are one
 // entry with a count, and a committed fix names its files and commit.
@@ -41,4 +41,18 @@ test('journal: events narrated, repeated checks folded', () => {
   // Where the time went: fixing from the fix step to the push, waiting from the wait to the arrival.
   const tm = timeOf([{ type: 'round', at: at(0), round: 2 }, { type: 'summary', at: at(1), round: 2, summary: {} }, { type: 'step', at: at(2), round: 2, step: 'fix', count: 2 }, ...events.slice(5)]);
   assert.deepEqual([tm.crawling, tm.fixing, tm.waiting, tm.deployments], [60000, 180000, 180000, [180000]]);
+});
+
+// Whether search worked, said after each crawl in What happened.
+test('journal: a crawl says whether its search ran and what it found', () => {
+  assert.equal(searchLine([]), '');
+  assert.equal(searchLine([{ searched: null }]), 'search was not run');
+  assert.equal(searchLine([{ searched: 0, searchResults: 0 }, { searched: 0 }]), 'no search form was pressed (none found)');
+  assert.equal(searchLine([{ searched: 1, searchResults: 0 }]), 'pressed Search on 1 form: no results came back');
+  assert.equal(searchLine([{ searched: 1, searchResults: 8, clickedNew: 2, revealed: 3 }, { searched: 0 }]), 'pressed Search on 1 form: 8 result pages found; 2 pages found by clicking, 3 links revealed by menus');
+  const got = narrate([
+    { type: 'page', at: 'a', url: 'u', searched: 1, searchResults: 4 },
+    { type: 'summary', at: 'b', round: 3, summary: { audited: 5, violations: 1, reviews: 2 } },
+  ]).map((e) => e.text);
+  assert.deepEqual(got, ['Round 3: crawled 5 pages: 1 violation, 2 to review', 'Round 3: pressed Search on 1 form: 4 result pages found']);
 });
