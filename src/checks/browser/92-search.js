@@ -455,10 +455,25 @@
     for (const el of fresh) {
       if (el.matches('a[href]') && !/^(javascript:|#$)/i.test(el.getAttribute('href') || '')) links.add(el.href);
     }
+    // What a person can click inside a row: a link with no address (a router link handled on click),
+    // role="link", something focusable, or anything shown with a pointer cursor.
+    const CLICKABLE = 'a:not([href]), [role="link"], [tabindex]:not([tabindex="-1"]), [onclick]';
+    const clickableIn = (row) => {
+      for (const el of row.querySelectorAll('*')) {
+        if (el.closest('th, [role="columnheader"]') || el.matches('input, select, textarea, button[type="submit"]')) continue;
+        if (!A.isVisible(el) || !(A.text(el) || '').trim()) continue;
+        if (el.matches(CLICKABLE)) return el;
+        const c = A.cs(el);
+        if (c && c.cursor === 'pointer' && !(el.parentElement && A.cs(el.parentElement) && A.cs(el.parentElement).cursor === 'pointer' && el.parentElement !== row)) return el;
+      }
+      return null;
+    };
     for (const el of fresh) {
-      if (el.matches('tr, [role="row"], li')) {
+      if (el.matches('tr, [role="row"], li, mat-row, .mat-mdc-row, .mat-row')) {
         if (el.querySelector('a[href]')) continue; // its link is followed as a link
+        if (el.querySelector('th, [role="columnheader"]')) continue; // a header row
         if (A.cs(el) && A.cs(el).cursor === 'pointer') consider(el, 'result row');
+        else consider(clickableIn(el), 'result cell');
       } else if (el.matches('button, [role="button"], a[href^="javascript:" i], a[href="#"]')) {
         const n = nameOf(el);
         if (/\b(view|details?|open|show|more)\b|^[›»>→]$|chevron/i.test(n) || /chevron|arrow/i.test(el.className || '')) consider(el, 'result control');

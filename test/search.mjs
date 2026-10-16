@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
-const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless', 'live', 'overlay', 'also', 'sameroute'];
+const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless', 'live', 'overlay', 'also', 'sameroute', 'cells'];
 if (only && !GROUPS.includes(only)) throw new Error(`--only takes one of ${GROUPS.join(', ')}`);
 const want = (group) => !only || only === group;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-search-')));
@@ -396,6 +396,21 @@ if (want('sameroute')) {
     const forms = rep.pages[0].discovery.forms;
     assert.equal(forms.submitted, 1, JSON.stringify(forms));
     assert.equal(forms.results, 0, JSON.stringify(forms));
+  });
+}
+
+// Result rows that are not clickable themselves, whose cells hold links with no address: one is clicked
+// and the record's page it opens is crawled.
+if (want('cells')) {
+  const site0 = await startFixtureSite({ dropForms: 0 });
+  const out = join(tmp, 'cells');
+  const r = await cli([site0.base + 'search-cells.html', '--max-pages', '5', '--no-interact', '--no-zoom', '--no-screenshots', '--fail-on', 'none', '--out', out, '--quiet', '--json']);
+  site0.close();
+  const rep = existsSync(join(out, 'report.json')) ? JSON.parse(readFileSync(join(out, 'report.json'), 'utf8')) : null;
+  check('a result row\'s clickable cell is clicked and the record page it opens is crawled', () => {
+    assert.ok(rep, r.stderr);
+    assert.ok(rep.pages.some((p) => path(p.url) === '/search-cells-detail.html'), JSON.stringify(rep.pages.map((p) => p.url)));
+    assert.ok(rep.pages[0].discovery.forms.results >= 1, JSON.stringify(rep.pages[0].discovery.forms));
   });
 }
 

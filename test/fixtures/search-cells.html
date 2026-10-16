@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Records</title></head>
+<body>
+<main>
+<h1>Records</h1>
+<!-- A search whose result rows are not clickable themselves: the values in their cells are, as an
+     app's router links with no address. Clicking one opens the record's page. -->
+<form id="f">
+  <label for="from">From date</label> <input id="from" name="from" type="date">
+  <label for="to">To date</label> <input id="to" name="to" type="date">
+  <button type="submit">Search</button>
+</form>
+<table id="results" aria-label="Results"></table>
+<script>
+document.getElementById('f').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const t = document.getElementById('results');
+  t.innerHTML = '<tr><th scope="col">ID</th><th scope="col">Name</th></tr>';
+  for (const id of ['261', '262']) {
+    const tr = document.createElement('tr');
+    const a = document.createElement('a');
+    a.textContent = id;
+    a.style.cursor = 'pointer';
+    a.style.textDecoration = 'underline';
+    a.addEventListener('click', () => location.assign('search-cells-detail.html?id=' + id));
+    const td1 = document.createElement('td');
+    td1.append(a);
+    const td2 = document.createElement('td');
+    td2.textContent = 'Record ' + id;
+    tr.append(td1, td2);
+    t.append(tr);
+  }
+});
+</script>
+</main>
+</body>
+</html>
