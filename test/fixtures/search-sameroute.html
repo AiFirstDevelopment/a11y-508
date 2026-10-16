@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Shipments</title></head>
+<body>
+<main>
+<h1>Shipments</h1>
+<!-- The app keeps its search in the URL, with times that move on: the form reloads this same page. -->
+<form method="get" action="search-sameroute.html">
+  <label for="from">From date</label> <input id="from" name="from" type="date">
+  <label for="to">To date</label> <input id="to" name="to" type="date">
+  <input type="hidden" name="t" value="">
+  <button type="submit">Search</button>
+</form>
+<script>document.querySelector('input[name=t]').value = String(Date.now());</script>
+<p id="out"></p>
+<script>if (location.search) document.getElementById('out').textContent = 'No shipments in this range.';</script>
+</main>
+</body>
+</html>

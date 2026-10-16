@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
-const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless', 'live', 'overlay', 'also'];
+const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless', 'live', 'overlay', 'also', 'sameroute'];
 if (only && !GROUPS.includes(only)) throw new Error(`--only takes one of ${GROUPS.join(', ')}`);
 const want = (group) => !only || only === group;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-search-')));
@@ -284,9 +284,6 @@ if (want('reset')) {
   });
 }
 
-rmSync(tmp, { recursive: true, force: true });
-console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
-process.exitCode = failures ? 1 : 0;
 
 // A slow API: the results arrive two seconds after a progress bar; the crawler waits for them.
 if (want('slow')) {
@@ -385,3 +382,23 @@ if (want('also')) {
     assert.deepEqual(rep.pages.map((p) => [path(p.url), p.foundBy || null]).sort(), [['/menu-page-2.html', 'also'], ['/search-nameless.html', null]], JSON.stringify(rep.pages.map((p) => p.url)));
   });
 }
+
+// An app that keeps its search in the URL, with times that move on: the form reloads the same page.
+if (want('sameroute')) {
+  const site0 = await startFixtureSite({ dropForms: 0 });
+  const out = join(tmp, 'sameroute');
+  const r = await cli([site0.base + 'search-sameroute.html', '--max-pages', '5', '--no-interact', '--no-zoom', '--no-screenshots', '--fail-on', 'none', '--out', out, '--quiet', '--json']);
+  site0.close();
+  const rep = existsSync(join(out, 'report.json')) ? JSON.parse(readFileSync(join(out, 'report.json'), 'utf8')) : null;
+  check('a search that reloads its own page with the dates in the URL is pressed, but its URL is not crawled as another page', () => {
+    assert.ok(rep, r.stderr);
+    assert.deepEqual(rep.pages.map((p) => path(p.url)), ['/search-sameroute.html'], JSON.stringify(rep.pages.map((p) => p.url)));
+    const forms = rep.pages[0].discovery.forms;
+    assert.equal(forms.submitted, 1, JSON.stringify(forms));
+    assert.equal(forms.results, 0, JSON.stringify(forms));
+  });
+}
+
+rmSync(tmp, { recursive: true, force: true });
+console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
+process.exitCode = failures ? 1 : 0;
