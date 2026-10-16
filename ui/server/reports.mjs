@@ -198,7 +198,8 @@ export function loopTimeline(ledger, counts) {
     return {
       round: r.round, at: r.at || null, found: r.violations, commits: commits[r.round] ? commits[r.round].size : 0, covered: made, changes: changes[r.round] || [],
       // fixed: the findings the round's commits covered; verified: earlier fixes its crawl confirmed.
-      fixed: made, verified: fixed, remaining: r.round === last ? counts.open || 0 : Math.max(0, r.violations - made),
+      // remaining: what the round left open (recorded at its end); for the last round, the ledger's open count now.
+      fixed: made, verified: fixed, remaining: r.round === last ? counts.open || 0 : typeof r.openAfter === 'number' ? r.openAfter : Math.max(0, r.violations - made),
       source: r.source || 'crawl', pages: r.pages ?? null, audited: r.audited ?? null, reviews: r.reviews ?? null, failed: (r.diff && r.diff.failed) || 0,
       branch: r.branch || null, pushed: !!r.pushed, remote: r.remote || null,
       state, label: state === 'awaiting-deploy' ? 'awaiting deployment' : null,

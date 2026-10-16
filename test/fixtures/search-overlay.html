@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cases, dropdown that stays open - a11y-508 test site</title>
+<style>
+  .sel { display: inline-block; min-width: 10em; padding: 4px 8px; border: 1px solid #555; cursor: pointer; }
+  .cdk-overlay-backdrop { position: fixed; inset: 0; z-index: 9; background: transparent; }
+  .cdk-overlay-pane { position: absolute; background: #fff; border: 1px solid #555; padding: 4px 0; z-index: 10; }
+  .cdk-overlay-pane [role="option"] { padding: 4px 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+<h1>Cases, dropdown that stays open</h1>
+<p>Like a select whose panel and backdrop stay open after a choice (only Escape closes them): a click meant for Search would land on the backdrop. The crawler closes the panel before it presses Search.</p>
+<div id="ov-filters">
+  <span id="ov-label">Quick Date/Time</span>
+  <div role="combobox" id="ov" class="sel" tabindex="0" aria-labelledby="ov-label" aria-haspopup="listbox" aria-expanded="false">Last 24 hours</div>
+  <button type="button" id="ov-search">Search</button>
+</div>
+<div id="ov-results" aria-live="polite"></div>
+<p><a href="/about.html">Back to the fixture list</a></p>
+</main>
+<script>
+  const DAYS = { 'Last 24 hours': 1, 'Last 7 days': 7, 'Last 6 months': 180 };
+  const model = { quick: 'Last 24 hours' };
+  const trigger = document.getElementById('ov');
+  let pane = null;
+  let backdrop = null;
+  const close = () => {
+    if (pane) pane.remove();
+    if (backdrop) backdrop.remove();
+    pane = backdrop = null;
+    trigger.setAttribute('aria-expanded', 'false');
+  };
+  const open = () => {
+    if (pane) return;
+    backdrop = document.createElement('div');
+    backdrop.className = 'cdk-overlay-backdrop';
+    backdrop.addEventListener('click', (e) => e.stopPropagation()); // swallows the click; does not close
+    document.body.appendChild(backdrop);
+    const r = trigger.getBoundingClientRect();
+    pane = document.createElement('div');
+    pane.className = 'cdk-overlay-pane';
+    pane.style.left = `${r.right + window.scrollX + 12}px`;
+    pane.style.top = `${r.top + window.scrollY}px`;
+    pane.innerHTML = `<div role="listbox" id="ov-panel" aria-label="Quick Date/Time">${Object.keys(DAYS).map((o, i) => `<div role="option" id="ov-opt-${i}" aria-selected="${model.quick === o}">${o}</div>`).join('')}</div>`;
+    document.body.appendChild(pane);
+    for (const el of pane.querySelectorAll('[role="option"]')) {
+      el.addEventListener('click', () => {
+        model.quick = el.textContent;
+        trigger.textContent = el.textContent;
+        // The buggy part: the panel and its backdrop stay open after a choice.
+      });
+    }
+    trigger.setAttribute('aria-expanded', 'true');
+  };
+  trigger.addEventListener('click', () => (pane ? close() : open()));
+  trigger.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' && e.altKey) open();
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pane ? close() : open(); }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') close();
+  });
+  document.getElementById('ov-search').addEventListener('click', () => {
+    document.getElementById('ov-results').innerHTML = DAYS[model.quick] >= 90 ? '<ul><li><a href="/result-67.html">Case 67</a> <img src="/img/case.png" class="ov-icon" width="16" height="16"></li></ul>' : '<p>No cases found.</p>';
+  });
+</script>
+</body>
+</html>

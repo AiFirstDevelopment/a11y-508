@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cases, live page - a11y-508 test site</title>
+</head>
+<body>
+<main>
+<h1>Cases, live page</h1>
+<p>Like a dashboard that never holds still: a clock ticks every 300 ms and a counter polls. The crawler's wait for results must not run to its maximum on every search.</p>
+<p>Now: <span id="clock">…</span> · polls: <span id="polls">0</span></p>
+<form id="live-form" onsubmit="return false">
+  <label for="l-from">From</label> <input id="l-from" type="text" placeholder="MM/DD/YYYY" size="10">
+  <label for="l-to">To</label> <input id="l-to" type="text" placeholder="MM/DD/YYYY" size="10">
+  <button type="button" id="l-search">Search</button>
+</form>
+<div id="l-results" aria-live="polite"></div>
+<p><a href="/about.html">Back to the fixture list</a></p>
+</main>
+<script>
+  setInterval(() => { document.getElementById('clock').textContent = new Date().toLocaleTimeString(); }, 300);
+  let polls = 0;
+  setInterval(() => { polls++; document.getElementById('polls').textContent = String(polls); fetch('/pixel.png?' + polls, { headers: { authorization: 'Bearer FIXTURE_TOKEN' } }).catch(() => {}); }, 700);
+  document.getElementById('l-search').addEventListener('click', () => {
+    const from = document.getElementById('l-from').value;
+    const [mm, dd, yy] = from.split('/');
+    const wide = /^\d{2}\/\d{2}\/\d{4}$/.test(from) && Date.now() - new Date(+yy, +mm - 1, +dd).getTime() >= 59 * 24 * 3600 * 1000;
+    setTimeout(() => { document.getElementById('l-results').innerHTML = wide ? '<ul><li><a href="/result-66.html">Case 66</a> <img src="/img/case.png" class="l-icon" width="16" height="16"></li></ul>' : '<p>No cases found.</p>'; }, 800);
+  });
+</script>
+</body>
+</html>

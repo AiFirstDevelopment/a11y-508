@@ -25,6 +25,10 @@ test('search: a Search button disabled until the dates are filled is pressed, th
   const start = report.pages.find((p: any) => /search-disabled\.html$/.test(p.url));
   expect(start.search.forms[0].pressed).toBe('Search');
   await nav(page, 'Report');
+  // A short crawl is explained up front: the start page's numbers, and what the search did.
+  const why = page.getByTestId('why-few-pages');
+  await expect(why).toContainText(/^Only 2 pages were found\. The start page has \d+ links?.*; 1 search was run and returned 1 result\./);
+  await expect(why).toContainText(/Search form on \/search-disabled\.html: filled .* Pressed "Search": 1 result\./);
   await details(page);
   const rows = page.getByTestId('report-pages').locator('tbody tr');
   const startRow = rows.filter({ hasText: '/search-disabled.html' });

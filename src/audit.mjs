@@ -104,9 +104,20 @@ async function auditPageIn(page, url, ctx) {
     }
   };
 
+  // How long each pass took, so a slow page says where its time went (Routes crawled shows it).
+  const timing = {};
+  const timed = async (phase, fn) => {
+    const t = Date.now();
+    try {
+      return await fn();
+    } finally {
+      timing[phase] = (timing[phase] || 0) + Date.now() - t;
+    }
+  };
+  result.timing = timing;
   let nav;
   try {
-    nav = await page.goto(url, opts.timeout);
+    nav = await timed('loading', () => page.goto(url, opts.timeout));
   } catch (e) {
     result.error = e.message;
     result.durationMs = Date.now() - t0;
@@ -278,13 +289,13 @@ async function auditPageIn(page, url, ctx) {
 
     if (opts.interact) {
       try {
-        result.passes.keyboard = await keyboardPass(page, add, opts);
+        result.passes.keyboard = await timed('keyboard', () => keyboardPass(page, add, opts));
         if (result.passes.keyboard.navigated) await reload();
       } catch (e) {
         result.errors.push(`keyboard pass: ${e.message}`);
       }
       try {
-        result.passes.disclosure = await disclosurePass(page, add, fingerprints, opts, reload);
+        result.passes.disclosure = await timed('disclosures', () => disclosurePass(page, add, fingerprints, opts, reload));
       } catch (e) {
         result.errors.push(`disclosure pass: ${e.message}`);
       }
@@ -293,7 +304,7 @@ async function auditPageIn(page, url, ctx) {
     if (opts.zoom) {
       try {
         if (page.progress) page.progress('zoom');
-        result.passes.zoom = await zoomPass(page, add);
+        result.passes.zoom = await timed('zoom', () => zoomPass(page, add));
       } catch (e) {
         result.errors.push(`zoom pass: ${e.message}`);
       }
@@ -318,7 +329,7 @@ async function auditPageIn(page, url, ctx) {
     if (opts.forms) {
       try {
         await reload();
-        const s = await searchPass(page, add, fingerprints, opts, reload, ctx.origin);
+        const s = await timed('search', () => searchPass(page, add, fingerprints, opts, reload, ctx.origin));
         if (s) result.search = s;
       } catch (e) {
         result.errors.push(`search forms: ${e.message}`);
@@ -330,7 +341,7 @@ async function auditPageIn(page, url, ctx) {
     if (opts.followClicks && opts.maxClicks > 0) {
       try {
         await reload();
-        result.discovery = await routeDiscoveryPass(page, base.meta, opts, reload, ctx.origin);
+        result.discovery = await timed('discovery', () => routeDiscoveryPass(page, base.meta, opts, reload, ctx.origin));
       } catch (e) {
         result.errors.push(`route discovery: ${e.message}`);
       }

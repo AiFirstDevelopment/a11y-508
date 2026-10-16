@@ -36,7 +36,7 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
     @if (list().length) {
       <table data-testid="history">
         <caption>Crawls and fix-loop rounds</caption>
-        <thead><tr><th scope="col">Event</th><th scope="col">Finished</th><th scope="col">Pages audited</th><th scope="col">Violations found</th><th scope="col">Review</th><th scope="col">Fixed</th><th scope="col">Remaining</th><th scope="col">Commits</th></tr></thead>
+        <thead><tr><th scope="col">Event</th><th scope="col">Finished</th><th scope="col">Pages audited</th><th scope="col">Found this round</th><th scope="col">Review</th><th scope="col">Fixed</th><th scope="col">Open after</th><th scope="col">Commits</th></tr></thead>
         <tbody>
           @for (r of list(); track r.id) {
             @let lr = loopRound(r);
@@ -106,7 +106,7 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
         }
         <table data-testid="routes-table">
           <caption>Every route audited, with what the crawler found on it</caption>
-          <thead><tr><th scope="col">Route</th><th scope="col">Title</th><th scope="col">Rounds</th><th scope="col">Last result</th><th scope="col">Violations</th><th scope="col">Review</th><th scope="col">Found on it</th></tr></thead>
+          <thead><tr><th scope="col">Route</th><th scope="col">Title</th><th scope="col">Rounds</th><th scope="col">Last result</th><th scope="col">Violations</th><th scope="col">Review</th><th scope="col">Found on it</th><th scope="col">Took</th></tr></thead>
           <tbody>
             @for (r of rt.routes; track r.url) {
               <tr [attr.data-url]="r.url">
@@ -117,6 +117,7 @@ interface LoopTimeline { rounds: LoopRound[]; total: { rounds: number; fixed: nu
                 <td>{{ r.violations }}</td>
                 <td>{{ r.reviews }}</td>
                 <td>@if (r.found) { {{ found(r.found) }}@if (r.found.skippedActionsCount) { <span class="modal-note"> Not clicked, look like actions: {{ skipped(r.found) }}</span> } } @else { — }</td>
+                <td data-testid="route-took">{{ took(r) }}</td>
               </tr>
             }
           </tbody>
@@ -195,6 +196,14 @@ export class HistoryScreen {
   }
   readonly found = foundText;
   readonly skipped = skippedText;
+  // "44 min (search 31 min, discovery 9 min)": the route's last audit, and the passes that took the most.
+  took(r: { found: { tookMs?: number | null; timing?: Record<string, number> | null } | null }): string {
+    const ms = r.found?.tookMs;
+    if (typeof ms !== 'number') return '—';
+    const span = (x: number) => (x < 60000 ? `${Math.round(x / 1000)} s` : `${Math.round(x / 60000)} min`);
+    const parts = Object.entries(r.found?.timing || {}).filter(([, v]) => v >= Math.max(5000, ms * 0.15)).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k} ${span(v)}`);
+    return `${span(ms)}${parts.length ? ` (${parts.join(', ')})` : ''}`;
+  }
   private injector = inject(Injector);
   // /history#routes (the tally's link): the Routes crawled section open, its heading focused.
   readonly fragment = toSignal(inject(ActivatedRoute).fragment, { initialValue: null as string | null });

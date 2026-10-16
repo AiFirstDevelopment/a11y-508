@@ -179,6 +179,8 @@ export interface ReportPage {
   skipped?: string | null;
   findings: Finding[];
   durationMs?: number;
+  // How long each pass took on the page (loading, keyboard, disclosures, zoom, search, discovery).
+  timing?: Record<string, number> | null;
   servedWith?: number | null;
   info?: { links?: string[] } | null;
   discovery?: { clicked?: number; urls?: string[]; skipped?: { name?: string; selector?: string }[]; skippedCount?: number; capped?: number } | null;
@@ -299,7 +301,7 @@ export interface RouteRow {
   status: string | null;
   violations: number;
   reviews: number;
-  found: { links: number; clicked: number | null; clickedNew: number | null; searched?: number | null; searchResults?: number | null; skippedActions: string[]; skippedActionsCount: number } | null;
+  found: { links: number; clicked: number | null; clickedNew: number | null; searched?: number | null; searchResults?: number | null; skippedActions: string[]; skippedActionsCount: number; revealed?: number; tookMs?: number | null; timing?: Record<string, number> | null } | null;
   foundBy: string | null;
   lastAt: string | null;
 }

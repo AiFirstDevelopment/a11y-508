@@ -418,6 +418,11 @@
     return A.all(LISTY).some((e) => e !== el && A.isVisible(e) && !pre.has(e) && !(el && el.contains(e)));
   };
 
+  // Panels left open (a dropdown's listbox, a menu, an overlay's backdrop): a click meant for a control
+  // beneath lands on them, and a zoomed page measures them. Escape closes them (closePanels in passes.mjs).
+  const PANELS = '[role="listbox"], [role="menu"], .cdk-overlay-backdrop, .mat-mdc-select-panel, .mat-select-panel, .mat-mdc-menu-panel, .mat-menu-panel, .p-dropdown-panel, .p-overlaypanel';
+  A.openPanels = () => A.all(PANELS).filter((e) => A.isVisible(e) && !e.closest('[role="dialog"], dialog')).length;
+
   // Elements present before a search, so what it reveals can be told apart.
   A.markBeforeSearch = () => {
     A._preSearch = new WeakSet(A.all('*'));

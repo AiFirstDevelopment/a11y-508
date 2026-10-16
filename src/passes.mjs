@@ -376,6 +376,9 @@ async function disclosureScope(page, add, fingerprints, reload, fr, max, out, op
       add(g);
       out.revealedFindings++;
     }
+    // What the activation opened (a dropdown's panel, a menu) is closed again: left open, it would
+    // cover the next control and be measured at zoom.
+    await closePanels(page, ctx).catch(() => false);
   }
   return cands.length;
 }
@@ -419,6 +422,7 @@ export async function routeDiscoveryPass(page, meta, opts, reload, origin) {
   for (const [i, c] of candidates.entries()) {
     if (page.progress) page.progress('discovery', { clicked: i, of: candidates.length });
     if ((await here()) !== startHref) await reload();
+    else await closePanels(page).catch(() => false);
     // A search button clicked here runs the search: with the date range set first.
     await guardRange(page, opts, c.selector).catch(() => false);
     let pt = null;
@@ -467,7 +471,28 @@ export async function routeDiscoveryPass(page, meta, opts, reload, origin) {
   return out;
 }
 
+// Closes what an earlier pass left open (a dropdown's panel, a menu, an overlay's backdrop) with
+// Escape, up to three times: a click meant for a control beneath would land on it, and a zoomed
+// page would measure it. true when something was closed.
+export async function closePanels(page, contextId) {
+  let closed = false;
+  for (let i = 0; i < 3; i++) {
+    let open = 0;
+    try {
+      open = await page.evaluate('window.__a11y508.openPanels()', contextId ? { contextId } : undefined);
+    } catch {
+      return closed;
+    }
+    if (!open) return closed;
+    await page.press('Escape');
+    await sleep(250);
+    closed = true;
+  }
+  return closed;
+}
+
 export async function zoomPass(page, add) {
+  await closePanels(page);
   const before = await page.evaluate('window.__a11y508.layoutIssues()');
   await page.setZoom(2);
   await sleep(400);
@@ -561,6 +586,7 @@ async function settle(page, { max = 20000, quiet = 8000, before = null } = {}) {
   const t0 = Date.now();
   const until = t0 + max;
   let changed = before == null;
+  let changedAt = Date.now();
   let last = null;
   let since = Date.now();
   await sleep(250);
@@ -572,8 +598,10 @@ async function settle(page, { max = 20000, quiet = 8000, before = null } = {}) {
       ({ sig, busy } = await page.evaluate('window.__a11y508.searchState()'));
     } catch {}
     if (!changed) {
-      if (sig && sig !== before) changed = true;
-      else if (Date.now() - t0 >= quiet) break;
+      if (sig && sig !== before) {
+        changed = true;
+        changedAt = Date.now();
+      } else if (Date.now() - t0 >= quiet) break;
       else {
         await sleep(150);
         continue;
@@ -585,6 +613,9 @@ async function settle(page, { max = 20000, quiet = 8000, before = null } = {}) {
       last = sig;
       since = Date.now();
     }
+    // A page that keeps changing (a clock, polling) never holds still: five seconds after it first
+    // changed, with nothing saying it is busy, it is taken as settled.
+    if (!busy && changed && Date.now() - changedAt >= 5000) break;
     await sleep(150);
   }
   await sleep(500);
@@ -767,6 +798,8 @@ export async function searchPass(page, add, fingerprints, opts, reload, origin) 
       while (Date.now() < until && !(await page.evaluate(`window.__a11y508.isEnabled(${JSON.stringify(f.submit)})`).catch(() => false))) await sleep(150);
       stayedDisabled = !(await page.evaluate(`window.__a11y508.isEnabled(${JSON.stringify(f.submit)})`).catch(() => false));
     }
+    // A dropdown's panel the fill left open would take the click meant for the button.
+    await closePanels(page).catch(() => false);
     if (f.submit && !stayedDisabled) pt = await page.evaluate(`window.__a11y508.prepareClick(${JSON.stringify(f.submit)})`).catch(() => null);
     const before = await page.evaluate('window.__a11y508.searchSignature()').catch(() => null);
     if (pt) {

@@ -1422,6 +1422,11 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       roundEntry.branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
       roundEntry.pushed = !!cfg.push;
       roundEntry.remote = cfg.push ? 'origin' : null;
+    }
+    // What the round leaves: open findings and fixes awaiting verification, as a running count.
+    if (roundEntry) {
+      roundEntry.openAfter = openFindings(ledger).length;
+      roundEntry.pendingAfter = byStatus(ledger, 'pending').length;
       save();
     }
     // Earlier fixes still waiting for a deployment (fix the remaining without waiting) wait again.

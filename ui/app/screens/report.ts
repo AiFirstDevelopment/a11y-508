@@ -53,6 +53,14 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
       @if (!complete()) {
         <p data-testid="coverage-line">Coverage is incomplete: {{ r.summary.coverage?.warnings?.length || 0 }} warning{{ r.summary.coverage?.warnings?.length === 1 ? '' : 's' }} (under Details). <a routerLink="/troubleshoot" class="small-link">Troubleshoot</a></p>
       }
+      @if (fewPages(); as why) {
+        <!-- A short crawl explained with the start page's numbers, before anyone has to look under Details. -->
+        <div class="notice warn" role="status" data-testid="why-few-pages">
+          <p>{{ why.text }}</p>
+          @if (why.searches.length) { <ul>@for (s of why.searches; track $index) { <li>{{ s }}</li> }</ul> }
+          <p><a routerLink="/history" fragment="routes">Routes crawled</a></p>
+        </div>
+      }
       <h2 id="findings-h">Findings by page</h2>
       <nav aria-label="Audited pages" data-testid="routes">
         <ul class="routes">
@@ -261,6 +269,34 @@ export class ReportScreen {
     return `Report from ${localTime(this.report()?.finishedAt) || 'history'}`;
   });
   readonly complete = computed(() => !this.report()?.summary.coverage || this.report()!.summary.coverage!.complete);
+  // Three pages or fewer: what the start page offered, in numbers, and what the search did there.
+  readonly fewPages = computed(() => {
+    const r = this.report();
+    if (!r || r.summary.audited > 3 || !r.pages.length) return null;
+    const start = r.pages[0] as any;
+    let origin = '';
+    try {
+      origin = new URL(r.baseUrl).origin;
+    } catch {}
+    const links: string[] = (start.info && Array.isArray(start.info.links) ? start.info.links : []) as string[];
+    const off = links.filter((l) => {
+      try {
+        return new URL(l).origin !== origin;
+      } catch {
+        return false;
+      }
+    }).length;
+    const d = discoveryOf(start);
+    const n = r.summary.audited;
+    const parts = [`Only ${n} page${n === 1 ? '' : 's'} ${n === 1 ? 'was' : 'were'} found. The start page has ${links.length} link${links.length === 1 ? '' : 's'}${off ? `, ${off} of them to other sites` : ''}`];
+    if (d.clicked !== null) parts.push(`${d.clicked} navigation-like control${d.clicked === 1 ? '' : 's'} ${d.clicked === 1 ? 'was' : 'were'} clicked and led to ${d.clickedNew ?? 0} new page${(d.clickedNew ?? 0) === 1 ? '' : 's'}`);
+    if (d.revealed) parts.push(`${d.revealed} link${d.revealed === 1 ? '' : 's'} appeared only after a click`);
+    if (d.searched) parts.push(`${d.searched} search${d.searched === 1 ? ' was' : 'es were'} run and returned ${d.searchResults ?? 0} result${(d.searchResults ?? 0) === 1 ? '' : 's'}`);
+    else parts.push('no search form was run');
+    const notes = (r.summary.coverage?.notes || []).filter((x) => /^Search(-like)? form on /.test(x));
+    const warnings = r.summary.coverage?.warnings || [];
+    return { text: `${parts.join('; ')}.${warnings.length ? ` ${warnings[0]}` : ''}`, searches: notes };
+  });
   readonly line = computed(() => (this.report() ? resultLine(this.report()!) : ''));
   readonly htmlLink = computed(() => `/api/reports/${encodeURIComponent(this.reportId())}/report.html`);
 

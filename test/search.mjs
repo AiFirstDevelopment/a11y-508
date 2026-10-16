@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
-const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless'];
+const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless', 'live', 'overlay'];
 if (only && !GROUPS.includes(only)) throw new Error(`--only takes one of ${GROUPS.join(', ')}`);
 const want = (group) => !only || only === group;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-search-')));
@@ -342,5 +342,32 @@ if (want('nameless')) {
     const pg = pageOf(nl.report, '/search-nameless.html');
     assert.deepEqual(pg.search.skipped.map((s) => s.reason), ['no control named like a search'], JSON.stringify(pg.search));
     assert.ok(notes(nl.report).includes('Search-like form on /search-nameless.html was not searched: no control named like a search (buttons: (no name), Export). Name its search button, or the crawler cannot find the pages behind it.'), JSON.stringify(notes(nl.report)));
+  });
+}
+
+// A page that never holds still (a clock, polling): the search is still found and the wait does not
+// run to its maximum every time; the page's record says how long each pass took.
+if (want('live')) {
+  const lv = await crawl('live', ['--quiet', '--json', '--max-pages', '3'], 'search-live.html');
+  check('live: on a page that keeps changing the search still finds its results, and the search took seconds, not its maximum', () => {
+    assert.ok(lv.report, lv.stderr);
+    const pg = pageOf(lv.report, '/search-live.html');
+    assert.deepEqual(pg.discovery.forms, { filled: 1, submitted: 1, results: 1 }, JSON.stringify(pg.search));
+    assert.ok(pageOf(lv.report, '/result-66.html'), JSON.stringify(lv.report.pages.map((p) => path(p.url))));
+    assert.ok(pg.timing && typeof pg.timing.search === 'number', JSON.stringify(pg.timing));
+    assert.ok(pg.timing.search < 20000, `search took ${pg.timing.search} ms: ${JSON.stringify(pg.timing)}`);
+    assert.ok(typeof pg.timing.loading === 'number' && typeof pg.durationMs === 'number');
+  });
+}
+// A dropdown whose panel and backdrop stay open after a choice: closed before Search is pressed.
+if (want('overlay')) {
+  const ov = await crawl('overlay', ['--quiet', '--json', '--max-pages', '3'], 'search-overlay.html', { interact: true });
+  check('overlay: a panel left open over the page is closed before Search is pressed, so the search runs and its result is audited', () => {
+    assert.ok(ov.report, ov.stderr);
+    const pg = pageOf(ov.report, '/search-overlay.html');
+    assert.deepEqual(pg.discovery.forms, { filled: 1, submitted: 1, results: 1 }, JSON.stringify(pg.search));
+    assert.ok(pageOf(ov.report, '/result-67.html'), JSON.stringify(ov.report.pages.map((p) => path(p.url))));
+    // The zoom pass measured the page, not the panel: no overlap with an option.
+    assert.ok(!pg.findings.some((f) => f.test === '18.A' && /option/i.test(f.selector || '')), JSON.stringify(pg.findings.filter((f) => f.test === '18.A')));
   });
 }

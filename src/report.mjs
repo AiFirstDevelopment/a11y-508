@@ -371,6 +371,8 @@ export function discoveryFacts(p) {
     searched: d && d.forms ? d.forms.submitted : null,
     searchResults: d && d.forms ? d.forms.results : null,
     revealed: d ? d.revealed || 0 : 0,
+    tookMs: typeof p.durationMs === 'number' ? p.durationMs : null,
+    timing: p.timing || null,
     skippedActions: d ? (d.skipped || []).map((x) => x.name || x.selector || '').filter(Boolean) : [],
     skippedActionsCount: d ? d.skippedCount || 0 : 0,
   };

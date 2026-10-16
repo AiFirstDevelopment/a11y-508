@@ -190,8 +190,10 @@ test('loop timeline: a group of findings fixed by one task is one row and one co
   const { loopTimeline } = await import('../reports.mjs');
   const a = { round: 1, n: 3, files: ['src/a.html'], outcome: 'pending', commit: 'abc1234', agentMs: 10, gateMs: 20, gateCode: 0 };
   const f = (sel) => ({ status: 'pending', test: '7.A', impact: 'serious', message: 'no alt', pages: ['/'], selector: sel, attempts: [{ ...a }] });
-  const ledger = { version: 1, rounds: [{ round: 1, at: '2026-10-13T10:00:00Z', violations: 4, diff: { verified: 0 } }], findings: { a: f('img.a'), b: f('img.b'), c: f('img.c'), d: f('img.d') } };
-  const t = loopTimeline(ledger, { pending: 4 });
+  const ledger = { version: 1, rounds: [{ round: 1, at: '2026-10-13T10:00:00Z', violations: 4, diff: { verified: 0 }, openAfter: 2 }, { round: 2, at: '2026-10-13T11:00:00Z', violations: 9, diff: { verified: 0 } }], findings: { a: f('img.a'), b: f('img.b'), c: f('img.c'), d: f('img.d') } };
+  const t = loopTimeline(ledger, { pending: 4, open: 1 });
+  // Open after a round: what the loop recorded at its end, not the round's violations less its fixes.
+  assert.deepEqual(t.rounds.map((r) => r.remaining), [2, 1]);
   assert.equal(t.rounds[0].commits, 1);
   assert.equal(t.rounds[0].changes.length, 1);
   assert.equal(t.rounds[0].changes[0].elements, 4);
