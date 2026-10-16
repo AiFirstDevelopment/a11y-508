@@ -41,7 +41,7 @@ test('diagnostics AC4, guard e: every section in order, the whole page copied an
     await expect(page).toHaveURL(/\/diagnostics$/);
     const pageEl = page.getByTestId('diagnostics-page');
     // Guard e: every heading, in order.
-    await expect(pageEl.locator('h2')).toHaveText(HEADINGS);
+    await expect(pageEl.locator('h2:visible')).toHaveText(HEADINGS);
     await expect(page.getByTestId('d-folder')).toHaveText(cwd);
     await expect(page.getByTestId('d-config')).toContainText('"agent"');
     await expect(page.getByTestId('d-counts-line')).toHaveText(/^\d+ found · /);

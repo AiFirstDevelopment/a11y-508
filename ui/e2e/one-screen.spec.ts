@@ -196,3 +196,15 @@ test('one screen AC2, guard f: Start on a folder with fixes awaiting a deploymen
     a.close();
   }
 });
+
+test('one screen AC6: the README\'s dashboard section describes the one screen and Diagnostics in under 200 words, and nothing that no longer exists', async () => {
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  const start = readme.indexOf('### The dashboard\n');
+  const end = readme.indexOf('\n#### ', start);
+  expect(start).toBeGreaterThan(0);
+  const prose = readme.slice(start, end).replace(/```[\s\S]*?```/g, '');
+  expect(prose.split(/\s+/).filter(Boolean).length).toBeLessThan(200);
+  for (const words of ['**Start**', '**Stop**', '**Diagnostics**', '**Copy diagnostics**', '**Download diagnostics**', '**Change folder or URL**', '**Advanced**']) expect(prose, words).toContain(words);
+  // Nothing of the wizard, anywhere in the README.
+  for (const gone of ['wizard', 'Fix step', 'Results step', 'History', 'Where you are', 'Run again', 'Fix the violations', 'Check now', 'Copy summary', '/run/advanced', '/fix-loop/settings', 'Report screen', 'Test assistant', 'Crawl step', 'lastStep']) expect(readme, gone).not.toContain(gone);
+});
