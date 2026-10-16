@@ -1267,8 +1267,8 @@ const stubbed = (outcomes) => {
 {
   // 12.B: query variants of one route are one page; the message keeps no count, so the finding is the
   // same finding however many pages a crawl reached.
-  const pg = (u, title = 'Cargo Traceability | Home') => ({ url: u, finalUrl: u, title, info: { links: [] } });
-  const b = (pages) => siteChecks(pages).findings.filter((f) => f.test === '12.B');
+  const pg = (u, title = 'Cargo Traceability | Home') => ({ url: u, finalUrl: u, title, info: { links: [], nav: [], linkNames: [], navCount: 0 } });
+  const b = (pages) => siteChecks(pages).findings.filter((f) => f.test === '12.B' && f.level === 'violation');
   check('12.B: search variants of one route sharing its title are not a duplicate title', () => {
     assert.equal(b([pg('https://x.gov/app/layout/default?from=1&to=2'), pg('https://x.gov/app/layout/default?from=3&to=4'), pg('https://x.gov/app/layout/default/')]).length, 0);
   });
@@ -1279,6 +1279,10 @@ const stubbed = (outcomes) => {
     assert.deepEqual(two[0].pages, ['https://x.gov/app/a?q=1', 'https://x.gov/app/b']);
     assert.equal(two[0].message, three[0].message);
     assert.equal(two[0].message, 'Different pages share the title "Cargo Traceability | Home", so the title does not identify the page.');
+  });
+  check('12.B: the titles review item names no count either', () => {
+    const r = (pages) => siteChecks(pages).findings.find((f) => f.test === '12.B' && f.level === 'review').message;
+    assert.equal(r([pg('https://x.gov/a'), pg('https://x.gov/b')]), r([pg('https://x.gov/a'), pg('https://x.gov/b'), pg('https://x.gov/c')]));
   });
 }
 

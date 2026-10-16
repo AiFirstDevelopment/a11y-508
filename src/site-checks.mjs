@@ -93,7 +93,7 @@ export function siteChecks(pages) {
     add({ test: '12.B', impact: 'serious', selector: 'head > title', message: `Different pages share the title "${title}", so the title does not identify the page.`, pages: distinctUrls.slice(0, 10) });
   }
   const titles = audited.map((p) => ({ url: p.finalUrl, title: p.title })).slice(0, 200);
-  add({ test: '12.B', level: 'review', impact: 'minor', selector: 'head > title', message: `Page titles for ${titles.length} page(s). Confirm each identifies its page's content or purpose.`, details: { titles } });
+  add({ test: '12.B', level: 'review', impact: 'minor', selector: 'head > title', message: "Confirm each page's title identifies its content or purpose (the titles are in the details).", pages: titles.map((t) => t.url).slice(0, 10), details: { titles } });
 
   // 19.A multiple ways
   const ways = [];
