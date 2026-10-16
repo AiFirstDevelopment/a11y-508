@@ -4,7 +4,7 @@
 import { test, expect } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dashboard, fixtureSite, open, moreOptions, nav, removeTemp, ROOT, TOKEN, type Dash, type Site } from './harness';
+import { dashboard, fixtureSite, gitRepo, open, moreOptions, nav, ROOT, TOKEN, type Dash, type Site } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 
@@ -40,10 +40,9 @@ test('notifications: with permission given and the tab in the background, a push
   });
   writeFileSync(join(dash.cwd, 'package.json'), JSON.stringify({ name: 'app' }));
   writeFileSync(join(dash.cwd, 'a11y-508.config.json'), JSON.stringify({ url: site.base + 'about.html', args: ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots'], agent: FAKE, source: ['site'], push: false, deployed: 'none', maxAttempts: 1, triageBatch: 50 }));
-  const g = (...a: string[]) => require('node:child_process').spawnSync('git', a, { cwd: dash.cwd, encoding: 'utf8' });
-  g('init', '-q');
+  const g = gitRepo(dash.cwd);
   g('add', '-A');
-  g('commit', '-q', '-m', 'app', '--author', 'a <a@example.com>');
+  g('commit', '-q', '-m', 'app');
   await open(page, dash, '/run');
   await moreOptions(page);
   await page.getByLabel('A token').check();
