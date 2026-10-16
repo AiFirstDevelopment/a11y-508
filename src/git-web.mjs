@@ -29,3 +29,15 @@ export function remoteWeb(cwd) {
   const r = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8', windowsHide: true });
   return r.status === 0 ? webRemote(r.stdout) : null;
 }
+
+// A commit's page on the repository's web host (the dashboard's git-links.ts keeps the same paths).
+export function commitWebUrl(web, sha) {
+  if (!web || !sha) return null;
+  let host = '';
+  try {
+    host = new URL(web).host;
+  } catch {}
+  if (/gitlab/.test(host)) return `${web}/-/commit/${sha}`;
+  if (/bitbucket/.test(host)) return `${web}/commits/${sha}`;
+  return `${web}/commit/${sha}`;
+}

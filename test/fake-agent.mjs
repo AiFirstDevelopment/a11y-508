@@ -54,11 +54,13 @@ if (Number(process.env.FAKE_AGENT_DELAY_MS) > 0) await new Promise((r) => setTim
 
 const prompt = readFileSync(promptFile, 'utf8');
 const blocks = [...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => m[1]);
-const task = blocks.map((b) => { try { return JSON.parse(b); } catch { return null; } }).find((o) => o && (o.kind === 'fix' || o.kind === 'triage' || o.kind === 'test'));
+const task = blocks.map((b) => { try { return JSON.parse(b); } catch { return null; } }).find((o) => o && (o.kind === 'fix' || o.kind === 'triage' || o.kind === 'test' || /^manual-/.test(String(o.kind))));
 const leaked = /fixture-token-123/.test(prompt) || !!process.env.TOKEN;
 const write = (obj) => writeFileSync(resultFile, JSON.stringify(Array.isArray(obj) ? obj : { ...obj, leaked }, null, 2));
 
-if (!task) {
+if (task && /^manual-/.test(task.kind)) {
+  manual(task);
+} else if (!task) {
   write({ fixed: false, note: 'no task block found' });
 } else if (task.kind === 'test') {
   // The dashboard's "Test assistant" check.
@@ -100,4 +102,82 @@ if (!task) {
   } else {
     write({ fixed: false, files: [], note: `fake agent does not handle ${f.test}` });
   }
+}
+
+// ---- The manual flow (docs/plans/manual-findings.md), scripted by env:
+// FAKE_MANUAL_PLAN_WRONG: the plan puts F1 (the search button) in HeaderComponent.
+// FAKE_MANUAL_MISUNDERSTAND_ONCE=<file>: the first confirmation answers understood: false.
+// The read parses the PDF's FINDING lines; the check and the verify judge from the evidence the tool
+// captured (a button with no aria-label, an image with no alt, is the problem); a fix edits the
+// approved component's file.
+function manual(task) {
+  const out = (obj) => writeFileSync(task.resultFile, JSON.stringify(obj, null, 2));
+  const problem = (ev) => {
+    if (!ev || !ev.loaded) return null;
+    const html = (ev.elements || []).flatMap((m) => m.html || []);
+    if (!html.length) return null;
+    return html.some((h) => /^<button\b(?![^>]*\baria-label=)/.test(h) || /^<img\b(?![^>]*\balt=)/.test(h));
+  };
+  if (task.kind === 'manual-read') {
+    const text = readFileSync(task.pdf, 'latin1');
+    const pages = [...text.matchAll(/stream\n([\s\S]*?)\nendstream/g)].map((m) => [...m[1].matchAll(/\(((?:\\.|[^\\)])*)\) Tj/g)].map((x) => x[1].replace(/\\(.)/g, '$1')));
+    const findings = [];
+    pages.forEach((lines, i) => {
+      for (const l of lines) {
+        const m = /^FINDING (\S+) \| (.*?) \| (.*?) \| (.*?) \| (.*?) \| (.*)$/.exec(l);
+        if (m) findings.push({ id: m[1], title: m[2], page: i + 1, route: m[3], selectors: m[4].split(';').map((x) => x.trim()), element: m[5], quote: m[6], expected: `${m[5]} has a text alternative`, decisions: m[3] === '/' ? [{ decision: `took the home page for ${m[1]}`, reason: 'the tester names no page; the header and footer are on every page' }] : [] });
+      }
+    });
+    return out({ findings });
+  }
+  if (task.kind === 'manual-check' || task.kind === 'manual-verify') {
+    const list = task.kind === 'manual-check' ? task.findings : task.items;
+    return out(list.map((f) => {
+      const p = problem(f.evidence);
+      const id = f.id || f.finding;
+      if (task.kind === 'manual-check') return { id, verdict: p === null ? 'unreachable' : p ? 'present' : 'gone', reason: p === null ? 'no element matched' : p ? 'the element still has no name' : 'the element has a name now' };
+      return { finding: id, verdict: p === false ? 'fixed' : 'not-fixed', reason: p === false ? 'the element has a name in the deployed page' : 'the deployed page still shows the element without a name' };
+    }));
+  }
+  const fileOf = (name) => (task.components || []).find((c) => c.name === name);
+  const owner = (f) => {
+    const sel = (f.selectors || []).join(' ');
+    const id = (/#([\w-]+)/.exec(sel) || [])[1];
+    const comps = task.components || [];
+    const hit = comps.find((c) => existsSync(join(process.cwd(), c.file)) && (id ? readFileSync(join(process.cwd(), c.file), 'utf8').includes(`id="${id}"`) : /img/.test(sel) && readFileSync(join(process.cwd(), c.file), 'utf8').includes('<img')));
+    return hit || comps[0];
+  };
+  if (task.kind === 'manual-plan' || task.kind === 'manual-replan') {
+    const list = task.kind === 'manual-plan' ? task.findings : task.items.map((it) => ({ id: it.finding, title: it.finding, selectors: [], component: it.component }));
+    return out({ items: list.map((f) => {
+      let c = f.component || owner(f);
+      if (task.kind === 'manual-plan' && process.env.FAKE_MANUAL_PLAN_WRONG && f.id === 'F1') c = fileOf('HeaderComponent') || c;
+      return { finding: f.id, fix: `${task.kind === 'manual-replan' ? 'Try again: give' : 'Give'} the element the tester names an accessible name in ${c.name}.`, component: { name: c.name, file: c.file }, files: [c.file], decisions: [{ decision: `the element is rendered by ${c.name}`, reason: `${c.file} holds its markup` }] };
+    }) });
+  }
+  if (task.kind === 'manual-confirm') {
+    const once = process.env.FAKE_MANUAL_MISUNDERSTAND_ONCE;
+    const refuse = once && !existsSync(once);
+    if (refuse) writeFileSync(once, 'refused');
+    return out(task.items.map((it) => (refuse
+      ? { finding: it.finding, understood: false, text: `${it.edit.component.name} does not render the element the tester describes.`, files: [] }
+      : { finding: it.finding, understood: true, text: `I will ${it.edit.fix.replace(/^./, (c) => c.toLowerCase()).replace(/\.$/, '')} in ${it.edit.component.name}, ${it.edit.component.file}${it.original.component && it.original.component.name !== it.edit.component.name ? `, instead of ${it.original.component.name}` : ''}.`, files: [it.edit.component.file] })));
+  }
+  if (task.kind === 'manual-fix') {
+    const rel = task.component && task.component.file;
+    const file = rel ? join(process.cwd(), rel) : null;
+    if (!file || !existsSync(file)) return out({ fixed: false, files: [], note: 'no component file to change' });
+    let s = readFileSync(file, 'utf8');
+    const id = (/#([\w-]+)/.exec((task.finding.selectors || []).join(' ')) || [])[1];
+    const label = id ? id.replace(/-btn$/, '').replace(/^./, (c) => c.toUpperCase()) : 'Label';
+    const before = s;
+    const target = id && new RegExp(`<button id="${id}"(?![^>]*aria-label=)`).test(s) ? new RegExp(`<button id="${id}"(?![^>]*aria-label=)`) : /<button\b(?![^>]*aria-label=)/;
+    if (target.test(s)) s = s.replace(target, (m) => `${m} aria-label="${label}"`);
+    else if (/<img\b(?![^>]*\balt=)/.test(s)) s = s.replace(/<img\b(?![^>]*\balt=)/, (m) => `${m} alt="${label}"`);
+    else if (id) s = s.replace(new RegExp(`(<button id="${id}"[^>]*aria-label=")([^"]*)"`), (m, a, v) => `${a}${v} again"`);
+    if (s === before) return out({ fixed: false, files: [], note: 'nothing to change' });
+    writeFileSync(file, s);
+    return out({ fixed: true, files: [rel], note: `gave the element an accessible name in ${task.component.name}`, decisions: [{ decision: `labelled it "${label}"`, reason: 'the visible icon means that' }] });
+  }
+  out({ error: `fake agent does not handle ${task.kind}` });
 }

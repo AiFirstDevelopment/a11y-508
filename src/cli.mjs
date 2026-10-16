@@ -9,6 +9,7 @@ import { addDiarySecrets, writeDiary } from './diary.mjs';
 import { interactiveLogin, loadState, saveState, stateSummary } from './login.mjs';
 import { troubleshoot, formatTroubleshoot } from './troubleshoot.mjs';
 import { loadConfig, printStatus, runLoop } from './loop.mjs';
+import { runManual } from './manual.mjs';
 import { gitDirOf, migrateRepo, migrationLines, reportDir } from './home.mjs';
 import { siteChecks } from './site-checks.mjs';
 import { summarize, shouldFail, writeReports, makeLogger, coverage, eventWriter } from './report.mjs';
@@ -25,6 +26,7 @@ Usage: a11y-508 <url> [options]
        npm run e2e:a11y-508 <url> [-- options]
        a11y-508 loop [url] [--config <file>] [--max-rounds <n>] [--agent <spec>] [--dry-run] [--sign-in-first] [--from-report [file]] [--verify | --verify-anyway | --wait] [crawl options]
        a11y-508 status
+       a11y-508 manual <pdf> [--config <file>] [--agent <spec>] [--events] [crawl options]
 
 Crawls every same-origin page reachable from <url> in headless Chrome, runs the
 automatable Trusted Tester checks on each page, and writes a report with
@@ -126,6 +128,14 @@ Fix loop
     --wait             Go on waiting for the deployment (deployTimeout), then verify
     --resume           Go on with the ledger's last round where it was interrupted: its open
                        findings are fixed with no new crawl; the next round crawls
+  manual <pdf>  Fix what a tester found by hand, from their PDF report: the assistant reads it,
+                the tool checks each finding in the deployed site (findings already fixed are
+                reported, linked to their PDF page), the assistant plans the fixes, and the plan
+                waits for your approval: write changes to plan-edit.json and type review (the
+                assistant confirms each), or type approve. Then each item is fixed, committed and
+                pushed, the deployment is awaited and each fix verified in it (one more try, then a
+                revised plan to approve). Every decision is logged in decisions.md. Files are in
+                the tool's folder for the repository, work/manual/<id>/. Uses the loop's config.
   status        Print the ledger: what is open, pending, verified, and skipped, and
                 where the tool keeps its files for this repository.
 
@@ -291,6 +301,78 @@ export function splitLoopArgs(argv) {
   return { loop, remaining };
 }
 
+// "manual <pdf>": the PDF, then the loop's --config and --agent; everything else goes to the crawl
+// options (the evidence browser's way in: --state, --cookie, ...). A second http(s) argument is the start URL.
+export function splitManualArgs(argv) {
+  const [command, ...rest] = argv;
+  if (command !== 'manual') return null;
+  const manual = { config: 'a11y-508.config.json', agent: null, pdf: null, url: null, help: false };
+  const remaining = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    const eq = a.startsWith('--') ? a.indexOf('=') : -1;
+    const key = eq > 0 ? a.slice(0, eq) : a;
+    const val = () => {
+      const v = eq > 0 ? a.slice(eq + 1) : rest[++i];
+      if (v === undefined) throw new Error(`${key} requires a value`);
+      return v;
+    };
+    if (key === '--config') manual.config = val();
+    else if (key === '--agent') manual.agent = val();
+    else if (key === '-h' || key === '--help') manual.help = true;
+    else if (!a.startsWith('-') && !manual.pdf && !/^https?:\/\//i.test(a)) manual.pdf = a;
+    else if (!a.startsWith('-') && /^https?:\/\//i.test(a) && !manual.url) manual.url = a;
+    else remaining.push(a);
+  }
+  return { manual, remaining };
+}
+
+async function manualMain({ manual, remaining }) {
+  if (manual.help) {
+    process.stdout.write(HELP);
+    return 0;
+  }
+  let crawlOpts;
+  try {
+    crawlOpts = parseArgs(remaining);
+  } catch (e) {
+    process.stderr.write(`error: ${e.message}\n\n${HELP}`);
+    return 2;
+  }
+  const events = crawlOpts.events;
+  const passthrough = remaining.filter((a) => a !== '--events');
+  const log = makeLogger({ quiet: false, json: false, events });
+  log.event('start', { kind: 'manual', version: pkg.version, url: manual.url || null });
+  if (!manual.pdf) {
+    log.error('a PDF is required: a11y-508 manual <pdf>');
+    return 2;
+  }
+  let config;
+  try {
+    config = loadConfig(manual.config, process.cwd());
+  } catch (e) {
+    log.error(e.message);
+    return 2;
+  }
+  if (config._missing) log.warn(`no ${manual.config} found; using command-line values only`);
+  if (manual.url) config._url = manual.url;
+  config._agent = manual.agent;
+  const stopSignal = { stopped: false };
+  const onSignal = () => {
+    if (stopSignal.stopped) process.exit(130);
+    stopSignal.stopped = true;
+    log.warn('stopping after the current step (press Ctrl+C again to quit at once)');
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  try {
+    return await runManual({ pdf: manual.pdf, config, cwd: process.cwd(), log, events, stopSignal, passthrough });
+  } finally {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+  }
+}
+
 async function loopMain(split) {
   const { loop, remaining } = split;
   if (loop.help) {
@@ -366,6 +448,8 @@ export async function main(argv) {
 async function run(argv) {
   const split = splitLoopArgs(argv);
   if (split) return loopMain(split);
+  const manualSplit = splitManualArgs(argv);
+  if (manualSplit) return manualMain(manualSplit);
   let opts;
   try {
     opts = parseArgs(argv);

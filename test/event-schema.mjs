@@ -11,7 +11,7 @@ const opt = (f) => (v) => v === undefined || v === null || f(v);
 const oneOf = (...xs) => (v) => xs.includes(v);
 
 export const EVENT_SCHEMA = {
-  start: { kind: oneOf('crawl', 'troubleshoot', 'login', 'loop'), version: str, url: opt(str) },
+  start: { kind: oneOf('crawl', 'troubleshoot', 'login', 'loop', 'manual'), version: str, url: opt(str) },
   info: { message: str },
   warn: { message: str },
   error: { message: str },
@@ -44,6 +44,9 @@ export const EVENT_SCHEMA = {
   changes: { round: num, n: num, m: num, files: arr },
   attempt: { round: num, n: num, m: num, test: str, message: str, elements: opt(num), files: arr, outcome: oneOf('committed', 'failed-gate', 'no-change', 'timed-out', 'commit-failed'), commit: opt(str), note: opt(str), agentMs: opt(num), gateMs: opt(num), gateCode: opt(num), gateTail: opt(str) },
   precondition: { code: oneOf('not-a-repo', 'dirty-tree', 'branch'), message: str, remedy: str },
+  // The manual flow (docs/plans/manual-findings.md): one event per stage, and one per decision.
+  manual: { stage: oneOf('start', 'read', 'read-failed', 'findings', 'no-findings', 'check', 'capture', 'judge', 'already-fixed', 'planning', 'plan', 'review', 'confirming', 'approve-refused', 'approved', 'agent', 'fix', 'gate', 'commit', 'push', 'deploy', 'await-deploy', 'deploy-check', 'verify', 'verdicts', 'retry', 'replanning', 'done') },
+  'manual-decision': { stage: oneOf('read', 'check', 'plan', 'confirm', 'fix', 'verify', 'replan'), finding: opt(str), by: oneOf('agent', 'developer', 'tool'), decision: str, reason: str, evidence: opt(str) },
   done: { code: num },
 };
 
