@@ -12,7 +12,7 @@ import { fixedLine, localTime, spoken } from '../core/format';
 import { askToNotify, checkLine } from '../core/run.store';
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-import { AgentTest, LedgerInfo, LoopDefaults, LoopMatch, Preset } from '../core/types';
+import { AgentTest, Journal, LedgerInfo, LoopDefaults, LoopMatch, Preset } from '../core/types';
 import { ChartPanel } from '../shared/chart-panel';
 import { RunView } from '../shared/run-view';
 import { SignInWait } from '../shared/sign-in-wait';
@@ -60,7 +60,7 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
       @if (env.env()?.detecting) {
         <span role="status">Detecting assistants…</span>
       } @else if (assistantLabel(); as label) {
-        Fixing with <strong>{{ label }}</strong>@if (assistantVersion(); as v) { <span> ({{ v }})</span> }@if (runTool(); as t) { <span class="hint" data-testid="run-revision"> · loop started with build {{ t }}{{ t !== env.env()?.revision ? ' (this dashboard is ' + env.env()?.revision + ')' : '' }}</span> }
+        Fixing with <strong>{{ label }}</strong>@if (assistantVersion(); as v) { <span> ({{ v }})</span> }@if (fallbackPreset(); as fb) { <span class="hint" data-testid="fallback-note"> · {{ fb.label }} takes a finding {{ label }} fails twice on</span> }@if (runTool(); as t) { <span class="hint" data-testid="run-revision"> · loop started with build {{ t }}{{ t !== env.env()?.revision ? ' (this dashboard is ' + env.env()?.revision + ')' : '' }}</span> }
         <button type="button" class="link" (click)="pickerOpen.set(!pickerOpen())" [attr.aria-expanded]="showPicker()" aria-controls="agent-picker">change<span class="visually-hidden"> the assistant</span></button>
       } @else if (env.env()) {
         No assistant is installed yet. Install one below.
@@ -216,6 +216,7 @@ let loadedWithStart = INITIAL_PATH.startsWith('/fix-loop') && new URLSearchParam
         <p data-testid="deploy-wait-next">{{ waitNext() }}</p>
         <!-- Every check on record, and one at once on request: the wait is never a mystery. -->
         <p role="status" data-testid="deploy-check">{{ checkText() }}</p>
+        @if (eta(); as e) { <p class="hint" data-testid="deploy-eta">{{ e }}</p> }
         <div class="actions">
           <button type="button" class="secondary" (click)="checkNow()" [disabled]="checking()" data-testid="check-now">{{ checking() === 'check' ? 'Checking…' : 'Check now' }}</button>
           <button type="button" class="secondary" (click)="signInNow()" [disabled]="checking()" data-testid="sign-in-now">{{ checking() === 'sign-in' ? 'Opening the sign-in…' : 'Sign in' }}</button>
@@ -436,6 +437,13 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   readonly presets = computed<Preset[]>(() => this.env.env()?.presets || []);
   readonly shell = computed(() => this.env.env()?.shell?.name || 'your shell');
   readonly chosenPreset = computed(() => this.presets().find((p) => p.name === this.choice()) || null);
+  // Another installed preset than the chosen one: the fallback for a finding the first fails twice on.
+  readonly fallbackPreset = computed(() => {
+    const configured = this.cfg()['fallback'];
+    if (typeof configured === 'string' && configured) return this.presets().find((p) => p.name === configured) || { name: configured, label: configured, found: true } as Preset;
+    if (configured === null || configured === '') return null;
+    return this.presets().find((p) => p.found && p.name !== this.choice()) || null;
+  });
   readonly agentSpec = computed(() => (this.choice() === 'custom' ? this.custom().trim() : this.choice()) || '');
   readonly agentReady = computed(() => (this.choice() === 'custom' ? this.custom().includes('{promptFile}') : !!this.chosenPreset()?.found));
   readonly anyInstalled = computed(() => this.presets().some((p) => p.found));
@@ -667,6 +675,10 @@ export class FixLoopScreen implements OnInit, OnDestroy {
     }
   });
   readonly waitingForBuild = computed(() => this.store.awaitingDeploy() && !this.store.done());
+  private readonly etaLoader = effect(() => {
+    if (!this.waitingForBuild()) return;
+    untracked(() => void this.api.get<Journal>('/api/loop/journal').then((j) => this.deployStats.set(j?.deployments || null)).catch(() => {}));
+  });
   // The wait's remaining findings are being fixed from the ledger meanwhile (no crawl).
   readonly meanwhile = computed(() => !!this.store.deployWait()?.['meanwhile']);
   private readonly counts = computed<Record<string, number>>(() => (this.store.ledger()?.['counts'] as Record<string, number>) || this.ledger()?.counts || {});
@@ -688,6 +700,17 @@ export class FixLoopScreen implements OnInit, OnDestroy {
   readonly checking = signal<'' | 'check' | 'sign-in'>('');
   // What went wrong when Check now or Sign in could not be passed on: never swallowed.
   readonly checkError = signal('');
+  // "Your deployments have taken about 9 min so far; this one is expected around 4:21 PM."
+  readonly deployStats = signal<{ count: number; avgMs: number | null } | null>(null);
+  readonly eta = computed(() => {
+    const d = this.deployStats();
+    const w: Record<string, any> = this.store.deployWait() || {};
+    if (!d || !d.avgMs || !d.count) return '';
+    const pushedAt = Date.parse(String(w['pushedAt'] || this.ledger()?.deploy?.pushedAt || '')) || null;
+    const about = d.avgMs < 60000 ? `${Math.round(d.avgMs / 1000)} s` : `${Math.round(d.avgMs / 60000)} min`;
+    const when = pushedAt ? ` This one is expected around ${clock(new Date(pushedAt + d.avgMs).toISOString())}${pushedAt + d.avgMs < this.now() ? ' and is late' : ''}.` : '';
+    return `Your ${d.count === 1 ? 'deployment has' : `${d.count} deployments have`} taken about ${about} so far.${when}`;
+  });
   readonly checkText = computed(() => {
     const c = this.store.deployCheck();
     if (this.checking() === 'check') return 'Checking the site now…';
@@ -1021,6 +1044,11 @@ export class FixLoopScreen implements OnInit, OnDestroy {
       if (!c['branch']) c['branch'] = pl.branch;
       if (c['push'] === undefined) c['push'] = !!pl.push && !!pl.remote;
       if (c['maxAttempts'] === undefined) c['maxAttempts'] = pl.maxAttempts;
+    }
+    // A second installed assistant takes a finding the first fails twice on; chosen once, kept in the config.
+    if (c['fallback'] === undefined) {
+      const fb = this.fallbackPreset();
+      if (fb) c['fallback'] = fb.name;
     }
     if (!c['deployed'] && !c['deploy']) {
       c['deployed'] = 'bundle-change';

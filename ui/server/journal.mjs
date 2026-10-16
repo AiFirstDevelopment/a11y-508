@@ -140,8 +140,90 @@ function readEvents(file) {
   return out;
 }
 
+// Where a run's time went, from its events: crawling (a round's start to its crawl summary), fixing
+// (the fix step to the push, or the round's end), waiting for deployments (the wait to the build's
+// arrival or the run's end), and waiting for a sign-in. Also each deployment's wait, for an estimate.
+export function timeOf(events, endAt = null) {
+  const t = { crawling: 0, fixing: 0, waiting: 0, signIn: 0 };
+  const deployments = [];
+  const ms = (a, b) => Math.max(0, (Date.parse(b || '') || 0) - (Date.parse(a || '') || 0));
+  let crawlAt = null;
+  let fixAt = null;
+  let waitAt = null;
+  let signAt = null;
+  const last = events.length ? events[events.length - 1].at : null;
+  const end = endAt || last;
+  for (const ev of events) {
+    switch (ev.type) {
+      case 'round':
+        if (fixAt) {
+          t.fixing += ms(fixAt, ev.at);
+          fixAt = null;
+        }
+        if (!ev.fromLedger && !ev.resumed) crawlAt = ev.at;
+        break;
+      case 'summary':
+        if (crawlAt) {
+          t.crawling += ms(crawlAt, ev.at);
+          crawlAt = null;
+        }
+        break;
+      case 'step':
+        if (ev.step === 'fix' || ev.step === 'triage') {
+          if (!fixAt) fixAt = ev.at;
+        } else if (ev.step === 'push' && fixAt) {
+          t.fixing += ms(fixAt, ev.at);
+          fixAt = null;
+        }
+        break;
+      case 'await-deploy':
+        if (fixAt) {
+          t.fixing += ms(fixAt, ev.at);
+          fixAt = null;
+        }
+        waitAt = ev.at;
+        break;
+      case 'deployment':
+        if (waitAt && ev.state === 'arrived') {
+          const w = ms(waitAt, ev.at);
+          t.waiting += w;
+          deployments.push(w);
+          waitAt = null;
+        }
+        break;
+      case 'login-waiting':
+        if (!signAt) signAt = ev.at;
+        break;
+      case 'session-saved':
+        if (signAt) {
+          t.signIn += ms(signAt, ev.at);
+          signAt = null;
+        }
+        break;
+      case 'done':
+        if (crawlAt) t.crawling += ms(crawlAt, ev.at);
+        if (fixAt) t.fixing += ms(fixAt, ev.at);
+        if (waitAt) t.waiting += ms(waitAt, ev.at);
+        if (signAt) t.signIn += ms(signAt, ev.at);
+        crawlAt = fixAt = waitAt = signAt = null;
+        break;
+      default:
+        break;
+    }
+  }
+  // A run still going: its open phase runs to now.
+  if (end) {
+    if (crawlAt) t.crawling += ms(crawlAt, end);
+    if (fixAt) t.fixing += ms(fixAt, end);
+    if (waitAt) t.waiting += ms(waitAt, end);
+    if (signAt) t.signIn += ms(signAt, end);
+  }
+  return { ...t, deployments };
+}
+
 // Every run of the folder, oldest first, narrated, with the ledger's re-check results; newest first
-// in the answer, at most `limit` entries.
+// in the answer, at most `limit` entries. time: where the runs' time went, and how long the
+// deployments took (count and average), for an estimate of the next.
 export function journal(cwd, { limit = 1500 } = {}) {
   const dir = runsDir(cwd);
   let names = [];
@@ -150,11 +232,20 @@ export function journal(cwd, { limit = 1500 } = {}) {
   } catch {}
   const records = names.map((f) => readJson(join(dir, f))).filter((r) => r && typeof r.id === 'string' && r.startedAt).sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
   const entries = [];
+  const time = { crawling: 0, fixing: 0, waiting: 0, signIn: 0 };
+  const deployments = [];
   for (const r of records) {
     const kind = r.kind === 'loop' ? 'Fix loop' : r.kind === 'dry-run' ? 'Dry run' : r.kind === 'crawl' ? 'Crawl' : r.kind === 'login' ? 'Sign-in' : r.kind || 'Run';
     const url = (r.meta && r.meta.url) || (r.request && r.request.url) || '';
     entries.push({ at: r.startedAt, kind: 'run', text: `${kind} started${url ? ` for ${url}` : ''}${r.meta && r.meta.tool ? ` (build ${r.meta.tool})` : ''}` });
-    entries.push(...narrate(readEvents(join(dir, `${r.id}.events.ndjson`))));
+    const events = readEvents(join(dir, `${r.id}.events.ndjson`));
+    entries.push(...narrate(events));
+    if (r.kind === 'loop') {
+      const done = events.some((e) => e.type === 'done');
+      const tm = timeOf(events, done ? null : new Date().toISOString());
+      for (const k of Object.keys(time)) time[k] += tm[k];
+      deployments.push(...tm.deployments);
+    }
   }
   const file = ledgerPath(cwd);
   if (existsSync(file)) {
@@ -166,5 +257,6 @@ export function journal(cwd, { limit = 1500 } = {}) {
     } catch {}
   }
   entries.sort((a, b) => (Date.parse(b.at || '') || 0) - (Date.parse(a.at || '') || 0));
-  return { entries: entries.slice(0, limit), runs: records.length };
+  const avg = deployments.length ? Math.round(deployments.reduce((a, b) => a + b, 0) / deployments.length) : null;
+  return { entries: entries.slice(0, limit), runs: records.length, time, deployments: { count: deployments.length, avgMs: avg } };
 }

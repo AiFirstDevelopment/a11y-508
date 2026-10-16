@@ -146,6 +146,8 @@ export function normalizeConfig(c, overrides = {}, { interactive = !!process.std
     url: overrides.url || c.url || null,
     args: Array.isArray(c.args) ? c.args : [],
     agent: overrides.agent || c.agent || null,
+    // A second assistant (a preset or a command), tried on a finding the first failed twice on.
+    fallback: typeof c.fallback === 'string' && c.fallback.trim() && c.fallback !== (overrides.agent || c.agent) ? c.fallback.trim() : null,
     source: Array.isArray(c.source) && c.source.length ? c.source : ['src'],
     check: c.check || null,
     checkEvery: c.checkEvery === 'round' ? 'round' : 'finding',
@@ -522,6 +524,9 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // node_modules/a11y-508 or tools/a11y-508, by its relative path).
   const protectedDirs = toolRel.startsWith('..') || isAbsolute(toolRel) ? [TOOL_DIR] : toolRel ? [toolRel] : [];
   const agentCommand = resolveAgentCommand(cfg.agent);
+  const fallbackCommand = cfg.fallback ? resolveAgentCommand(cfg.fallback) : null;
+  const fallbackName = cfg.fallback ? (PRESET_INFO[cfg.fallback] && PRESET_INFO[cfg.fallback].label) || 'the fallback assistant' : null;
+  if (fallbackCommand) log.info(`fallback assistant: ${fallbackName}, for a finding ${(PRESET_INFO[cfg.agent] && PRESET_INFO[cfg.agent].label) || 'the assistant'} fails twice on`);
   const sourceDirs = cfg.source;
   const stopped = () => stopSignal && stopSignal.stopped;
 
@@ -1126,11 +1131,19 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       writePrompt(promptFile, fixPrompt({ finding: entry, group: members(entry), sourceDirs, protectedDirs, resultFile, condition: testInfo(entry.test).condition, hints }));
       // The attempt is on record before the assistant starts: one with no outcome is in progress, so
       // after an interruption its uncommitted changes are known to be the loop's (the dashboard's Continue).
-      const attempt = { round, startedAt: new Date().toISOString() };
+      // The fallback assistant, once the first has failed twice on this finding (no change, an edit that
+      // broke the build, a call that ran out of time): a different model may see what the first did not.
+      const failedBefore = entry.attempts.filter((a) => a.outcome && a.outcome !== 'pending' && !a.commit).length;
+      const useFallback = !!fallbackCommand && failedBefore >= 2;
+      const attempt = { round, startedAt: new Date().toISOString(), ...(useFallback ? { assistant: cfg.fallback } : {}) };
+      if (useFallback) {
+        log.info(`  ${fallbackName} this time: ${(PRESET_INFO[cfg.agent] && PRESET_INFO[cfg.agent].label) || 'the assistant'} made no fix that held in ${failedBefore} tries`);
+        ev('fallback', { round, n: n + 1, m: tasks.length, assistant: cfg.fallback, after: failedBefore });
+      }
       // Every finding of the task gets the attempt (and so the same outcome and commit).
       for (const e of members(entry)) e.attempts.push(attempt);
       save();
-      const res = await withOutput(`r${round}-fix-${n}`, { command: agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout }, round, n + 1, 'fix');
+      const res = await withOutput(`r${round}-fix-${n}`, { command: useFallback ? fallbackCommand : agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout }, round, n + 1, 'fix');
       calls.push(res);
       writeFileSync(join(work, `agent-r${round}-fix-${n}.log`), agentLog(res));
       const changed = gitChanged(cwd, sourceDirs);
@@ -1352,8 +1365,13 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           log.error(`${agentName} did not run: all ${calls.length} call${calls.length === 1 ? '' : 's'} this round ended without an answer (last exit code ${failed[failed.length - 1].code}). Check that it is installed and signed in (Test assistant on the Fix step), then try again.`);
           return 1;
         }
-        log.warn('no fix was committed and nothing is pending, so another round would do the same work again; stopping.');
-        return 1;
+        // A fallback assistant that has not had its turn on a finding the first failed twice on: one more round.
+        const fallbackDue = !!fallbackCommand && openFindings(ledger).some((e) => e.attempts.filter((a) => a.outcome && a.outcome !== 'pending' && !a.commit).length >= 2 && !e.attempts.some((a) => a.assistant));
+        if (!fallbackDue) {
+          log.warn('no fix was committed and nothing is pending, so another round would do the same work again; stopping.');
+          return 1;
+        }
+        log.info(`${fallbackName} has not had its turn on the remaining findings: one more round`);
       }
     }
 

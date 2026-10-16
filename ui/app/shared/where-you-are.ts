@@ -3,7 +3,7 @@ import { RouterLink } from '@angular/router';
 import { Api } from '../core/api';
 import { EnvStore } from '../core/env.store';
 import { RunStore } from '../core/run.store';
-import { CrawledRoutes, LoopTimeline } from '../core/types';
+import { CrawledRoutes, Journal, LoopTimeline } from '../core/types';
 import { WhereLive, notHoldingLine, tallyLine, whereYouAre } from '../core/where';
 import { branchUrl } from '../core/git-links';
 import { localTime } from '../core/format';
@@ -18,6 +18,7 @@ import { localTime } from '../core/format';
       <h2 id="where-h">Where you are</h2>
       <!-- The whole run so far in a few numbers, and the one thing to change when fixes keep not holding. -->
       @if (tally(); as t) { <p class="tally" data-testid="tally">{{ t }}@if (routesCount(); as n) { · <a routerLink="/history" fragment="routes" data-testid="tally-routes">{{ n }} route{{ n === 1 ? '' : 's' }} crawled</a> } · <a routerLink="/history" fragment="journal" data-testid="tally-journal">what happened</a>@if (skipped(); as k) { · <a routerLink="/history" fragment="given-up" data-testid="tally-given-up">why {{ k }} could not be fixed</a> }@if (branchLink(); as b) { · <a [href]="b.href" target="_blank" rel="noopener" data-testid="tally-branch">branch {{ b.branch }} on {{ b.host }}</a> }</p>
+      @if (timeLine(); as tl) { <p class="tally" data-testid="time-line">{{ tl }}</p> }
       <div class="actions"><button type="button" class="secondary small" (click)="copySummary()" data-testid="copy-summary">{{ copied() ? 'Copied' : 'Copy summary' }}</button></div> }
       @if (notHolding(); as n) { <p class="notice warn" role="status" data-testid="not-holding">{{ n }}</p> }
       <ul class="plain where-list">
@@ -40,6 +41,18 @@ export class WhereYouAre implements OnDestroy {
   readonly timeline = signal<LoopTimeline | null>(null);
   readonly now = signal(Date.now());
   readonly routesCount = signal(0);
+  readonly journal = signal<Journal | null>(null);
+  // Where the time went: "2 h 10 min waiting for deployments · 41 min fixing · 12 min crawling".
+  readonly timeLine = computed(() => {
+    const t = this.journal()?.time;
+    if (!t) return '';
+    const span = (ms: number) => {
+      const m = Math.round(ms / 60000);
+      return m < 1 ? `${Math.round(ms / 1000)} s` : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+    };
+    const parts = [[t.waiting, 'waiting for deployments'], [t.fixing, 'fixing'], [t.crawling, 'crawling'], [t.signIn, 'waiting for a sign-in']].filter(([ms]) => (ms as number) >= 1000).map(([ms, w]) => `${span(ms as number)} ${w}`);
+    return parts.length ? `Time: ${parts.join(' · ')}` : '';
+  });
   readonly copied = signal(false);
   // The branch the loop commits to, on the repository's web host.
   readonly branchLink = computed(() => {
@@ -56,7 +69,7 @@ export class WhereYouAre implements OnDestroy {
   // A status note: the tally, where you are, and the branch, as plain text.
   async copySummary(): Promise<void> {
     const url = this.store.run()?.['url'] || this.env.env()?.config?.file || '';
-    const lines = [`a11y-508 status, ${localTime(new Date().toISOString())}${url ? ` — ${url}` : ''}`, this.tally(), ...this.lines().map((l) => `${l.kind === 'done' ? '✓' : l.kind === 'now' ? '●' : '○'} ${l.text}`)];
+    const lines = [`a11y-508 status, ${localTime(new Date().toISOString())}${url ? ` — ${url}` : ''}`, this.tally(), this.timeLine(), ...this.lines().map((l) => `${l.kind === 'done' ? '✓' : l.kind === 'now' ? '●' : '○'} ${l.text}`)];
     const b = this.branchLink();
     if (b) lines.push(`Branch ${b.branch}: ${b.href}`);
     try {
@@ -97,6 +110,7 @@ export class WhereYouAre implements OnDestroy {
     try {
       const t = await this.api.get<LoopTimeline | null>('/api/loop/timeline');
       this.api.get<CrawledRoutes>('/api/loop/routes').then((r) => this.routesCount.set(r?.routes?.length || 0)).catch(() => {});
+      this.api.get<Journal>('/api/loop/journal').then((j) => this.journal.set(j)).catch(() => {});
       if (n === this.loads) this.timeline.set(t);
     } catch {}
   }

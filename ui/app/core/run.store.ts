@@ -68,7 +68,7 @@ export const SIGN_IN_LINES = /^A browser window is open on |holds live credentia
 export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
   'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit', 'changes', 'attempt', 'bisect',
-  'resume', 'deployment', 'deploy-check', 'marker', 'retry', 'rerun', 'sign-in-again', 'sign-in-opening', 'sign-in-failed',
+  'resume', 'deployment', 'deploy-check', 'marker', 'fallback', 'retry', 'rerun', 'sign-in-again', 'sign-in-opening', 'sign-in-failed',
 ]);
 
 // The current run, built from its event stream.
@@ -418,6 +418,9 @@ export class RunStore {
         if (ev['result'] === 'changed') notify('Deployment arrived', `Verifying ${ev['pending']} fix${ev['pending'] === 1 ? '' : 'es'} against the new build.`);
         this.deployCheck.set(ev);
         this.pane(checkLine(ev), true);
+        break;
+      case 'fallback':
+        this.pane(`Fix ${ev['n']} of ${ev['m']}: ${String(ev['assistant'])} this time, after ${ev['after']} tries that made no fix that held`, true);
         break;
       case 'marker':
         this.pane(`Build marker ${String(ev['token'])} committed in ${String(ev['file'])}: the fixes are verified against a build that serves it`, true);

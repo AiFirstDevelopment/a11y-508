@@ -32,6 +32,7 @@ export const EVENT_SCHEMA = {
   'sign-in-failed': { reason: str },
   'deploy-check': { round: num, at: str, result: oneOf('same', 'changed', 'unreadable', 'no-baseline'), forced: bool, via: opt(str), host: str, pending: num, reason: opt(str), expected: opt(str), marker: opt(str) },
   marker: { round: num, token: str, file: str },
+  fallback: { round: num, n: num, m: num, assistant: str, after: num },
   'await-deploy': { round: num, committed: num, nextRound: num, pending: opt(num), open: opt(num), branch: opt(str), host: opt(str), intervalMs: opt(num), timeoutMs: opt(num), until: opt(str), pushedAt: opt(str), meanwhile: opt(bool) },
   deployment: { state: oneOf('arrived', 'still-old', 'unreachable', 'timeout', 'stopped-waiting', 'verify-anyway'), reason: opt(oneOf('unreachable', 'no-baseline')), round: num, pending: num, open: num, branch: str, host: str, pushed: bool, remote: opt(str) },
   'agent-wait': { round: num, task: num, kind: oneOf('fix', 'triage'), reason: oneOf('quota'), delayMs: num, attempt: num, attempts: num },

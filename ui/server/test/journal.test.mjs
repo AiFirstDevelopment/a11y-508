@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { narrate } from '../journal.mjs';
+import { narrate, timeOf } from '../journal.mjs';
 
 // "What happened": events become dated sentences; repeated checks with the same result are one
 // entry with a count, and a committed fix names its files and commit.
@@ -38,4 +38,7 @@ test('journal: events narrated, repeated checks folded', () => {
   assert.deepEqual([folded.count, folded.until, folded.kind], [2, at(8), 'check']);
   assert.equal(got.find((e) => /made no change/.test(e.text)).kind, 'problem');
   assert.equal(got.find((e) => /fixed 12\.B/.test(e.text)).kind, 'fixed');
+  // Where the time went: fixing from the fix step to the push, waiting from the wait to the arrival.
+  const tm = timeOf([{ type: 'round', at: at(0), round: 2 }, { type: 'summary', at: at(1), round: 2, summary: {} }, { type: 'step', at: at(2), round: 2, step: 'fix', count: 2 }, ...events.slice(5)]);
+  assert.deepEqual([tm.crawling, tm.fixing, tm.waiting, tm.deployments], [60000, 180000, 180000, [180000]]);
 });

@@ -321,4 +321,7 @@ export interface JournalEntry {
 export interface Journal {
   entries: JournalEntry[];
   runs: number;
+  // Where the runs' time went, and how long the deployments took (for an estimate of the next).
+  time?: { crawling: number; fixing: number; waiting: number; signIn: number };
+  deployments?: { count: number; avgMs: number | null };
 }

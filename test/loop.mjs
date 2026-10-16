@@ -1225,6 +1225,32 @@ rmSync(repo2, { recursive: true, force: true });
     void g;
   }
 
+  // A fallback assistant: a finding the first assistant failed twice on goes to the second on its third
+  // try, the loop gives that try its round, and the ledger says which assistant took it.
+  {
+    const fallbackCmd = `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync(process.argv[1], JSON.stringify({ fixed: false, note: 'fallback tried' }))" {resultFile}`;
+    const { dir } = appRepo('a11y-508-fallback-', { maxAttempts: 3, fallback: fallbackCmd });
+    const site = await serve(dir);
+    const url = `http://127.0.0.1:${site.address().port}/`;
+    const run = await loopIn(dir, [url, '--max-rounds', '4', '--events']);
+    const ledger = loadLedger(join(workDir(dir), 'ledger.json'));
+    const declined = Object.values(ledger.findings).filter((e) => e.attempts.length >= 3 && !e.attempts.some((a) => a.commit));
+    check('fallback assistant: the third try of a finding the first assistant failed twice on goes to the fallback, in its own round, on record', () => {
+      assert.ok(declined.length, JSON.stringify(Object.values(ledger.findings).map((e) => [e.test, e.status, e.attempts.map((a) => [a.outcome, a.assistant || null])])));
+      for (const e of declined) {
+        assert.equal(e.attempts[2].assistant, fallbackCmd, JSON.stringify(e.attempts));
+        assert.equal(e.attempts[2].note, 'fallback tried');
+        assert.ok(!e.attempts[0].assistant && !e.attempts[1].assistant);
+      }
+      const { events, problems } = parseEvents(run.stdout);
+      assert.deepEqual(problems, []);
+      assert.ok(events.some((e) => e.type === 'fallback' && e.assistant === fallbackCmd && e.after === 2), run.stdout);
+      assert.match(run.out, /has not had its turn on the remaining findings: one more round/, run.out);
+    });
+    site.close();
+    removeOwn(dir);
+  }
+
   // ---- the build check sees a deployment that keeps its file names: each script and stylesheet is
   // hashed, and two signatures compare by content (by name where a hash is unknown, as in a ledger an
   // earlier version wrote).
