@@ -13,7 +13,7 @@ import { CrawledRoutes, Journal, LoopTimeline, Report, ReportListEntry, Timeline
 import { QuitButton } from '../shared/quit-button';
 
 // Keys whose values are secrets, anywhere in the config; and the crawl options that carry one.
-const SECRET_KEY = /token|secret|password|cookie|authorization|header/i;
+const SECRET_KEY = /token|secret|password|cookie|authorization|header|^deploy$/i;
 const SECRET_FLAG = /^--(header|cookie|token)/;
 
 // The config with its secrets blanked: values under secret-looking keys, and the value after a
@@ -22,6 +22,7 @@ export function stripSecrets(c: Record<string, any>): Record<string, any> {
   const out: Record<string, any> = {};
   for (const [k, v] of Object.entries(c || {})) {
     if (SECRET_KEY.test(k)) out[k] = '[removed]';
+    else if (typeof v === 'string' && /^[a-z]+:\/\/[^/@\s]+@/i.test(v)) out[k] = v.replace(/\/\/[^/@\s]+@/, '//[removed]@');
     else if (Array.isArray(v)) out[k] = v.map((x, i) => (i > 0 && SECRET_FLAG.test(String(v[i - 1])) ? '[removed]' : /^--(header|cookie)=/.test(String(x)) ? String(x).replace(/=.*/, '=[removed]') : x));
     else if (v && typeof v === 'object') out[k] = stripSecrets(v);
     else out[k] = v;

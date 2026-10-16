@@ -190,7 +190,7 @@ export class Driver {
         // it, where the sign-in's session is saved).
         await this.api.put('/api/settings', { agent: this.agent() }).catch(() => {});
         // The loop signs in first, in a tab of the dashboard's window, unless a way in was chosen under Advanced.
-        await this.store.start({ kind: 'loop', auth: this.form.auth(true), agent: this.agent(), signIn: !this.form.authChosen() });
+        await this.store.start({ kind: 'loop', auth: this.form.auth(true), agent: this.agent(), signIn: !this.form.authChosen(), crawl: true });
       } else {
         if (!this.form.url().trim() && this.url()) this.form.url.set(this.url());
         await this.api.put('/api/settings', {}).catch(() => {});

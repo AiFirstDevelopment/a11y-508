@@ -122,11 +122,17 @@ test('one screen AC2, AC3, guards a b c: one Start crawls, fixes, pushes, waits 
   const a = await app('a11y-508-one-');
   const dash: Dash = await dashboard({ cwd: a.cwd });
   try {
+    // A crawl of the same URL already on record: Start still crawls first (AC 2), never fixes from it.
+    expect((await api(dash, '/api/runs', { method: 'POST', body: { kind: 'crawl', url: a.base, options: { 'max-pages': '1', 'no-zoom': true }, auth: { mode: 'token', token: TOKEN } } })).status).toBe(202);
+    await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.status, { timeout: 120_000 }).toBe('done');
     await open(page, dash);
     await useToken(page);
-    await expect(now(page)).toHaveText(/^Ready to crawl 127\.0\.0\.1:\d+ and fix what it finds\.$/, { timeout: 60_000 });
+    await expect(now(page)).toHaveText(/^Done: crawled 1 page, \d+ findings?$/, { timeout: 60_000 });
+    await expect(go(page)).toHaveText('Start');
     await record(page, ['now', 'counts']);
     await go(page).click();
+    await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.kind, { timeout: 60_000 }).toBe('loop');
+    expect((await api(dash, '/api/runs/current')).json.meta.command).not.toContain('--from-report');
     // Guard b: one click goes on past the crawl to the fixing, with no second click.
     await expect.poll(async () => (await seen(page)).some((t) => /^Fixing /.test(t)), { timeout: 240_000 }).toBe(true);
     await expect(now(page)).toHaveText(WAITING, { timeout: 240_000 });

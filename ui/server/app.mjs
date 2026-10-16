@@ -575,7 +575,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       // crawl), 'wait' (keep waiting).
       const deploy = ['verify', 'verify-anyway', 'from-ledger', 'wait'].includes(body.deploy) ? body.deploy : null;
       if (body.deploy !== undefined && !deploy) throw new BadRequest('deploy must be verify, verify-anyway, from-ledger or wait');
-      const fromReport = deploy === 'from-ledger' ? true : latest && loopUrl && sameUrl(latest.baseUrl, loopUrl) ? join(latestDir(cwd), 'report.json') : null;
+      // crawl: true (the one screen's Start): round 1 crawls, whatever report is on record.
+      const fromReport = deploy === 'from-ledger' ? true : body.crawl === true ? null : latest && loopUrl && sameUrl(latest.baseUrl, loopUrl) ? join(latestDir(cwd), 'report.json') : null;
       built = loopArgs({ kind, url: body.url, options: body.options, auth, agent: agentArg, signIn, config: configPath(), stateFile: signIn || existsSync(sp().state) ? sp().state : null, connect: state.browserPort || null, fromReport, resume: body.resume === true, deploy });
       // fromReport: 'ledger' (no crawl), the report file round 1 may start from, or null.
       meta = { agent: resolved, fromReport: fromReport === true ? 'ledger' : fromReport, deploy };

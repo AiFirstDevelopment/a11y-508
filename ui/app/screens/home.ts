@@ -96,7 +96,13 @@ export class HomeScreen implements OnDestroy {
   readonly counts = computed(() => {
     const live = this.store.ledger()?.['counts'] as Record<string, number> | undefined;
     const c = live || this.driver.ledger()?.counts;
-    if (c && Object.keys(c).length) return countsLine(c);
+    const ended = this.loopKind() && !!this.store.done() && !this.running();
+    if (c && Object.keys(c).length) return countsLine(c, ended);
+    // A crawl under way, with no ledger yet: what it has found so far, never an older report's total.
+    if (this.store.active()) {
+      const so = this.store.pages().reduce((a, p) => a + (p.violations || 0) + (p.reviews || 0), 0);
+      return so ? `${so} found` : '';
+    }
     const sum = this.store.kind() === 'crawl' ? this.store.summary()?.['summary'] : null;
     const r = this.env.env()?.report;
     const found = sum ? (sum.violations || 0) + (sum.reviews || 0) : r?.exists ? (r.violations || 0) + (r.reviews || 0) : 0;

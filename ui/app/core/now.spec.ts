@@ -7,6 +7,8 @@ describe("the one screen's line of numbers", () => {
     expect(countsLine({ open: 3 })).toBe('3 found');
     expect(countsLine({})).toBe('');
     expect(countsLine(null)).toBe('');
+    // Once the loop has finished, what is still open or undecided could not be fixed either.
+    expect(countsLine({ verified: 5, open: 1, review: 1, skipped: 1 }, true)).toBe('8 found · 5 verified fixed · 3 could not be fixed');
   });
   it('says a time span in minutes once it is one', () => {
     expect(span(45_000)).toBe('45 s');

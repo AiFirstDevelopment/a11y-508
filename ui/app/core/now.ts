@@ -3,14 +3,15 @@
 
 // "25 found · 1 verified fixed · 4 awaiting your deployment · 15 could not be fixed": the ledger's
 // counts, only the parts that are not zero. found: every finding the ledger knows.
-export function countsLine(c: Record<string, number | undefined> | null | undefined): string {
+// ended: the loop has finished, so what is still open or undecided could not be fixed either.
+export function countsLine(c: Record<string, number | undefined> | null | undefined, ended = false): string {
   if (!c) return '';
   const found = Object.values(c).reduce<number>((a, n) => a + (n || 0), 0);
   const parts: [number, string][] = [
     [found, 'found'],
     [c['verified'] || 0, 'verified fixed'],
     [c['pending'] || 0, 'awaiting your deployment'],
-    [c['skipped'] || 0, 'could not be fixed'],
+    [(c['skipped'] || 0) + (ended ? (c['open'] || 0) + (c['review'] || 0) : 0), 'could not be fixed'],
   ];
   return parts.filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}`).join(' · ');
 }
