@@ -228,6 +228,10 @@ export interface LedgerItem {
   attempts: number;
   reason: string | null;
   selector: string;
+  // The one screen's "could not be fixed" panel: the routes it was seen on, the element, and why.
+  routes?: string[];
+  html?: string;
+  why?: string;
 }
 
 export interface LedgerInfo {

@@ -117,7 +117,7 @@ test('one screen AC1, guard d: the name and build, the folder and URL, one sente
   }
 });
 
-test('one screen AC2, AC3, guards a b c: one Start crawls, fixes, pushes, waits for the build, verifies and finishes; the sentence follows every step; one button throughout', async ({ page }) => {
+test('one screen AC2, AC3, AC7, guards a b c: one Start crawls, fixes, pushes, waits for the build, verifies and finishes; the sentence follows every step; one button throughout; what could not be fixed is a link to why, where and the element', async ({ page }) => {
   test.setTimeout(600_000);
   const a = await app('a11y-508-one-');
   const dash: Dash = await dashboard({ cwd: a.cwd });
@@ -152,6 +152,39 @@ test('one screen AC2, AC3, guards a b c: one Start crawls, fixes, pushes, waits 
     for (const st of states) expect(st.buttons, `${st.now}: ${st.buttons.join(' | ')}`).toHaveLength(1);
     for (const st of states.filter((x) => CRAWLING.test(x.now) || FIXING.test(x.now) || WAITING.test(x.now))) expect(st.buttons, st.now).toEqual(['Stop']);
     for (const st of states.filter((x) => DONE.test(x.now))) expect(st.buttons, st.now).toEqual(['Start']);
+    await asksNothing(page);
+    // AC7: the number that could not be fixed is a link; a panel from the right lists each one with
+    // why it could not be fixed, the routes it was seen on, and the element.
+    const m = /(\d+) could not be fixed/.exec((await page.getByTestId('counts').textContent()) || '');
+    expect(m, 'the fake agent leaves findings it cannot fix').not.toBeNull();
+    const n = Number(m![1]);
+    const link = page.getByTestId('unfixed-link');
+    await expect(link).toHaveText(`${n} could not be fixed`);
+    await expect(page.getByTestId('unfixed-panel')).toBeHidden();
+    await link.click();
+    const panel = page.getByTestId('unfixed-panel');
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole('heading', { level: 2 })).toHaveText(`${n} could not be fixed`);
+    const items = panel.getByTestId('unfixed-item');
+    await expect(items).toHaveCount(n);
+    const site = new RegExp(`^${a.base.replace(/[.*+?^$()|[\]\\]/g, '\\$&')}`);
+    for (const item of await items.all()) {
+      await expect(item.locator('.what')).toHaveText(/^\d+\.[A-Z]+ (critical|serious|moderate|minor|review): \S/);
+      await expect(item.getByTestId('unfixed-why')).toHaveText(/^Why: \S/);
+      const where = item.getByTestId('unfixed-where');
+      if (await where.getByRole('link').count()) await expect(where.getByRole('link').first()).toHaveAttribute('href', site);
+      else await expect(where).toHaveText(/the whole site/);
+      await expect(item.getByTestId('unfixed-element')).toHaveText(/^Element: \S/);
+    }
+    // The fake agent says why it made no change; the panel says it in those words.
+    await expect(items.filter({ hasText: 'Why: The assistant made no change' }).first()).toBeVisible();
+    // Esc and Close both close it; the screen asks nothing again.
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    await link.click();
+    await expect(panel).toBeVisible();
+    await page.getByTestId('unfixed-close').click();
+    await expect(panel).toBeHidden();
     await asksNothing(page);
   } finally {
     await api(dash, '/api/runs/current/stop', { method: 'POST' }).catch(() => {});

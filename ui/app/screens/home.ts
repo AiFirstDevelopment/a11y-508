@@ -1,4 +1,4 @@
-import { Component, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Component, ElementRef, OnDestroy, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Api } from '../core/api';
 import { Driver } from '../core/driver';
@@ -7,7 +7,8 @@ import { RunStore } from '../core/run.store';
 import { Starter } from '../core/starter';
 import { continuingText } from '../core/resume';
 import { plainReason } from '../core/outcome';
-import { clockOf, countsLine, hostOf, lowerFirst, plural, span, upperFirst } from '../core/now';
+import { LedgerItem } from '../core/types';
+import { clockOf, countsParts, hostOf, lowerFirst, plural, span, upperFirst, type CountsPart } from '../core/now';
 
 // A finding's words, cut at a word once they are long.
 function short(text: string, max = 72): string {
@@ -32,7 +33,9 @@ function short(text: string, max = 72): string {
       </p>
     }
     <p class="big-status" role="status" data-testid="now">{{ now() }}</p>
-    @if (counts(); as c) { <p data-testid="counts">{{ c }}</p> }
+    @if (counts().length) {
+      <p data-testid="counts">@for (c of counts(); track c.key) {@if (!$first) {<span aria-hidden="true"> · </span>}@if (c.key === 'unfixed') {<a href="#could-not-be-fixed" data-testid="unfixed-link" (click)="openUnfixed($event)">{{ c.text }}</a>} @else {<span>{{ c.text }}</span>}}</p>
+    }
     <div class="actions">
       @if (running()) {
         <button type="button" class="big" data-testid="go" (click)="driver.stop()" [disabled]="driver.starting() && !store.active()">Stop</button>
@@ -45,10 +48,44 @@ function short(text: string, max = 72): string {
     </div>
     @if (driver.error() || missed()) { <p class="notice error" role="alert" data-testid="start-error">{{ driver.error() || missed() }}</p> }
     <p class="diagnostics-link"><a routerLink="/diagnostics" data-testid="diagnostics-link">Diagnostics</a></p>
+    <!-- What could not be fixed: a panel from the right, one entry per finding with why, where and the element. -->
+    <dialog #unfixedPanel class="pane" id="could-not-be-fixed" aria-labelledby="unfixed-title" data-testid="unfixed-panel" (close)="unfixedOpen.set(false)">
+      @if (unfixedOpen()) {
+        <div class="pane-head">
+          <h2 id="unfixed-title">{{ plural(unfixed().length, 'could not be fixed', 'could not be fixed') }}</h2>
+          <button type="button" class="secondary" data-testid="unfixed-close" (click)="closeUnfixed()">Close</button>
+        </div>
+        @if (!unfixed().length) { <p>Nothing is on record yet.</p> }
+        <ol>
+          @for (e of unfixed(); track $index) {
+            <li data-testid="unfixed-item">
+              <p class="what"><strong>{{ e.test }}</strong> {{ e.impact }}: {{ e.message }}</p>
+              <p data-testid="unfixed-why"><span class="label">Why:</span> {{ e.why || e.reason || 'no reason was recorded' }}</p>
+              <p data-testid="unfixed-where"><span class="label">Where:</span>
+                @for (r of routesOf(e); track r; let last = $last) {
+                  @if (r === 'site') { the whole site } @else { <a [href]="r" target="_blank" rel="noopener" [title]="r">{{ pathOf(r) }}</a> }@if (!last) {, }
+                }
+                @if (!routesOf(e).length) { not recorded }
+              </p>
+              <p data-testid="unfixed-element"><span class="label">Element:</span> <code>{{ e.selector || 'the page' }}</code></p>
+              @if (e.html) { <pre><code>{{ e.html }}</code></pre> }
+            </li>
+          }
+        </ol>
+      }
+    </dialog>
   `,
   styles: [`
     .place { overflow-wrap: anywhere; color: var(--muted); }
     .app-name .build { font-size: 0.5em; font-weight: normal; color: var(--muted); }
+    dialog.pane { position: fixed; inset: 0 0 0 auto; margin: 0; height: 100vh; max-height: none; width: min(640px, 100vw); max-width: none; box-sizing: border-box; border: 0; border-left: 2px solid var(--accent); border-radius: 0; padding: 16px 20px 24px; overflow: auto; }
+    .pane-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .pane-head h2 { margin: 0; }
+    .pane ol { padding-left: 22px; margin: 16px 0 0; }
+    .pane li { margin: 0 0 18px; }
+    .pane li p { margin: 2px 0; overflow-wrap: anywhere; }
+    .pane .label { color: var(--muted); }
+    .pane pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; background: #f4f4f4; padding: 6px 8px; margin: 4px 0 0; border-radius: 4px; }
   `],
 })
 export class HomeScreen implements OnDestroy {
@@ -58,6 +95,9 @@ export class HomeScreen implements OnDestroy {
   private api = inject(Api);
   private starter = inject(Starter);
   readonly missed = signal('');
+  readonly unfixedOpen = signal(false);
+  private unfixedPanel = viewChild.required<ElementRef<HTMLDialogElement>>('unfixedPanel');
+  readonly plural = plural;
   private tick = signal(Date.now());
   private ticker = setInterval(() => this.tick.set(Date.now()), 1000);
 
@@ -92,22 +132,49 @@ export class HomeScreen implements OnDestroy {
     }
   }
 
+  // Once the loop has ended, what is still open or undecided could not be fixed either.
+  private loopEnded = computed(() => this.loopKind() && !!this.store.done() && !this.running());
+
   // The ledger's counts, live while the loop runs; a crawl alone has only what it found.
-  readonly counts = computed(() => {
+  readonly counts = computed<CountsPart[]>(() => {
     const live = this.store.ledger()?.['counts'] as Record<string, number> | undefined;
     const c = live || this.driver.ledger()?.counts;
-    const ended = this.loopKind() && !!this.store.done() && !this.running();
-    if (c && Object.keys(c).length) return countsLine(c, ended);
+    if (c && Object.keys(c).length) return countsParts(c, this.loopEnded());
+    const one = (n: number): CountsPart[] => (n ? [{ key: 'found', n, text: `${n} found` }] : []);
     // A crawl under way, with no ledger yet: what it has found so far, never an older report's total.
-    if (this.store.active()) {
-      const so = this.store.pages().reduce((a, p) => a + (p.violations || 0) + (p.reviews || 0), 0);
-      return so ? `${so} found` : '';
-    }
+    if (this.store.active()) return one(this.store.pages().reduce((a, p) => a + (p.violations || 0) + (p.reviews || 0), 0));
     const sum = this.store.kind() === 'crawl' ? this.store.summary()?.['summary'] : null;
     const r = this.env.env()?.report;
-    const found = sum ? (sum.violations || 0) + (sum.reviews || 0) : r?.exists ? (r.violations || 0) + (r.reviews || 0) : 0;
-    return found ? `${found} found` : '';
+    return one(sum ? (sum.violations || 0) + (sum.reviews || 0) : r?.exists ? (r.violations || 0) + (r.reviews || 0) : 0);
   });
+
+  // What could not be fixed, as the line counts it: given up on, and once the loop has ended, still open or undecided.
+  readonly unfixed = computed<LedgerItem[]>(() => {
+    const lists = this.driver.ledger()?.lists;
+    if (!lists) return [];
+    return [...(lists['skipped'] || []), ...(this.loopEnded() ? [...(lists['open'] || []), ...(lists['review'] || [])] : [])];
+  });
+  readonly routesOf = (e: LedgerItem): string[] => e.routes || [];
+  pathOf(url: string): string {
+    try {
+      const u = new URL(url);
+      return `${u.pathname}${u.hash}` || '/';
+    } catch {
+      return url;
+    }
+  }
+  openUnfixed(ev?: Event): void {
+    ev?.preventDefault();
+    void this.driver.loadLedger();
+    this.unfixedOpen.set(true);
+    const d = this.unfixedPanel().nativeElement;
+    if (!d.open) d.showModal();
+  }
+  closeUnfixed(): void {
+    const d = this.unfixedPanel().nativeElement;
+    if (d.open) d.close();
+    this.unfixedOpen.set(false);
+  }
 
   private host = computed(() => hostOf(String(this.store.run()?.['url'] || '') || this.driver.url()));
   private assistant = computed(() => this.driver.label(String((this.store.run()?.['meta'] as Record<string, unknown> | undefined)?.['agent'] || '') || this.driver.agent()));

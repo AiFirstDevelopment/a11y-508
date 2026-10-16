@@ -38,7 +38,7 @@ That is all. There is no `npm install` step, for the command line or the dashboa
 
 ### The dashboard
 
-A local web dashboard, built on the CLI, runs the fix loop from one button, only on your machine.
+A local dashboard runs the fix loop from one button, only on your machine.
 
 ```sh
 git clone https://github.com/AiFirstDevelopment/a11y-508.git
@@ -47,7 +47,7 @@ npm run ui                                # opens http://127.0.0.1:5508/#secret=
 node ui/server/main.mjs --dir ../my-app   # the same, started in another repository
 ```
 
-It is one screen: the folder and URL, one sentence of what is happening now ("Pushed 3 fixes to a11y-508; waiting for your deployment (pushed 11:51 AM, checked 2:31 PM: still the old build)"), one line of numbers, and one button. **Start** crawls the site (signing in through a tab when the app asks), fixes what it finds with the first installed assistant (Claude Code, Gemini CLI or Codex), pushes, waits for your deployment, verifies, and goes round again until nothing is left; meanwhile the button is **Stop**. A first visit asks for the folder (**Browse…**) and the URL. Outside the app's repository, Start only crawls.
+It is one screen: the folder and URL, one sentence of what is happening now ("Pushed 3 fixes to a11y-508; waiting for your deployment (pushed 11:51 AM, checked 2:31 PM: still the old build)"), one line of numbers (the count that could not be fixed links to why, where and which element), and one button. **Start** crawls the site (signing in through a tab when the app asks), fixes what it finds with the first installed assistant (Claude Code, Gemini CLI or Codex), pushes, waits for your deployment, verifies, and goes round again until nothing is left; meanwhile the button is **Stop**. A first visit asks for the folder (**Browse…**) and the URL. Outside the app's repository, Start only crawls.
 
 **Diagnostics**, the one link, is a page for the tool's developer: the build, config, counts, what happened, rounds, routes, findings, what could not be fixed, the deploy record, changes, assistants, the diary and the last run's output, with **Copy diagnostics** and **Download diagnostics**. At its bottom: **Change folder or URL**, and **Advanced** (the assistant, the crawl's and the loop's settings).
 

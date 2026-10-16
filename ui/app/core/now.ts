@@ -4,16 +4,25 @@
 // "25 found · 1 verified fixed · 4 awaiting your deployment · 15 could not be fixed": the ledger's
 // counts, only the parts that are not zero. found: every finding the ledger knows.
 // ended: the loop has finished, so what is still open or undecided could not be fixed either.
-export function countsLine(c: Record<string, number | undefined> | null | undefined, ended = false): string {
-  if (!c) return '';
+export interface CountsPart {
+  key: 'found' | 'verified' | 'pending' | 'unfixed';
+  n: number;
+  text: string;
+}
+// The parts of the line that are not zero; "unfixed" is the link to the "could not be fixed" panel.
+export function countsParts(c: Record<string, number | undefined> | null | undefined, ended = false): CountsPart[] {
+  if (!c) return [];
   const found = Object.values(c).reduce<number>((a, n) => a + (n || 0), 0);
-  const parts: [number, string][] = [
-    [found, 'found'],
-    [c['verified'] || 0, 'verified fixed'],
-    [c['pending'] || 0, 'awaiting your deployment'],
-    [(c['skipped'] || 0) + (ended ? (c['open'] || 0) + (c['review'] || 0) : 0), 'could not be fixed'],
+  const parts: [CountsPart['key'], number, string][] = [
+    ['found', found, 'found'],
+    ['verified', c['verified'] || 0, 'verified fixed'],
+    ['pending', c['pending'] || 0, 'awaiting your deployment'],
+    ['unfixed', (c['skipped'] || 0) + (ended ? (c['open'] || 0) + (c['review'] || 0) : 0), 'could not be fixed'],
   ];
-  return parts.filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}`).join(' · ');
+  return parts.filter(([, n]) => n > 0).map(([key, n, w]) => ({ key, n, text: `${n} ${w}` }));
+}
+export function countsLine(c: Record<string, number | undefined> | null | undefined, ended = false): string {
+  return countsParts(c, ended).map((p) => p.text).join(' · ');
 }
 
 // "45 s", "4 min", "2 h 10 min".

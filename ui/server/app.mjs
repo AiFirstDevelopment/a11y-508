@@ -29,6 +29,7 @@ import { CONFIG_FILE, factsOf, inGitRepo, listDirs, realDir } from './dirs.mjs';
 import { addDiarySecrets, readDiary, writeDiary } from '../../src/diary.mjs';
 import { describeEntry, doingOf } from './diagnostics.mjs';
 import { bringToFront as bringTabToFront, signInTabOf } from './sign-in-tab.mjs';
+import { unfixedFacts } from './unfixed.mjs';
 
 // The wizard's steps, as lastStep stores them.
 const STEPS = ['/run', '/live', '/report', '/fix-loop', '/history'];
@@ -717,7 +718,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const ledger = loadLedger(file);
     // reason: the ledger's, else what the assistant said last (why a finding it gave up on could not be fixed).
     const lastNote = (e) => [...(e.attempts || [])].reverse().map((a) => a && a.note).find(Boolean) || null;
-    const pick = (status) => byStatus(ledger, status).map((e) => ({ test: e.test, impact: e.impact, message: e.message, pages: e.pages.length, attempts: e.attempts.length, reason: e.reason || lastNote(e), selector: e.selector }));
+    // routes, html and why: the one screen's "could not be fixed" panel (ui/server/unfixed.mjs).
+    const pick = (status) => byStatus(ledger, status).map((e) => ({ test: e.test, impact: e.impact, message: e.message, pages: e.pages.length, attempts: e.attempts.length, reason: e.reason || lastNote(e), selector: e.selector, ...unfixedFacts(e) }));
     return {
       exists: true, rounds: ledger.rounds, counts: statusCounts(ledger), line: summaryLine(ledger), deploy: ledger.deploy || null,
       lists: { open: pick('open'), pending: pick('pending'), review: pick('review'), skipped: pick('skipped') },
