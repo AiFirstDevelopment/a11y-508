@@ -39,6 +39,8 @@ export interface PageRow {
   discovery: Discovery;
   // 404 from the server, rendered by the app anyway (audited).
   servedWith: number | null;
+  // The page's findings (absent from an older CLI).
+  findings: { test: string; level: string; impact: string; message: string; selector: string }[];
 }
 
 // One call of the fixing assistant (a fix, or a triage batch), with its output as it arrives.
@@ -266,6 +268,7 @@ export class RunStore {
           violations: ev['violations'], reviews: ev['reviews'], byImpact: ev['byImpact'], durationMs: ev['durationMs'], round: ev['round'] ?? null,
           modalOnLoad: ev['modalOnLoad'] ?? null,
           servedWith: ev['servedWith'] ?? null,
+          findings: Array.isArray(ev['findings']) ? ev['findings'] : [],
           discovery: { links: ev['links'] ?? 0, clicked: ev['clicked'] ?? null, clickedNew: ev['clickedNew'] ?? null, skippedActions: ev['skippedActions'] ?? [], skippedActionsCount: ev['skippedActionsCount'] ?? 0, searched: ev['searched'] ?? null, searchResults: ev['searchResults'] ?? null },
         };
         this.pages.update((p) => [...p, row]);

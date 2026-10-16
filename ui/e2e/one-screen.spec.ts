@@ -117,7 +117,7 @@ test('one screen AC1, guard d: the name and build, the folder and URL, one sente
   }
 });
 
-test('one screen AC2, AC3, AC7, guards a b c: one Start crawls, fixes, pushes, waits for the build, verifies and finishes; the sentence follows every step; one button throughout; what could not be fixed is a link to why, where and the element', async ({ page }) => {
+test('one screen AC2, AC3, AC7, AC8, guards a b c: one Start crawls, fixes, pushes, waits for the build, verifies and finishes; the sentence follows every step; one button throughout; what could not be fixed is a link to why, where and the element', async ({ page }) => {
   test.setTimeout(600_000);
   const a = await app('a11y-508-one-');
   const dash: Dash = await dashboard({ cwd: a.cwd });
@@ -132,6 +132,16 @@ test('one screen AC2, AC3, AC7, guards a b c: one Start crawls, fixes, pushes, w
     await record(page, ['now', 'counts']);
     await go(page).click();
     await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.kind, { timeout: 60_000 }).toBe('loop');
+    // AC8: while it crawls, "N pages" and "M findings" are links to a panel of each page's route and findings.
+    await expect(page.getByTestId('pages-link')).toBeVisible({ timeout: 120_000 });
+    await page.getByTestId('findings-link').click();
+    const pagesPanel = page.getByTestId('pages-panel');
+    await expect(pagesPanel).toBeVisible();
+    await expect(pagesPanel.getByRole('heading', { level: 2 })).toHaveText(/^\d+ pages?, \d+ findings?$/);
+    await expect(pagesPanel.getByTestId('pages-route').first()).toHaveAttribute('href', new RegExp(`^${a.base.replace(/[.*+?^$()|[\]\\]/g, '\\$&')}`));
+    await expect(pagesPanel.getByTestId('pages-finding').first()).toHaveText(/^\d+\.[A-Z]+ (critical|serious|moderate|minor|to review): .+\S$/);
+    await page.getByTestId('pages-close').click();
+    await expect(pagesPanel).toBeHidden();
     expect((await api(dash, '/api/runs/current')).json.meta.command).not.toContain('--from-report');
     // Guard b: one click goes on past the crawl to the fixing, with no second click.
     await expect.poll(async () => (await seen(page)).some((t) => /^Fixing /.test(t)), { timeout: 240_000 }).toBe(true);

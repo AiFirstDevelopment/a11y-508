@@ -391,6 +391,8 @@ export function pageEvent(p, done, discovered, limit) {
     url: p.url, finalUrl: p.finalUrl || p.url, title: p.title || '', status: p.status ?? null, error: p.error || null, skipped: p.skipped || null,
     violations, reviews: findings.length - violations, byImpact, durationMs: p.durationMs || 0, foundBy: p.foundBy || 'link',
     modalOnLoad: p.modalOnLoad || null, servedWith: p.servedWith || null, ...discoveryFacts(p), done, discovered, limit: limit ?? null,
+    // The page's findings, for the dashboard's "pages so far" panel (capped, messages cut).
+    findings: findings.slice(0, 200).map((f) => ({ test: f.test, level: f.level, impact: f.impact, message: String(f.message || '').slice(0, 300), selector: f.selector || '' })),
   };
 }
 

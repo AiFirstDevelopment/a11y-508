@@ -32,7 +32,7 @@ function short(text: string, max = 72): string {
         <span data-testid="url"><span class="visually-hidden">URL: </span>{{ driver.url() || 'no URL yet' }}</span>
       </p>
     }
-    <p class="big-status" role="status" data-testid="now">{{ now() }}</p>
+    <p class="big-status" role="status" data-testid="now">@for (seg of nowParts(); track $index) {@if (seg.link) {<a href="#pages-so-far" [attr.data-testid]="seg.link" (click)="openPages($event)">{{ seg.text }}</a>} @else {{{ seg.text }}}}</p>
     @if (counts().length) {
       <p data-testid="counts">@for (c of counts(); track c.key) {@if (!$first) {<span aria-hidden="true"> · </span>}@if (c.key === 'unfixed') {<a href="#could-not-be-fixed" data-testid="unfixed-link" (click)="openUnfixed($event)">{{ c.text }}</a>} @else {<span>{{ c.text }}</span>}}</p>
     }
@@ -48,6 +48,31 @@ function short(text: string, max = 72): string {
     </div>
     @if (driver.error() || missed()) { <p class="notice error" role="alert" data-testid="start-error">{{ driver.error() || missed() }}</p> }
     <p class="diagnostics-link"><a routerLink="/diagnostics" data-testid="diagnostics-link">Diagnostics</a></p>
+    <!-- The pages crawled so far: each one's route, title and findings. -->
+    <dialog #pagesPanel class="pane" id="pages-so-far" aria-labelledby="pages-title" data-testid="pages-panel" (close)="pagesOpen.set(false)">
+      @if (pagesOpen()) {
+        <div class="pane-head">
+          <h2 id="pages-title">{{ plural(store.pages().length, 'page') }}, {{ plural(foundSoFar(), 'finding') }}</h2>
+          <button type="button" class="secondary" data-testid="pages-close" (click)="closePages()">Close</button>
+        </div>
+        <ol>
+          @for (p of store.pages(); track $index) {
+            <li data-testid="pages-item">
+              <p class="what"><a [href]="p.finalUrl || p.url" target="_blank" rel="noopener" [title]="p.finalUrl || p.url" data-testid="pages-route">{{ pathOf(p.finalUrl || p.url) }}</a>@if (p.title) { · {{ p.title }}}</p>
+              @if (p.error || p.skipped) { <p data-testid="pages-error">Not audited: {{ p.error || p.skipped }}</p> }
+              @else if (!p.findings.length) { <p data-testid="pages-none">{{ p.violations + p.reviews ? plural(p.violations + p.reviews, 'finding') : 'No findings' }}</p> }
+              @else {
+                <ul>
+                  @for (f of p.findings; track $index) {
+                    <li data-testid="pages-finding"><strong>{{ f.test }}</strong> {{ f.level === 'violation' ? f.impact : 'to review' }}: {{ f.message }} <code>{{ f.selector || 'the page' }}</code></li>
+                  }
+                </ul>
+              }
+            </li>
+          }
+        </ol>
+      }
+    </dialog>
     <!-- What could not be fixed: a panel from the right, one entry per finding with why, where and the element. -->
     <dialog #unfixedPanel class="pane" id="could-not-be-fixed" aria-labelledby="unfixed-title" data-testid="unfixed-panel" (close)="unfixedOpen.set(false)">
       @if (unfixedOpen()) {
@@ -84,6 +109,8 @@ function short(text: string, max = 72): string {
     .pane ol { padding-left: 22px; margin: 16px 0 0; }
     .pane li { margin: 0 0 18px; }
     .pane li p { margin: 2px 0; overflow-wrap: anywhere; }
+    .pane ul { padding-left: 18px; margin: 4px 0 0; }
+    .pane ul li { margin: 0 0 4px; overflow-wrap: anywhere; }
     .pane .label { color: var(--muted); }
     .pane pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; background: #f4f4f4; padding: 6px 8px; margin: 4px 0 0; border-radius: 4px; }
   `],
@@ -96,6 +123,8 @@ export class HomeScreen implements OnDestroy {
   private starter = inject(Starter);
   readonly missed = signal('');
   readonly unfixedOpen = signal(false);
+  readonly pagesOpen = signal(false);
+  private pagesPanel = viewChild.required<ElementRef<HTMLDialogElement>>('pagesPanel');
   private unfixedPanel = viewChild.required<ElementRef<HTMLDialogElement>>('unfixedPanel');
   readonly plural = plural;
   private tick = signal(Date.now());
@@ -162,6 +191,32 @@ export class HomeScreen implements OnDestroy {
     } catch {
       return url;
     }
+  }
+  readonly foundSoFar = computed(() => this.store.pages().reduce((a, p) => a + (p.violations || 0) + (p.reviews || 0), 0));
+  // The sentence, with "6 pages" and "24 findings" as links to the pages panel while there are pages to show.
+  readonly nowParts = computed<{ text: string; link?: string }[]>(() => {
+    const text = this.now();
+    if (!this.store.pages().length || !/^(Crawling |Done: crawled )/.test(text)) return [{ text }];
+    const out: { text: string; link?: string }[] = [];
+    let last = 0;
+    for (const m of text.matchAll(/\d+ pages?(?= so far|,)|\d+ findings?/g)) {
+      if (m.index! > last) out.push({ text: text.slice(last, m.index) });
+      out.push({ text: m[0], link: /page/.test(m[0]) ? 'pages-link' : 'findings-link' });
+      last = m.index! + m[0].length;
+    }
+    if (last < text.length) out.push({ text: text.slice(last) });
+    return out;
+  });
+  openPages(ev?: Event): void {
+    ev?.preventDefault();
+    this.pagesOpen.set(true);
+    const d = this.pagesPanel().nativeElement;
+    if (!d.open) d.showModal();
+  }
+  closePages(): void {
+    const d = this.pagesPanel().nativeElement;
+    if (d.open) d.close();
+    this.pagesOpen.set(false);
   }
   openUnfixed(ev?: Event): void {
     ev?.preventDefault();
