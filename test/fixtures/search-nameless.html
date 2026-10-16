@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cases, nameless search button - a11y-508 test site</title>
+</head>
+<body>
+<main>
+<h1>Cases, nameless search button</h1>
+<p>The search button is an icon with no accessible name: the crawler cannot know it is the search, and says so in the coverage notes, naming the buttons it saw.</p>
+<form id="nameless-form" onsubmit="return false">
+  <label for="n-from">From</label> <input id="n-from" type="text" placeholder="MM/DD/YYYY" size="10">
+  <label for="n-to">To</label> <input id="n-to" type="text" placeholder="MM/DD/YYYY" size="10">
+  <button type="button" id="n-go"><span aria-hidden="true">🔍</span></button>
+  <button type="button" id="n-export">Export</button>
+</form>
+<p><a href="/about.html">Back to the fixture list</a></p>
+</main>
+</body>
+</html>

@@ -759,14 +759,26 @@ export async function searchPass(page, add, fingerprints, opts, reload, origin) 
     const rest = await page.evaluate(`window.__a11y508.fillSearch(${sel}, ${months}, { presets: false, dates: ${!fill.preset} })`);
     if (rest) Object.assign(fill, { dates: rest.dates, from: rest.from, to: rest.to, required: rest.required });
     let pt = null;
-    if (f.submit) pt = await page.evaluate(`window.__a11y508.prepareClick(${JSON.stringify(f.submit)})`).catch(() => null);
+    // A Search button disabled until the form is valid: pressed once the fill has enabled it (the app
+    // may take a moment); when it never does, Enter in a field submits instead, and the record says so.
+    let stayedDisabled = false;
+    if (f.submit && f.submitDisabled) {
+      const until = Date.now() + 2000;
+      while (Date.now() < until && !(await page.evaluate(`window.__a11y508.isEnabled(${JSON.stringify(f.submit)})`).catch(() => false))) await sleep(150);
+      stayedDisabled = !(await page.evaluate(`window.__a11y508.isEnabled(${JSON.stringify(f.submit)})`).catch(() => false));
+    }
+    if (f.submit && !stayedDisabled) pt = await page.evaluate(`window.__a11y508.prepareClick(${JSON.stringify(f.submit)})`).catch(() => null);
     const before = await page.evaluate('window.__a11y508.searchSignature()').catch(() => null);
-    if (pt) await page.click(pt.x, pt.y);
+    if (pt) {
+      await page.click(pt.x, pt.y);
+      fill.pressed = f.name;
+    }
     // Enter submits the form's default button: never beside one named like an action.
     else if (f.danger) return null;
     else {
       await page.evaluate(`(() => { const s = window.__a11y508.query(${JSON.stringify(f.selector)}); const el = s && s.querySelector('input:not([type=hidden]), select, textarea'); if (el) el.focus(); return !!el; })()`);
       await page.press('Enter');
+      fill.pressed = stayedDisabled ? `Enter (the "${f.name}" button stayed disabled)` : 'Enter';
     }
     await settle(page, { before });
     await page.ensureInjected().catch(() => {});
@@ -844,7 +856,7 @@ export async function searchPass(page, add, fingerprints, opts, reload, origin) 
     const picked = new Set(found.map((_, k) => k).sort(() => Math.random() - 0.5).slice(0, 3));
     out.urls.push(...found.map((url, k) => ({ url, priority: picked.has(k) })));
     out.results += found.length;
-    out.forms.push({ name: f.name, selector: f.selector, from: fill.from || null, to: fill.to || null, preset: fill.preset, presetDays: fill.presetDays, short: !!fill.short, results: found.length, navigated: !!navigated });
+    out.forms.push({ name: f.name, selector: f.selector, from: fill.from || null, to: fill.to || null, preset: fill.preset, presetDays: fill.presetDays, short: !!fill.short, results: found.length, navigated: !!navigated, pressed: fill.pressed || null });
     if (!found.length && !res.candidates.length && (fill.dates || fill.preset)) out.empty++;
   }
   if ((await here()) !== startHref) await reload();

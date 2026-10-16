@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
-const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal'];
+const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless'];
 if (only && !GROUPS.includes(only)) throw new Error(`--only takes one of ${GROUPS.join(', ')}`);
 const want = (group) => !only || only === group;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-search-')));
@@ -151,7 +151,7 @@ if (want('combo')) {
     assert.deepEqual(subs.map((s) => [s.open, s.status]), subs.map(() => [false, 'All']));
   });
   check('combo: the coverage notes say which preset the form used', () => {
-    assert.ok(notes(c.report).includes("Search form on /search-combo.html: chose 'Last 6 months'."), JSON.stringify(notes(c.report)));
+    assert.ok(notes(c.report).some((n) => n.startsWith("Search form on /search-combo.html: chose 'Last 6 months'.")), JSON.stringify(notes(c.report)));
   });
 }
 if (want('combo12')) {
@@ -193,7 +193,7 @@ if (want('material')) {
     for (const p of ['/result-51.html', '/result-52.html']) assert.ok(audited(m.report).includes(p), `${p} in ${audited(m.report)}`);
   });
   check('material: the coverage notes say which dates each form was filled with', () => {
-    const filled = notes(m.report).filter((n) => /^Search form on \/search-material\.html: filled \d{2}\/\d{2}\/\d{4} to \d{2}\/\d{2}\/\d{4}\.$/.test(n));
+    const filled = notes(m.report).filter((n) => /^Search form on \/search-material\.html: filled \d{2}\/\d{2}\/\d{4} to \d{2}\/\d{2}\/\d{4}\.( Pressed .*)?$/.test(n));
     assert.equal(filled.length, 2, JSON.stringify(notes(m.report)));
   });
 }
@@ -242,7 +242,7 @@ if (want('quick')) {
     const pg = pageOf(q.report, '/search-quick.html');
     assert.ok(pg.search && !pg.search.skipped.length, JSON.stringify(pg.search));
     assert.deepEqual(pg.search.forms.map((f) => [f.name, f.preset, f.navigated]), [['Search', 'Last 6 months', true]], JSON.stringify(pg.search.forms));
-    assert.ok(notes(q.report).includes("Search form on /search-quick.html: chose 'Last 6 months'."), JSON.stringify(notes(q.report)));
+    assert.ok(notes(q.report).some((n) => n.startsWith("Search form on /search-quick.html: chose 'Last 6 months'.")), JSON.stringify(notes(q.report)));
   });
 }
 if (want('quickload')) {
@@ -317,5 +317,30 @@ if (want('reveal')) {
     const start = pageOf(rv.report, '/menu-reveal.html');
     assert.equal(start.discovery.revealed, 3, JSON.stringify(start.discovery));
     assert.ok(notes(rv.report).some((n) => /^3 link\(s\) appeared only after a control was clicked or opened/.test(n)), JSON.stringify(notes(rv.report)));
+  });
+}
+
+// A Search button disabled until the form is valid: pressed once the fill has enabled it.
+if (want('disabled')) {
+  const d = await crawl('disabled', ['--quiet', '--json', '--max-pages', '3'], 'search-disabled.html');
+  check('disabled: the Search button, disabled until the dates are filled, is pressed once the fill enables it, and the result page is audited', () => {
+    assert.ok(d.report, d.stderr);
+    const pg = pageOf(d.report, '/search-disabled.html');
+    assert.deepEqual(pg.search.skipped, [], JSON.stringify(pg.search));
+    assert.deepEqual(pg.discovery.forms, { filled: 1, submitted: 1, results: 1 }, JSON.stringify(pg.search));
+    assert.equal(pg.search.forms[0].pressed, 'Search', JSON.stringify(pg.search.forms));
+    const res = pageOf(d.report, '/result-65.html');
+    assert.ok(res && !res.error && res.foundBy === 'form', JSON.stringify(d.report.pages.map((p) => [path(p.url), p.foundBy, p.error])));
+    assert.ok(notes(d.report).some((n) => /^Search form on \/search-disabled\.html: filled \d{2}\/\d{2}\/\d{4} to \d{2}\/\d{2}\/\d{4}\. Pressed "Search": 1 result\.$/.test(n)), JSON.stringify(notes(d.report)));
+  });
+}
+// A search button with no accessible name: the form cannot be searched, and the notes say which buttons it has.
+if (want('nameless')) {
+  const nl = await crawl('nameless', ['--quiet', '--json', '--max-pages', '2'], 'search-nameless.html');
+  check('nameless: a search-like form whose button has no name is reported with the buttons it has', () => {
+    assert.ok(nl.report, nl.stderr);
+    const pg = pageOf(nl.report, '/search-nameless.html');
+    assert.deepEqual(pg.search.skipped.map((s) => s.reason), ['no control named like a search'], JSON.stringify(pg.search));
+    assert.ok(notes(nl.report).includes('Search-like form on /search-nameless.html was not searched: no control named like a search (buttons: (no name), Export). Name its search button, or the crawler cannot find the pages behind it.'), JSON.stringify(notes(nl.report)));
   });
 }

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cases, Search disabled until valid - a11y-508 test site</title>
+<style>.row { margin: 12px 0; }</style>
+</head>
+<body>
+<main>
+<h1>Cases, Search disabled until valid</h1>
+<p>Like a reactive form: the Search button is disabled until both dates are filled. The crawler fills them, waits for the button to enable, presses it, and follows the results.</p>
+<form id="disabled-form" onsubmit="return false">
+  <div class="row"><label for="d-from">From</label> <input id="d-from" type="text" placeholder="MM/DD/YYYY" size="10">
+    <label for="d-to">To</label> <input id="d-to" type="text" placeholder="MM/DD/YYYY" size="10"></div>
+  <div class="row"><button type="button" id="d-search" disabled>Search</button> <button type="button" id="d-clear">Clear</button></div>
+</form>
+<div id="d-results" aria-live="polite"></div>
+<p><a href="/about.html">Back to the fixture list</a></p>
+</main>
+<script>
+  const from = document.getElementById('d-from');
+  const to = document.getElementById('d-to');
+  const btn = document.getElementById('d-search');
+  const mdy = (s) => /^\d{2}\/\d{2}\/\d{4}$/.test(s);
+  const check = () => (btn.disabled = !(mdy(from.value) && mdy(to.value)));
+  from.addEventListener('input', check);
+  to.addEventListener('input', check);
+  btn.addEventListener('click', () => {
+    const [mm, dd, yy] = from.value.split('/');
+    const wide = Date.now() - new Date(+yy, +mm - 1, +dd).getTime() >= 59 * 24 * 3600 * 1000;
+    document.getElementById('d-results').innerHTML = wide ? '<ul><li><a href="/result-65.html">Case 65</a> <img src="/img/case.png" class="d-icon" width="16" height="16"></li></ul>' : '<p>No cases found.</p>';
+  });
+</script>
+</body>
+</html>

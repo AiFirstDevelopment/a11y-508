@@ -147,6 +147,13 @@ const byWeight = (a: Finding, b: Finding) => (a.level === b.level ? 0 : a.level 
           <ul>@for (w of r.summary.coverage!.warnings; track $index) { <li>{{ w }}</li> }</ul>
         </div>
       }
+      @if (r.summary.coverage?.notes?.length) {
+        <!-- What the crawl did on each page that is worth knowing: searches made and what they pressed, menus opened, frames left out. -->
+        <details data-testid="coverage-notes">
+          <summary>Coverage notes ({{ r.summary.coverage!.notes.length }})</summary>
+          <ul>@for (n of r.summary.coverage!.notes; track $index) { <li>{{ n }}</li> }</ul>
+        </details>
+      }
       <h2>Totals</h2>
       <dl class="tiles" data-testid="totals">
         @for (i of impacts; track i) {

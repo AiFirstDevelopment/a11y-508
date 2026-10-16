@@ -89,11 +89,16 @@ export function coverage(pages, crawl, opts) {
   const searched = pages.flatMap((p) => ((p.search && p.search.forms) || []).map((f) => ({ p, f })));
   for (const { p, f } of searched.slice(0, 10)) {
     const where = `Search form on ${short(p.finalUrl || p.url)}`;
-    if (f.preset && f.short) notes.push(`${where}: chose '${f.preset}', the widest preset (${f.presetDays} days), shorter than --search-months ${opts.searchMonths}; results older than that were not looked for.`);
-    else if (f.preset) notes.push(`${where}: chose '${f.preset}'.`);
-    else if (f.from || f.to) notes.push(`${where}: filled ${f.from || '(no start)'} to ${f.to || '(no end)'}.`);
-    else notes.push(`${where}: submitted with no date range (no preset or date field found).`);
+    // What was pressed, and what came of it: "pressed "Search": 8 results".
+    const did = f.pressed ? ` Pressed ${/^Enter/.test(f.pressed) ? f.pressed : `"${f.pressed}"`}: ${f.results} result${f.results === 1 ? '' : 's'}.` : '';
+    if (f.preset && f.short) notes.push(`${where}: chose '${f.preset}', the widest preset (${f.presetDays} days), shorter than --search-months ${opts.searchMonths}; results older than that were not looked for.${did}`);
+    else if (f.preset) notes.push(`${where}: chose '${f.preset}'.${did}`);
+    else if (f.from || f.to) notes.push(`${where}: filled ${f.from || '(no start)'} to ${f.to || '(no end)'}.${did}`);
+    else notes.push(`${where}: submitted with no date range (no preset or date field found).${did}`);
   }
+  // A scope that looked like a search but had no control named like one: which buttons it had.
+  const unsearched = pages.flatMap((p) => ((p.search && p.search.skipped) || []).filter((s) => s.reason === 'no control named like a search').map((s) => ({ p, s })));
+  for (const { p, s } of unsearched.slice(0, 10)) notes.push(`Search-like form on ${short(p.finalUrl || p.url)} was not searched: no control named like a search (buttons: ${s.name}). Name its search button, or the crawler cannot find the pages behind it.`);
   if (searched.length > 10) notes.push(`${searched.length - 10} more searched form(s) are listed in report.json under pages[].search.forms.`);
   // The date range set on every load of a page with a search or filter form, once per form.
   const ranged = pages.flatMap((p) => ((p.ranges && p.ranges.forms) || []).map((f) => ({ p, f })));

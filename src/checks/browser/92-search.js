@@ -54,25 +54,50 @@
       const fields = [...scope.querySelectorAll(FIELD)].filter((f) => A.isVisible(f) && !f.disabled);
       const widgets = [...scope.querySelectorAll(WIDGET)].filter((w) => A.isVisible(w));
       if ((!fields.length && !widgets.length) || fields.some((f) => f.type === 'password' || f.type === 'file')) continue;
-      const controls = [...scope.querySelectorAll(CONTROL)].filter((c) => A.isVisible(c) && !c.disabled && c.getAttribute('aria-disabled') !== 'true');
-      const named = controls.map((c) => ({ c, name: nameOf(c) }));
+      // Every visible control, a disabled one too: a Search button that is disabled until the form is
+      // valid is still the search's control; it is pressed once the fill has enabled it.
+      const disabledOf = (c) => !!c.disabled || c.getAttribute('aria-disabled') === 'true';
+      const controls = [...scope.querySelectorAll(CONTROL)].filter((c) => A.isVisible(c));
+      const named = controls.map((c) => ({ c, name: nameOf(c), acc: (A.accName(c).name || '').trim().replace(/\s+/g, ' ').slice(0, 80), disabled: disabledOf(c) }));
       // The search is submitted by its own control, one named like a search; the other controls in
       // the scope (Clear, Reset, Export, Save...) are never pressed, so they do not make the scope an
       // action. Only a scope whose one way to submit is such a control, or Enter with one as the
       // form's default, is left alone (and reported).
-      const danger = named.find((x) => DANGER.test(x.name) || /^submit$/i.test(x.name));
-      const go = named.find((x) => SEARCH.test(x.name) && !DANGER.test(x.name));
-      if (danger && !go) {
-        skipped.push({ selector: A.selector(scope), name: danger.name, reason: 'looks like an action' });
-        continue;
-      }
+      const isDanger = (x) => DANGER.test(x.name) || /^submit$/i.test(x.name);
+      const danger = named.find((x) => !x.disabled && isDanger(x));
+      const searchers = named.filter((x) => SEARCH.test(x.name) && !DANGER.test(x.name));
+      const go = searchers.find((x) => !x.disabled) || searchers[0] || null;
       // A search box with no button submits with Enter.
       const searchBox = fields.find((f) => f.type === 'search') || (scope.matches('[role="search"]') ? fields[0] : null);
-      if (!go && !searchBox) continue;
+      if (!go) {
+        // A scope that looks like a search (date fields, a date preset, a search label) whose buttons are
+        // not named like one (an icon with no name, beside an Export): said, with the buttons it has, so
+        // a Search button with no name is not a mystery. A scope whose only control is an action is one.
+        const searchLike = widgets.length > 0 || !!scope.querySelector(TOGGLE) || fields.some((f) => f.type === 'date' || DATEY.test(hintOf(f)) || DATEFMT.test(f.getAttribute('placeholder') || '')) || /search|filter/i.test(`${scope.getAttribute('aria-label') || ''} ${scope.id || ''} ${typeof scope.className === 'string' ? scope.className : ''}`);
+        const other = named.some((x) => !isDanger(x));
+        if (searchLike && other && !searchBox) {
+          skipped.push({ selector: A.selector(scope), name: named.map((x) => x.acc || '(no name)').slice(0, 4).join(', ') || 'none', reason: 'no control named like a search' });
+          continue;
+        }
+        if (danger) {
+          skipped.push({ selector: A.selector(scope), name: danger.name, reason: 'looks like an action' });
+          continue;
+        }
+        if (!searchBox) {
+          if (searchLike) skipped.push({ selector: A.selector(scope), name: named.map((x) => x.acc || '(no name)').slice(0, 4).join(', ') || 'none', reason: 'no control named like a search' });
+          continue;
+        }
+      }
       used.add(scope);
-      out.push({ selector: A.selector(scope), submit: go ? A.selector(go.c) : null, name: go ? go.name : 'Enter', fields: fields.length, method: (scope.getAttribute('method') || 'get').toLowerCase(), danger: !!danger });
+      out.push({ selector: A.selector(scope), submit: go ? A.selector(go.c) : null, submitDisabled: !!(go && go.disabled), name: go ? go.name : 'Enter', fields: fields.length, method: (scope.getAttribute('method') || 'get').toLowerCase(), danger: !!danger });
     }
     return { forms: out, skipped };
+  };
+
+  // Whether a control can be pressed now (a Search button the fill has enabled).
+  A.isEnabled = (sel) => {
+    const el = A.query(sel);
+    return !!el && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
   };
 
   const pad = (n) => String(n).padStart(2, '0');
