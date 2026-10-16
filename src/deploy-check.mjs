@@ -90,7 +90,7 @@ function tokenValue() {
 
 async function byFetch(url) {
   try {
-    const headers = {};
+    const headers = { 'cache-control': 'no-cache', pragma: 'no-cache' };
     const tok = tokenValue();
     if (tok) headers.authorization = tok.value;
     const res = await fetch(url, { headers, redirect: 'follow', signal: AbortSignal.timeout(30000) });
@@ -153,6 +153,13 @@ async function byBrowser(url, { args, cwd, timeout }) {
     const session = await browser.newPage();
     const page = new Page(session, opts.page);
     await page.init();
+    // Never an old copy: no browser cache, and every request asks caches on the way (a CDN, a proxy)
+    // for a fresh answer.
+    try {
+      await session.send('Network.enable');
+      await session.send('Network.setCacheDisabled', { cacheDisabled: true });
+      await session.send('Network.setExtraHTTPHeaders', { headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } });
+    } catch {}
     // The page's own load gets most of the time; the launch and the hashing share the rest.
     const r = await page.goto(url, Math.max(10000, timeout - 20000));
     if (r.error) return { refs: null, portal: false, reason: `the page did not load (${r.error})` };
@@ -185,7 +192,7 @@ async function byBrowser(url, { args, cwd, timeout }) {
           const u = new URL(ref, location.href);
           if (assets.has(ref) && u.origin === location.origin && read < ${MAX_ASSETS}) {
             read++;
-            const r = await fetch(u.href, { credentials: 'include' });
+            const r = await fetch(u.href, { credentials: 'include', cache: 'no-store' });
             if (r.ok) h = await hash(await r.text());
           }
         } catch {}

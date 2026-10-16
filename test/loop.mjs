@@ -503,6 +503,7 @@ writeFileSync(join(repo2, 'a11y-508.config.json'), JSON.stringify({
   push: false,
   deployed: 'enter',
   triageBatch: 50,
+  reviews: 'triage',
 }, null, 2));
 g2('add', '-A');
 g2('commit', '-q', '-m', 'fixture site');

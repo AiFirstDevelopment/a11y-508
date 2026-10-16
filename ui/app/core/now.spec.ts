@@ -5,6 +5,8 @@ describe("the one screen's line of numbers", () => {
   it('names only the parts that are not zero, found being every finding the ledger knows', () => {
     expect(countsLine({ open: 5, verified: 1, pending: 4, skipped: 15 })).toBe('25 found · 1 verified fixed · 4 awaiting your deployment · 15 could not be fixed');
     expect(countsLine({ open: 3 })).toBe('3 found');
+    // Review items left out, and findings judged fine, are not counted.
+    expect(countsLine({ open: 3, ignored: 9, adequate: 2 })).toBe('3 found');
     expect(countsLine({})).toBe('');
     expect(countsLine(null)).toBe('');
     // Once the loop has finished, what is still open or undecided could not be fixed either.

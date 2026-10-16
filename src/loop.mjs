@@ -163,6 +163,8 @@ export function normalizeConfig(c, overrides = {}, { interactive = !!process.std
     maxAttempts: typeof c.maxAttempts === 'number' ? c.maxAttempts : 3,
     agentTimeout: typeof c.agentTimeout === 'number' ? c.agentTimeout : 15 * 60 * 1000,
     triageBatch: typeof c.triageBatch === 'number' ? c.triageBatch : 15,
+    // 'ignore' (the default): review items are left out; 'triage': the assistant judges them.
+    reviews: c.reviews === 'triage' ? 'triage' : 'ignore',
     // Waits before each retry of an assistant call refused for quota (default 30 s, then 90 s).
     quotaDelays: Array.isArray(c.quotaDelays) && c.quotaDelays.every((n) => typeof n === 'number' && n >= 0) ? c.quotaDelays : QUOTA_DELAYS,
     // After this long with no output from the assistant, the dashboard says it is still waiting.
@@ -1064,6 +1066,19 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
 
     // Every assistant call this round: when none of them ran at all, the loop says so as an error.
     const calls = [];
+    // Review items ("confirm each label describes its input") are reminders, not problems: ignored by
+    // default (a person who meets one reports it), never triaged, fixed or counted. Ones an earlier
+    // run opened or gave up on are ignored too; a committed fix stays as it is.
+    if (cfg.reviews !== 'triage') {
+      let n = 0;
+      for (const e of Object.values(ledger.findings)) {
+        if (e.level === 'review' && ['review', 'open', 'skipped'].includes(e.status)) {
+          e.status = 'ignored';
+          n++;
+        }
+      }
+      if (n) save();
+    }
     // Triage review items in batches.
     const review = byStatus(ledger, 'review');
     if (review.length) {

@@ -12,7 +12,8 @@ export interface CountsPart {
 // The parts of the line that are not zero; "unfixed" is the link to the "could not be fixed" panel.
 export function countsParts(c: Record<string, number | undefined> | null | undefined, ended = false): CountsPart[] {
   if (!c) return [];
-  const found = Object.values(c).reduce<number>((a, n) => a + (n || 0), 0);
+  // Found: every finding but the review items left out and the ones judged fine.
+  const found = Object.entries(c).filter(([k]) => k !== 'ignored' && k !== 'adequate').reduce<number>((a, [, n]) => a + (n || 0), 0);
   const parts: [CountsPart['key'], number, string][] = [
     ['found', found, 'found'],
     ['verified', c['verified'] || 0, 'verified fixed'],
