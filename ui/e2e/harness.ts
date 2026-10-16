@@ -348,6 +348,8 @@ export const REMOVED_BUTTONS = /Try again|Continue|Start over|verify now|Keep wa
 export async function asksNothing(page: Page): Promise<void> {
   await expect(page.getByRole('navigation', { name: 'Steps' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: REMOVED_BUTTONS })).toHaveCount(0);
+  // The screen has rendered its button before the buttons are counted.
+  await expect(go(page)).toBeVisible();
   const buttons = page.locator('main button:visible:not([data-testid="show-sign-in-tab"])');
   expect(await buttons.count(), (await buttons.allTextContents()).join(' | ')).toBe(1);
   await expect(go(page)).toHaveText(/^(Start|Stop)$/);
