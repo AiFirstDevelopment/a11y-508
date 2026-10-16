@@ -1416,8 +1416,6 @@ rmSync(repo2, { recursive: true, force: true });
   };
   // A repository whose crawl and build check use a saved session (what --login writes) with sid=ok.
   const ssoRepo = async (prefix, config) => {
-    // The site is shared by these tests: each starts with nothing deployed (no build marker served).
-    site.deployed = false;
     const { dir, g } = appRepo(prefix, config);
     const site = await ssoSite(dir);
     writeFileSync(join(dir, 'a11y-508-state.json'), JSON.stringify({ version: 1, capturedAt: new Date().toISOString(), origins: [site.url.slice(0, -1)], cookies: [{ name: 'sid', value: 'ok', domain: '127.0.0.1', path: '/' }], storage: {} }));
@@ -1545,8 +1543,8 @@ rmSync(repo2, { recursive: true, force: true });
     const l = JSON.parse(readFileSync(ledgerFile, 'utf8'));
     l.deploy.signature = null;
     writeFileSync(ledgerFile, JSON.stringify(l));
+    // A new build, but none that serves the round's marker: with no build on record either, nothing is known, so nothing is said.
     site.build = 2;
-    site.deployed = true;
     const verify = await loopIn(dir, [site.url, '--verify', '--events', '--max-rounds', '1']);
     const vEvents = parseEvents(verify.stdout);
     const l2 = loadLedger(ledgerFile);
