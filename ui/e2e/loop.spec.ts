@@ -228,10 +228,10 @@ test('AC 14: dry run fills the ledger; Start runs a round that commits, with liv
     const routes = page.getByTestId('routes-crawled');
     expect(await routes.locator('tbody tr').count()).toBeGreaterThan(0);
     await expect(routes.getByTestId('routes-summary')).toHaveText(new RegExp(`^Routes crawled: \\d+ across ${ledger.rounds.length} rounds$`));
-    await expect(routes.getByTestId('routes-coverage')).toBeVisible();
     await page.getByTestId('tally-routes').click();
     await expect(page).toHaveURL(/\/history#routes$/);
     await expect(routes).toHaveJSProperty('open', true);
+    await expect(routes.getByTestId('routes-coverage')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Routes crawled', level: 2 })).toBeFocused();
     // The tally: the whole run in one line, on History as on the Fix step.
     await expect(page.getByTestId('tally')).toHaveText(new RegExp(`^${ledger.rounds.length} rounds in .+ · ${Object.keys(ledger.findings).length} found · ${counts.verified || 0} verified fixed`));
