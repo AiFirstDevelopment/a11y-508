@@ -46,4 +46,7 @@ export function whyUnfixed(entry) {
   return 'The loop ended before it got to this one.';
 }
 
-export const unfixedFacts = (entry) => ({ routes: routesOf(entry), html: entry.html || '', why: whyUnfixed(entry) });
+// The commits that fixed it (the last one is the fix that holds, or waits for the deployment).
+export const fixesOf = (entry) => (entry.attempts || []).filter((a) => a && a.commit).map((a) => ({ round: a.round ?? null, commit: a.commit, files: a.files || [], note: a.note || null }));
+
+export const unfixedFacts = (entry) => ({ routes: routesOf(entry), html: entry.html || '', why: whyUnfixed(entry), fixes: fixesOf(entry) });

@@ -118,7 +118,7 @@ test('one screen AC1, guard d: the name and build, the folder and URL, one sente
   }
 });
 
-test('one screen AC2, AC3, AC7, AC8, AC9, AC10, guards a b c: one Start crawls, fixes, pushes, waits for the build, verifies and finishes; the sentence follows every step; one button throughout; what could not be fixed is a link to why, where and the element', async ({ page }) => {
+test('one screen AC2, AC3, AC7, AC8, AC9, AC10, AC11, guards a b c: one Start crawls, fixes, pushes, waits for the build, verifies and finishes; the sentence follows every step; one button throughout; what could not be fixed is a link to why, where and the element', async ({ page }) => {
   test.setTimeout(600_000);
   const a = await app('a11y-508-one-');
   // Each assistant call takes a while, as a real one does, so its output can be opened while it works.
@@ -158,6 +158,16 @@ test('one screen AC2, AC3, AC7, AC8, AC9, AC10, guards a b c: one Start crawls, 
     expect(a.ledger().rounds.length).toBeGreaterThan(0);
     expect(spawnSync('git', ['rev-parse', '--verify', 'a11y-508'], { cwd: a.origin }).status, 'pushed to origin').toBe(0);
     await expect(page.getByTestId('counts')).toHaveText(/^\d+ found · \d+ awaiting your deployment( · \d+ could not be fixed)?$/);
+    // AC11: the fixes are a link to a panel of each fix: what, where, the element and its commit.
+    await page.getByTestId('pending-link').click();
+    const fixes = page.getByTestId('fixes-panel');
+    await expect(fixes).toBeVisible();
+    await expect(fixes.getByRole('heading', { level: 2 })).toHaveText(/^\d+ fix(es)?$/);
+    await expect(fixes.getByTestId('fixes-item').first().getByTestId('fixes-state')).toHaveText(/waiting for your deployment/);
+    await expect(fixes.getByTestId('fixes-commit').first()).toHaveText(/^Commit: [0-9a-f]{7} \(round \d+\) · site\//);
+    await expect(fixes.getByTestId('fixes-where').first().getByRole('link').first()).toHaveAttribute('href', new RegExp(`^${a.base.replace(/[.*+?^$()|[\]\\]/g, '\\$&')}`));
+    await page.getByTestId('fixes-close').click();
+    await expect(fixes).toBeHidden();
     // The build is deployed: the loop sees it, verifies, and finishes.
     a.deploy();
     await expect(now(page)).toHaveText(DONE, { timeout: 300_000 });

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { routeOf, routesOf, whyUnfixed, unfixedFacts } from '../unfixed.mjs';
+import { routeOf, routesOf, whyUnfixed, unfixedFacts, fixesOf } from '../unfixed.mjs';
 
 // The one screen's "could not be fixed" panel: why, in plain words, from the ledger's record.
 test('unfixed: why, from the last attempt, the triage, or the ledger reason', () => {
@@ -22,5 +22,10 @@ test('unfixed: routes are the pages without their query, once each; the whole si
   assert.equal(routeOf('not a url'), 'not a url');
   const entry = { pages: ['https://app.example.gov/a?x=1', 'https://app.example.gov/a?x=2', 'https://app.example.gov/b#top'], html: '<img src="x.png">', attempts: [] , status: 'open' };
   assert.deepEqual(routesOf(entry), ['https://app.example.gov/a', 'https://app.example.gov/b#top']);
-  assert.deepEqual(unfixedFacts(entry), { routes: ['https://app.example.gov/a', 'https://app.example.gov/b#top'], html: '<img src="x.png">', why: 'The loop ended before it got to this one.' });
+  assert.deepEqual(unfixedFacts(entry), { routes: ['https://app.example.gov/a', 'https://app.example.gov/b#top'], html: '<img src="x.png">', why: 'The loop ended before it got to this one.', fixes: [] });
+});
+
+test('unfixed: the commits that fixed a finding, with their files', () => {
+  assert.deepEqual(fixesOf({ attempts: [{ round: 1, outcome: 'no-change' }, { round: 2, commit: 'abc1234', files: ['src/a.html'], note: 'Added alt text.' }] }), [{ round: 2, commit: 'abc1234', files: ['src/a.html'], note: 'Added alt text.' }]);
+  assert.deepEqual(fixesOf({}), []);
 });

@@ -722,7 +722,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const pick = (status) => byStatus(ledger, status).map((e) => ({ test: e.test, impact: e.impact, message: e.message, pages: e.pages.length, attempts: e.attempts.length, reason: e.reason || lastNote(e), selector: e.selector, ...unfixedFacts(e) }));
     return {
       exists: true, rounds: ledger.rounds, counts: statusCounts(ledger), line: summaryLine(ledger), deploy: ledger.deploy || null,
-      lists: { open: pick('open'), pending: pick('pending'), review: pick('review'), skipped: pick('skipped') },
+      lists: { open: pick('open'), pending: pick('pending'), verified: pick('verified'), review: pick('review'), skipped: pick('skipped') },
     };
   }
 

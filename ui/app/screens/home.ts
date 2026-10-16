@@ -8,6 +8,7 @@ import { Starter } from '../core/starter';
 import { continuingText } from '../core/resume';
 import { plainReason } from '../core/outcome';
 import { LedgerItem } from '../core/types';
+import { commitUrl } from '../core/git-links';
 import { clockOf, countsParts, hostOf, lowerFirst, plural, span, upperFirst, type CountsPart } from '../core/now';
 
 // A finding's words, cut at a word once they are long.
@@ -34,7 +35,7 @@ function short(text: string, max = 72): string {
     }
     <p class="big-status" role="status" data-testid="now">@for (seg of nowParts(); track $index) {@if (seg.link) {<a [href]="seg.link === 'output-link' ? '#assistant-output' : '#pages-so-far'" [attr.data-testid]="seg.link" (click)="seg.link === 'output-link' ? openOutput($event) : openPages($event)">{{ seg.text }}</a>} @else {{{ seg.text }}}}</p>
     @if (counts().length) {
-      <p data-testid="counts">@for (c of counts(); track c.key) {@if (!$first) {<span aria-hidden="true"> · </span>}@if (c.key === 'unfixed') {<a href="#could-not-be-fixed" data-testid="unfixed-link" (click)="openUnfixed($event)">{{ c.text }}</a>} @else {<span>{{ c.text }}</span>}}</p>
+      <p data-testid="counts">@for (c of counts(); track c.key) {@if (!$first) {<span aria-hidden="true"> · </span>}@if (c.key === 'unfixed') {<a href="#could-not-be-fixed" data-testid="unfixed-link" (click)="openUnfixed($event)">{{ c.text }}</a>} @else if (c.key === 'verified' || c.key === 'pending') {<a href="#fixes" [attr.data-testid]="c.key + '-link'" (click)="openFixes($event)">{{ c.text }}</a>} @else {<span>{{ c.text }}</span>}}</p>
     }
     <div class="actions">
       @if (running()) {
@@ -49,6 +50,34 @@ function short(text: string, max = 72): string {
     @if (driver.error() || missed()) { <p class="notice error" role="alert" data-testid="start-error">{{ driver.error() || missed() }}</p> }
     <p class="diagnostics-link"><a routerLink="/diagnostics" data-testid="diagnostics-link">Log</a><span aria-hidden="true"> · </span><a href="#start-over" data-testid="start-over" (click)="startOver($event)">Start over</a></p>
     @if (resetError()) { <p class="notice error" role="alert">{{ resetError() }}</p> }
+    <!-- The fixes: what each one fixed, where, the element, the files it changed and its commit. -->
+    <dialog #fixesPanel class="pane" id="fixes" aria-labelledby="fixes-title" data-testid="fixes-panel" (close)="fixesOpen.set(false)">
+      @if (fixesOpen()) {
+        <div class="pane-head">
+          <h2 id="fixes-title">{{ plural(fixed().length, 'fix', 'fixes') }}</h2>
+          <button type="button" class="secondary" data-testid="fixes-close" (click)="closeFixes()">Close</button>
+        </div>
+        @if (!fixed().length) { <p>Nothing is fixed yet.</p> }
+        <ol>
+          @for (e of fixed(); track $index) {
+            <li data-testid="fixes-item">
+              <p class="what"><strong>{{ e.test }}</strong> {{ e.impact }}: {{ e.message }}</p>
+              <p data-testid="fixes-state"><span class="label">State: </span>{{ e.state }}</p>
+              <p data-testid="fixes-where"><span class="label">Where: </span>
+                @for (r of routesOf(e); track r; let last = $last) {
+                  @if (r === 'site') { the whole site } @else { <a [href]="r" target="_blank" rel="noopener" [title]="r">{{ pathOf(r) }}</a> }@if (!last) {, }
+                }
+              </p>
+              <p><span class="label">Element: </span><code>{{ e.selector || 'the page' }}</code></p>
+              @for (f of e.fixes || []; track f.commit) {
+                <p data-testid="fixes-commit"><span class="label">Commit: </span>@if (commitLink(f.commit); as u) {<a [href]="u" target="_blank" rel="noopener">{{ f.commit.slice(0, 7) }}</a>} @else {<code>{{ f.commit.slice(0, 7) }}</code>}@if (f.round) { (round {{ f.round }})}@if (f.files.length) { · {{ f.files.join(', ') }}}</p>
+                @if (f.note) { <p class="note">{{ f.note }}</p> }
+              }
+            </li>
+          }
+        </ol>
+      }
+    </dialog>
     <!-- What the assistant is printing, as it prints it. -->
     <dialog #outputPanel class="pane" id="assistant-output" aria-labelledby="output-title" data-testid="output-panel" (close)="outputOpen.set(false)">
       @if (outputOpen()) {
@@ -127,6 +156,7 @@ function short(text: string, max = 72): string {
     .pane pre.output { max-height: calc(100vh - 140px); overflow: auto; font-size: 0.8rem; }
     .pane ul li { margin: 0 0 4px; overflow-wrap: anywhere; }
     .pane .label { color: var(--muted); }
+    .pane .note { color: var(--muted); font-style: italic; }
     .pane pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; background: #f4f4f4; padding: 6px 8px; margin: 4px 0 0; border-radius: 4px; }
   `],
 })
@@ -152,6 +182,29 @@ export class HomeScreen implements OnDestroy {
     }
   }
   readonly pagesOpen = signal(false);
+  readonly fixesOpen = signal(false);
+  private fixesPanel = viewChild.required<ElementRef<HTMLDialogElement>>('fixesPanel');
+  // Waiting for the deployment first, then verified.
+  readonly fixed = computed(() => {
+    const l = this.driver.ledger()?.lists;
+    if (!l) return [];
+    return [...(l['pending'] || []).map((e) => ({ ...e, state: 'committed and pushed; waiting for your deployment to verify it' })), ...(l['verified'] || []).map((e) => ({ ...e, state: 'verified: gone on a later crawl' }))];
+  });
+  commitLink(sha: string): string | null {
+    return commitUrl(this.env.env()?.remoteWeb, sha);
+  }
+  openFixes(ev?: Event): void {
+    ev?.preventDefault();
+    void this.driver.loadLedger();
+    this.fixesOpen.set(true);
+    const d = this.fixesPanel().nativeElement;
+    if (!d.open) d.showModal();
+  }
+  closeFixes(): void {
+    const d = this.fixesPanel().nativeElement;
+    if (d.open) d.close();
+    this.fixesOpen.set(false);
+  }
   readonly outputOpen = signal(false);
   private outputPanel = viewChild.required<ElementRef<HTMLDialogElement>>('outputPanel');
   private outputText = viewChild<ElementRef<HTMLPreElement>>('outputText');

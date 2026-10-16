@@ -232,6 +232,8 @@ export interface LedgerItem {
   routes?: string[];
   html?: string;
   why?: string;
+  // The commits that fixed it.
+  fixes?: { round: number | null; commit: string; files: string[]; note: string | null }[];
 }
 
 export interface LedgerInfo {
