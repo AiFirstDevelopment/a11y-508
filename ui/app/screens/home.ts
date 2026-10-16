@@ -47,7 +47,8 @@ function short(text: string, max = 72): string {
       }
     </div>
     @if (driver.error() || missed()) { <p class="notice error" role="alert" data-testid="start-error">{{ driver.error() || missed() }}</p> }
-    <p class="diagnostics-link"><a routerLink="/diagnostics" data-testid="diagnostics-link">Log</a></p>
+    <p class="diagnostics-link"><a routerLink="/diagnostics" data-testid="diagnostics-link">Log</a><span aria-hidden="true"> · </span><a href="#start-over" data-testid="start-over" (click)="startOver($event)">Start over</a></p>
+    @if (resetError()) { <p class="notice error" role="alert">{{ resetError() }}</p> }
     <!-- What the assistant is printing, as it prints it. -->
     <dialog #outputPanel class="pane" id="assistant-output" aria-labelledby="output-title" data-testid="output-panel" (close)="outputOpen.set(false)">
       @if (outputOpen()) {
@@ -137,6 +138,19 @@ export class HomeScreen implements OnDestroy {
   private starter = inject(Starter);
   readonly missed = signal('');
   readonly unfixedOpen = signal(false);
+  readonly resetError = signal('');
+  // Start over: stops any run and forgets this app's rounds, fixes, reports and log; sign-in, settings and commits stay.
+  async startOver(ev?: Event): Promise<void> {
+    ev?.preventDefault();
+    if (!confirm('Start over? This stops any run and erases every round, fix, report and log entry for this app. Your sign-in, settings and the commits already made stay.')) return;
+    this.resetError.set('');
+    try {
+      await this.api.post('/api/reset');
+      location.assign('/');
+    } catch (e: any) {
+      this.resetError.set(`Could not start over: ${e?.message || e}`);
+    }
+  }
   readonly pagesOpen = signal(false);
   readonly outputOpen = signal(false);
   private outputPanel = viewChild.required<ElementRef<HTMLDialogElement>>('outputPanel');

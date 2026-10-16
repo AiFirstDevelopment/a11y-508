@@ -192,11 +192,6 @@ export function stripSecrets(c: Record<string, any>): Record<string, any> {
         <li><a routerLink="/advanced" data-testid="advanced-link">Advanced</a></li>
       </ul>
     </nav>
-    <p class="start-over">
-      <button type="button" class="secondary" data-testid="start-over" (click)="startOver()" [disabled]="resetting()">Start over</button>
-      <span class="hint">Forgets every round, fix, report and log entry for this app, then waits for Start. Your sign-in, settings and the commits already made stay.</span>
-    </p>
-    @if (resetError()) { <p class="notice error" role="alert">{{ resetError() }}</p> }
     <app-quit />
   `,
   styles: [`
@@ -209,20 +204,6 @@ export function stripSecrets(c: Record<string, any>): Record<string, any> {
   `],
 })
 export class DiagnosticsScreen {
-  readonly resetting = signal(false);
-  readonly resetError = signal('');
-  async startOver(): Promise<void> {
-    if (!confirm('Start over? This stops any run and forgets every round, fix, report and log entry for this app. Your sign-in, settings and the commits already made stay.')) return;
-    this.resetting.set(true);
-    this.resetError.set('');
-    try {
-      await this.api.post('/api/reset');
-      location.assign('/');
-    } catch (e: any) {
-      this.resetError.set(`Could not start over: ${e?.message || e}`);
-      this.resetting.set(false);
-    }
-  }
   readonly env = inject(EnvStore);
   readonly store = inject(RunStore);
   readonly driver = inject(Driver);

@@ -104,7 +104,8 @@ test('one screen AC1, guard d: the name and build, the folder and URL, one sente
     await asksNothing(page);
     // Nothing else: none of the wizard's parts.
     for (const id of ['steps', 'where-you-are', 'tally', 'details', 'changes', 'copy-summary', 'check-now', 'picker', 'run-again', 'loop-start', 'assistant-line', 'ledger']) await expect(page.getByTestId(id), id).toHaveCount(0);
-    await expect(page.locator('main a')).toHaveCount(1);
+    await expect(page.locator('main a')).toHaveCount(2);
+    await expect(page.getByTestId('start-over')).toHaveText('Start over');
     // Guard d: every old route, and anything under it, is the one screen.
     for (const path of ['/run', '/run/advanced', '/live', '/report', '/report/latest', '/fix-loop', '/fix-loop/settings', '/history', '/troubleshoot', '/sign-in']) {
       await page.goto(`${dash.origin}${path}`);
@@ -204,10 +205,8 @@ test('one screen AC2, AC3, AC7, AC8, AC9, AC10, guards a b c: one Start crawls, 
     await page.getByTestId('unfixed-close').click();
     await expect(panel).toBeHidden();
     await asksNothing(page);
-    // AC10: Start over, at the bottom of the Log, forgets the rounds, fixes and log; the screen is a first run again.
+    // AC10: Start over, beside Log on the screen, forgets the rounds, fixes and log; the screen is a first run again.
     await expect(page.getByTestId('diagnostics-link')).toHaveText('Log');
-    await page.getByTestId('diagnostics-link').click();
-    await expect(page.getByRole('heading', { level: 1, name: 'Log' })).toBeVisible();
     page.once('dialog', (d) => d.accept());
     await page.getByTestId('start-over').click();
     await expect(page).toHaveURL(`${dash.origin}/`);
