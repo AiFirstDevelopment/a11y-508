@@ -479,6 +479,18 @@
         if (/\b(view|details?|open|show|more)\b|^[›»>→]$|chevron/i.test(n) || /chevron|arrow/i.test(el.className || '')) consider(el, 'result control');
       }
     }
+    // Results the page already showed (an app that searches as it loads, and re-renders the same rows
+    // when Search is pressed again): nothing new appeared, so the rows on the page are the results.
+    if (!cands.length && !links.size) {
+      for (const el of A.all('tr, [role="row"], mat-row, .mat-mdc-row, .mat-row')) {
+        if (!A.isVisible(el) || inDialog(el) || el.querySelector('th, [role="columnheader"]')) continue;
+        if (!el.closest('table, [role="grid"], [role="table"], [role="treegrid"], mat-table, .mat-mdc-table')) continue;
+        const a = el.querySelector('a[href]');
+        if (a && !/^(javascript:|#$)/i.test(a.getAttribute('href') || '')) links.add(a.href);
+        else if (A.cs(el) && A.cs(el).cursor === 'pointer') consider(el, 'result row');
+        else consider(clickableIn(el), 'result cell');
+      }
+    }
     // Pagination: in the new content or a pager anywhere.
     for (const el of A.all('a[href], button, [role="button"], [role="link"]')) {
       const n = nameOf(el);

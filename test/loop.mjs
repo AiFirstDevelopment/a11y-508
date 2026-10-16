@@ -1614,5 +1614,23 @@ rmSync(repo2, { recursive: true, force: true });
   }
 }
 rmSync(HOME, { recursive: true, force: true, maxRetries: 10 });
+{
+  // A review item the assistant once left for a person is reopened to be fixed; one it judged fine, or
+  // one given up on after fix attempts, stays as it was.
+  const { writeFileSync: wf, rmSync: rm } = await import('node:fs');
+  const d = realHome(mkdtempHome(join(tmpHome(), 'a11y-508-ledger-unsure-')));
+  const file = join(d, 'ledger.json');
+  wf(file, JSON.stringify({ version: 1, rounds: [], findings: {
+    a: { fingerprint: 'a', status: 'skipped', triage: { decision: 'unsure' }, attempts: [] },
+    b: { fingerprint: 'b', status: 'adequate', triage: { decision: 'adequate' }, attempts: [] },
+    c: { fingerprint: 'c', status: 'skipped', reason: 'still present after 3 fix attempts', attempts: [{}, {}, {}] },
+  } }));
+  const l = loadLedger(file);
+  rm(d, { recursive: true, force: true });
+  check('an item left for a person ("unsure") is reopened to be fixed; the rest stay', () => {
+    assert.deepEqual([l.findings.a.status, l.findings.b.status, l.findings.c.status], ['open', 'adequate', 'skipped']);
+  });
+}
+
 console.log(failures ? `\n${failures} assertion(s) failed` : '\nall assertions passed');
 process.exitCode = failures ? 1 : 0;

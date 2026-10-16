@@ -411,7 +411,10 @@ Everything you need is in this prompt. Do not read, search or edit anything othe
 
 - "adequate": the content meets the test condition as it is.
 - "inadequate": it does not; it needs a fix.
-- "unsure": a person must look (for example, judging what an image depicts requires seeing it).
+
+Decide every item yourself; no person will look at them. Answer "adequate" only when the HTML and the
+page around it show the condition is met. When you are not sure, answer "inadequate": it is then fixed
+the way the condition asks. Never answer that a person must look.
 
 ## Items
 
@@ -421,7 +424,7 @@ ${items.map((it, i) => `### ${i + 1}. id ${it.id}\nTest ${it.test} (${it.name}),
 
 Write a JSON file at ${resultFile} with exactly this shape and nothing else: an array with one object per item, in any order.
 
-${block([{ id: items[0] ? items[0].id : 'id', decision: 'adequate | inadequate | unsure', reason: 'one sentence' }])}
+${block([{ id: items[0] ? items[0].id : 'id', decision: 'adequate | inadequate', reason: 'one sentence' }])}
 
 Machine-readable copy:
 

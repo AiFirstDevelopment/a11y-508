@@ -315,7 +315,7 @@ The in-page checks are one JavaScript bundle (`src/checks/browser/*.js`) evaluat
 ```mermaid
 flowchart LR
   A[Crawl the site<br/>work/round-N/] --> B[Ledger diff<br/>new, still open, verified, gone, came back]
-  B --> C[Triage review items<br/>assistant answers adequate / open / unsure]
+  B --> C[Triage review items<br/>assistant answers adequate / open]
   C --> D[Fix one open finding<br/>prompt file: condition, element, HTML,<br/>folders it may edit, result file to write]
   D --> G{Gate: your build<br/>or test command}
   G -- pass --> H[Commit that fix alone, push]

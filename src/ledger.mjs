@@ -20,7 +20,11 @@ export function loadLedger(file) {
   if (!existsSync(file)) return { version: 1, rounds: [], findings: {} };
   const l = JSON.parse(readFileSync(file, 'utf8'));
   if (!l.findings || !Array.isArray(l.rounds)) throw new Error(`${file} is not an a11y-508 ledger`);
-  for (const e of Object.values(l.findings)) if (e && e.status === 'needs-human') e.status = 'skipped';
+  for (const e of Object.values(l.findings)) {
+    if (e && e.status === 'needs-human') e.status = 'skipped';
+    // A review item the assistant once left for a person ("unsure") is a problem to fix now.
+    if (e && e.status === 'skipped' && e.triage && e.triage.decision !== 'adequate' && !(e.attempts || []).length) e.status = 'open';
+  }
   return l;
 }
 

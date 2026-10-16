@@ -1088,16 +1088,16 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         for (const { id, entry } of batch) {
           const d = decisions.find((x) => x && x.id === id);
           const decision = d && typeof d.decision === 'string' ? d.decision.toLowerCase() : 'unsure';
+          // Never left for a person: what the assistant does not call adequate is a problem, and is fixed.
           if (decision === 'adequate') entry.status = 'adequate';
-          else if (decision === 'inadequate') entry.status = 'open';
-          else entry.status = 'skipped';
+          else entry.status = 'open';
           entry.triage = { round, decision, reason: d && d.reason ? String(d.reason).slice(0, 300) : '' };
         }
         save();
       }
       ledgerEvent();
       const c = statusCounts(ledger);
-      log.info(`triage done: ${byStatus(ledger, 'adequate').length} adequate, ${c.open || 0} open to fix, ${c['skipped'] || 0} skipped (the assistant cannot decide them)`);
+      log.info(`triage done: ${byStatus(ledger, 'adequate').length} adequate, ${c.open || 0} open to fix, ${c['skipped'] || 0} given up on`);
     }
 
     // Fix open findings, one bounded prompt each; findings that are the same problem on different

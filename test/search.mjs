@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
-const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless', 'live', 'overlay', 'also', 'sameroute', 'cells'];
+const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless', 'live', 'overlay', 'also', 'sameroute', 'cells', 'onload'];
 if (only && !GROUPS.includes(only)) throw new Error(`--only takes one of ${GROUPS.join(', ')}`);
 const want = (group) => !only || only === group;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-search-')));
@@ -411,6 +411,19 @@ if (want('cells')) {
     assert.ok(rep, r.stderr);
     assert.ok(rep.pages.some((p) => path(p.url) === '/search-cells-detail.html'), JSON.stringify(rep.pages.map((p) => p.url)));
     assert.ok(rep.pages[0].discovery.forms.results >= 1, JSON.stringify(rep.pages[0].discovery.forms));
+  });
+}
+
+// Results already on the page when it loads, the same rows after Search: those rows are clicked.
+if (want('onload')) {
+  const site0 = await startFixtureSite({ dropForms: 0 });
+  const out = join(tmp, 'onload');
+  const r = await cli([site0.base + 'search-onload.html', '--max-pages', '5', '--no-follow-clicks', '--no-interact', '--no-zoom', '--no-screenshots', '--fail-on', 'none', '--out', out, '--quiet', '--json']);
+  site0.close();
+  const rep = existsSync(join(out, 'report.json')) ? JSON.parse(readFileSync(join(out, 'report.json'), 'utf8')) : null;
+  check('results shown as the page loads are clicked after Search, and the record page is crawled', () => {
+    assert.ok(rep, r.stderr);
+    assert.ok(rep.pages.some((p) => path(p.url) === '/search-cells-detail.html'), JSON.stringify(rep.pages.map((p) => p.url)));
   });
 }
 

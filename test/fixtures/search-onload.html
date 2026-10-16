@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Workflows</title></head>
+<body>
+<main>
+<h1>Workflows</h1>
+<!-- The app searches as it loads, and pressing Search again keeps the same rows (nothing new appears).
+     Each row's ID is a router link with no address that opens the record. -->
+<form id="f">
+  <label for="from">From date</label> <input id="from" name="from" type="date">
+  <label for="to">To date</label> <input id="to" name="to" type="date">
+  <button type="submit">Search</button>
+</form>
+<table aria-label="Results"><thead><tr><th scope="col">ID</th><th scope="col">Name</th></tr></thead><tbody id="rows"></tbody></table>
+<script>
+const rows = document.getElementById('rows');
+for (const id of ['261']) {
+  const tr = document.createElement('tr');
+  const a = document.createElement('a');
+  a.textContent = id;
+  a.style.cursor = 'pointer';
+  a.addEventListener('click', () => location.assign('search-cells-detail.html?id=' + id));
+  const td1 = document.createElement('td');
+  td1.append(a);
+  const td2 = document.createElement('td');
+  td2.textContent = 'Record ' + id;
+  tr.append(td1, td2);
+  rows.append(tr);
+}
+document.getElementById('f').addEventListener('submit', (e) => e.preventDefault());
+</script>
+</main>
+</body>
+</html>
