@@ -270,10 +270,11 @@ export function bouncedToSignIn(report) {
 // Event types from a round's crawl that the loop passes on, tagged with the round.
 const RELAYED = new Set(['page', 'coverage', 'summary', 'login-waiting', 'session-saved', 'progress']);
 
-async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = [] }) {
+// also: pages audited besides the start page, as they are (the fixes' pages, so they are re-checked).
+async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = [], also = [] }) {
   const out = join(workDir(cwd), `round-${round}`);
   mkdirSync(out, { recursive: true });
-  const args = [BIN, cfg.url, ...cfg.args, ...passthrough, ...session, '--out', out, '--json', '--quiet'];
+  const args = [BIN, cfg.url, ...cfg.args, ...passthrough, ...session, ...also.flatMap((u) => ['--also', u]), '--out', out, '--json', '--quiet'];
   if (events) args.push('--events');
   const child = spawn(process.execPath, args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
@@ -648,6 +649,22 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   // Fixes committed and waiting for a new build of the site (deployed: bundle-change): ledger.deploy
   // holds the start page's bundles from before them, the branch and where it was pushed.
   const awaitingDeploy = () => cfg.deployed === 'bundle-change' && !!ledger.deploy && byStatus(ledger, 'pending').length > 0;
+  // The pages the fixes awaiting verification were found on (same origin, at most ten): a crawl
+  // audits them as they are, so a fix is verified on its own page and not left unchecked.
+  const pendingPages = () => {
+    let origin = null;
+    try {
+      origin = new URL(cfg.url).origin;
+    } catch {}
+    const urls = new Set();
+    for (const e of byStatus(ledger, 'pending')) for (const u of e.pages || []) {
+      if (u === 'site') continue;
+      try {
+        if (new URL(u).origin === origin) urls.add(u);
+      } catch {}
+    }
+    return [...urls].slice(0, 10);
+  };
   // The build from before the fixes, when it can be compared with: a record with names only (written
   // by an earlier version) cannot tell a same-name deployment, so it counts as no record.
   const baseline = () => (ledger.deploy && ledger.deploy.signature != null && hasHashes(ledger.deploy.signature) ? ledger.deploy.signature : null);
@@ -979,7 +996,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       crawl = { report: given };
     } else try {
       const first = signInFirst && round === firstCrawl && !signedInNow;
-      const once = () => crawlOnce({ cfg, cwd, round, log, passthrough: first ? passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') : passthrough, events, session: first ? signInArgs : session });
+      const once = () => crawlOnce({ cfg, cwd, round, log, passthrough: first ? passthrough.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state') : passthrough, events, session: first ? signInArgs : session, also: pendingPages() });
       try {
         crawl = await once();
       } catch (e) {
@@ -1000,7 +1017,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           signedInNow = true;
           session = sessionArgs(cfg, passthrough, cwd);
           ev('step', { round, step: 'crawl', first: round === startRound, again: true });
-          crawl = await crawlOnce({ cfg, cwd, round, log, passthrough, events, session });
+          crawl = await crawlOnce({ cfg, cwd, round, log, passthrough, events, session, also: pendingPages() });
         } else if (!crawl) throw new Error('the saved session file is gone and no sign-in happened');
       }
       // Behind a sign-in the build could not be read before this round signed in; the site has not
@@ -1021,7 +1038,9 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     }
     const diff = applyReport(ledger, report, round, { maxAttempts: cfg.maxAttempts });
     // The crawl has verified whatever waited for a deployment.
-    delete ledger.deploy;
+    // The crawl has verified (or failed) whatever waited for a deployment -- unless some of it was on
+    // pages this crawl did not reach: then the wait goes on for them.
+    if (!byStatus(ledger, 'pending').length) delete ledger.deploy;
     if (fromGiven) Object.assign(ledger.rounds[ledger.rounds.length - 1], { source: 'report', reportFinishedAt: given.finishedAt });
     save();
     ledgerEvent();
@@ -1354,9 +1373,19 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     if (!committed) {
       log.info(`round ${round}: nothing was fixed. ${summaryLine(ledger)}`);
       // Earlier fixes still wait for their deployment: the loop waits for it rather than stopping.
+      const stillPending = byStatus(ledger, 'pending').length;
       if (!openFindings(ledger).length && !byStatus(ledger, 'review').length && !awaitingDeploy()) {
-        log.info('nothing left the agent can fix; stopping.');
-        return isDone(ledger) ? 0 : 1;
+        // Fixes that still await verification: never left behind; the loop waits for the build with them.
+        if (stillPending && cfg.deployed === 'bundle-change') {
+          if (!ledger.deploy) {
+            ledger.deploy = { round, signature: signatureBefore ?? null, branch: git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out, remote: cfg.push ? 'origin' : null, pushed: !!cfg.push, host: hostOf(cfg.url), since: new Date().toISOString(), pushedAt: null, marker: null };
+            save();
+          }
+          log.info(`${stillPending} fix${stillPending === 1 ? '' : 'es'} still await${stillPending === 1 ? 's' : ''} verification: waiting for the deployment`);
+        } else {
+          log.info('nothing left the agent can fix; stopping.');
+          return isDone(ledger) ? 0 : 1;
+        }
       }
       if (!byStatus(ledger, 'pending').length) {
         // An assistant that never ran (not installed, not signed in): every call failed without an answer.

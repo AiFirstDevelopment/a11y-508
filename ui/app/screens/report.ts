@@ -291,7 +291,7 @@ export class ReportScreen {
     const parts = [`Only ${n} page${n === 1 ? '' : 's'} ${n === 1 ? 'was' : 'were'} found. The start page has ${links.length} link${links.length === 1 ? '' : 's'}${off ? `, ${off} of them to other sites` : ''}`];
     if (d.clicked !== null) parts.push(`${d.clicked} navigation-like control${d.clicked === 1 ? '' : 's'} ${d.clicked === 1 ? 'was' : 'were'} clicked and led to ${d.clickedNew ?? 0} new page${(d.clickedNew ?? 0) === 1 ? '' : 's'}`);
     if (d.revealed) parts.push(`${d.revealed} link${d.revealed === 1 ? '' : 's'} appeared only after a click`);
-    if (d.searched) parts.push(`${d.searched} search${d.searched === 1 ? ' was' : 'es were'} run and returned ${d.searchResults ?? 0} result${(d.searchResults ?? 0) === 1 ? '' : 's'}`);
+    if (d.searched) parts.push(`${d.searched} search${d.searched === 1 ? ' was' : 'es were'} run and returned ${d.searchResults ?? 0} result${(d.searchResults ?? 0) === 1 ? '' : 's'}${d.searchResults ? '' : ' (no rows for the range used: an environment with no records in it gives no detail pages; widen the range with --search-months in the crawl options if the data is older)'}`);
     else parts.push('no search form was run');
     const notes = (r.summary.coverage?.notes || []).filter((x) => /^Search(-like)? form on /.test(x));
     const warnings = r.summary.coverage?.warnings || [];

@@ -73,6 +73,17 @@ const check = (name, fn) => {
     assert.equal(d3.unchecked.length, 4);
     assert.equal(ledger.findings['13.C|p|contrast'].status, 'open');
   });
+  // A page audited again under other query values is the same page: a pending fix on /a?from=1 is
+  // verified by a crawl of /a?from=2 that no longer shows the finding (an app keeping its search in the URL).
+  const lq = { version: 1, rounds: [], findings: {} };
+  applyReport(lq, report([page('http://x/a?from=1', [f('7.A', 'img', 'no alt')])]), 1);
+  lq.findings['7.A|img|no alt'].status = 'pending';
+  lq.findings['7.A|img|no alt'].attempts.push({ round: 1, outcome: 'pending', commit: 'abc' });
+  const dq = applyReport(lq, report([page('http://x/a?from=2', [])]), 2);
+  check('ledger: a fix is verified when its route is audited again under other query values', () => {
+    assert.deepEqual([dq.verified.length, dq.unchecked.length], [1, 0]);
+    assert.equal(lq.findings['7.A|img|no alt'].status, 'verified');
+  });
   const l2 = { version: 1, rounds: [], findings: {} };
   applyReport(l2, report([page('/a', [f('7.A', 'img', 'no alt')])]), 1);
   const e = l2.findings['7.A|img|no alt'];
@@ -1343,6 +1354,22 @@ rmSync(repo2, { recursive: true, force: true });
       assert.ok(readFileSync(join(dir, 'site', 'index.html'), 'utf8').includes(`<meta name="a11y-508-build" content="${l1.deploy.marker}">`), 'the marker in site/index.html');
       assert.match(first.out, /build marker r\d+-[0-9a-z]+ committed in site\/index\.html/, first.out);
     });
+    // A report for round 1 that never reached the fixes' pages: they stay pending, the deployment record
+    // stays, and the loop waits for the build rather than ending "nothing left to fix".
+    {
+      const r1 = JSON.parse(readFileSync(join(workDir(dir), 'round-1', 'report.json'), 'utf8'));
+      const elsewhere = { ...r1, finishedAt: new Date().toISOString(), pages: r1.pages.map((p) => ({ ...p, url: `${url}elsewhere.html`, finalUrl: `${url}elsewhere.html`, findings: [] })) };
+      const file = join(dir, 'elsewhere-report.json');
+      writeFileSync(file, JSON.stringify(elsewhere));
+      const partial = await loopIn(dir, [url, '--from-report', file, '--max-rounds', '1']);
+      const lp = loadLedger(ledgerFile);
+      check('deploy-wait: a round from a report that did not reach the fixes\' pages leaves them pending and keeps waiting for the build', () => {
+        assert.equal(partial.status, 4, partial.out);
+        assert.ok(lp.deploy, 'the deployment record stays');
+        assert.equal(Object.values(lp.findings).filter((e) => e.status === 'pending').length, pending1, partial.out);
+        assert.doesNotMatch(partial.out, /nothing left the agent can fix/);
+      });
+    }
     const verify = await loopIn(dir, [url, '--verify', '--events']);
     const vEvents = parseEvents(verify.stdout);
     const l2 = loadLedger(ledgerFile);

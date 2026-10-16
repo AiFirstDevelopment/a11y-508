@@ -89,6 +89,9 @@ export async function crawl({ browser: firstBrowser, startUrl, opts, log, outDir
   const first = normalizeUrl(startUrl, origin) || startUrl;
   const queue = [{ url: first, depth: 0 }];
   const seen = new Set([first]);
+  // Pages asked for as they are (--also: the fix loop's pages to re-check): audited right after the
+  // start page, whatever the variant limit says.
+  const alsoQueued = [];
   // URLs a page landed on after a redirect: already audited, never queued again.
   const landed = new Set();
   const audited = new Set(); // final URLs of pages audited so far, so a redirect target is audited once
@@ -106,6 +109,14 @@ export async function crawl({ browser: firstBrowser, startUrl, opts, log, outDir
     return true;
   };
   acceptVariant(first);
+  for (const u of opts.also || []) {
+    const n = normalizeUrl(u, origin);
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    if (new URL(n).search || hasIdSegment(n)) variants.set(routeKey(n), (variants.get(routeKey(n)) || 0) + 1);
+    alsoQueued.push({ url: n, depth: 0, via: 'also' });
+  }
+  queue.push(...alsoQueued);
   const pages = [];
   let active = 0;
   let overflow = 0;
@@ -215,6 +226,7 @@ export async function crawl({ browser: firstBrowser, startUrl, opts, log, outDir
           res.depth = item.depth;
           if (item.via === 'click') res.foundBy = 'click';
           if (item.via === 'form') res.foundBy = 'form';
+          if (item.via === 'also') res.foundBy = 'also';
           // A page that lands on another URL (an app's start route that
           // redirects to its default view) is that URL's page: audit it once.
           const landedOn = (res.finalUrl && normalizeUrl(res.finalUrl, origin)) || item.url;

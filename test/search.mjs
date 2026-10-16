@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
-const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless', 'live', 'overlay'];
+const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless', 'live', 'overlay', 'also'];
 if (only && !GROUPS.includes(only)) throw new Error(`--only takes one of ${GROUPS.join(', ')}`);
 const want = (group) => !only || only === group;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-search-')));
@@ -369,5 +369,18 @@ if (want('overlay')) {
     assert.ok(pageOf(ov.report, '/result-67.html'), JSON.stringify(ov.report.pages.map((p) => path(p.url))));
     // The zoom pass measured the page, not the panel: no overlap with an option.
     assert.ok(!pg.findings.some((f) => f.test === '18.A' && /option/i.test(f.selector || '')), JSON.stringify(pg.findings.filter((f) => f.test === '18.A')));
+  });
+}
+
+// --also: a page audited besides the start page, as it is, right after it.
+if (want('also')) {
+  const site0 = await startFixtureSite({ dropForms: 0 });
+  const out = join(tmp, 'also');
+  const r = await cli([site0.base + 'search-nameless.html', '--also', site0.base + 'menu-page-2.html', '--also', 'https://example.org/off', '--max-pages', '2', '--no-interact', '--no-zoom', '--no-screenshots', '--fail-on', 'none', '--out', out, '--quiet', '--json']);
+  site0.close();
+  const rep = existsSync(join(out, 'report.json')) ? JSON.parse(readFileSync(join(out, 'report.json'), 'utf8')) : null;
+  check('--also: the page is audited right after the start page, as it is, and marked so; another origin is left out', () => {
+    assert.ok(rep, r.stderr);
+    assert.deepEqual(rep.pages.map((p) => [path(p.url), p.foundBy || null]), [['/search-nameless.html', null], ['/menu-page-2.html', 'also']], JSON.stringify(rep.pages.map((p) => p.url)));
   });
 }

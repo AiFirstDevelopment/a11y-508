@@ -47,6 +47,8 @@ Options
   --header "Name: value"   Extra request header, sent to every request (repeatable)
   --token-header <name>    Header that carries TOKEN (default Authorization)
   --auth-origin <origin>   Additional origin that also receives TOKEN (repeatable)
+  --also <url>             A page audited besides the start page, as it is (repeatable; the fix
+                           loop passes the pages its fixes were found on, so they are re-checked)
   --token-storage <key>    Also seed TOKEN into web storage under <key> (repeatable)
   --no-token-storage       Do not seed TOKEN into localStorage/sessionStorage
   --cookie "name=value"    Cookie set on the start origin before the crawl (repeatable)
@@ -137,7 +139,7 @@ export function parseArgs(argv) {
   const o = {
     url: null, maxPages: 200, maxDepth: 10, concurrency: 4, include: [], exclude: [], failOn: ['critical', 'serious'],
     out: null, viewport: { width: 1280, height: 800 }, timeout: 30000, settle: 500, extraHeaders: [],
-    tokenHeader: 'Authorization', authOrigins: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stay: false, connect: null, stateFile: null, troubleshoot: false, interact: true, zoom: true,
+    tokenHeader: 'Authorization', authOrigins: [], also: [], tokenStorage: true, tokenStorageKeys: [], cookies: [], login: false, loginOnly: false, stay: false, connect: null, stateFile: null, troubleshoot: false, interact: true, zoom: true,
     maxTabs: 400, maxActivations: 12, maxClicks: 30, followClicks: true, forms: true, searchMonths: 3, userAgent: null, chrome: null, noSandbox: false, quiet: false, json: false, events: false,
     listTests: false, help: false, version: false, wcag: '2.0',
   };
@@ -195,6 +197,7 @@ export function parseArgs(argv) {
       }
       case '--token-header': o.tokenHeader = next(a); break;
       case '--auth-origin': o.authOrigins.push(next(a)); break;
+      case '--also': o.also.push(next(a)); break;
       case '--token-storage': o.tokenStorageKeys.push(next(a)); break;
       case '--no-token-storage': o.tokenStorage = false; break;
       case '--login': o.login = true; break;

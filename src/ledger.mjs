@@ -34,6 +34,15 @@ export const pageKey = (p) => p.finalUrl || p.url;
 // Folds one crawl report into the ledger and returns what changed.
 export function applyReport(ledger, report, round, { maxAttempts = 3 } = {}) {
   const audited = new Set(report.pages.filter((p) => !p.error && !p.skipped).map(pageKey));
+  const routeOf = (u) => {
+    try {
+      const x = new URL(u);
+      return `${x.origin}${x.pathname}${x.hash}`;
+    } catch {
+      return u;
+    }
+  };
+  const auditedRoutes = new Set([...audited].map(routeOf));
   const seen = new Map();
   const note = (f, page) => {
     const fp = fingerprint(f);
@@ -68,7 +77,9 @@ export function applyReport(ledger, report, round, { maxAttempts = 3 } = {}) {
       }
       continue;
     }
-    const checked = entry.pages.includes('site') || entry.pages.some((u) => audited.has(u));
+    // Audited again: the page itself, or the same route with other query values (an app that keeps its
+    // search in the URL gives every crawl a fresh variant of one page).
+    const checked = entry.pages.includes('site') || entry.pages.some((u) => audited.has(u) || auditedRoutes.has(routeOf(u)));
     if (!checked) {
       diff.unchecked.push(entry);
       continue;

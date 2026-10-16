@@ -91,7 +91,7 @@ export function coverage(pages, crawl, opts) {
     const where = `Search form on ${short(p.finalUrl || p.url)}`;
     // What was pressed, and what came of it: "pressed "Search": 8 results".
     const did = f.pressed ? ` Pressed ${/^Enter/.test(f.pressed) ? f.pressed : `"${f.pressed}"`}: ${f.results} result${f.results === 1 ? '' : 's'}.` : '';
-    if (f.preset && f.short) notes.push(`${where}: chose '${f.preset}', the widest preset (${f.presetDays} days), shorter than --search-months ${opts.searchMonths}; results older than that were not looked for.${did}`);
+    if (f.preset && f.short) notes.push(`${where}: chose '${f.preset}', the widest preset (${f.presetDays} days), shorter than --search-months ${opts.searchMonths}; ${f.from || f.to ? `the date fields were set to ${f.from || '(no start)'} to ${f.to || '(no end)'} as well` : 'results older than that were not looked for'}.${did}`);
     else if (f.preset) notes.push(`${where}: chose '${f.preset}'.${did}`);
     else if (f.from || f.to) notes.push(`${where}: filled ${f.from || '(no start)'} to ${f.to || '(no end)'}.${did}`);
     else notes.push(`${where}: submitted with no date range (no preset or date field found).${did}`);

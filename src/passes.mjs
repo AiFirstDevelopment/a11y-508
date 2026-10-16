@@ -787,7 +787,8 @@ export async function searchPass(page, add, fingerprints, opts, reload, origin) 
       Object.assign(fill, { preset: got.text, presetDays: got.days, short: got.short });
       break;
     }
-    const rest = await page.evaluate(`window.__a11y508.fillSearch(${sel}, ${months}, { presets: false, dates: ${!fill.preset} })`);
+    // No preset, or only one shorter than --search-months: the date fields get the full range.
+    const rest = await page.evaluate(`window.__a11y508.fillSearch(${sel}, ${months}, { presets: false, dates: ${!fill.preset || !!fill.short} })`);
     if (rest) Object.assign(fill, { dates: rest.dates, from: rest.from, to: rest.to, required: rest.required });
     let pt = null;
     // A Search button disabled until the form is valid: pressed once the fill has enabled it (the app

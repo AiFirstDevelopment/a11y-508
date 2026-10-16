@@ -318,6 +318,8 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       if (done.outcome === 'awaiting-deploy') [kind, reason] = ['wait', 'the new build has not arrived yet'];
       else if (pre) [kind, reason] = ['precondition', pre.message];
       else if (done.outcome === 'error' || errors.length) [kind, reason] = ['error', (errors.length ? errors[errors.length - 1].message : null) || done.reason || `the loop ended with exit code ${done.code}`];
+      // Fixes still awaiting verification when the loop ended for any other reason: the watch goes on.
+      if (!kind && pendingDeploy()) [kind, reason] = ['wait', 'fixes still wait for the new build'];
       if (!kind) return;
       scheduleRetry(run, kind, reason, startAgain(run, kind === 'wait' ? { deploy: 'wait' } : {}), { at: restored && rec ? rec.at : null });
       return;
