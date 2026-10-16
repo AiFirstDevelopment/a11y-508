@@ -214,7 +214,9 @@ test('turnkey AC3 / guard e: the sign-in waits as long as it takes, opens a clos
 test('turnkey AC3 / guard f: a round whose crawl is sent to the sign-in signs in again and crawls again, and the loop goes on', async ({ page }) => {
   test.setTimeout(500_000);
   const a = await app('a11y-508-tk-expired-', {}, { portal: true });
-  const dash = await dashboard({ cwd: a.cwd });
+  // Each assistant call takes a while, as a real one does: round 1's fix step then lasts long enough
+  // for the poll below to see it and expire the sessions before round 2's crawl begins.
+  const dash = await dashboard({ cwd: a.cwd, env: { FAKE_AGENT_DELAY_MS: '500' } });
   try {
     await open(page, dash);
     await go(page).click();
