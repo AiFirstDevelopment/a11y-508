@@ -116,7 +116,7 @@ test('manual AC1 / guard a: the PDF is chosen with a file chooser, stored, serve
     await expect(go(page)).toHaveText('Stop');
     expect((await api(dash, '/api/runs/current')).json.id).toBe(run.id);
     await go(page).click();
-    await expect(now(page)).toHaveText('Stopped', { timeout: 30_000 });
+    await expect(now(page)).toHaveText('Stopped.', { timeout: 30_000 });
     removeTemp(notes);
   } finally {
     await dash.stop();
@@ -144,6 +144,9 @@ test('manual AC2/3/4/5/7/8/9 / guards b c d: findings tied to PDF pages, checked
   test.setTimeout(400_000);
   const app = await manualApp();
   const base = app.g('rev-parse', 'HEAD');
+  // A remote with a web page (commits link to it); pushes still go to the local bare repository.
+  app.g('remote', 'set-url', 'origin', 'https://github.com/example/manual-app.git');
+  app.g('remote', 'set-url', '--push', 'origin', app.originDir);
   const dash = await dashboard({ cwd: app.cwd });
   try {
     await open(page, dash);
@@ -236,6 +239,33 @@ test('manual AC2/3/4/5/7/8/9 / guards b c d: findings tied to PDF pages, checked
     expect(app.g('log', '-1', '--format=%s', 'a11y-508')).toMatch(/^a11y-508: build marker m1-/);
     for (const f of ['F1', 'F3']) expect(existsSync(join(dir, 'evidence', f, 'after-1', 'screenshot.png')), f).toBe(true);
 
+    // clarity AC3 / guard c: Done shows what was done: one row per fixed item, open, each with its PDF
+    // page, the deployed URL checked, its commit as a link, the verdict's reason and the screenshots
+    // before and after; Already fixed below it, collapsed; the plan and the decisions stay, collapsed.
+    const done = page.getByTestId('fixed-confirmed');
+    await expect(done.locator('summary')).toHaveText('Fixed and confirmed in the deployed site (2)', { timeout: 30_000 });
+    await expect(done).toHaveAttribute('open', '');
+    const rows = done.getByTestId('fixed-item');
+    await expect(rows).toHaveCount(2);
+    for (const [f, pdfPage, sha] of [['F1', 1, f1[0]], ['F3', 2, f3[0]]] as const) {
+      const r = done.locator(`[data-testid="fixed-item"][data-finding="${f}"]`);
+      await expect(r.getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=${pdfPage}`);
+      await expect(r.getByTestId('checked')).toContainText(app.site.base);
+      await expect(r.getByTestId('fixed-commit')).toHaveAttribute('href', `https://github.com/example/manual-app/commit/${sha}`);
+      await expect(r.getByTestId('fixed-commit')).toHaveText(sha.slice(0, 7));
+      await expect(r.getByTestId('reason')).toHaveText('Why it counts as fixed: the element has a name in the deployed page');
+      const shots = r.getByTestId('fixed-shot');
+      await expect(shots).toHaveCount(2);
+      await expect(shots.nth(0)).toHaveAttribute('src', `/api/manual/${id}/file/evidence/${f}/before/screenshot.png`);
+      await expect(shots.nth(1)).toHaveAttribute('src', `/api/manual/${id}/file/evidence/${f}/after-1/screenshot.png`);
+      for (const i of [0, 1]) await expect.poll(() => shots.nth(i).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBeGreaterThan(0);
+    }
+    await expect(page.getByTestId('already-fixed')).not.toHaveAttribute('open', '');
+    await expect(page.getByTestId('decision-log')).toBeVisible();
+    await expect(page.getByTestId('decision-log').locator('summary')).toHaveText(/^Decisions \(\d+\)$/);
+    await expect(page.getByTestId('decision-log')).not.toHaveAttribute('open', '');
+    await expect(page.getByTestId('plan')).not.toHaveAttribute('open', '');
+
     // AC 9: every decision, and decisions.md grouped by finding, linked to its PDF page.
     const all = decisions(dir);
     for (const stage of ['read', 'check', 'plan', 'fix', 'verify']) expect(all.some((d) => d.stage === stage), stage).toBe(true);
@@ -244,7 +274,8 @@ test('manual AC2/3/4/5/7/8/9 / guards b c d: findings tied to PDF pages, checked
     const md = readFileSync(join(dir, 'decisions.md'), 'utf8');
     expect(md).toContain('## F1: Search button has no accessible name — [PDF page 1](source.pdf#page=1)');
     expect(md).toContain('## F2: Company logo has no text alternative — [PDF page 2](source.pdf#page=2)');
-    expect(md).toContain(`- ${f1[0].slice(0, 7)}`);
+    // With a web remote, the commit is a link to its page.
+    expect(md).toContain(`- [${f1[0].slice(0, 7)}](https://github.com/example/manual-app/commit/${f1[0]})`);
     expect(md).toContain('![F1 before](evidence/F1/before/screenshot.png)');
     expect(md).toContain('![F1 after, try 1](evidence/F1/after-1/screenshot.png)');
     // Show decisions opens it on the home screen.
@@ -280,6 +311,8 @@ test('manual AC1/6 / guards e f g h k: the developer edits the plan with the pic
     // Guard g: no commit without approval; the run sits in review (5 s, and across a dashboard restart).
     await page.waitForTimeout(5000);
     await expect(now(page)).toHaveText(REVIEW);
+    // clarity AC1 / guard a: the instruction is said once on the page, by the sentence; the plan's buttons follow the items.
+    await expect(page.getByText(REVIEW)).toHaveCount(1);
     expect(commitsSinceBase()).toBe('0');
     await expect(item(page, 'F1').getByTestId('component-chosen')).toHaveText(/^HeaderComponent/);
     const before = (await api(dash, '/api/runs/current')).json;
@@ -345,6 +378,13 @@ test('manual AC1/6 / guards e f g h k: the developer edits the plan with the pic
     await expect(now(page)).toHaveText('Done: 1 finding from the PDF is fixed and confirmed in the deployed site; 1 was already fixed.', { timeout: 240_000 });
     expect(fixCommits(app, 'Search button has no accessible name')).toHaveLength(1);
     expect(fixCommits(app, 'Menu button')).toEqual([]);
+    // clarity AC3: the item the developer removed is under Left out of the plan, collapsed, with what it was.
+    const left = page.getByTestId('left-out');
+    await expect(left.locator('summary')).toHaveText('Left out of the plan (1)');
+    await expect(left).not.toHaveAttribute('open', '');
+    await expect(left.getByTestId('left-out-item')).toContainText('F3 Menu button has no accessible name');
+    await expect(left.getByTestId('left-out-reason')).toContainText('Removed by you; the planned fix was: ');
+    await expect(page.getByTestId('fixed-item')).toHaveCount(1);
     // Guard k: the developer's edits are in the log, before → after; the removal and the approval too.
     const md = readFileSync(join(dir, 'decisions.md'), 'utf8');
     expect(md).toMatch(/plan · developer: changed the plan item: .* In HeaderComponent \(src\/app\/header\/header\.component\.ts\)\. → .* In SearchBarComponent \(src\/app\/search\/search-bar\.component\.ts\)\./);
@@ -375,7 +415,8 @@ test('manual AC8 / guards i j: a fix that does not hold in the deployed site get
     await expect.poll(() => verifies().length, { timeout: 200_000 }).toBeGreaterThanOrEqual(2);
     expect(verifies().slice(0, 2).map((d) => [d.finding, d.decision, d.evidence])).toEqual([['F1', 'not fixed in the deployed site', 'evidence/F1/after-1'], ['F3', 'not fixed in the deployed site', 'evidence/F3/after-1']]);
     await expect(now(page)).toHaveText('2 fixes did not hold in the deployed site after two tries. Review the revised plan.', { timeout: 300_000 });
-    await expect(page.getByTestId('review-step')).toHaveText('2 fixes did not hold in the deployed site after two tries. Review the revised plan.');
+    // clarity AC1: the revised plan's sentence is said once.
+    await expect(page.getByText('2 fixes did not hold in the deployed site after two tries. Review the revised plan.')).toHaveCount(1);
     // Guard j: exactly one automatic retry: two fix commits for each before the revised plan, and no third without a new approval.
     expect([fixCommits(app, 'Search button').length, fixCommits(app, 'Menu button').length]).toEqual([2, 2]);
     expect(verifies().map((d) => [d.finding, d.decision, d.evidence])).toEqual([
@@ -506,5 +547,112 @@ test('manual AC11: a11y-508 manual <pdf> runs the same flow from the command lin
   } finally {
     await app.cleanup();
     removeTemp(home);
+  }
+});
+
+// ---- docs/plans/manual-findings-clarity.md
+
+test('clarity AC2 / guard b: a dashboard restart during a PDF run continues and says so from the first paint, never "Stopped"; a Stop stays Stopped.', async ({ page }) => {
+  test.setTimeout(400_000);
+  const app = await manualApp();
+  // The rerun starts 3 s after the relaunch (200 ms otherwise), so what the page and the API say meanwhile can be watched.
+  const env = { A11Y_508_RERUN_DELAY: '3000' };
+  let dash = await dashboard({ cwd: app.cwd, env });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    const quit = (await api(dash, '/api/runs/current')).json;
+    const home = dash.home;
+    await dash.stop();
+    // The quit run's record carries rerun from the moment it was marked done, with the stage from state.json.
+    const runsDir = join(dash.dirs().work, 'runs');
+    expect(readJson(join(runsDir, `${quit.id}.run.json`)).rerun).toEqual({ reason: 'dashboard-restart', stage: 'review' });
+
+    dash = await dashboard({ cwd: app.cwd, env: { ...env, A11Y_508_HOME: home } });
+    // For 3 s from the relaunch: the API never returns a bare stopped PDF run, and the page never says Stopped.
+    const bare: any[] = [];
+    let watching = true;
+    const apiWatch = (async () => {
+      while (watching) {
+        const r = (await api(dash, '/api/runs/current')).json;
+        if (r && r.kind === 'manual' && r.status !== 'running' && !r.rerun) bare.push(r);
+        await new Promise((ok) => setTimeout(ok, 100));
+      }
+    })();
+    await open(page, dash);
+    const seen: { text: string; button: string }[] = [];
+    const until = Date.now() + 3000;
+    while (Date.now() < until) {
+      const text = ((await now(page).textContent().catch(() => '')) || '').trim();
+      const button = ((await go(page).textContent().catch(() => '')) || '').trim();
+      if (text) seen.push({ text, button });
+      await page.waitForTimeout(100);
+    }
+    watching = false;
+    await apiWatch;
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0].text).toBe('The dashboard was closed during the PDF run (at the plan review); continuing from there.');
+    expect(seen.filter((s) => /Stopped/.test(s.text))).toEqual([]);
+    expect(seen.filter((s) => s.button !== 'Stop')).toEqual([]);
+    expect(bare).toEqual([]);
+    // Then it is back at the plan review, the same PDF run.
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 60_000 });
+    const after = (await api(dash, '/api/runs/current')).json;
+    expect([after.kind, after.status, after.meta.manualId]).toEqual(['manual', 'running', quit.meta.manualId]);
+
+    // A Stop the person pressed: "Stopped.", and a relaunch does not run it again.
+    await go(page).click();
+    await expect(now(page)).toHaveText('Stopped.', { timeout: 30_000 });
+    const stopped = (await api(dash, '/api/runs/current')).json;
+    await dash.stop();
+    dash = await dashboard({ cwd: app.cwd, env: { ...env, A11Y_508_HOME: home } });
+    await open(page, dash);
+    await expect(now(page)).toHaveText('Stopped.', { timeout: 30_000 });
+    await expect(go(page)).toHaveText('Start');
+    await page.waitForTimeout(4000);
+    await expect(now(page)).toHaveText('Stopped.');
+    const cur = (await api(dash, '/api/runs/current')).json;
+    expect([cur.id, cur.status, cur.rerun]).toEqual([stopped.id, 'done', undefined]);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('clarity AC4 / guard d: a read answer with no list of findings is asked again, logged, and the run goes on to the plan', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_READ_FAIL: '1' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText("The assistant's answer had no list of findings; asking it again.", { timeout: 120_000 });
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    expect(decisions(runDir(dash)).filter((d) => d.stage === 'read' && d.by === 'tool' && d.decision === 'asked again').map((d) => d.reason)).toEqual(['the first answer could not be used: its answer had no list of findings']);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('clarity AC4 / guard e: a read that fails twice ends naming the assistant and Advanced, and the one button is Choose another PDF', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_READ_FAIL: '2' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    // The fake assistant is a custom command: its first word names it.
+    await expect(now(page)).toHaveText('Node could not read the PDF (its answer had no list of findings). Choose another PDF, or pick another assistant under Advanced.', { timeout: 180_000 });
+    await expect(go(page)).toHaveText('Start', { timeout: 30_000 });
+    await expect(page.getByTestId('manual-pdf')).toHaveText('Choose another PDF');
+    const chooser = page.waitForEvent('filechooser', { timeout: 10_000 });
+    await page.getByTestId('manual-pdf').click();
+    expect((await chooser).isMultiple()).toBe(false);
+    expect(decisions(runDir(dash)).filter((d) => d.decision === 'asked again')).toHaveLength(1);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
   }
 });

@@ -5,7 +5,7 @@
 // The dashboard's Test assistant prompt gets { ok: true }.
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const [promptFile, resultFile] = process.argv.slice(2);
 // A few lines of output first, as a real assistant prints while it works.
@@ -107,6 +107,7 @@ if (task && /^manual-/.test(task.kind)) {
 // ---- The manual flow (docs/plans/manual-findings.md), scripted by env:
 // FAKE_MANUAL_PLAN_WRONG: the plan puts F1 (the search button) in HeaderComponent.
 // FAKE_MANUAL_MISUNDERSTAND_ONCE=<file>: the first confirmation answers understood: false.
+// FAKE_MANUAL_READ_FAIL=<n>: the first n reads answer with no list of findings.
 // The read parses the PDF's FINDING lines; the check and the verify judge from the evidence the tool
 // captured (a button with no aria-label, an image with no alt, is the problem); a fix edits the
 // approved component's file.
@@ -119,6 +120,19 @@ function manual(task) {
     return html.some((h) => /^<button\b(?![^>]*\baria-label=)/.test(h) || /^<img\b(?![^>]*\balt=)/.test(h));
   };
   if (task.kind === 'manual-read') {
+    // FAKE_MANUAL_READ_FAIL=<n>: the first n reads answer without a list of findings (counted in a
+    // file beside the result, in the run's tasks folder).
+    const fails = Number(process.env.FAKE_MANUAL_READ_FAIL) || 0;
+    if (fails) {
+      const count = join(dirname(task.resultFile), 'fake-manual-read-fails');
+      const n = existsSync(count) ? Number(readFileSync(count, 'utf8')) || 0 : 0;
+      if (n < fails) {
+        writeFileSync(count, String(n + 1));
+        return out({ note: 'I could not make out the findings in this PDF.' });
+      }
+      // Asked again: a moment before the answer, so the page's sentence for the wait can be seen.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
+    }
     const text = readFileSync(task.pdf, 'latin1');
     const pages = [...text.matchAll(/stream\n([\s\S]*?)\nendstream/g)].map((m) => [...m[1].matchAll(/\(((?:\\.|[^\\)])*)\) Tj/g)].map((x) => x[1].replace(/\\(.)/g, '$1')));
     const findings = [];
