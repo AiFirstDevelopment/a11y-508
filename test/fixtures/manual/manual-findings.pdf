@@ -3,17 +3,16 @@
 << /Type /Catalog /Pages 2 0 R >>
 endobj
 2 0 obj
-<< /Type /Pages /Kids [5 0 R 7 0 R] /Count 2 >>
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R] /Count 3 >>
 endobj
 3 0 obj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
 endobj
 4 0 obj
-<< /Length 321 >>
+<< /Length 298 >>
 stream
 BT /F1 6 Tf 40 780 Td 9 TL
-(Manual accessibility test report - Example app) Tj T*
-(Tested with NVDA and keyboard only.) Tj T*
+(The magnifier button in the search bar is announced only as button.) Tj T*
 (FINDING F1 | Search button has no accessible name | /search | #search-btn | the magnifier button in the search bar | The magnifier button in the search bar is announced only as button.) Tj T*
 ET
 endstream
@@ -22,29 +21,43 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
 endobj
 6 0 obj
-<< /Length 329 >>
+<< /Length 217 >>
 stream
 BT /F1 6 Tf 40 780 Td 9 TL
+(The footer logo image has no alt text.) Tj T*
 (FINDING F2 | Company logo has no text alternative | / | footer img | the logo in the footer | The footer logo image has no alt text.) Tj T*
-(FINDING F3 | Menu button has no accessible name | / | #menu-btn | the menu button in the header | The hamburger menu button in the header has no name.) Tj T*
 ET
 endstream
 endobj
 7 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
 endobj
+8 0 obj
+<< /Length 249 >>
+stream
+BT /F1 6 Tf 40 780 Td 9 TL
+(The hamburger menu button in the header has no name.) Tj T*
+(FINDING F3 | Menu button has no accessible name | / | #menu-btn | the menu button in the header | The hamburger menu button in the header has no name.) Tj T*
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
 xref
-0 8
+0 10
 0000000000 65535 f 
 0000000009 00000 n 
 0000000058 00000 n 
-0000000121 00000 n 
-0000000191 00000 n 
-0000000563 00000 n 
-0000000689 00000 n 
-0000001069 00000 n 
+0000000127 00000 n 
+0000000197 00000 n 
+0000000546 00000 n 
+0000000672 00000 n 
+0000000940 00000 n 
+0000001066 00000 n 
+0000001366 00000 n 
 trailer
-<< /Size 8 /Root 1 0 R >>
+<< /Size 10 /Root 1 0 R >>
 startxref
-1195
+1492
 %%EOF

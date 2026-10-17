@@ -37,7 +37,7 @@ if (streamOnce && !existsSync(streamOnce)) {
   const gap = Number(process.env.FAKE_AGENT_STREAM_MS) || 1500;
   const emit = (e) => process.stdout.write(JSON.stringify({ timestamp: new Date().toISOString(), ...e }) + '\n');
   const pause = () => new Promise((r) => setTimeout(r, gap));
-  emit({ type: 'init', session_id: 'fake', model: 'fake-model' });
+  emit({ type: 'init', session_id: 'fake', model: 'fake-1' });
   emit({ type: 'tool_use', tool_name: 'read_file', tool_id: '1', parameters: { absolute_path: join(process.cwd(), 'site', 'index.html') } });
   await pause();
   emit({ type: 'tool_result', tool_id: '1', status: 'success' });
@@ -107,15 +107,28 @@ if (task && /^manual-/.test(task.kind)) {
 // ---- The manual flow (docs/plans/manual-findings.md), scripted by env:
 // FAKE_MANUAL_PLAN_WRONG: the plan puts F1 (the search button) in HeaderComponent.
 // FAKE_MANUAL_MISUNDERSTAND_ONCE=<file>: the first confirmation answers understood: false.
-// FAKE_MANUAL_READ_FAIL=<n>: the first n reads answer with no list of findings.
-// FAKE_MANUAL_WRONG_PAGE: the read gives F1 a quote, status and criterion the report does not have, F2
-// the page before its own, F3 a page past the end.
-// FAKE_MANUAL_READ_SILENT=1 (with it): those reads say "I cannot open this file" and write no answer at all.
-// FAKE_MANUAL_READ_ECHO=1: a read whose prompt does not quote its previous answer says only "Here is the original image:".
-// The read takes the FINDING lines from the tool's parse of the PDF (report.md); the check and the verify judge from the evidence the tool
-// captured (a button with no aria-label, an image with no alt, is the problem); a fix edits the
-// approved component's file.
+// FAKE_MANUAL_READ_FAIL=<n>: the first n describes answer with no list of answers.
+// FAKE_MANUAL_READ_SILENT=1 (with it): those describes say "I cannot open this file" and write no answer at all.
+// FAKE_MANUAL_READ_ECHO=1: a describe whose prompt does not quote its previous answer says only "Here is the original image:".
+// docs/plans/read-from-parse.md AC 8:
+// FAKE_MANUAL_DESCRIBE_SKIP=F3,F5: the first describe leaves those ids out; the second answers them.
+// FAKE_MANUAL_DESCRIBE_EXTRA=F1: the describe adds a copy of F1's answer under an id the tool did not issue.
+// FAKE_MANUAL_SAME_AS=F4:F1: F4's answer says sameAs F1.
+// FAKE_MANUAL_SELECTORS_WRONG=F1: the describe gives F1 selectors that match nothing; the locate gives the right ones.
+// FAKE_MANUAL_CHECK_SKIP=F2: the first check leaves F2's verdict out.
+// Besides the plan's: FAKE_MANUAL_LOCATE_WRONG=F1 (the locate's selectors match nothing either),
+// FAKE_MANUAL_ROUTE_DOWN=F2 (the describe puts F2 on a page that does not load, with selectors that
+// match nothing), FAKE_MANUAL_VERIFY_SKIP=F1 and FAKE_MANUAL_CONFIRM_SKIP=F3 (the first verify or
+// confirmation leaves that id out), FAKE_MANUAL_DESCRIBE_NO_ELEMENT=1 (no answer names an element).
+// The describe answers each candidate from its page's FINDING line (id | title | route | selectors |
+// element | words): a tag other than the candidate's own id says the page shows that earlier finding
+// (sameAs); a second FINDING line on a page is a second problem (extra); a page with none names no
+// problem when it has no criterion. Its "seen" is "A fixture page showing <the candidate's quote>".
+// The check and the verify judge from the evidence the tool captured (a button with no aria-label,
+// an image with no alt, is the problem); a fix edits the approved component's file.
 function manual(task) {
+  const FINDING = /^FINDING (\S+) \| (.*?) \| (.*?) \| (.*?) \| (.*?) \| (.*)$/;
+  const ids = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
   const out = (obj) => writeFileSync(task.resultFile, JSON.stringify(obj, null, 2));
   const problem = (ev) => {
     if (!ev || !ev.loaded) return null;
@@ -123,9 +136,10 @@ function manual(task) {
     if (!html.length) return null;
     return html.some((h) => /^<button\b(?![^>]*\baria-label=)/.test(h) || /^<img\b(?![^>]*\balt=)/.test(h));
   };
-  if (task.kind === 'manual-read') {
-    // FAKE_MANUAL_READ_FAIL=<n>: the first n reads answer without a list of findings (counted in a
-    // file beside the result, in the run's tasks folder).
+  const second = prompt.includes('You did not answer for');
+  if (task.kind === 'manual-describe') {
+    // FAKE_MANUAL_READ_FAIL=<n>: the first n describes answer without a list (counted in a file beside
+    // the result, in the run's tasks folder).
     const fails = Number(process.env.FAKE_MANUAL_READ_FAIL) || 0;
     if (fails) {
       const count = join(dirname(task.resultFile), 'fake-manual-read-fails');
@@ -138,47 +152,58 @@ function manual(task) {
       // Asked again: a moment before the answer, so the page's sentence for the wait can be seen.
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
     }
-    // FAKE_MANUAL_READ_ECHO: a read whose prompt does not say what the previous answer was answers as
-    // Gemini CLI once did ("Here is the original image:", exit 0, no answer file).
+    // FAKE_MANUAL_READ_ECHO: a describe whose prompt does not say what the previous answer was answers
+    // as Gemini CLI once did ("Here is the original image:", exit 0, no answer file).
     if (process.env.FAKE_MANUAL_READ_ECHO && !prompt.includes('Your previous answer was')) return console.log('Here is the original image:');
-    // It reads the tool's parse, never the PDF: the prompt must name report.md and a picture of a page.
-    const picture = new RegExp(`${(task.parsed || '\0').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/pages/page-\\d+(-image-\\d+)?\\.png`);
-    if (!task.report || !/report\.md$/.test(task.report) || !existsSync(task.report) || !prompt.includes(task.report) || !picture.test(prompt)) return out({ error: 'the prompt names no parsed report (report.md) and no picture of a page' });
-    const report = readFileSync(task.report, 'utf8');
-    // The pages: "## Page N of M", then its Status:, Criterion:, Picture lines and "> " text lines.
-    const pages = report.split(/^## Page /m).slice(1).map((b) => {
-      const n = Number(/^(\d+) of \d+/.exec(b)[1]);
-      return { n, status: (/^Status: (fixed|open)\b/m.exec(b) || [])[1] || null, criterion: (/^Criterion: (\S+)/m.exec(b) || [])[1] || null, picture: /^Picture of the page: /m.test(b), lines: [...b.matchAll(/^> (.*)$/gm)].map((m) => m[1]) };
-    });
-    const findings = [];
-    for (const p of pages) {
-      for (const l of p.lines) {
-        const m = /^FINDING (\S+) \| (.*?) \| (.*?) \| (.*?) \| (.*?) \| (.*)$/.exec(l);
-        if (!m) continue;
-        const had = findings.find((f) => f.id === m[1]);
-        if (had) {
-          if (!had.pages.includes(p.n)) had.pages.push(p.n);
-          continue;
-        }
-        findings.push({ id: m[1], title: m[2], pages: [p.n], page: p.n, status: p.status, criterion: p.criterion, route: m[3], selectors: m[4].split(';').map((x) => x.trim()), element: m[5], quote: m[6], expected: `${m[5]} has a text alternative`, decisions: m[3] === '/' ? [{ decision: `took the home page for ${m[1]}`, reason: 'the tester names no page; the header and footer are on every page' }] : [] });
+    // It reads the tool's parse, never the PDF: the prompt names report.md and the picture of each page, which exist.
+    if (!task.report || !/report\.md$/.test(task.report) || !existsSync(task.report) || !prompt.includes(task.report)) return out({ error: 'the prompt names no parsed report (report.md)' });
+    for (const c of task.candidates) if (!c.picture || !existsSync(c.picture) || !prompt.includes(c.picture)) return out({ error: `the prompt names no picture of page ${c.page}` });
+    const skip = second ? [] : ids(process.env.FAKE_MANUAL_DESCRIBE_SKIP);
+    const sameAs = Object.fromEntries(ids(process.env.FAKE_MANUAL_SAME_AS).map((p) => p.split(':')));
+    const wrong = ids(process.env.FAKE_MANUAL_SELECTORS_WRONG);
+    const noText = !task.candidates.some((c) => c.lines.length);
+    const answers = [];
+    for (const c of task.candidates) {
+      if (skip.includes(c.id)) continue;
+      const seen = `A fixture page showing ${c.quote || `the picture of page ${c.page}`}`;
+      const tags = c.lines.map((l) => FINDING.exec(l)).filter(Boolean);
+      const fields = (m) => ({ title: m[2], route: m[3], selectors: m[4].split(';').map((x) => x.trim()), element: m[5], expected: `${m[5]} has a text alternative` });
+      let a;
+      if (noText) {
+        // A PDF with no text (a scan): every page the same search button, from the pictures.
+        a = { id: c.id, seen, title: 'Search button has no accessible name', route: '/search', selectors: ['#search-btn'], element: 'the magnifier button in the pictures', expected: 'the button has a text alternative', sameAs: c.id === task.candidates[0].id ? null : task.candidates[0].id, decisions: [{ decision: 'read the problem from the pictures of the pages', reason: 'the PDF has no text' }] };
+      } else if (!tags.length) {
+        a = c.criterion ? { id: c.id, seen, title: `Page ${c.page}`, element: `the element on page ${c.page}`, route: '/', selectors: [], expected: '' } : { id: c.id, none: true, seen };
+      } else {
+        const m = tags[0];
+        a = { id: c.id, seen, ...fields(m), sameAs: m[1] !== c.id ? m[1] : null, decisions: m[3] === '/' ? [{ decision: `took the home page for ${c.id}`, reason: 'the tester names no page; the header and footer are on every page' }] : [] };
+        if (tags[1]) a.extra = { seen: `${seen}, and a second problem`, ...fields(tags[1]) };
       }
+      if (sameAs[c.id]) a.sameAs = sameAs[c.id];
+      if (wrong.includes(c.id)) a.selectors = ['#not-on-this-page'];
+      // FAKE_MANUAL_DESCRIBE_NO_ELEMENT: every answer says what it saw but names no element.
+      if (process.env.FAKE_MANUAL_DESCRIBE_NO_ELEMENT) delete a.element;
+      if (ids(process.env.FAKE_MANUAL_ROUTE_DOWN).includes(c.id)) Object.assign(a, { route: 'http://127.0.0.1:9/', selectors: ['#not-on-this-page'] });
+      answers.push(a);
     }
-    // A PDF with no text (a scan): one finding from the pictures of its pages.
-    if (!pages.some((p) => p.lines.length)) {
-      const shown = pages.filter((p) => p.picture).map((p) => p.n);
-      if (shown.length) findings.push({ id: 'F1', title: 'Search button has no accessible name', pages: shown, page: shown[0], status: null, criterion: null, route: '/search', selectors: ['#search-btn'], element: 'the magnifier button in the pictures', quote: '', expected: 'the button has a text alternative', decisions: [{ decision: 'read the problem from the pictures of the pages', reason: 'the PDF has no text' }] });
+    const extra = ids(process.env.FAKE_MANUAL_DESCRIBE_EXTRA);
+    for (const x of extra) {
+      const a = answers.find((y) => y.id === x);
+      if (a) answers.push({ ...a, id: 'F99', title: `${a.title} (an id the tool did not issue)` });
     }
-    if (process.env.FAKE_MANUAL_WRONG_PAGE) {
-      // The first: a quote that is on no page, a status and a criterion the report does not have.
-      if (findings[0]) Object.assign(findings[0], { quote: 'Words the tester never wrote.', status: 'open', criterion: '9.Z' });
-      if (findings[1]) findings[1].pages = [findings[1].pages[0] - 1];
-      if (findings[2]) findings[2].pages = [99];
-      for (const f of findings) f.page = f.pages[0];
-    }
-    return out({ findings });
+    return out({ answers });
+  }
+  if (task.kind === 'manual-locate') {
+    // The fixture's real route and selectors, from the finding's FINDING line.
+    return out({ answers: task.items.map((it) => {
+      const m = it.lines.map((l) => FINDING.exec(l)).filter(Boolean)[0];
+      if (ids(process.env.FAKE_MANUAL_LOCATE_WRONG).includes(it.id)) return { id: it.id, route: m ? m[3] : '/', selectors: ['#still-not-on-this-page'], reason: 'a guess' };
+      return m ? { id: it.id, route: m[3], selectors: m[4].split(';').map((x) => x.trim()), notOnThisRoute: false, reason: 'the element is in the deployed page under these selectors' } : { id: it.id, route: '/', selectors: [], reason: 'cannot tell' };
+    }) });
   }
   if (task.kind === 'manual-check' || task.kind === 'manual-verify') {
-    const list = task.kind === 'manual-check' ? task.findings : task.items;
+    const skip = second ? [] : ids(process.env[task.kind === 'manual-check' ? 'FAKE_MANUAL_CHECK_SKIP' : 'FAKE_MANUAL_VERIFY_SKIP']);
+    const list = (task.kind === 'manual-check' ? task.findings : task.items).filter((f) => !skip.includes(f.id || f.finding));
     return out(list.map((f) => {
       const p = problem(f.evidence);
       const id = f.id || f.finding;
@@ -206,7 +231,8 @@ function manual(task) {
     const once = process.env.FAKE_MANUAL_MISUNDERSTAND_ONCE;
     const refuse = once && !existsSync(once);
     if (refuse) writeFileSync(once, 'refused');
-    return out(task.items.map((it) => (refuse
+    const skip = second ? [] : ids(process.env.FAKE_MANUAL_CONFIRM_SKIP);
+    return out(task.items.filter((it) => !skip.includes(it.finding)).map((it) => (refuse
       ? { finding: it.finding, understood: false, text: `${it.edit.component.name} does not render the element the tester describes.`, files: [] }
       : { finding: it.finding, understood: true, text: `I will ${it.edit.fix.replace(/^./, (c) => c.toLowerCase()).replace(/\.$/, '')} in ${it.edit.component.name}, ${it.edit.component.file}${it.original.component && it.original.component.name !== it.edit.component.name ? `, instead of ${it.original.component.name}` : ''}.`, files: [it.edit.component.file] })));
   }
@@ -219,7 +245,9 @@ function manual(task) {
     const label = id ? id.replace(/-btn$/, '').replace(/^./, (c) => c.toUpperCase()) : 'Label';
     const before = s;
     const target = id && new RegExp(`<button id="${id}"(?![^>]*aria-label=)`).test(s) ? new RegExp(`<button id="${id}"(?![^>]*aria-label=)`) : /<button\b(?![^>]*aria-label=)/;
-    if (target.test(s)) s = s.replace(target, (m) => `${m} aria-label="${label}"`);
+    const image = id && new RegExp(`<img id="${id}"(?![^>]*\\balt=)`);
+    if (image && image.test(s)) s = s.replace(image, (m) => `${m} alt="${label}"`);
+    else if (target.test(s)) s = s.replace(target, (m) => `${m} aria-label="${label}"`);
     else if (/<img\b(?![^>]*\balt=)/.test(s)) s = s.replace(/<img\b(?![^>]*\balt=)/, (m) => `${m} alt="${label}"`);
     else if (id) s = s.replace(new RegExp(`(<button id="${id}"[^>]*aria-label=")([^"]*)"`), (m, a, v) => `${a}${v} again"`);
     if (s === before) return out({ fixed: false, files: [], note: 'nothing to change' });

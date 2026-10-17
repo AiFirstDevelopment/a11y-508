@@ -7,11 +7,13 @@
 // plan for what still did not hold. Every decision is logged in decisions.ndjson and, at the end,
 // decisions.md. The plan approval is the one thing a person decides.
 //
-// The PDF is parsed first (docs/plans/pdf-parse.md): parsed/report.md, the one file the read prompt
-// points at, with each page's text, recognised facts and pictures; the tool checks the assistant's
-// pages, quotes, statuses and criteria against it and logs every correction.
+// The PDF is parsed first (docs/plans/pdf-parse.md): parsed/report.md, with each page's text,
+// recognised facts and pictures. The tool lists the findings from the parse, one per page that names
+// a criterion (docs/plans/read-from-parse.md); the assistant says what each page's picture shows and
+// where the element is, and must answer for every one; an element the tool cannot find on the
+// deployed page goes back to it once.
 //
-// Files, under <work>/manual/<id>/: source.pdf, parsed/ (report.md, manifest.json, pages/*.png), findings.json, check.json, already-fixed.md,
+// Files, under <work>/manual/<id>/: source.pdf, parsed/ (report.md, manifest.json, pages/*.png), candidates.json, findings.json, check.json, already-fixed.md,
 // plan.json (the current version) and plan-v1.json, plan-v2.json, ..., plan-edit.json (the
 // developer's edits, written by the dashboard), state.json, decisions.ndjson, decisions.md, and
 // evidence/<finding>/{before,after-1,after-2,...}/.
@@ -20,7 +22,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readF
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  PRESET_INFO, QUOTA_DELAYS, agentLabel, agentLog, manualCheckPrompt, manualConfirmPrompt, manualFixPrompt, manualPlanPrompt, manualReadPrompt, manualReplanPrompt, manualVerifyPrompt, resolveAgentCommand, writePrompt,
+  PRESET_INFO, QUOTA_DELAYS, agentLabel, agentLog, manualCheckPrompt, manualConfirmPrompt, manualDescribePrompt, manualFixPrompt, manualLocatePrompt, manualPlanPrompt, manualReplanPrompt, manualVerifyPrompt, resolveAgentCommand, writePrompt,
 } from './agent.mjs';
 import { callAgent, findIndexHtml, frameworkLine, git, gitChanged, normalizeConfig, prepareRepo, sessionArgs, sh, signInOnly, splitCheck, stampBuildMarker, testRoundFixes, waitForEnter } from './loop.mjs';
 import { migrateRepo, migrationLines, reportDir, shortenHome, tasksDir, workDir } from './home.mjs';
@@ -62,64 +64,125 @@ export function alreadyWords(g, v) {
 const squash = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const pagesWords = (ns) => (ns.length === 1 ? `page ${ns[0]}` : `pages ${ns.slice(0, -1).join(', ')} and ${ns[ns.length - 1]}`);
 
-// The assistant's findings checked against the parse (AC 6): pages that exist, a quote that is on one of
-// them (else moved to the page it is on, or kept with quoteVerified false), and the status and
-// criterion the report recognised for those pages. decide(stage, finding, by, decision, reason).
-export function checkFindings(findings, manifest, decide) {
+// ---- The findings come from the parse (docs/plans/read-from-parse.md): the tool lists them, one per
+// page; the assistant only says what each page shows.
+
+const idsWords = (ids) => (ids.length <= 1 ? ids.join('') : `${ids.slice(0, -1).join(', ')} and ${ids[ids.length - 1]}`);
+const reEsc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// AC 1: the candidates, deterministic: one per page that names a recognised criterion; when no page
+// names one, one per page that is not a divider and has text or a picture.
+export function buildCandidates(manifest) {
   const pages = (manifest && manifest.pages) || [];
-  const M = (manifest && manifest.pageCount) || pages.length;
-  const byN = new Map(pages.map((p) => [p.n, p]));
-  const textOf = (n) => squash((byN.get(n) || { lines: [] }).lines.join(' '));
-  const hasText = pages.some((p) => p.lines && p.lines.length);
+  const named = pages.filter((p) => !p.divider && (p.criteria || []).length);
+  const list = named.length ? named : pages.filter((p) => !p.divider && ((p.lines || []).length || p.picture));
+  return list.map((p, i) => {
+    const c = named.length ? p.criteria[0] : null;
+    const lines = p.lines || [];
+    const line = c ? lines.find((l) => new RegExp(`^${reEsc(c.id)}\\b`).test(l)) : null;
+    return {
+      id: `F${i + 1}`, pages: [p.n], page: p.n,
+      status: p.status ? p.status.value : null, statusDate: (p.status && p.status.date) || null, statusWords: (p.status && p.status.words) || null,
+      criterion: c ? c.id : null, criterionName: c ? c.name || null : null, wcag: c ? c.wcag || null : null,
+      quote: line || lines[0] || '', picture: p.picture || null, images: (p.images || []).map((im) => im.file).filter(Boolean),
+      lines,
+    };
+  });
+}
+
+// An answer that counts (AC 2): it says what the page shows and which element; a page that names no
+// criterion may instead be said to name no problem.
+export const describedEnough = (a, c) => !!a && ((a.none === true && !!c && !c.criterion) || (!!str(a.seen) && !!str(a.element)));
+const selectorsOf = (v) => (Array.isArray(v) ? v : typeof v === 'string' && v ? [v] : []).map((x) => str(x, 300)).filter(Boolean).slice(0, 5);
+const NOT_DESCRIBED = 'not described by the assistant';
+
+// AC 2/3: the findings from the candidates and the assistant's answers (a Map of id to answer, only
+// for ids the tool issued, only those that count). Nothing is lost: an unanswered candidate is kept
+// undescribed. sameAs merges only pages with the same criterion and status, described alike; extra
+// adds <id>b with the page's facts. decide(stage, finding, by, decision, reason).
+export function foldAnswers(candidates, answers, decide) {
   const out = [];
-  for (const f of findings) {
-    const given = f.pages;
-    const ok = given.filter((n) => n >= 1 && n <= M);
-    const bad = given.filter((n) => !(n >= 1 && n <= M));
-    if (!ok.length) {
-      decide('read', f.id, 'tool', 'dropped', `the assistant gave ${pagesWords(bad)} for it; the PDF has ${M} page${M === 1 ? '' : 's'}`);
+  const into = new Map();
+  const own = (c, a) => {
+    const described = !!a && !!str(a.seen) && !!str(a.element);
+    const element = described ? str(a.element, 300) : NOT_DESCRIBED;
+    const title = (a && str(a.title, 120)) || (described ? element.replace(/^./, (x) => x.toUpperCase()) : '') || (c.criterion ? `${c.criterion} ${c.criterionName || ''}`.trim() : `PDF page ${c.page}`);
+    const { lines, statusWords, ...facts } = c;
+    return {
+      ...facts, pages: [...c.pages], images: [...(c.images || [])], title, seen: described ? str(a.seen, 1200) : null, element,
+      route: described ? str(a.route || a.url, 500) : '', url: null, selectors: described ? selectorsOf(a.selectors) : [], expected: described ? str(a.expected, 400) : '',
+      located: null,
+    };
+  };
+  const sameish = (x, y) => {
+    if (!x.seen || !y.seen) return true;
+    if (squash(x.element) === squash(y.element)) return true;
+    return x.selectors.some((s) => y.selectors.includes(s));
+  };
+  for (const c of candidates) {
+    const a = answers.get(c.id) || null;
+    if (!a) {
+      decide('read', c.id, 'tool', 'kept without a description', `the assistant did not describe PDF page ${c.page} after two asks`);
+      out.push(own(c, null));
       continue;
     }
-    if (bad.length) decide('read', f.id, 'tool', `left out ${pagesWords(bad)}`, `the PDF has ${M} page${M === 1 ? '' : 's'}`);
-    let list = ok;
-    let pagesOk = !bad.length;
-    let quote = null;
-    if (f.quote && hasText) {
-      const q = squash(f.quote);
-      if (list.some((n) => textOf(n).includes(q))) quote = true;
+    if (a.none === true && !c.criterion) {
+      decide('read', c.id, 'agent', `left out PDF page ${c.page}: it names no accessibility problem`, str(a.seen, 400));
+      continue;
+    }
+    const f = own(c, a);
+    let merged = false;
+    const target = typeof a.sameAs === 'string' ? str(a.sameAs, 20) : '';
+    if (target && target !== c.id) {
+      const root = into.get(target) || out.find((x) => x.id === target);
+      const why = !root ? `${target} is not an earlier finding`
+        : (root.criterion || null) !== (c.criterion || null) ? 'they are different criteria'
+        : (root.status || null) !== (c.status || null) ? `the tester's statuses differ: ${root.status || 'none'} on page ${root.page}, ${c.status || 'none'} on page ${c.page}`
+        : !sameish(root, f) ? 'the assistant merged two pages whose pictures it described differently'
+        : null;
+      if (why) decide('read', c.id, 'tool', `kept ${c.id} separate from ${target}`, why);
       else {
-        const other = pages.find((p) => !list.includes(p.n) && textOf(p.n).includes(q));
-        if (other) {
-          decide('read', f.id, 'tool', `moved to page ${other.n}`, `the quote is on page ${other.n}, not ${pagesWords(list)}`);
-          list = [other.n];
-          pagesOk = false;
-          quote = true;
-        } else {
-          quote = false;
-          decide('read', f.id, 'tool', 'kept it, although its quote is on no page of the PDF', `"${f.quote.slice(0, 120)}" is not in the text of ${pagesWords(list)} or any other page`);
-        }
+        root.pages = [...new Set([...root.pages, ...c.pages])].sort((x, y) => x - y);
+        root.images = [...root.images, ...f.images];
+        (root.merged ||= []).push(c.id);
+        // What it saw on each merged page stays on the finding, so a merge of two different pictures shows.
+        (root.seenMore ||= []).push({ page: c.page, seen: f.seen });
+        into.set(c.id, root);
+        decide('read', root.id, 'agent', `merged ${c.id} (PDF page ${c.page}) into ${root.id}`, `page ${c.page} shows the same element with the same problem as page ${root.page}`);
+        merged = true;
       }
     }
-    // The report's facts for its pages: the first status, the criteria.
-    const withStatus = list.map((n) => byN.get(n)).find((p) => p && p.status);
-    const known = withStatus ? withStatus.status : null;
-    let status = f.status;
-    let statusDate = null;
-    if (known) {
-      if (status && status !== known.value) decide('read', f.id, 'tool', `status ${known.value}, not ${status}`, `the report reads "${known.words}" on page ${withStatus.n}`);
-      status = known.value;
-      statusDate = known.date || null;
+    if (!merged) out.push(f);
+    // The assistant's decisions for the page, under the finding it ended up in.
+    for (const d of Array.isArray(a.decisions) ? a.decisions : []) if (d && d.decision) decide('read', merged ? into.get(c.id).id : c.id, 'agent', d.decision, d.reason);
+    const x = a.extra && typeof a.extra === 'object' && !Array.isArray(a.extra) ? a.extra : null;
+    if (x) {
+      if (!str(x.element)) decide('read', c.id, 'tool', 'left out a second problem on its page', 'the assistant named no element for it');
+      else {
+        const e = own({ ...c, id: `${c.id}b` }, { ...x, seen: str(x.seen) || str(a.seen) });
+        e.extraOf = c.id;
+        out.push(e);
+        decide('read', e.id, 'agent', `a second problem on PDF page ${c.page}: ${e.element}`, str(x.seen, 400));
+      }
     }
-    const ids = [...new Set(list.flatMap((n) => ((byN.get(n) || {}).criteria || []).map((c) => c.id)))];
-    let criterion = f.criterion;
-    if (ids.length && !ids.includes(criterion)) {
-      if (criterion) decide('read', f.id, 'tool', `criterion ${ids[0]}, not ${criterion}`, `the report names ${ids.join(', ')} on ${pagesWords(list)}`);
-      criterion = ids[0];
-    }
-    out.push({ ...f, pages: list, page: list[0], status, statusDate, criterion: criterion || null, quoteVerified: quote, verified: { pages: pagesOk, quote } });
   }
   return out;
 }
+
+// "10 findings read from the PDF: 8 the tester verified fixed, 2 open." (AC 3), counted after merging.
+export function countsSentence(findings) {
+  const n = (v) => findings.filter((f) => (f.status || null) === v).length;
+  const [fixed, open, none] = [n('fixed'), n('open'), n(null)];
+  const parts = [fixed ? `${fixed} the tester verified fixed` : '', open ? `${open} open` : '', none && (fixed || open) ? `${none} with no status` : ''].filter(Boolean);
+  return `${plural(findings.length, 'finding')} read from the PDF${parts.length ? `: ${parts.join(', ')}` : ''}.`;
+}
+// "The tool could not find this element on /search: ..." (AC 4), for a plan item or an already-fixed row.
+export const notLocatedLine = (where) => `The tool could not find this element on ${where}: the assistant's selectors matched nothing. Check the component before approving.`;
+// The same when the page did not load: nothing could be looked for.
+export const unreachableLine = (where) => `The tool could not open ${where} in the deployed site, so it could not look for this element. Check the component before approving.`;
+// "What the assistant saw on page 12: ..." (AC 6); and, for a finding merged from several pages, a line per page.
+export const seenLine = (f) => (f && f.seen ? `What the assistant saw on page ${f.page}: ${f.seen}` : 'The assistant did not describe this page.');
+export const seenLines = (f) => [seenLine(f), ...((f && f.seenMore) || []).map((x) => seenLine(x))];
 
 export const isPdf = (buf) => !!buf && buf.length >= 5 && buf.subarray(0, 5).toString('latin1') === '%PDF-';
 export const manualRoot = (cwd) => join(workDir(cwd), MANUAL_DIR);
@@ -199,7 +262,7 @@ export function decisionGroups(dir, web = null) {
   const manifest = readJson(join(dir, PARSED_DIR, 'manifest.json'), null);
   const pictureOf = (n) => ((manifest && manifest.pages) || []).find((p) => p.n === n)?.picture || null;
   const groups = findings.map((f) => ({
-    picture: pictureOf(f.page),
+    picture: pictureOf(f.page), seen: f.seen || null, seenMore: f.seenMore || [], located: f.located ?? null,
     finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], tester: f.status || null, quote: f.quote, url: f.url || null, status: (state.items && state.items[f.id] && state.items[f.id].status) || null,
     decisions: all.filter((d) => d.finding === f.id),
     commits: ((state.items && state.items[f.id] && state.items[f.id].commits) || []).map((c) => ({ ...c, url: commitWebUrl(web, c.sha) })),
@@ -215,7 +278,7 @@ export function decisionsMarkdown(dir, web = null) {
   const out = ['# Decisions', '', `From the tester's PDF: [source.pdf](source.pdf)${existsSync(join(dir, PARSED_DIR, 'report.md')) ? ` (parsed: [${PARSED_DIR}/report.md](${PARSED_DIR}/report.md))` : ''}`, ''];
   if (general.length) out.push('## The run', '', ...general.map(line), '');
   for (const g of groups) {
-    out.push(`## ${g.finding}: ${g.title} — [PDF page ${g.page}](source.pdf#page=${g.page})`, '');
+    out.push(`## ${g.finding}: ${g.title} — [PDF page ${g.page}](source.pdf#page=${g.page})`, '', ...seenLines(g).flatMap((l) => [l, '']));
     if (g.quote) out.push(`> ${g.quote}`, '');
     out.push(...(g.decisions.length ? g.decisions.map(line) : ['- No decision recorded.']), '');
     if (g.commits.length) out.push('Commits:', '', ...g.commits.map((c) => `- ${c.url ? `[${c.short}](${c.url})` : c.short}: ${(c.files || []).join(', ') || 'no files'}`), '');
@@ -353,20 +416,98 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   const agentName = (PRESET_INFO[cfg.agent] && PRESET_INFO[cfg.agent].label) || 'the assistant';
   const AgentName = agentName.replace(/^./, (c) => c.toUpperCase());
   const framework = frameworkLine(cwd);
-  let calls = 0;
+  // Each call is numbered within its kind (describe-1, describe-2, locate-1, ...), after any a
+  // previous process of this run left, so a run taken up again overwrites none of them.
+  const calls = {};
+  const nextCall = (label) => {
+    if (!(label in calls)) {
+      let max = 0;
+      try {
+        for (const f of readdirSync(dir)) {
+          const m = /^agent-(.+)-(\d+)\.log$/.exec(f);
+          if (m && m[1] === label) max = Math.max(max, Number(m[2]));
+        }
+      } catch {}
+      calls[label] = max;
+    }
+    return ++calls[label];
+  };
   const ask = async (label, prompt) => {
-    const n = ++calls;
+    const n = nextCall(label);
     const promptFile = join(taskFolder, `prompt-manual-${id}-${label}-${n}.md`);
     const resultFile = join(taskFolder, `result-manual-${id}-${label}-${n}.json`);
     writePrompt(promptFile, prompt(resultFile));
     stage('agent', { task: label, state: 'start' });
     const at = new Date().toISOString();
-    const res = await callAgent(work, `manual-${id}-${label}-${n}`, { command: agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout, quotaDelays: cfg.quotaDelays || QUOTA_DELAYS });
+    const res = await callAgent(work, `manual-${id}-${label}-${n}`, { command: agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout, quotaDelays: cfg.quotaDelays || QUOTA_DELAYS, context: 'manual' });
     writeFileSync(join(dir, `agent-${label}-${n}.log`), agentLog(res, { at, assistant: agentLabel(cfg.agent) }));
     const why = res.result ? null : res.timedOut ? `${AgentName} did not answer in time` : res.quota ? `${AgentName} was refused for quota or rate limit` : `${AgentName} ended without an answer (exit code ${res.code})`;
     stage('agent', { task: label, state: 'done', ok: !!res.result, ...(why ? { reason: why } : {}) });
     return { result: res.result, why, res };
   };
+  // What an answer said, for the second prompt: its words, else its answer file.
+  const said = (r) => {
+    const out = r && r.res ? readable(r.res.stdout) : null;
+    const text = String((out && out.recognized ? out.text : r && r.res && r.res.stdout) || '').replace(/\s+/g, ' ').trim();
+    if (text) return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+    if (r && r.result) return `an answer file holding ${JSON.stringify(r.result).slice(0, 280)}`;
+    return 'it wrote no answer file and said nothing';
+  };
+  const answersOf = (result) => (Array.isArray(result) ? result : result && Array.isArray(result.answers) ? result.answers : result && Array.isArray(result.items) ? result.items : result && Array.isArray(result.findings) ? result.findings : null);
+  // One question about several items, asked again once for those its answer left out (docs/plans/
+  // read-from-parse.md AC 2 and 5). prompt(resultFile, ids, again, previous): the prompt for those ids
+  // (again: the ids asked a second time; previous: what the first answer said when none of it could
+  // be used). complete(answer, id): an answer that counts. Returns { got: Map id -> answer, last },
+  // or null when stopped.
+  const askForAll = async (label, stg, ids, prompt, { complete = () => true, empty = 'its answer had no list of answers', onAgain = null } = {}) => {
+    const got = new Map();
+    let first = null;
+    let last = null;
+    // Whether either answer had a list at all (an answer whose items all fell short still had one).
+    let listed = false;
+    for (let round = 1; round <= 2; round++) {
+      const want = ids.filter((x) => !got.has(x));
+      if (!want.length) break;
+      if (round === 2) {
+        const whole = !got.size;
+        const reason = whole ? `the first answer could not be used: ${(first.result && typeof first.result.error === 'string' && first.result.error) || (first.why ? first.why.replace(AgentName, 'it') : '') || empty}` : `it did not answer for ${idsWords(want)}`;
+        decide(stg, null, 'tool', 'asked again', reason);
+        if (onAgain) onAgain({ whole, reason, want });
+        if (!log.events) log.warn(`${AgentName} ${whole ? 'gave no answer that could be used' : `did not answer for ${idsWords(want)}`}; asking it again`);
+      }
+      const r = await ask(label, (resultFile) => prompt(resultFile, want, round === 2 ? want : null, round === 2 && !got.size ? said(first) : null));
+      if (stopped()) return null;
+      if (round === 1) first = r;
+      last = r;
+      if (answersOf(r.result)) listed = true;
+      for (const a of answersOf(r.result) || []) {
+        if (!a || typeof a !== 'object') continue;
+        const aid = str(a.id ?? a.finding, 40);
+        if (!ids.includes(aid)) {
+          decide(stg, null, 'tool', `dropped an answer for ${aid || 'no id'}`, `the tool asked about ${idsWords(ids)} only`);
+          continue;
+        }
+        if (want.includes(aid) && !got.has(aid) && complete(a, aid)) got.set(aid, a);
+      }
+    }
+    return { got, last, listed };
+  };
+  // A PDF page's picture, under parsed/.
+  const pictureOf = (n) => {
+    const p = manifest && manifest.pages.find((x) => x.n === n);
+    return p && p.picture ? p.picture : null;
+  };
+  // Where a finding was looked for: its path in the deployed site, or its full URL elsewhere.
+  const whereOf = (f) => {
+    try {
+      const u = new URL(f.url || urlOf(f));
+      return u.origin === new URL(cfg.url).origin ? `${u.pathname}${u.search}` : u.href;
+    } catch {
+      return f.url || f.route || cfg.url;
+    }
+  };
+  // The line a plan item or an already-fixed row carries when the tool could not find its element (AC 4).
+  const lookedLine = (f) => (f.located === false ? notLocatedLine(whereOf(f)) : f.unreachable ? unreachableLine(whereOf(f)) : null);
   // A finding's page, as a full URL in the deployed site.
   const urlOf = (f) => {
     const raw = f.url || f.route || '';
@@ -430,7 +571,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         screenshot = null;
       }
     }
-    return { ...s, elements: readJson(join(edir, 'elements.json'), []), tabOrder: readJson(join(edir, 'tab-order.json'), []), screenshot, dir: `evidence/${fid}/${label}` };
+    return { ...s, elements: readJson(join(edir, 'elements.json'), []), ax: readJson(join(edir, 'ax.json'), []), tabOrder: readJson(join(edir, 'tab-order.json'), []), screenshot, dir: `evidence/${fid}/${label}` };
   };
 
   stage('start', { id, pdf: `${MANUAL_DIR}/${id}/source.pdf`, url: cfg.url, agent: cfg.agent });
@@ -463,76 +604,58 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   const parsedFacts = (m) => ({ pages: m.pageCount, parsed: m.parsed, withText: m.pages.filter((p) => p.lines.length).length, withPictures: m.pages.filter((p) => p.images.length).length, dividers: m.dividers, notes: m.notes || [] });
   if (manifest) stage('parsed', parsedFacts(manifest));
   const noText = !!manifest && manifest.pages.length > 0 && !manifest.pages.some((p) => p.lines.length);
-  if (!findings) {
-    stage('read', { noText, pages: manifest.pageCount });
-    log.info(noText ? `The PDF has no text; ${agentName} is working from the pictures of its ${plural(manifest.pageCount, 'page')}.` : `reading the parsed PDF with ${agentName}`);
-    // What the assistant reads, in the tasks folder (the one folder of the tool's it can read):
-    // the parse (report.md and its pictures) and, last, the PDF.
-    const copyDir = join(taskFolder, `manual-${id}`);
+  // What the assistant reads, in the tasks folder (the one folder of the tool's it can read): the
+  // parse (report.md and its pictures) and, last, the PDF.
+  const copyDir = join(taskFolder, `manual-${id}`);
+  const copyParse = () => {
     mkdirSync(join(copyDir, PARSED_DIR, 'pages'), { recursive: true });
     copyFileSync(join(dir, 'source.pdf'), join(copyDir, 'source.pdf'));
-    for (const f of ['report.md', 'manifest.json']) copyFileSync(join(parsedDir, f), join(copyDir, PARSED_DIR, f));
-    for (const f of readdirSync(join(parsedDir, 'pages'))) if (/\.png$/.test(f)) copyFileSync(join(parsedDir, 'pages', f), join(copyDir, PARSED_DIR, 'pages', f));
-    const example = (manifest.pages.find((p) => p.images.length) || manifest.pages.find((p) => p.picture) || {}).picture || null;
-    const readOnce = (previous = null) => ask('read', (resultFile) => manualReadPrompt({ reportFile: join(copyDir, PARSED_DIR, 'report.md'), parsedDir: join(copyDir, PARSED_DIR), example, pdfFile: join(copyDir, 'source.pdf'), pageCount: manifest.pageCount, noText, startUrl: cfg.url, routes: knownRoutes(cwd), resultFile, previous }));
-    // What the first answer said (its words, else its answer file), for the second prompt.
-    const said = (r) => {
-      const out = r && r.res ? readable(r.res.stdout) : null;
-      const text = String((out && out.recognized ? out.text : r && r.res && r.res.stdout) || '').replace(/\s+/g, ' ').trim();
-      if (text) return text.length > 300 ? `${text.slice(0, 300)}…` : text;
-      if (r && r.result) return `an answer file holding ${JSON.stringify(r.result).slice(0, 280)}`;
-      return 'it wrote no answer file and said nothing';
-    };
-    const listOf = (result) => (Array.isArray(result) ? result : result && Array.isArray(result.findings) ? result.findings : null);
-    const whyNot = (result, why) => (result && result.error) || (why ? why.replace(AgentName, 'it') : '') || 'its answer had no list of findings';
-    const first = await readOnce();
-    let { result, why } = first;
-    if (stopped()) return 1;
-    let raw = listOf(result);
-    // No list of findings (or no answer at all): asked once more before the run ends.
-    if (!raw) {
-      const reason = whyNot(result, why);
-      decide('read', null, 'tool', 'asked again', `the first answer could not be used: ${reason}`);
-      stage('read-again', { reason });
-      log.warn(`${AgentName} could not read the PDF (${reason}); asking it again`);
-      // The second prompt says what the first answer was, and that it is not the task.
-      ({ result, why } = await readOnce(said(first)));
-      if (stopped()) return 1;
-      raw = listOf(result);
+    for (const f of ['report.md', 'manifest.json']) if (existsSync(join(parsedDir, f))) copyFileSync(join(parsedDir, f), join(copyDir, PARSED_DIR, f));
+    try {
+      for (const f of readdirSync(join(parsedDir, 'pages'))) if (/\.png$/.test(f)) copyFileSync(join(parsedDir, 'pages', f), join(copyDir, PARSED_DIR, 'pages', f));
+    } catch {}
+  };
+  if (!findings) {
+    // AC 1: the tool lists the findings; the assistant cannot add, drop or renumber them.
+    const candidates = buildCandidates(manifest);
+    const fallback = !candidates.some((c) => c.criterion);
+    writeJson(join(dir, 'candidates.json'), { at: new Date().toISOString(), pages: manifest.pageCount, fallback, candidates });
+    stage('read', { noText, pages: manifest.pageCount, candidates: candidates.length });
+    log.info(noText ? `The PDF has no text; ${agentName} is working from the pictures of its ${plural(manifest.pageCount, 'page')}.` : `Reading the PDF: ${plural(candidates.length, 'finding')} on ${plural(manifest.pageCount, 'page')}; asking ${agentName} what each page shows.`);
+    let answers = new Map();
+    if (candidates.length) {
+      copyParse();
+      const byC = new Map(candidates.map((c) => [c.id, c]));
+      const asked = await askForAll('describe', 'read', candidates.map((c) => c.id), (resultFile, ids, again, previous) => manualDescribePrompt({
+        candidates: ids.map((x) => byC.get(x)), reportFile: join(copyDir, PARSED_DIR, 'report.md'), parsedDir: join(copyDir, PARSED_DIR), pdfFile: join(copyDir, 'source.pdf'),
+        pageCount: manifest.pageCount, noText, fallback, startUrl: cfg.url, routes: knownRoutes(cwd), resultFile, previous, again,
+      }), {
+        complete: (a, x) => describedEnough(a, byC.get(x)), empty: 'its answer had no list of findings',
+        onAgain: ({ whole, reason, want }) => stage('read-again', { reason: whole ? reason.replace(/^the first answer could not be used: /, '') : reason, missing: want }),
+      });
+      if (!asked) return 1;
+      answers = asked.got;
+      // Nothing usable in either answer: the assistant could not read the PDF at all.
+      if (!answers.size && !asked.listed) {
+        const r = asked.last || {};
+        const reason = (r.result && typeof r.result.error === 'string' && r.result.error) || (r.why ? r.why.replace(AgentName, 'it') : '') || 'its answer had no list of findings';
+        const who = agentLabel(cfg.agent).replace(/^./, (c) => c.toUpperCase());
+        const words = `${who} could not read the PDF (${reason}). Choose a PDF, or pick another assistant under Advanced.`;
+        decide('read', null, 'agent', 'could not read the PDF', reason);
+        stage('read-failed', { reason: words, assistant: who });
+        log.error(words);
+        return finish(1);
+      }
     }
-    if (!raw) {
-      const reason = whyNot(result, why);
-      const who = agentLabel(cfg.agent).replace(/^./, (c) => c.toUpperCase());
-      const words = `${who} could not read the PDF (${reason}). Choose a PDF, or pick another assistant under Advanced.`;
-      decide('read', null, 'agent', 'could not read the PDF', reason);
-      stage('read-failed', { reason: words, assistant: who });
-      log.error(words);
-      return finish(1);
+    findings = foldAnswers(candidates, answers, decide);
+    for (const f of findings) {
+      f.url = urlOf(f);
+      decide('read', f.id, f.seen ? 'agent' : 'tool', `read "${f.title}" from PDF ${pagesWords(f.pages)}`, f.seen ? `what it saw: ${f.seen}` : 'it did not describe the page');
     }
-    const ids = new Set();
-    const read = raw.filter((f) => f && typeof f === 'object').map((f, i) => {
-      let fid = str(f.id, 20).replace(/[^\w-]/g, '') || `F${i + 1}`;
-      while (ids.has(fid)) fid = `${fid}-${i + 1}`;
-      ids.add(fid);
-      const int = (v) => (Number.isInteger(Number(v)) && v !== null && v !== '' ? Number(v) : null);
-      const given = [...new Set((Array.isArray(f.pages) ? f.pages : []).map(int).filter((n) => n !== null))].sort((a, b) => a - b);
-      if (!given.length && int(f.page) !== null) given.push(int(f.page));
-      const status = /^(fixed|open)$/i.test(String(f.status || '')) ? String(f.status).toLowerCase() : null;
-      const out = {
-        id: fid, title: str(f.title, 120) || `Finding ${i + 1}`, page: given[0] || 1, pages: given.length ? given : [1], quote: str(f.quote, 300), route: str(f.route || f.url, 500), url: null,
-        element: str(f.element, 300), selectors: (Array.isArray(f.selectors) ? f.selectors : []).map((x) => str(x, 300)).filter(Boolean).slice(0, 5), wcag: str(f.wcag, 40) || null, expected: str(f.expected, 400),
-        status, criterion: str(f.criterion, 12) || null,
-      };
-      out.url = urlOf(out);
-      for (const d of Array.isArray(f.decisions) ? f.decisions : []) if (d && d.decision) decide('read', fid, 'agent', d.decision, d.reason);
-      if (!given.length) decide('read', fid, 'tool', 'tied the finding to PDF page 1', 'the assistant gave no page number for it');
-      return out;
-    });
-    findings = checkFindings(read, manifest, decide);
-    for (const f of findings) decide('read', f.id, 'agent', `read "${f.title}" from PDF ${pagesWords(f.pages)}`, f.quote ? `the tester wrote: "${f.quote}"` : '');
+    if (findings.length) decide('read', null, 'tool', countsSentence(findings), `the tool listed ${plural(candidates.length, 'finding')} from ${plural(manifest.pageCount, 'page')}${fallback ? ' (one per page: the PDF names no criterion)' : ' (one per page that names a criterion)'}`);
     writeJson(join(dir, 'findings.json'), { at: new Date().toISOString(), findings });
   }
-  stage('findings', { count: findings.length, findings });
+  stage('findings', { count: findings.length, findings, message: findings.length ? countsSentence(findings) : null });
   if (!findings.length) {
     stage('no-findings', { message: NO_FINDINGS });
     state.done = true;
@@ -540,7 +663,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     save();
     return finish(0, NO_FINDINGS);
   }
-  log.info(`${plural(findings.length, 'finding')} read from the PDF`);
+  log.info(countsSentence(findings));
   const byId = new Map(findings.map((f) => [f.id, f]));
 
   // ---- 2. Check the deployed site: present or gone, from evidence the tool captures.
@@ -550,18 +673,71 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     log.info(`checking the deployed site for the ${plural(findings.length, 'finding')}`);
     const evidence = await capture(findings, 'before');
     if (stopped()) return 1;
-    stage('judge', { count: findings.length });
-    const { result } = await ask('check', (resultFile) => manualCheckPrompt({ findings: findings.map((f) => ({ ...f, evidence: evidence.get(f.id) })), resultFile }));
-    if (stopped()) return 1;
-    const verdicts = Array.isArray(result) ? result : Array.isArray(result && result.items) ? result.items : [];
-    const results = findings.map((f) => {
-      const v = verdicts.find((x) => x && (x.id === f.id || x.finding === f.id));
-      const said = v && typeof v.verdict === 'string' ? v.verdict.toLowerCase() : null;
+    // AC 4: a finding whose selectors matched nothing on a page that loaded goes back to the assistant
+    // once, with the page picture, the deployed page and its controls in front of it; then it is
+    // captured again. Never for a page that did not load.
+    for (const f of findings) {
       const e = evidence.get(f.id);
-      let verdict = said === 'gone' ? 'gone' : 'present';
+      f.located = e && e.loaded ? e.matched > 0 : null;
+      f.unreachable = !!(e && !e.loaded);
+    }
+    const unlocated = findings.filter((f) => f.located === false);
+    if (unlocated.length) {
+      stage('locate', { count: unlocated.length, findings: unlocated.map((f) => f.id) });
+      log.info(`${plural(unlocated.length, 'element')} the tool could not find on the deployed site (${idsWords(unlocated.map((f) => f.id))}); asking ${agentName} where ${unlocated.length === 1 ? 'it is' : 'they are'}`);
+      copyParse();
+      const { result } = await ask('locate', (resultFile) => manualLocatePrompt({
+        items: unlocated.map((f) => ({ finding: { ...f, lines: ((manifest && manifest.pages.find((p) => p.n === f.page)) || {}).lines || [] }, picture: pictureOf(f.page) ? join(copyDir, PARSED_DIR, pictureOf(f.page)) : null, evidence: evidence.get(f.id) })),
+        startUrl: cfg.url, routes: knownRoutes(cwd), resultFile,
+      }));
+      if (stopped()) return 1;
+      const answers = answersOf(result) || [];
+      const again = [];
+      const gave = new Set();
+      for (const f of unlocated) {
+        const a = answers.find((x) => x && (x.id === f.id || x.finding === f.id));
+        const sels = a ? selectorsOf(a.selectors) : [];
+        const route = a ? str(a.route || a.url, 500) : '';
+        if (!a || (!sels.length && !route)) continue;
+        if (route) {
+          f.route = route;
+          f.url = null;
+          f.url = urlOf(f);
+        }
+        if (sels.length) f.selectors = sels;
+        gave.add(f.id);
+        decide('check', f.id, 'agent', a.notOnThisRoute === true ? `looked for it on ${whereOf(f)} instead` : `looked for it again on ${whereOf(f)}`, `${f.selectors.join(', ') || 'no selectors'}${a.reason ? `: ${str(a.reason, 300)}` : ''}`);
+        again.push(f);
+      }
+      const second = again.length ? await capture(again, 'before') : new Map();
+      if (stopped()) return 1;
+      for (const f of unlocated) {
+        if (second.has(f.id)) evidence.set(f.id, second.get(f.id));
+        const e = evidence.get(f.id);
+        f.located = !!(e && e.loaded && e.matched > 0);
+        // The second look's page did not load: the item says the tool could not open it.
+        f.unreachable = !!(e && !e.loaded);
+        if (f.unreachable) f.located = null;
+        if (f.unreachable) decide('check', f.id, 'tool', `could not open ${whereOf(f)}`, (e && e.error) || 'the page did not load', `evidence/${f.id}/before`);
+        else if (f.located) decide('check', f.id, 'tool', `found the element on ${whereOf(f)}`, `the assistant's second selectors matched ${plural(e.matched, 'element')}`, `evidence/${f.id}/before`);
+        else decide('check', f.id, 'tool', `could not find the element on ${whereOf(f)}`, gave.has(f.id) ? "the assistant's selectors matched nothing twice" : "the assistant's selectors matched nothing and it gave no others", `evidence/${f.id}/before`);
+      }
+    }
+    writeJson(join(dir, 'findings.json'), { at: new Date().toISOString(), findings });
+    stage('judge', { count: findings.length });
+    const VERDICTS = ['present', 'gone', 'unreachable'];
+    const asked = await askForAll('check', 'check', findings.map((f) => f.id), (resultFile, ids, again) => manualCheckPrompt({ findings: findings.filter((f) => ids.includes(f.id)).map((f) => ({ ...f, evidence: evidence.get(f.id) })), resultFile, again }), {
+      complete: (a) => VERDICTS.includes(String(a.verdict || '').toLowerCase()), empty: 'its answer had no verdicts',
+    });
+    if (!asked) return 1;
+    const results = findings.map((f) => {
+      const v = asked.got.get(f.id) || null;
+      const said = v ? String(v.verdict).toLowerCase() : null;
+      const e = evidence.get(f.id);
+      const verdict = said === 'gone' ? 'gone' : 'present';
       let reason = v && v.reason ? str(v.reason, 400) : '';
       if (said === 'unreachable') reason = `the page could not be checked (${(e && e.error) || reason || 'it did not load'}); treated as present`;
-      else if (said !== 'gone' && said !== 'present') reason = `no verdict from the assistant; treated as present${reason ? ` (${reason})` : ''}`;
+      else if (!said) reason = 'no verdict from the assistant after two asks; treated as present';
       decide('check', f.id, said === 'gone' || said === 'present' ? 'agent' : 'tool', verdict === 'gone' ? 'already fixed in the deployed site' : 'still present in the deployed site', reason, `evidence/${f.id}/before`);
       return { finding: f.id, verdict, said, reason, url: (e && (e.finalUrl || e.url)) || f.url, checkedAt: (e && e.at) || new Date().toISOString(), screenshot: e && e.files && e.files.includes('screenshot.png') ? `evidence/${f.id}/before/screenshot.png` : null };
     });
@@ -585,18 +761,14 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   save();
 
   // ---- 3. The already-fixed report.
-  const pictureOf = (n) => {
-    const p = manifest && manifest.pages.find((x) => x.n === n);
-    return p && p.picture ? p.picture : null;
-  };
   const goneRows = gone.map((r) => {
     const f = byId.get(r.finding);
-    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), tester: f.status === 'fixed' ? testerVerified(f) : null };
+    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), tester: f.status === 'fixed' ? testerVerified(f) : null, seen: f.seen || null, seenMore: f.seenMore || [], notLocated: lookedLine(f) };
   });
   writeFileSync(join(dir, 'already-fixed.md'), [
     `# Already fixed in the deployed site (${goneRows.length})`, '', `From the tester's PDF: [source.pdf](source.pdf)`, '',
     ...(verifiedGone.length || cameBack.length ? [`${verifiedGone.length} of them the tester had verified fixed; ${cameBack.length} the tester had verified fixed came back (${cameBack.length === 1 ? 'it is' : 'they are'} in the plan).`, ''] : []),
-    ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [PDF page ${r.page}](source.pdf#page=${r.page})`, '', r.quote ? `> ${r.quote}` : '', '', ...(r.tester ? [`- ${r.tester}`] : []), `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
+    ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [PDF page ${r.page}](source.pdf#page=${r.page})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', ...(r.tester ? [`- ${r.tester}`] : []), ...(r.notLocated ? [`- ${r.notLocated}`] : []), `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
   ].join('\n'));
   const all = gone.length === findings.length;
   stage('already-fixed', { rows: goneRows, total: findings.length, all });
@@ -629,7 +801,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     if (!a) decide(stg, f.id, 'tool', 'planned it with the tester\'s expectation as the fix', 'the assistant gave no plan for this finding');
     for (const d of Array.isArray(a && a.decisions) ? a.decisions : []) if (d && d.decision) decide(stg, f.id, 'agent', d.decision, d.reason);
     decide(stg, f.id, 'agent', `fix in ${component ? `${component.name} (${component.file || 'no file'})` : 'no named component'}: ${fix}`, files.length ? `files: ${files.join(', ')}` : '');
-    return { finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], status: f.status || null, criterion: f.criterion || null, cameBack: f.cameBack || null, picture: pictureOf(f.page), quote: f.quote, url: f.url, fix, component, files, decisions: (Array.isArray(a && a.decisions) ? a.decisions : []).filter((d) => d && d.decision).map((d) => ({ decision: str(d.decision, 400), reason: str(d.reason, 400) })), confirm: null, screenshot: existsSync(join(dir, 'evidence', f.id, 'before', 'screenshot.png')) ? `evidence/${f.id}/before/screenshot.png` : null };
+    return { finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], status: f.status || null, criterion: f.criterion || null, cameBack: f.cameBack || null, picture: pictureOf(f.page), seen: f.seen || null, seenMore: f.seenMore || [], located: f.located ?? null, notLocated: lookedLine(f), quote: f.quote, url: f.url, fix, component, files, decisions: (Array.isArray(a && a.decisions) ? a.decisions : []).filter((d) => d && d.decision).map((d) => ({ decision: str(d.decision, 400), reason: str(d.reason, 400) })), confirm: null, screenshot: existsSync(join(dir, 'evidence', f.id, 'before', 'screenshot.png')) ? `evidence/${f.id}/before/screenshot.png` : null };
   };
   const savePlan = (plan) => {
     state.version = plan.version;
@@ -708,18 +880,19 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       }
       if (toConfirm.length) {
         stage('confirming', { count: toConfirm.length });
-        const { result } = await ask('confirm', (resultFile) => manualConfirmPrompt({ items: toConfirm.map((c) => ({ finding: c.it.finding, title: c.it.title, quote: c.it.quote, page: c.it.page, original: c.original, edit: c.edit })), components: list, resultFile }));
-        if (stopped()) return false;
-        const answers = Array.isArray(result) ? result : Array.isArray(result && result.items) ? result.items : [];
+        const asked = await askForAll('confirm', 'confirm', toConfirm.map((c) => c.it.finding), (resultFile, ids, again) => manualConfirmPrompt({ items: toConfirm.filter((c) => ids.includes(c.it.finding)).map((c) => ({ finding: c.it.finding, title: c.it.title, quote: c.it.quote, page: c.it.page, original: c.original, edit: c.edit })), components: list, resultFile, again }), {
+          complete: (a) => typeof a.understood === 'boolean', empty: 'its answer had no confirmations',
+        });
+        if (!asked) return false;
         for (const c of toConfirm) {
-          const a = answers.find((x) => x && x.finding === c.it.finding);
+          const a = asked.got.get(c.it.finding) || null;
           c.it.fix = c.edit.fix;
           c.it.component = c.edit.component;
           const files = (Array.isArray(a && a.files) ? a.files : []).map((x) => str(x, 500)).filter(Boolean);
           if (c.edit.component && c.edit.component.file && !files.includes(c.edit.component.file)) files.unshift(c.edit.component.file);
           c.it.files = files.length ? files : c.it.files;
-          c.it.confirm = a ? { understood: a.understood === true, text: str(a.text || a.reason, 600) } : { understood: false, text: 'The assistant gave no answer for this change; send it again.' };
-          decide('confirm', c.it.finding, a ? 'agent' : 'tool', c.it.confirm.understood ? `understood: ${c.it.confirm.text}` : `did not understand: ${c.it.confirm.text}`, c.it.confirm.understood ? `files: ${c.it.files.join(', ')}` : '');
+          c.it.confirm = a ? { understood: a.understood === true, text: str(a.text || a.reason, 600) } : { understood: false, text: 'The assistant gave no answer for this change after two asks; send it again.' };
+          decide('confirm', c.it.finding, a ? 'agent' : 'tool', c.it.confirm.understood ? `understood: ${c.it.confirm.text}` : `did not understand: ${c.it.confirm.text}`, c.it.confirm.understood ? `files: ${c.it.files.join(', ')}` : a ? '' : 'no verdict from the assistant after two asks');
         }
       }
       plan = next;
@@ -890,12 +1063,14 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     log.info(`checking the deployed site for ${plural(items.length, 'fix', 'fixes')}`);
     const evidence = await capture(items.map((it) => byId.get(it.finding)), label);
     if (stopped()) return null;
-    const { result } = await ask('verify', (resultFile) => manualVerifyPrompt({ items: items.map((it) => ({ finding: byId.get(it.finding), fix: it.fix, evidence: evidence.get(it.finding) })), resultFile }));
-    const answers = Array.isArray(result) ? result : Array.isArray(result && result.items) ? result.items : [];
+    const asked = await askForAll('verify', 'verify', items.map((it) => it.finding), (resultFile, ids, again) => manualVerifyPrompt({ items: items.filter((it) => ids.includes(it.finding)).map((it) => ({ finding: byId.get(it.finding), fix: it.fix, evidence: evidence.get(it.finding) })), resultFile, again }), {
+      complete: (a) => ['fixed', 'not-fixed'].includes(String(a.verdict || '').toLowerCase()), empty: 'its answer had no verdicts',
+    });
+    if (!asked) return null;
     const verdicts = items.map((it) => {
-      const a = answers.find((x) => x && (x.finding === it.finding || x.id === it.finding));
+      const a = asked.got.get(it.finding) || null;
       const fixed = !!a && String(a.verdict || '').toLowerCase() === 'fixed';
-      const reason = a && a.reason ? str(a.reason, 400) : 'no verdict from the assistant; counted as not fixed';
+      const reason = a ? str(a.reason, 400) || (fixed ? 'the assistant gave no reason' : 'the assistant gave no reason; counted as not fixed') : 'no verdict from the assistant after two asks; counted as not fixed';
       itemState(it.finding).status = fixed ? 'fixed' : 'not-fixed';
       const last = itemState(it.finding).attempts.slice(-1)[0];
       if (last) Object.assign(last, { verdict: fixed ? 'fixed' : 'not-fixed', reason, evidence: `evidence/${it.finding}/${label}` });

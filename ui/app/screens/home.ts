@@ -550,12 +550,18 @@ export class HomeScreen implements OnDestroy {
         return p ? `Reading the PDF: ${plural(p.pages, 'page')} (${p.withPictures} with pictures).` : 'Reading the PDF';
       }
       case 'read':
-        return m.noText ? `The PDF has no text; the assistant is working from the pictures of its ${plural(m.parsed?.pages || n('pages'), 'page')}.` : `Reading the PDF with ${who}`;
+        if (m.noText) return `The PDF has no text; the assistant is working from the pictures of its ${plural(m.parsed?.pages || n('pages'), 'page')}.`;
+        return m.candidates ? `Reading the PDF: ${plural(m.candidates.findings, 'finding')} on ${plural(m.candidates.pages, 'page')}; asking the assistant what each page shows.` : `Reading the PDF with ${who}`;
       case 'read-again': {
         const why = m.readAgain || '';
+        if (/^it did not answer for /.test(why)) return `The assistant ${why.slice(3)}; asking it again for ${(ev['missing'] || []).length === 1 ? 'that page' : 'those pages'}.`;
         return !why || why === 'its answer had no list of findings' ? "The assistant's answer had no list of findings; asking it again." : `The assistant could not read the PDF (${why}); asking it again.`;
       }
+      case 'locate':
+        return `The tool could not find ${plural(n('count'), 'element')} on the deployed site; asking ${who} where ${n('count') === 1 ? 'it is' : 'they are'}`;
       case 'findings':
+        if (ev['message']) return String(ev['message']);
+        return `Checking the deployed site for ${plural(m.findings || 0, 'finding')} from the PDF`;
       case 'check':
         return `Checking the deployed site for ${plural(m.findings || 0, 'finding')} from the PDF`;
       case 'capture':

@@ -26,6 +26,13 @@ export interface PlanItem {
   status?: 'fixed' | 'open' | null;
   picture?: string | null;
   cameBack?: string | null;
+  // docs/plans/read-from-parse.md: what the assistant said the page shows (AC 6), and, when the tool
+  // could not find the element on the deployed page, the line that says so (AC 4).
+  seen?: string | null;
+  // For a finding merged from several pages: what the assistant saw on each of the others.
+  seenMore?: { page: number; seen: string | null }[];
+  located?: boolean | null;
+  notLocated?: string | null;
 }
 
 export interface AlreadyFixedRow {
@@ -41,6 +48,9 @@ export interface AlreadyFixedRow {
   picture?: string | null;
   // "The tester verified this fixed on 28 Sep 2026; the deployed site agrees." when they had.
   tester?: string | null;
+  seen?: string | null;
+  seenMore?: { page: number; seen: string | null }[];
+  notLocated?: string | null;
 }
 
 export interface ManualDecision {
@@ -65,7 +75,12 @@ export interface DecisionGroup {
   commits: { sha: string; short: string; files: string[]; url: string | null }[];
   screenshots: { label: string; path: string }[];
   picture?: string | null;
+  seen?: string | null;
+  seenMore?: { page: number; seen: string | null }[];
 }
+
+// "What the assistant saw on page 12: ..." (docs/plans/read-from-parse.md AC 6).
+export const seenWords = (r: { page: number; seen?: string | null }) => (r.seen ? `What the assistant saw on page ${r.page}: ${r.seen}` : 'The assistant did not describe this page.');
 
 export interface ManualState {
   id: string | null;
@@ -93,6 +108,8 @@ export interface ManualState {
   readFailedBy: string | null;
   // The read's first answer had no list of findings: why, while it is asked again.
   readAgain: string | null;
+  // The tool's list from the parse (docs/plans/read-from-parse.md AC 1): how many findings on how many pages.
+  candidates: { findings: number; pages: number } | null;
   done: { message: string; fixed: number; alreadyFixed: number; all: boolean } | null;
   commits: number;
   fix: { n: number; m: number; finding: string; title: string; attempt: number } | null;
@@ -104,7 +121,7 @@ export interface ManualState {
 
 export const emptyManual = (): ManualState => ({
   id: null, stage: null, last: null, findings: null, alreadyFixed: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
-  noFindings: null, readFailed: null, readFailedBy: null, parse: null, parsed: null, parseFailed: null, noText: false, readAgain: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
+  noFindings: null, readFailed: null, readFailedBy: null, parse: null, parsed: null, parseFailed: null, noText: false, readAgain: null, candidates: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
 });
 
 // The state after one more event.
@@ -134,6 +151,7 @@ export function applyManual(s: ManualState, ev: Record<string, any>): ManualStat
       break;
     case 'read':
       if (ev['noText'] !== undefined) n.noText = !!ev['noText'];
+      if (ev['candidates'] !== undefined) n.candidates = { findings: Number(ev['candidates']) || 0, pages: Number(ev['pages']) || 0 };
       break;
     case 'read-again':
       n.readAgain = String(ev['reason'] || '');
