@@ -174,8 +174,8 @@ sentences the parse wants shown ("Stopped after 300 pages; the PDF has 412.").
    none (a picture only)`; the read goes ahead on the page pictures, the step saying "The PDF has
    no text; the assistant is working from the pictures of its 13 pages." When pdf.js cannot open
    the file (encrypted with a password, truncated, not a PDF inside), the run ends before any
-   assistant call: "The PDF could not be opened: <pdf.js's reason, in plain words>. Choose another
-   PDF." with **Choose another PDF**, and the decision log records it. Limits: pages beyond
+   assistant call: "The PDF could not be opened: <pdf.js's reason, in plain words>. Choose a
+   PDF." with **Choose a PDF**, and the decision log records it. Limits: pages beyond
    `A11Y_508_PDF_MAX_PAGES` (default 300) are not parsed and the header says "Stopped after 300
    pages; the PDF has 412."; the parse as a whole has a time limit of 5 minutes, after which what
    is parsed is used and the header says which pages are missing.
@@ -237,7 +237,7 @@ sentences the parse wants shown ("Stopped after 300 pages; the PDF has 412.").
    lines) and the step said "The PDF has no text".
 8. **(h) A broken PDF reaches the assistant.** Mutation: call the assistant anyway. Red: with the
    encrypted and the truncated fixtures, no `agent-read-*.log` exists, the sentence starts "The
-   PDF could not be opened", the button reads **Choose another PDF**.
+   PDF could not be opened", the button reads **Choose a PDF**.
 9. **(i) The parse is not deterministic.** Mutation: include `Date.now()` in an image name. Red:
    parse the deck twice into two folders; `report.md` identical, `manifest.json` identical with
    `parsedAt` removed.

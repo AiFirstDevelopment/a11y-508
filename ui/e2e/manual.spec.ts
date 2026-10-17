@@ -124,7 +124,7 @@ test('manual AC1 / guard a: the PDF is chosen with a file chooser, stored, serve
   }
 });
 
-test('manual AC2: a PDF that names no finding ends the run with the sentence and Choose another PDF', async ({ page }) => {
+test('manual AC2: a PDF that names no finding ends the run with the sentence and Choose a PDF', async ({ page }) => {
   const app = await manualApp();
   const dash = await dashboard({ cwd: app.cwd });
   try {
@@ -132,7 +132,7 @@ test('manual AC2: a PDF that names no finding ends the run with the sentence and
     await choosePdf(page, NO_FINDINGS_PDF);
     await expect(now(page)).toHaveText('The PDF names no accessibility findings the assistant could read.', { timeout: 120_000 });
     await expect(go(page)).toHaveText('Start', { timeout: 30_000 });
-    await expect(page.getByTestId('manual-pdf')).toHaveText('Choose another PDF');
+    await expect(page.getByTestId('manual-pdf')).toHaveText('Choose a PDF');
     expect(readJson(join(runDir(dash), 'findings.json')).findings).toEqual([]);
   } finally {
     await dash.stop();
@@ -662,7 +662,7 @@ test('clarity AC4 / guard d: a read answer with no list of findings is asked aga
   }
 });
 
-test('clarity AC4 / guard e: a read that fails twice ends naming the assistant and Advanced, and the one button is Choose another PDF', async ({ page }) => {
+test('clarity AC4 / guard e: a read that fails twice ends naming the assistant and Advanced, and the one button is Choose a PDF', async ({ page }) => {
   test.setTimeout(300_000);
   const app = await manualApp();
   const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_READ_FAIL: '2' } });
@@ -670,9 +670,9 @@ test('clarity AC4 / guard e: a read that fails twice ends naming the assistant a
     await open(page, dash);
     await choosePdf(page, PDF);
     // The fake assistant is a custom command: its first word names it.
-    await expect(now(page)).toHaveText('Node could not read the PDF (its answer had no list of findings). Choose another PDF, or pick another assistant under Advanced.', { timeout: 180_000 });
+    await expect(now(page)).toHaveText('Node could not read the PDF (its answer had no list of findings). Choose a PDF, or pick another assistant under Advanced.', { timeout: 180_000 });
     await expect(go(page)).toHaveText('Start', { timeout: 30_000 });
-    await expect(page.getByTestId('manual-pdf')).toHaveText('Choose another PDF');
+    await expect(page.getByTestId('manual-pdf')).toHaveText('Choose a PDF');
     const chooser = page.waitForEvent('filechooser', { timeout: 10_000 });
     await page.getByTestId('manual-pdf').click();
     expect((await chooser).isMultiple()).toBe(false);
@@ -822,7 +822,7 @@ test('pdf-parse AC8 / guard g: a PDF with no text is read from its pictures and 
   }
 });
 
-test('pdf-parse AC8 / guard h: a PDF that cannot be opened ends before any assistant call, in one sentence, with Choose another PDF', async ({ page }) => {
+test('pdf-parse AC8 / guard h: a PDF that cannot be opened ends before any assistant call, in one sentence, with Choose a PDF', async ({ page }) => {
   test.setTimeout(300_000);
   const app = await manualApp();
   const dash = await dashboard({ cwd: app.cwd });
@@ -830,9 +830,9 @@ test('pdf-parse AC8 / guard h: a PDF that cannot be opened ends before any assis
     await open(page, dash);
     for (const [file, why] of [[ENCRYPTED, 'it is protected by a password'], [TRUNCATED, 'it is damaged or incomplete']]) {
       await choosePdf(page, file);
-      await expect(now(page)).toHaveText(`The PDF could not be opened: ${why}. Choose another PDF.`, { timeout: 120_000 });
+      await expect(now(page)).toHaveText(`The PDF could not be opened: ${why}. Choose a PDF.`, { timeout: 120_000 });
       await expect(go(page)).toHaveText('Start', { timeout: 30_000 });
-      await expect(page.getByTestId('manual-pdf')).toHaveText('Choose another PDF');
+      await expect(page.getByTestId('manual-pdf')).toHaveText('Choose a PDF');
       const dir = runDir(dash);
       expect(readdirSync(dir).filter((f) => /^agent-/.test(f))).toEqual([]);
       expect(existsSync(join(dir, 'findings.json'))).toBe(false);
@@ -852,7 +852,7 @@ test('assistant calls: a read that ends without an answer twice links from the h
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: dash.origin });
     await open(page, dash);
     await choosePdf(page, PDF);
-    await expect(now(page)).toHaveText('Node could not read the PDF (it ended without an answer (exit code 0)). Choose another PDF, or pick another assistant under Advanced.', { timeout: 180_000 });
+    await expect(now(page)).toHaveText('Node could not read the PDF (it ended without an answer (exit code 0)). Choose a PDF, or pick another assistant under Advanced.', { timeout: 180_000 });
     // The sentence is followed by the way to what the assistant said.
     const link = page.getByTestId('see-what-said');
     await expect(link).toHaveText('See what Node said');

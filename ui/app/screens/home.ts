@@ -63,7 +63,7 @@ function continuingPdf(stage: unknown): string {
       }
       <!-- The second way in (docs/plans/manual-findings.md): a tester's PDF, chosen with the system's file chooser. -->
       @if (!running()) {
-        <button type="button" class="secondary" data-testid="manual-pdf" (click)="pdfInput.click()" [disabled]="!driver.url()">{{ manualEnded()?.noFindings || manualEnded()?.readFailed || manualEnded()?.parseFailed ? 'Choose another PDF' : 'Fix from a test report (PDF)' }}</button>
+        <button type="button" class="secondary" data-testid="manual-pdf" (click)="pdfInput.click()" [disabled]="!driver.url()">{{ manualEnded() ? 'Choose a PDF' : 'Fix from a test report (PDF)' }}</button>
       }
       <input #pdfInput type="file" accept="application/pdf" hidden data-testid="manual-pdf-input" (change)="onPdf($event)" />
     </div>
