@@ -30,6 +30,7 @@ import { bundleSignature, sameBuild } from './deploy-check.mjs';
 import { sleep } from './page.mjs';
 import { commitWebUrl, remoteWeb } from './git-web.mjs';
 import { parsePdf } from './pdf-parse.mjs';
+import { readable } from './agent-stream.mjs';
 
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 export const MANUAL_DIR = 'manual';
@@ -473,19 +474,29 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     for (const f of ['report.md', 'manifest.json']) copyFileSync(join(parsedDir, f), join(copyDir, PARSED_DIR, f));
     for (const f of readdirSync(join(parsedDir, 'pages'))) if (/\.png$/.test(f)) copyFileSync(join(parsedDir, 'pages', f), join(copyDir, PARSED_DIR, 'pages', f));
     const example = (manifest.pages.find((p) => p.images.length) || manifest.pages.find((p) => p.picture) || {}).picture || null;
-    const readOnce = () => ask('read', (resultFile) => manualReadPrompt({ reportFile: join(copyDir, PARSED_DIR, 'report.md'), parsedDir: join(copyDir, PARSED_DIR), example, pdfFile: join(copyDir, 'source.pdf'), pageCount: manifest.pageCount, noText, startUrl: cfg.url, routes: knownRoutes(cwd), resultFile }));
+    const readOnce = (previous = null) => ask('read', (resultFile) => manualReadPrompt({ reportFile: join(copyDir, PARSED_DIR, 'report.md'), parsedDir: join(copyDir, PARSED_DIR), example, pdfFile: join(copyDir, 'source.pdf'), pageCount: manifest.pageCount, noText, startUrl: cfg.url, routes: knownRoutes(cwd), resultFile, previous }));
+    // What the first answer said (its words, else its answer file), for the second prompt.
+    const said = (r) => {
+      const out = r && r.res ? readable(r.res.stdout) : null;
+      const text = String((out && out.recognized ? out.text : r && r.res && r.res.stdout) || '').replace(/\s+/g, ' ').trim();
+      if (text) return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+      if (r && r.result) return `an answer file holding ${JSON.stringify(r.result).slice(0, 280)}`;
+      return 'it wrote no answer file and said nothing';
+    };
     const listOf = (result) => (Array.isArray(result) ? result : result && Array.isArray(result.findings) ? result.findings : null);
     const whyNot = (result, why) => (result && result.error) || (why ? why.replace(AgentName, 'it') : '') || 'its answer had no list of findings';
-    let { result, why } = await readOnce();
+    const first = await readOnce();
+    let { result, why } = first;
     if (stopped()) return 1;
     let raw = listOf(result);
     // No list of findings (or no answer at all): asked once more before the run ends.
     if (!raw) {
-      const first = whyNot(result, why);
-      decide('read', null, 'tool', 'asked again', `the first answer could not be used: ${first}`);
-      stage('read-again', { reason: first });
-      log.warn(`${AgentName} could not read the PDF (${first}); asking it again`);
-      ({ result, why } = await readOnce());
+      const reason = whyNot(result, why);
+      decide('read', null, 'tool', 'asked again', `the first answer could not be used: ${reason}`);
+      stage('read-again', { reason });
+      log.warn(`${AgentName} could not read the PDF (${reason}); asking it again`);
+      // The second prompt says what the first answer was, and that it is not the task.
+      ({ result, why } = await readOnce(said(first)));
       if (stopped()) return 1;
       raw = listOf(result);
     }

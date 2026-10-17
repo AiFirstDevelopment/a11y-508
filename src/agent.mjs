@@ -469,10 +469,11 @@ const findingText = (f) => `${f.id}: ${f.title} (${pagesText(f)})${f.cameBack ? 
 const componentList = (components) => components.slice(0, 600).map((c) => `- ${c.name}${c.selector ? ` <${c.selector}>` : ''}: ${c.file}`).join('\n');
 
 // reportFile: the tool's parse of the PDF (docs/plans/pdf-parse.md); pdfFile: the PDF itself, named last.
-export function manualReadPrompt({ reportFile, parsedDir, example = null, pdfFile, pageCount = null, noText = false, startUrl, routes = [], resultFile }) {
+// previous: what the first answer said, when this is the second asking.
+export function manualReadPrompt({ reportFile, parsedDir, example = null, pdfFile, pageCount = null, noText = false, startUrl, routes = [], resultFile, previous = null }) {
   return `# Read a tester's accessibility report
 
-A person tested the application at ${startUrl} by hand and wrote a report, a PDF${pageCount ? ` of ${pageCount} page${pageCount === 1 ? '' : 's'}` : ''}. The tool has already read that PDF into one plain file: ${reportFile}. Read it first; it is all you need. List every specific accessibility problem it reports. Do not edit any file other than the result file.
+${previous ? `Your previous answer was: ${previous}. That is not the task. Do not describe, return or echo the PDF or the pictures; read the report and write the JSON file at ${resultFile}.\n\n` : ''}A person tested the application at ${startUrl} by hand and wrote a report, a PDF${pageCount ? ` of ${pageCount} page${pageCount === 1 ? '' : 's'}` : ''}. The tool has already read that PDF into one plain file: ${reportFile}. Read it first; it is all you need. List every specific accessibility problem it reports. Do not edit any file other than the result file.
 
 How the report is laid out:
 

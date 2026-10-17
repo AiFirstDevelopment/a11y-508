@@ -111,6 +111,7 @@ if (task && /^manual-/.test(task.kind)) {
 // FAKE_MANUAL_WRONG_PAGE: the read gives F1 a quote, status and criterion the report does not have, F2
 // the page before its own, F3 a page past the end.
 // FAKE_MANUAL_READ_SILENT=1 (with it): those reads say "I cannot open this file" and write no answer at all.
+// FAKE_MANUAL_READ_ECHO=1: a read whose prompt does not quote its previous answer says only "Here is the original image:".
 // The read takes the FINDING lines from the tool's parse of the PDF (report.md); the check and the verify judge from the evidence the tool
 // captured (a button with no aria-label, an image with no alt, is the problem); a fix edits the
 // approved component's file.
@@ -137,6 +138,9 @@ function manual(task) {
       // Asked again: a moment before the answer, so the page's sentence for the wait can be seen.
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
     }
+    // FAKE_MANUAL_READ_ECHO: a read whose prompt does not say what the previous answer was answers as
+    // Gemini CLI once did ("Here is the original image:", exit 0, no answer file).
+    if (process.env.FAKE_MANUAL_READ_ECHO && !prompt.includes('Your previous answer was')) return console.log('Here is the original image:');
     // It reads the tool's parse, never the PDF: the prompt must name report.md and a picture of a page.
     const picture = new RegExp(`${(task.parsed || '\0').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/pages/page-\\d+(-image-\\d+)?\\.png`);
     if (!task.report || !/report\.md$/.test(task.report) || !existsSync(task.report) || !prompt.includes(task.report) || !picture.test(prompt)) return out({ error: 'the prompt names no parsed report (report.md) and no picture of a page' });

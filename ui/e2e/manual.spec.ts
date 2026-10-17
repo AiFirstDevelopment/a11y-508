@@ -886,3 +886,24 @@ test('assistant calls: a read that ends without an answer twice links from the h
     await app.cleanup();
   }
 });
+
+test('read retry / guard m: an answer that only echoes ("Here is the original image:", no answer file) is quoted back in the second prompt, which says it is not the task; the second answer is read', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_READ_ECHO: '1' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, DECK);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    const dir = runDir(dash);
+    const prompts = readPrompts(dash, dir.split(/[\\/]/).pop()!);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain('Your previous answer was');
+    expect(prompts[1]).toMatch(/^# Read a tester's accessibility report\n\nYour previous answer was: .*Here is the original image:\. That is not the task\. Do not describe, return or echo the PDF or the pictures; read the report and write the JSON file at \S+result-manual-\S+-read-2\.json\.\n/);
+    expect(decisions(dir).filter((d) => d.decision === 'asked again')).toHaveLength(1);
+    expect(readJson(join(dir, 'findings.json')).findings.map((f: any) => f.id)).toEqual(['F1', 'F2', 'F3']);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
