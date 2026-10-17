@@ -119,7 +119,7 @@ if (task && /^manual-/.test(task.kind)) {
 // Besides the plan's: FAKE_MANUAL_LOCATE_WRONG=F1 (the locate's selectors match nothing either),
 // FAKE_MANUAL_ROUTE_DOWN=F2 (the describe puts F2 on a page that does not load, with selectors that
 // match nothing), FAKE_MANUAL_VERIFY_SKIP=F1 and FAKE_MANUAL_CONFIRM_SKIP=F3 (the first verify or
-// confirmation leaves that id out).
+// confirmation leaves that id out), FAKE_MANUAL_DESCRIBE_NO_ELEMENT=1 (no answer names an element).
 // The describe answers each candidate from its page's FINDING line (id | title | route | selectors |
 // element | words): a tag other than the candidate's own id says the page shows that earlier finding
 // (sameAs); a second FINDING line on a page is a second problem (extra); a page with none names no
@@ -181,6 +181,8 @@ function manual(task) {
       }
       if (sameAs[c.id]) a.sameAs = sameAs[c.id];
       if (wrong.includes(c.id)) a.selectors = ['#not-on-this-page'];
+      // FAKE_MANUAL_DESCRIBE_NO_ELEMENT: every answer says what it saw but names no element.
+      if (process.env.FAKE_MANUAL_DESCRIBE_NO_ELEMENT) delete a.element;
       if (ids(process.env.FAKE_MANUAL_ROUTE_DOWN).includes(c.id)) Object.assign(a, { route: 'http://127.0.0.1:9/', selectors: ['#not-on-this-page'] });
       answers.push(a);
     }

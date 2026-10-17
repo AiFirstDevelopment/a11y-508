@@ -463,6 +463,8 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     const got = new Map();
     let first = null;
     let last = null;
+    // Whether either answer had a list at all (an answer whose items all fell short still had one).
+    let listed = false;
     for (let round = 1; round <= 2; round++) {
       const want = ids.filter((x) => !got.has(x));
       if (!want.length) break;
@@ -477,6 +479,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       if (stopped()) return null;
       if (round === 1) first = r;
       last = r;
+      if (answersOf(r.result)) listed = true;
       for (const a of answersOf(r.result) || []) {
         if (!a || typeof a !== 'object') continue;
         const aid = str(a.id ?? a.finding, 40);
@@ -487,7 +490,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         if (want.includes(aid) && !got.has(aid) && complete(a, aid)) got.set(aid, a);
       }
     }
-    return { got, last };
+    return { got, last, listed };
   };
   // A PDF page's picture, under parsed/.
   const pictureOf = (n) => {
@@ -633,7 +636,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       if (!asked) return 1;
       answers = asked.got;
       // Nothing usable in either answer: the assistant could not read the PDF at all.
-      if (!answers.size) {
+      if (!answers.size && !asked.listed) {
         const r = asked.last || {};
         const reason = (r.result && typeof r.result.error === 'string' && r.result.error) || (r.why ? r.why.replace(AgentName, 'it') : '') || 'its answer had no list of findings';
         const who = agentLabel(cfg.agent).replace(/^./, (c) => c.toUpperCase());
@@ -712,8 +715,11 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         if (second.has(f.id)) evidence.set(f.id, second.get(f.id));
         const e = evidence.get(f.id);
         f.located = !!(e && e.loaded && e.matched > 0);
-        f.unreachable = false;
-        if (f.located) decide('check', f.id, 'tool', `found the element on ${whereOf(f)}`, `the assistant's second selectors matched ${plural(e.matched, 'element')}`, `evidence/${f.id}/before`);
+        // The second look's page did not load: the item says the tool could not open it.
+        f.unreachable = !!(e && !e.loaded);
+        if (f.unreachable) f.located = null;
+        if (f.unreachable) decide('check', f.id, 'tool', `could not open ${whereOf(f)}`, (e && e.error) || 'the page did not load', `evidence/${f.id}/before`);
+        else if (f.located) decide('check', f.id, 'tool', `found the element on ${whereOf(f)}`, `the assistant's second selectors matched ${plural(e.matched, 'element')}`, `evidence/${f.id}/before`);
         else decide('check', f.id, 'tool', `could not find the element on ${whereOf(f)}`, gave.has(f.id) ? "the assistant's selectors matched nothing twice" : "the assistant's selectors matched nothing and it gave no others", `evidence/${f.id}/before`);
       }
     }

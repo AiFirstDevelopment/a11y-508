@@ -940,6 +940,26 @@ test('read-from-parse AC4: an element still not found after the second look is k
   }
 });
 
+test('read-from-parse AC2 (verifier fix): answers that never name an element keep every finding, undescribed; the run goes on', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_DESCRIBE_NO_ELEMENT: '1' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    const dir = runDir(dash);
+    const findings = readJson(join(dir, 'findings.json')).findings;
+    expect(findings.map((f: any) => [f.id, f.seen, f.element])).toEqual([['F1', null, 'not described by the assistant'], ['F2', null, 'not described by the assistant'], ['F3', null, 'not described by the assistant']]);
+    expect(decisions(dir).filter((d) => d.decision === 'kept without a description').map((d) => d.finding)).toEqual(['F1', 'F2', 'F3']);
+    expect(decisions(dir).filter((d) => d.decision === 'could not read the PDF')).toEqual([]);
+    await expect(item(page, 'F1').getByTestId('seen')).toHaveText('The assistant did not describe this page.');
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
 test('read-from-parse AC5: a confirmation and a verdict left out are asked again for just those, then the run goes on', async ({ page }) => {
   test.setTimeout(400_000);
   const app = await manualApp();
