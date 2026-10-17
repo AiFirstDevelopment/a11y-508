@@ -108,6 +108,7 @@ if (task && /^manual-/.test(task.kind)) {
 // FAKE_MANUAL_PLAN_WRONG: the plan puts F1 (the search button) in HeaderComponent.
 // FAKE_MANUAL_MISUNDERSTAND_ONCE=<file>: the first confirmation answers understood: false.
 // FAKE_MANUAL_READ_FAIL=<n>: the first n reads answer with no list of findings.
+// FAKE_MANUAL_READ_SILENT=1 (with it): those reads say "I cannot open this file" and write no answer at all.
 // The read parses the PDF's FINDING lines; the check and the verify judge from the evidence the tool
 // captured (a button with no aria-label, an image with no alt, is the problem); a fix edits the
 // approved component's file.
@@ -128,6 +129,7 @@ function manual(task) {
       const n = existsSync(count) ? Number(readFileSync(count, 'utf8')) || 0 : 0;
       if (n < fails) {
         writeFileSync(count, String(n + 1));
+        if (process.env.FAKE_MANUAL_READ_SILENT) return console.log(`I cannot open this file (read ${n + 1})`);
         return out({ note: 'I could not make out the findings in this PDF.' });
       }
       // Asked again: a moment before the answer, so the page's sentence for the wait can be seen.

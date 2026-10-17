@@ -370,9 +370,10 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     }
     if (!raw) {
       const reason = whyNot(result, why);
-      const words = `${agentLabel(cfg.agent).replace(/^./, (c) => c.toUpperCase())} could not read the PDF (${reason}). Choose another PDF, or pick another assistant under Advanced.`;
+      const who = agentLabel(cfg.agent).replace(/^./, (c) => c.toUpperCase());
+      const words = `${who} could not read the PDF (${reason}). Choose another PDF, or pick another assistant under Advanced.`;
       decide('read', null, 'agent', 'could not read the PDF', reason);
-      stage('read-failed', { reason: words });
+      stage('read-failed', { reason: words, assistant: who });
       log.error(words);
       return finish(1);
     }
