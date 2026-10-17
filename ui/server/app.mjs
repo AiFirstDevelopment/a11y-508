@@ -32,6 +32,7 @@ import { addDiarySecrets, readDiary, writeDiary } from '../../src/diary.mjs';
 import { describeEntry, doingOf } from './diagnostics.mjs';
 import { bringToFront as bringTabToFront, signInTabOf } from './sign-in-tab.mjs';
 import { unfixedFacts } from './unfixed.mjs';
+import { CALL_N, LOOP_NAME, MANUAL_LABEL, loopCall, loopCalls, manualCall, manualCalls } from './agent-calls.mjs';
 
 // The wizard's steps, as lastStep stores them.
 const STEPS = ['/run', '/live', '/report', '/fix-loop', '/history'];
@@ -960,6 +961,16 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       if (!validId(dm[1]) || !existsSync(manualDir(state.cwd, dm[1]))) return send(res, 404, { error: 'no such PDF run' });
       return send(res, 200, { id: dm[1], ...decisionGroups(manualDir(state.cwd, dm[1]), inGitRepo(state.cwd) ? remoteWeb(state.cwd) : null) });
     }
+    // The run's assistant calls, and one of them with what it said, its prompt and its answer file.
+    const ac = /^\/api\/manual\/([^/]+)\/agent-calls(?:\/([^/]+)\/([^/]+))?$/.exec(path);
+    if (m === 'GET' && ac) {
+      if (!validId(ac[1]) || !existsSync(manualDir(state.cwd, ac[1]))) return send(res, 404, { error: 'no such PDF run' });
+      const dir = manualDir(state.cwd, ac[1]);
+      if (!ac[2]) return send(res, 200, manualCalls(dir));
+      if (!MANUAL_LABEL.test(ac[2]) || !CALL_N.test(ac[3])) return send(res, 404, { error: 'no such call' });
+      const call = manualCall(state.cwd, dir, ac[1], ac[2], ac[3]);
+      return call ? send(res, 200, call) : send(res, 404, { error: 'no such call' });
+    }
     if (m === 'POST' && path === '/api/manual/review') {
       const dir = currentManual();
       const body = await readBody(req);
@@ -1124,6 +1135,12 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (m === 'GET' && path === '/api/reports') return send(res, 200, listReports(state.cwd));
     if (m === 'GET' && path === '/api/loop/routes') return send(res, 200, crawledRoutes(state.cwd));
     if (m === 'GET' && path === '/api/loop/journal') return send(res, 200, journal(state.cwd));
+    if (m === 'GET' && path === '/api/loop/agent-calls') return send(res, 200, loopCalls(state.cwd));
+    const lc = /^\/api\/loop\/agent-calls\/([^/]+)$/.exec(path);
+    if (m === 'GET' && lc) {
+      const call = LOOP_NAME.test(lc[1]) ? loopCall(state.cwd, lc[1]) : null;
+      return call ? send(res, 200, call) : send(res, 404, { error: 'no such call' });
+    }
     if (m === 'GET' && path === '/api/loop/timeline') {
       const file = ledgerPath(state.cwd);
       if (!existsSync(file)) return send(res, 200, null);

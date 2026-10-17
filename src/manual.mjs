@@ -268,8 +268,9 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     const resultFile = join(taskFolder, `result-manual-${id}-${label}-${n}.json`);
     writePrompt(promptFile, prompt(resultFile));
     stage('agent', { task: label, state: 'start' });
+    const at = new Date().toISOString();
     const res = await callAgent(work, `manual-${id}-${label}-${n}`, { command: agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout, quotaDelays: cfg.quotaDelays || QUOTA_DELAYS });
-    writeFileSync(join(dir, `agent-${label}-${n}.log`), agentLog(res));
+    writeFileSync(join(dir, `agent-${label}-${n}.log`), agentLog(res, { at, assistant: agentLabel(cfg.agent) }));
     const why = res.result ? null : res.timedOut ? `${AgentName} did not answer in time` : res.quota ? `${AgentName} was refused for quota or rate limit` : `${AgentName} ended without an answer (exit code ${res.code})`;
     stage('agent', { task: label, state: 'done', ok: !!res.result, ...(why ? { reason: why } : {}) });
     return { result: res.result, why, res };

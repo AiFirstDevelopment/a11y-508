@@ -9,7 +9,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { join, resolve, relative, dirname, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyReport, byStatus, isDone, loadLedger, openFindings, saveLedger, statusCounts } from './ledger.mjs';
-import { PRESET_INFO, QUOTA_DELAYS, agentLog, fixPrompt, resolveAgentCommand, runAgent, triagePrompt, writePrompt } from './agent.mjs';
+import { PRESET_INFO, QUOTA_DELAYS, agentLabel, agentLog, fixPrompt, resolveAgentCommand, runAgent, triagePrompt, writePrompt } from './agent.mjs';
 import { testInfo } from './checks/catalog.mjs';
 import { migrateRepo, migrationLines, shortenHome, tasksDir, workDir } from './home.mjs';
 import { sleep } from './page.mjs';
@@ -1195,9 +1195,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         const promptFile = join(taskFolder, `prompt-r${round}-triage-${i}.md`);
         const resultFile = join(taskFolder, `result-r${round}-triage-${i}.json`);
         writePrompt(promptFile, triagePrompt({ items, resultFile }));
+        const at = new Date().toISOString();
         const res = await withOutput(`r${round}-triage-${i}`, { command: agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout }, round, i / cfg.triageBatch + 1, 'triage', batch.length);
         calls.push(res);
-        writeFileSync(join(work, `agent-r${round}-triage-${i}.log`), agentLog(res));
+        writeFileSync(join(work, `agent-r${round}-triage-${i}.log`), agentLog(res, { at, assistant: agentLabel(cfg.agent) }));
         const decisions = Array.isArray(res.result) ? res.result : Array.isArray(res.result && res.result.items) ? res.result.items : null;
         if (!decisions) {
           log.warn(`triage batch ${i / cfg.triageBatch + 1}: the agent did not return a decision list (exit ${res.code}${res.timedOut ? ', timed out' : ''}${res.quota ? `, refused for quota or rate limit after ${res.quotaRetries} retries` : ''}); items stay in review`);
@@ -1280,9 +1281,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       // Every finding of the task gets the attempt (and so the same outcome and commit).
       for (const e of members(entry)) e.attempts.push(attempt);
       save();
+      const at = new Date().toISOString();
       const res = await withOutput(`r${round}-fix-${n}`, { command: useFallback ? fallbackCommand : agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout }, round, n + 1, 'fix');
       calls.push(res);
-      writeFileSync(join(work, `agent-r${round}-fix-${n}.log`), agentLog(res));
+      writeFileSync(join(work, `agent-r${round}-fix-${n}.log`), agentLog(res, { at, assistant: agentLabel(useFallback ? cfg.fallback : cfg.agent) }));
       const changed = gitChanged(cwd, sourceDirs);
       const strayChanges = gitChanged(cwd).filter((f) => !changed.includes(f));
       if (strayChanges.length) {
