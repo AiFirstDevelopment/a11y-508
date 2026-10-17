@@ -301,7 +301,7 @@ export class HomeScreen implements OnDestroy {
     const s = this.store;
     const r = s.retry();
     const d = s.done();
-    return s.active() || s.retryPending() || (!!d && (d['outcome'] === 'interrupted' || !!d['rerun'] || (!!r && !!r.firedAt && !r.cancelled))) || this.driver.starting();
+    return s.active() || s.retryPending() || (!!d && (d['outcome'] === 'interrupted' || (!!d['rerun'] && !s.rerunWithdrawn()) || (!!r && !!r.firedAt && !r.cancelled))) || this.driver.starting();
   });
   readonly signingIn = computed(() => this.store.loginWaiting() && this.store.active());
 
@@ -523,8 +523,10 @@ export class HomeScreen implements OnDestroy {
       case 'start':
       case 'read':
         return `Reading the PDF with ${who}`;
-      case 'read-again':
-        return "The assistant's answer had no list of findings; asking it again.";
+      case 'read-again': {
+        const why = m.readAgain || '';
+        return !why || why === 'its answer had no list of findings' ? "The assistant's answer had no list of findings; asking it again." : `The assistant could not read the PDF (${why}); asking it again.`;
+      }
       case 'findings':
       case 'check':
         return `Checking the deployed site for ${plural(m.findings || 0, 'finding')} from the PDF`;
@@ -583,7 +585,7 @@ export class HomeScreen implements OnDestroy {
       const m = s.manual();
       if (m.done) return m.done.message;
       if (m.noFindings) return m.noFindings;
-      if (d['rerun'] || d['outcome'] === 'interrupted') return continuingPdf((d['rerun'] as Record<string, unknown> | undefined)?.['stage']);
+      if ((d['rerun'] && !s.rerunWithdrawn()) || d['outcome'] === 'interrupted') return continuingPdf((d['rerun'] as Record<string, unknown> | undefined)?.['stage']);
       if (d['outcome'] === 'stopped') return 'Stopped.';
       if (m.readFailed) return m.readFailed;
       const errors = s.notices().filter((x) => x.level === 'error' && !/^The run failed( \(exit code|: )/.test(x.message)).map((x) => x.message);

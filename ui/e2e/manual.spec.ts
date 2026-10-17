@@ -7,7 +7,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { api, dashboard, gitRepo, go, now, open, removeTemp, tempDir, BIN, ROOT, type Dash } from './harness';
 
@@ -614,6 +614,32 @@ test('clarity AC2 / guard b: a dashboard restart during a PDF run continues and 
     await expect(now(page)).toHaveText('Stopped.');
     const cur = (await api(dash, '/api/runs/current')).json;
     expect([cur.id, cur.status, cur.rerun]).toEqual([stopped.id, 'done', undefined]);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('clarity AC2 (verifier fix): a rerun that cannot start is withdrawn; the page reads "Stopped." with Start and the PDF button, never stuck on Stop', async ({ page }) => {
+  test.setTimeout(400_000);
+  const app = await manualApp();
+  const env = { A11Y_508_RERUN_DELAY: '1000' };
+  let dash = await dashboard({ cwd: app.cwd, env });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    const dir = runDir(dash);
+    const home = dash.home;
+    await dash.stop();
+    // The run's PDF is gone, so its rerun cannot start.
+    rmSync(join(dir, 'source.pdf'));
+    dash = await dashboard({ cwd: app.cwd, env: { ...env, A11Y_508_HOME: home } });
+    await open(page, dash);
+    await expect(now(page)).toHaveText('Stopped.', { timeout: 30_000 });
+    await expect(go(page)).toHaveText('Start');
+    await expect(page.getByTestId('manual-pdf')).toBeVisible();
+    expect((await api(dash, '/api/runs/current')).json.rerun ?? null).toBeNull();
   } finally {
     await dash.stop();
     await app.cleanup();
