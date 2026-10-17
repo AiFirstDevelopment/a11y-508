@@ -291,7 +291,7 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, ti
   const decoder = streamDecoder((line) => {
     if (onOutput) onOutput('stdout', `${line}\n`);
     circling(line);
-  }, { cwd, doneLine, ignore: [tasksDir] });
+  }, { cwd, doneLine, ignore: [tasksDir], resultFile });
   // The first few kilobytes, kept whole: a streaming assistant's init event names its model there.
   let head = '';
   child.stdout.on('data', (d) => {
@@ -342,15 +342,34 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, ti
       stream.destroy();
     } catch {}
   }
+  // The answer, from the first of these that parses: what the stream shows it wrote to the result
+  // file (Gemini CLI's write_file unescapes \" before saving, so the file itself may not parse), the
+  // file, then the end of what it said (its words, when it streamed events). answerError: the last
+  // parse that failed, for the log and the person, when neither the stream nor the file gave one.
   let result = null;
-  if (existsSync(resultFile)) {
+  let answerError;
+  const parse = (text, source) => {
     try {
-      result = JSON.parse(readFileSync(resultFile, 'utf8'));
-    } catch {}
-  }
-  // Without a result file, the answer at the end of what it said: its words, when it streamed events.
-  if (!result) result = lastJson(decoder.recognized ? decoder.text : stdout);
-  return { code, timedOut, circled, result, stdout, stderr, text: decoder.text, model: streamModel(head) };
+      return JSON.parse(text);
+    } catch (e) {
+      const m = / at position (\d+)/.exec(e.message);
+      answerError = { source, message: e.message, position: m ? Number(m[1]) : null, preview: text.slice(0, 160) };
+      return null;
+    }
+  };
+  if (typeof decoder.answer === 'string') result = parse(decoder.answer, 'stream');
+  if (!result && existsSync(resultFile)) result = parse(readFileSync(resultFile, 'utf8'), 'file');
+  if (result) answerError = undefined;
+  else result = lastJson(decoder.recognized ? decoder.text : stdout);
+  return { code, timedOut, circled, result, stdout, stderr, text: decoder.text, model: streamModel(head), ...(answerError ? { answerError } : {}) };
+}
+
+// Why a call gave no answer, after the assistant's name: it wrote one that is not valid JSON (the
+// real cause, in JSON.parse's words), else it ended without one.
+export function noAnswerWhy(res) {
+  const e = res.answerError;
+  if (e) return `wrote an answer that is not valid JSON (${e.message}${typeof e.position === 'number' ? `, at character ${e.position}` : ''})`;
+  return `ended without an answer (exit code ${res.code})`;
 }
 
 // The model a streaming assistant names in its init event (Gemini CLI's "init", Claude's "system"/"init"), or null.
@@ -370,7 +389,7 @@ export function streamModel(text) {
 // output. Never the environment or the token (the prompt and the agent never had it).
 // extra: { at, assistant } -- when the call started, and the assistant's name, for the dashboard's Log.
 export function agentLog(res, extra = {}) {
-  const head = { ...extra, code: res.code, timedOut: !!res.timedOut, quota: !!res.quota, quotaRetries: res.quotaRetries || 0, result: !!res.result, durationMs: res.durationMs, ...(res.model ? { model: res.model } : {}) };
+  const head = { ...extra, code: res.code, timedOut: !!res.timedOut, quota: !!res.quota, quotaRetries: res.quotaRetries || 0, result: !!res.result, durationMs: res.durationMs, ...(res.model ? { model: res.model } : {}), ...(res.answerError ? { answerError: res.answerError } : {}) };
   return `${JSON.stringify(head)}\n--- stdout (tail)\n${String(res.stdout || '').slice(-8000)}\n--- stderr (tail)\n${String(res.stderr || '').slice(-8000)}\n`;
 }
 

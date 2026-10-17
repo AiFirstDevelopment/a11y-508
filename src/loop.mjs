@@ -9,7 +9,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { join, resolve, relative, dirname, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyReport, byStatus, isDone, loadLedger, openFindings, saveLedger, statusCounts } from './ledger.mjs';
-import { PRESET_INFO, QUOTA_DELAYS, agentLabel, agentLog, fixPrompt, resolveAgentCommand, runAgent, triagePrompt, writePrompt } from './agent.mjs';
+import { PRESET_INFO, QUOTA_DELAYS, agentLabel, agentLog, fixPrompt, noAnswerWhy, resolveAgentCommand, runAgent, triagePrompt, writePrompt } from './agent.mjs';
 import { testInfo } from './checks/catalog.mjs';
 import { migrateRepo, migrationLines, shortenHome, tasksDir, workDir } from './home.mjs';
 import { sleep } from './page.mjs';
@@ -923,7 +923,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       : res.timedOut ? `${agentName} did not answer within ${duration(cfg.agentTimeout)}; the loop goes on`
       : res.circled ? `${agentName} repeated the same failing step over and over, so its call was ended; the loop goes on`
       : res.quota ? `${agentName} was still rate-limited after ${res.quotaRetries} ${res.quotaRetries === 1 ? 'retry' : 'retries'}; the loop goes on`
-      : `${agentName} ended without an answer (exit code ${res.code}); the loop goes on`;
+      : `${agentName} ${noAnswerWhy(res)}; the loop goes on`;
     ev('agent-result', { round, task, kind, ok, timedOut: !!res.timedOut, quota: !!res.quota, code: typeof res.code === 'number' ? res.code : null, message });
     return res;
   };

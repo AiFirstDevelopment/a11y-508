@@ -4,7 +4,7 @@
 // For display only: the result file the assistant writes stays the source of truth. A line that is
 // not an event either understands is passed on as it is.
 
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { isAbsolute, posix, relative, resolve, sep, win32 } from 'node:path';
 
 const str = (v) => (typeof v === 'string' ? v : '');
 const oneLine = (s, max = 200) => {
@@ -27,16 +27,33 @@ const TOOLS = [
   [/^(Task)$/, (p) => `Starting a helper: ${oneLine(p.description, 80)}`],
 ];
 const CHANGES = /^(write_file|replace|edit|Write|Edit|MultiEdit|NotebookEdit)$/;
+const WRITES = /^(write_file|Write)$/;
+
+// Whether two paths name the same file, each resolved against cwd. On Windows the letter case and
+// the direction of the slashes do not matter: C:\Users\dev\r.json is c:/users/dev/r.json.
+export function samePath(a, b, { cwd = process.cwd(), platform = process.platform } = {}) {
+  const p = platform === 'win32' ? win32 : posix;
+  const norm = (x) => {
+    const s = str(x);
+    if (!s) return null;
+    const r = p.resolve(cwd, s);
+    return platform === 'win32' ? r.replace(/\//g, '\\').toLowerCase() : r;
+  };
+  const x = norm(a);
+  return x !== null && x === norm(b);
+}
 
 // A decoder for one call: push(text) as stdout arrives, end() when it has ended. onLine(line) gets
 // each readable line. recognized: whether any event was understood (the output is a stream).
 // doneLine(changed, failed, message), when given, words the closing line (the loop says what comes next).
 // ignore: folders whose files do not count as changed (the loop's own task folder, where the result file goes).
-export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null, ignore = [] } = {}) {
+// resultFile: the file the assistant answers in; what it last wrote there, as the stream shows it, is
+// answer (Gemini CLI's write_file unescapes \" before saving, so the file on disk may not parse).
+export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null, ignore = [], resultFile = null } = {}) {
   let partial = '';
   let said = ''; // the assistant's words not yet ended by a newline
   const changed = new Set();
-  const state = { recognized: false, text: '' };
+  const state = { recognized: false, text: '', answer: null };
   const path = (p) => {
     const s = str(p);
     if (!s) return 'a file';
@@ -59,6 +76,7 @@ export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null, ig
       const under = (d) => abs === d || abs.startsWith(d.endsWith(sep) ? d : d + sep);
       if (!s.startsWith('~') && under(cwd) && !ignore.some(under)) changed.add(path(s));
     }
+    if (WRITES.test(name) && resultFile && typeof p.content === 'string' && samePath(p.file_path || p.path, resultFile, { cwd })) state.answer = p.content;
     const row = TOOLS.find(([re]) => re.test(name));
     return row ? row[1](p, path) : `Using ${name}`;
   };
@@ -150,14 +168,18 @@ export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null, ig
     get text() {
       return state.text;
     },
+    // The content of its last write to resultFile, or null when the stream showed none.
+    get answer() {
+      return state.answer;
+    },
   };
 }
 
-// A whole call's stdout as readable lines, and its decoded words.
+// A whole call's stdout as readable lines, its decoded words and its streamed answer.
 export function readable(stdout, opts) {
   const lines = [];
   const d = streamDecoder((l) => lines.push(l), opts);
   d.push(String(stdout || ''));
   d.end();
-  return { lines, recognized: d.recognized, text: d.text };
+  return { lines, recognized: d.recognized, text: d.text, answer: d.answer };
 }

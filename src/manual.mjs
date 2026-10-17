@@ -22,7 +22,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readF
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  PRESET_INFO, QUOTA_DELAYS, agentLabel, agentLog, manualCheckPrompt, manualConfirmPrompt, manualDescribePrompt, manualFixPrompt, manualLocatePrompt, manualPlanPrompt, manualReplanPrompt, manualVerifyPrompt, resolveAgentCommand, writePrompt,
+  PRESET_INFO, QUOTA_DELAYS, agentLabel, agentLog, manualCheckPrompt, manualConfirmPrompt, manualDescribePrompt, manualFixPrompt, manualLocatePrompt, manualPlanPrompt, manualReplanPrompt, manualVerifyPrompt, noAnswerWhy, resolveAgentCommand, writePrompt,
 } from './agent.mjs';
 import { callAgent, findIndexHtml, frameworkLine, git, gitChanged, normalizeConfig, prepareRepo, sessionArgs, sh, signInOnly, splitCheck, stampBuildMarker, testRoundFixes, waitForEnter } from './loop.mjs';
 import { migrateRepo, migrationLines, reportDir, shortenHome, tasksDir, workDir } from './home.mjs';
@@ -441,7 +441,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     const at = new Date().toISOString();
     const res = await callAgent(work, `manual-${id}-${label}-${n}`, { command: agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout, quotaDelays: cfg.quotaDelays || QUOTA_DELAYS, context: 'manual' });
     writeFileSync(join(dir, `agent-${label}-${n}.log`), agentLog(res, { at, assistant: agentLabel(cfg.agent) }));
-    const why = res.result ? null : res.timedOut ? `${AgentName} did not answer in time` : res.quota ? `${AgentName} was refused for quota or rate limit` : `${AgentName} ended without an answer (exit code ${res.code})`;
+    const why = res.result ? null : res.timedOut ? `${AgentName} did not answer in time` : res.quota ? `${AgentName} was refused for quota or rate limit` : `${AgentName} ${noAnswerWhy(res)}`;
     stage('agent', { task: label, state: 'done', ok: !!res.result, ...(why ? { reason: why } : {}) });
     return { result: res.result, why, res };
   };
