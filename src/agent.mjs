@@ -294,6 +294,9 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, ti
   }, { cwd, doneLine, ignore: [tasksDir], resultFile });
   // The first few kilobytes, kept whole: a streaming assistant's init event names its model there.
   let head = '';
+  // Decoded as UTF-8 across chunks: a pipe can split a curly quote or an em dash between two reads.
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
   child.stdout.on('data', (d) => {
     if (head.length < 8000) head += String(d).slice(0, 8000 - head.length);
     stdout = keep(stdout, String(d));

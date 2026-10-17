@@ -30,16 +30,22 @@ const fake = join(root, 'fake-assistant.mjs');
 writeFileSync(fake, `import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const [, , caseDir, resultFile] = process.argv;
-process.stdout.write(readFileSync(join(caseDir, 'stream.jsonl'), 'utf8'));
 if (existsSync(join(caseDir, 'file.txt'))) writeFileSync(resultFile, readFileSync(join(caseDir, 'file.txt'), 'utf8'));
+const out = readFileSync(join(caseDir, 'stream.jsonl'));
+// split: the stream in two writes, cut at that byte (inside a multi-byte character), 300 ms apart.
+const at = existsSync(join(caseDir, 'split')) ? Number(readFileSync(join(caseDir, 'split'), 'utf8')) : -1;
+if (at < 0) process.stdout.write(out);
+else process.stdout.write(out.subarray(0, at), () => setTimeout(() => process.stdout.write(out.subarray(at)), 300));
 `);
 let n = 0;
 // Runs the fake on a stream (a function of the result file's path) and a file, through runAgent.
-const run = async (stream, file = null) => {
+const run = async (stream, file = null, split = null) => {
   const dir = join(root, `case-${++n}`);
   mkdirSync(dir);
   const resultFile = join(dir, 'result-manual-x-read-1.json');
-  writeFileSync(join(dir, 'stream.jsonl'), stream(resultFile));
+  const text = stream(resultFile);
+  writeFileSync(join(dir, 'stream.jsonl'), text);
+  if (split) writeFileSync(join(dir, 'split'), String(split(Buffer.from(text))));
   if (file !== null) writeFileSync(join(dir, 'file.txt'), file);
   const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(fake)} ${JSON.stringify(dir)} "{resultFile}"`;
   return runAgent({ command, promptFile: join(dir, 'prompt-manual-x-read-1.md'), resultFile, cwd: root, timeout: 20000, quotaDelays: [] });
@@ -156,6 +162,21 @@ await check('(vi) on Windows the event\'s path matches the result file whatever 
   assert.equal(samePath('tasks/result.json', '/home/dev/tasks/result.json', { cwd: '/home/dev', platform: 'linux' }), true);
   assert.equal(samePath('', '/home/dev/tasks/result.json', { platform: 'linux' }), false);
   assert.equal(samePath(undefined, undefined, { platform: 'linux' }), false);
+});
+
+await check('(vii) a stream split inside a multi-byte character still gives the right text', async () => {
+  const content = '{"seen":"The \u201cForm Panel\u201d page \u2014 is displayed"}';
+  const res = await run((f) => jsonl(...geminiWrite(f, content)), content, (buf) => buf.indexOf(Buffer.from('\u2014')) + 1);
+  assert.equal(res.result.seen, 'The \u201cForm Panel\u201d page \u2014 is displayed');
+  assert.ok(!res.result.seen.includes('\ufffd'));
+});
+await check('(viii) an edit of the result file after the write: the file is the answer again', async () => {
+  const edit = (f) => ({ type: 'tool_use', timestamp: 't', tool_name: 'replace', tool_id: 'b', parameters: { file_path: f, old_string: '"fixed"', new_string: '"partial"' } });
+  const res = await run((f) => jsonl(...geminiWrite(f, '{"status":"fixed"}').slice(0, 4), edit(f), ...geminiWrite(f, '').slice(4)), '{"status":"partial"}');
+  assert.deepEqual(res.result, { status: 'partial' });
+  // A write after the edit is the answer again.
+  const target = join(root, 'tasks', 'result-r1-fix-1.json');
+  assert.equal(readable(jsonl(edit(target), ...geminiWrite(target, '{"c":3}').slice(2, 3)), { cwd: root, resultFile: target }).answer, '{"c":3}');
 });
 
 rmSync(root, { recursive: true, force: true });

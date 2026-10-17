@@ -76,7 +76,11 @@ export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null, ig
       const under = (d) => abs === d || abs.startsWith(d.endsWith(sep) ? d : d + sep);
       if (!s.startsWith('~') && under(cwd) && !ignore.some(under)) changed.add(path(s));
     }
-    if (WRITES.test(name) && resultFile && typeof p.content === 'string' && samePath(p.file_path || p.path, resultFile, { cwd })) state.answer = p.content;
+    if (resultFile && samePath(p.file_path || p.path || p.notebook_path, resultFile, { cwd })) {
+      // A write is the answer as streamed; an edit after it changed the file, so the file is the truth again.
+      if (WRITES.test(name) && typeof p.content === 'string') state.answer = p.content;
+      else if (CHANGES.test(name)) state.answer = null;
+    }
     const row = TOOLS.find(([re]) => re.test(name));
     return row ? row[1](p, path) : `Using ${name}`;
   };
