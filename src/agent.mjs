@@ -5,7 +5,7 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { streamDecoder } from './agent-stream.mjs';
 
 // The prompt and result files are in the tool's tasks folder under the state base, outside the
@@ -235,15 +235,23 @@ export const QUOTA_DELAYS = [30000, 90000];
 // A quota that resets in hours (a free tier's daily limit) is not worth waiting for in seconds.
 export const QUOTA_TERMINAL = /daily quota|TerminalQuotaError|per day|retry in \d+h/i;
 
+// The model Gemini CLI reads the manual flow's pictures with when the person chose none
+// (docs/plans/read-from-parse.md AC 7): its automatic choice may pick one that skips them.
+export const MANUAL_GEMINI_MODEL = 'gemini-2.5-pro';
+
 // Gemini CLI refuses to run headless in a folder it has not been told to trust; the loop runs it
-// in the repository it was configured for, so it says so. Any other command's environment is
-// left as it is.
-export function agentEnvFor(command, env = agentEnv()) {
+// in the repository it was configured for, so it says so. For the manual flow's calls (context
+// 'manual') it also runs on a model that reads pictures, unless GEMINI_MODEL is set. Any other
+// command's environment is left as it is.
+export function agentEnvFor(command, env = agentEnv(), { context = null } = {}) {
   // A quoted executable may hold spaces ("C:\\Program Files\\nodejs\\gemini.cmd" ...).
   const t = String(command || '').trim();
   const exe = (t.startsWith('"') ? t.slice(1, t.indexOf('"', 1) > 0 ? t.indexOf('"', 1) : undefined) : t.split(/\s+/)[0]) || '';
-  if (/(^|[\\/])gemini(\.cmd|\.exe|\.ps1)?$/i.test(exe) && env.GEMINI_CLI_TRUST_WORKSPACE === undefined) return { ...env, GEMINI_CLI_TRUST_WORKSPACE: 'true' };
-  return env;
+  if (!/(^|[\\/])gemini(\.cmd|\.exe|\.ps1)?$/i.test(exe)) return env;
+  let out = env;
+  if (env.GEMINI_CLI_TRUST_WORKSPACE === undefined) out = { ...out, GEMINI_CLI_TRUST_WORKSPACE: 'true' };
+  if (context === 'manual' && !env.GEMINI_MODEL) out = { ...out, GEMINI_MODEL: MANUAL_GEMINI_MODEL };
+  return out;
 }
 
 // Runs the assistant once on a prompt file. A call that writes no result and whose output names a
@@ -252,7 +260,7 @@ export function agentEnvFor(command, env = agentEnv()) {
 // onOutput(stream, text), when given, sees the assistant's output as it arrives.
 // onWait({ delayMs, attempt, attempts }), when given, is told before each wait for a quota retry.
 // doneLine words a streaming assistant's closing line (see streamDecoder).
-export async function runAgent({ command, promptFile, resultFile, cwd, tasksDir = dirname(promptFile), timeout = 15 * 60 * 1000, env = agentEnvFor(command), quotaDelays = QUOTA_DELAYS, onOutput = null, onWait = null, doneLine = null }) {
+export async function runAgent({ command, promptFile, resultFile, cwd, tasksDir = dirname(promptFile), timeout = 15 * 60 * 1000, context = null, env = agentEnvFor(command, agentEnv(), { context }), quotaDelays = QUOTA_DELAYS, onOutput = null, onWait = null, doneLine = null }) {
   const t0 = Date.now();
   let quotaRetries = 0;
   for (;;) {
@@ -284,7 +292,10 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, ti
     if (onOutput) onOutput('stdout', `${line}\n`);
     circling(line);
   }, { cwd, doneLine, ignore: [tasksDir] });
+  // The first few kilobytes, kept whole: a streaming assistant's init event names its model there.
+  let head = '';
   child.stdout.on('data', (d) => {
+    if (head.length < 8000) head += String(d).slice(0, 8000 - head.length);
     stdout = keep(stdout, String(d));
     decoder.push(String(d));
   });
@@ -339,14 +350,27 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, ti
   }
   // Without a result file, the answer at the end of what it said: its words, when it streamed events.
   if (!result) result = lastJson(decoder.recognized ? decoder.text : stdout);
-  return { code, timedOut, circled, result, stdout, stderr, text: decoder.text };
+  return { code, timedOut, circled, result, stdout, stderr, text: decoder.text, model: streamModel(head) };
+}
+
+// The model a streaming assistant names in its init event (Gemini CLI's "init", Claude's "system"/"init"), or null.
+export function streamModel(text) {
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t.startsWith('{') || !/"init"/.test(t)) continue;
+    try {
+      const ev = JSON.parse(t);
+      if ((ev.type === 'init' || (ev.type === 'system' && ev.subtype === 'init')) && typeof ev.model === 'string' && ev.model) return ev.model.slice(0, 80);
+    } catch {}
+  }
+  return null;
 }
 
 // What one agent call left behind, for the work folder: a JSON header line, then the tail of its
 // output. Never the environment or the token (the prompt and the agent never had it).
 // extra: { at, assistant } -- when the call started, and the assistant's name, for the dashboard's Log.
 export function agentLog(res, extra = {}) {
-  const head = { ...extra, code: res.code, timedOut: !!res.timedOut, quota: !!res.quota, quotaRetries: res.quotaRetries || 0, result: !!res.result, durationMs: res.durationMs };
+  const head = { ...extra, code: res.code, timedOut: !!res.timedOut, quota: !!res.quota, quotaRetries: res.quotaRetries || 0, result: !!res.result, durationMs: res.durationMs, ...(res.model ? { model: res.model } : {}) };
   return `${JSON.stringify(head)}\n--- stdout (tail)\n${String(res.stdout || '').slice(-8000)}\n--- stderr (tail)\n${String(res.stderr || '').slice(-8000)}\n`;
 }
 
@@ -465,68 +489,119 @@ const pagesText = (f) => {
   const ps = Array.isArray(f.pages) && f.pages.length ? f.pages : [f.page];
   return ps.length === 1 ? `PDF page ${ps[0]}` : `PDF pages ${ps.join(', ')}`;
 };
-const findingText = (f) => `${f.id}: ${f.title} (${pagesText(f)})${f.cameBack ? `\n${f.cameBack}.` : ''}\nThe tester wrote: "${f.quote}"\nWhere: ${f.url || f.route || '(not said)'}\nElement: ${f.element || '(not said)'}${f.criterion ? `\nTrusted Tester criterion: ${f.criterion}` : ''}${f.status ? `\nThe tester's status: ${f.status}` : ''}${f.wcag ? `\nWCAG: ${f.wcag}` : ''}${f.expected ? `\nExpected: ${f.expected}` : ''}`;
+const findingText = (f) => `${f.id}: ${f.title} (${pagesText(f)})${f.cameBack ? `\n${f.cameBack}.` : ''}${f.seen ? `\nWhat the assistant saw on PDF page ${f.page}: ${f.seen}` : ''}\nThe tester wrote: "${f.quote}"\nWhere: ${f.url || f.route || '(not said)'}\nElement: ${f.element || '(not said)'}${f.criterion ? `\nTrusted Tester criterion: ${f.criterion}` : ''}${f.status ? `\nThe tester's status: ${f.status}` : ''}${f.wcag ? `\nWCAG: ${f.wcag}` : ''}${f.expected ? `\nExpected: ${f.expected}` : ''}`;
 const componentList = (components) => components.slice(0, 600).map((c) => `- ${c.name}${c.selector ? ` <${c.selector}>` : ''}: ${c.file}`).join('\n');
 
-// reportFile: the tool's parse of the PDF (docs/plans/pdf-parse.md); pdfFile: the PDF itself, named last.
-// previous: what the first answer said, when this is the second asking.
-export function manualReadPrompt({ reportFile, parsedDir, example = null, pdfFile, pageCount = null, noText = false, startUrl, routes = [], resultFile, previous = null }) {
-  return `# Read a tester's accessibility report
+// The sentence a second asking starts with (docs/plans/read-from-parse.md AC 2 and 5).
+const againLine = (ids) => (ids && ids.length ? `You did not answer for ${ids.length === 1 ? ids[0] : `${ids.slice(0, -1).join(', ')} and ${ids[ids.length - 1]}`}. Answer for each of them.\n\n` : '');
 
-${previous ? `Your previous answer was: ${previous}. That is not the task. Do not describe, return or echo the PDF or the pictures; read the report and write the JSON file at ${resultFile}.\n\n` : ''}A person tested the application at ${startUrl} by hand and wrote a report, a PDF${pageCount ? ` of ${pageCount} page${pageCount === 1 ? '' : 's'}` : ''}. The tool has already read that PDF into one plain file: ${reportFile}. Read it first; it is all you need. List every specific accessibility problem it reports. Do not edit any file other than the result file.
+// The tool's findings, read from the parse (docs/plans/read-from-parse.md AC 2): the tool built the
+// list, one per page; the assistant says what each page's picture shows, which element the tester
+// means and where it is. candidates: the ones asked about now; again: their ids on the second asking;
+// previous: what the first answer said when it could not be used at all. fallback: the PDF names no
+// criterion, so each page is a candidate and may be one that names no problem.
+// reportFile: the tool's parse of the PDF; parsedDir: its folder (the pictures); pdfFile: the PDF itself, named last.
+export function manualDescribePrompt({ candidates, reportFile, parsedDir, pdfFile, pageCount = null, noText = false, fallback = false, startUrl, routes = [], resultFile, previous = null, again = null }) {
+  const abs = (rel) => (rel ? join(parsedDir, rel) : null);
+  const status = (c) => (c.status ? `${c.status}${c.statusWords ? ` ("${c.statusWords}")` : ''}` : 'no status');
+  const head = (c) => `## ${c.id} — page ${c.page} — ${c.criterion ? `${c.criterion}${c.criterionName ? ` ${c.criterionName}` : ''}` : 'no criterion'} — ${status(c)}`;
+  const blockOf = (c) => [
+    head(c),
+    c.picture ? `Picture of the page: ${abs(c.picture)}   (look at it; the callouts and arrows are only there)` : 'Picture of the page: none',
+    ...(c.images && c.images.length ? [`Pictures on the page: ${c.images.map(abs).join('; ')}`] : []),
+    c.lines && c.lines.length ? `Text:\n${c.lines.map((l) => `> ${l}`).join('\n')}` : 'Text: none (a picture only)',
+  ].join('\n');
+  return `# Say what each page of a tester's report shows
 
-How the report is laid out:
-
-- One block per page of the PDF, headed "## Page N of M".
-- "Status:" and "Criterion:" lines are facts the tool read on that page: copy them into your answer, do not guess others.
-- "Picture of the page:" is the page as the tester saw it: look at it whenever the text does not name the element (the callouts, the ANDI output, the colours and the arrows are only in the picture).
-- "Pictures on the page:" are the screenshots on that page, as they were embedded, without the shapes drawn over them.
-- The quoted text ("> " lines) is the page's own text in reading order: every quote you give must be copied from it, verbatim.
-
-The paths in it are relative to ${parsedDir}${example ? `: ${example} is ${parsedDir}/${example}` : ''}.${noText ? `\n\nThe PDF has no text: every page is a picture only. Work from the pictures; give an empty quote.` : ''}
+${previous ? `Your previous answer was: ${previous}. That is not the task. Do not describe, return or echo the PDF or the pictures; read the report and write the JSON file at ${resultFile}.\n\n` : ''}${againLine(again)}A person tested the application at ${startUrl} by hand and wrote a report, a PDF${pageCount ? ` of ${pageCount} page${pageCount === 1 ? '' : 's'}` : ''}. The tool has read that PDF into one plain file, ${reportFile}, and listed its findings below: ${fallback ? 'the PDF names no Trusted Tester criterion, so there is one per page' : 'one per page that names a Trusted Tester criterion'}. Each finding's page, status, date, criterion and quote are the tool's, read from the PDF exactly; do not repeat or change them. Your job is what only you can do: look at the picture of each page and say what it shows, which element of the application the tester means, where it is, and how to find it. Do not edit any file other than the result file.${noText ? '\n\nThe PDF has no text: every page is a picture only. Work from the pictures.' : ''}
 
 ${DECIDE}
 
-One finding per distinct problem. A problem shown on several pages (five slides of unlabelled fields on one form) is one finding with all its pages, unless the pages name different elements: then each element gets its own finding.
+Answer for every finding below, by its id; the tool asks again for any you leave out. For each:
 
-For each problem:
-
-- id: F1, F2, ... in the order the report has them.
+- id: the finding's id, as listed.
+- seen: two or three sentences: what screen the picture shows, the callout's words as you read them in the picture, and what the arrows point at.
 - title: a short title of your own (under 80 characters).
-- pages: every page about it, in order (the first page is 1). Always give at least one.
-- page: the first of those pages.
-- status: "fixed" or "open", copied from its page's "Status:" line; null when the page has none.
-- criterion: the Trusted Tester id from its page's "Criterion:" line (for example "13.A"); null when there is none.
-- quote: the tester's own words about it, verbatim from the quoted text of one of its pages, at most 300 characters.
-- route: the page of the application it is on, as a path or a full URL; use one of the known routes below when one matches.
-- element: how the tester describes the element (from the picture when the text does not say).
-- selectors: up to 5 CSS selectors that would match that element on the page (best guesses are fine).
-- wcag: the WCAG success criterion, when the tester names one or it is clear.
+- element: which element of the application the tester means, in a few words.
+- route: the page of the application it is on, as a path or a full URL; one of the known routes below when one fits.
+- selectors: up to 5 CSS selectors that would match that element on that page.
 - expected: what the tester expects instead, in one sentence.
-- decisions: where the report is vague (no route, two possible elements), what you chose and why: [{ "decision": "...", "reason": "..." }].
+- sameAs: the id of an earlier finding when this page shows the same element with the same problem (two slides of one unlabelled field); otherwise null. Only findings with the same criterion are merged.
+- extra: rarely, a second, different problem on the same page, with its own seen, title, element, route, selectors and expected; otherwise null.${fallback ? '\n- none: true when the page names no accessibility problem at all (a cover page, a summary); then only seen is needed.' : ''}
+- decisions: where the page is vague (no route, two possible elements), what you chose and why: [{ "decision": "...", "reason": "..." }].
 
-Known routes of the application:
+${candidates.map(blockOf).join('\n\n')}
+
+## Known routes of the application
 
 ${routes.length ? routes.slice(0, 200).map((r) => `- ${r}`).join('\n') : `- ${startUrl}`}
 
-The original PDF is ${pdfFile}: open it only if the report is not enough.
+The whole parse is ${reportFile}; the paths of the pictures are under ${parsedDir}. The original PDF is ${pdfFile}: open it only if the report is not enough.
 
 ## When you are done
 
-Write a JSON file at ${resultFile} with exactly this shape and nothing else. If the report names no accessibility problem, write an empty list. If you cannot read it at all, write an empty list and say why in "error".
+Write a JSON file at ${resultFile} with exactly this shape and nothing else: one answer per finding listed above. If you cannot read the pictures at all, write an empty list and say why in "error".
 
-${block({ findings: [{ id: 'F1', title: 'Search button has no accessible name', pages: [2, 3], page: 2, status: 'open', criterion: '5.C', quote: 'the words of the tester', route: '/search', element: 'the magnifier button in the search bar', selectors: ['#search-btn'], wcag: '4.1.2', expected: 'The button is announced as "Search".', decisions: [{ decision: 'took the search page', reason: 'the report names no page; only /search has a search bar' }] }], error: null })}
+${block({ answers: [{ id: candidates[0] ? candidates[0].id : 'F1', seen: 'The search page of the application. The callout reads "Button has no accessible name"; the red arrow points at the magnifier button beside the search field.', title: 'Search button has no accessible name', element: 'the magnifier button in the search bar', route: '/search', selectors: ['#search-btn', 'form[role=search] button'], expected: 'The button is announced as "Search".', sameAs: null, extra: null, decisions: [{ decision: 'took the search page', reason: 'only /search has a search bar' }] }], error: null })}
 
 Machine-readable copy:
 
-${block({ kind: 'manual-read', report: reportFile, parsed: parsedDir, pdf: pdfFile, startUrl, routes, resultFile })}
+${block({ kind: 'manual-describe', report: reportFile, parsed: parsedDir, pdf: pdfFile, startUrl, routes, fallback, candidates: candidates.map((c) => ({ id: c.id, page: c.page, criterion: c.criterion, status: c.status, quote: c.quote, picture: abs(c.picture), lines: c.lines || [] })), resultFile })}
 `;
 }
 
-export function manualCheckPrompt({ findings, resultFile }) {
+// The landmarks and controls of a captured page (ax.json's roles), for the locate prompt.
+const INVENTORY = new Set(['banner', 'navigation', 'main', 'contentinfo', 'complementary', 'search', 'form', 'region', 'heading', 'button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'tab', 'menuitem', 'image', 'img', 'table', 'figure']);
+
+// The findings whose selectors matched nothing on a page that loaded (docs/plans/read-from-parse.md
+// AC 4), asked once: where is the element, really? items: [{ finding, picture, evidence }].
+export function manualLocatePrompt({ items, startUrl, routes = [], resultFile }) {
+  const itemText = ({ finding: f, picture, evidence: ev }) => {
+    const inv = (ev && ev.ax ? ev.ax : []).filter((n) => n && INVENTORY.has(n.role)).slice(0, 120).map((n) => `- ${n.role}${n.name ? ` "${String(n.name).slice(0, 80)}"` : ''}`).join('\n');
+    return `## ${f.id}: ${f.title} (${pagesText(f)})
+
+What you said the page shows: ${f.seen || '(you did not describe it)'}
+Element: ${f.element || '(not said)'}
+Picture of the PDF page: ${picture || '(none)'}
+Looked for on: ${(ev && (ev.finalUrl || ev.url)) || f.url || f.route || startUrl}
+Selectors that matched nothing there: ${(f.selectors || []).join(', ') || '(none were given)'}
+${ev && ev.screenshot ? `Screenshot of the deployed page: ${ev.screenshot}\n` : ''}
+The page's landmarks and controls:
+
+${inv || '(none read)'}
+
+Tab order (first ${Math.min(60, ((ev && ev.tabOrder) || []).length)} stops):
+
+${((ev && ev.tabOrder) || []).slice(0, 60).map((s, i) => `${i + 1}. ${s.role} "${s.name}" ${s.selector}`).join('\n') || '(no stop)'}`;
+  };
+  return `# Find the elements the tool could not find
+
+You described the pages of a tester's report, and for each finding below gave CSS selectors for the element the tester means. The tool opened that page in the deployed site at ${startUrl} and your selectors matched nothing on it. Look at the picture of the PDF page, the deployed page's screenshot and its landmarks and controls, and say where the element really is: the route it is on and selectors that match it there. If it is on another page of the application, say notOnThisRoute: true and give that page's route. Do not edit any file other than the result file.
+
+${DECIDE}
+
+${items.map(itemText).join('\n\n')}
+
+## Known routes of the application
+
+${routes.length ? routes.slice(0, 200).map((r) => `- ${r}`).join('\n') : `- ${startUrl}`}
+
+## When you are done
+
+Write a JSON file at ${resultFile} with exactly this shape and nothing else: one answer per finding.
+
+${block({ answers: [{ id: items[0] ? items[0].finding.id : 'F1', route: '/search', selectors: ['#search-btn'], notOnThisRoute: false, reason: 'one sentence: what in the screenshot or the controls shows it' }] })}
+
+Machine-readable copy:
+
+${block({ kind: 'manual-locate', startUrl, routes, items: items.map(({ finding: f }) => ({ id: f.id, page: f.page, route: f.route || null, selectors: f.selectors || [], lines: f.lines || [] })), resultFile })}
+`;
+}
+
+export function manualCheckPrompt({ findings, resultFile, again = null }) {
   return `# Is each problem still in the deployed site?
 
-A tester reported the problems below. The tool has just opened each one's page in the deployed site and captured what it shows (the evidence under each). For each problem, judge from that evidence whether it is still there. Do not edit any file other than the result file.
+${againLine(again)}A tester reported the problems below. The tool has just opened each one's page in the deployed site and captured what it shows (the evidence under each). For each problem, judge from that evidence whether it is still there. Do not edit any file other than the result file.
 
 ${DECIDE}
 
@@ -583,10 +658,10 @@ ${block({ kind: 'manual-plan', findings: findings.map((f) => ({ id: f.id, title:
 `;
 }
 
-export function manualConfirmPrompt({ items, components, resultFile }) {
+export function manualConfirmPrompt({ items, components, resultFile, again = null }) {
   return `# Confirm the developer's changes to your plan
 
-The developer reviewed your plan and changed the items below. For each, say whether you understand the change and can carry it out, before anything is fixed. Do not edit any file other than the result file. You may read the source files to check.
+${againLine(again)}The developer reviewed your plan and changed the items below. For each, say whether you understand the change and can carry it out, before anything is fixed. Do not edit any file other than the result file. You may read the source files to check.
 
 ${DECIDE} ${FOCUS}
 
@@ -654,10 +729,10 @@ ${block({ kind: 'manual-fix', finding: { id: finding.id, title: finding.title, s
 `;
 }
 
-export function manualVerifyPrompt({ items, resultFile }) {
+export function manualVerifyPrompt({ items, resultFile, again = null }) {
   return `# Did each fix hold in the deployed site?
 
-Fixes for the problems below were committed, pushed and deployed. The tool has just opened each one's page in the deployed site again and captured what it shows. Judge from that evidence alone whether each problem is fixed; a commit is not proof. Do not edit any file other than the result file.
+${againLine(again)}Fixes for the problems below were committed, pushed and deployed. The tool has just opened each one's page in the deployed site again and captured what it shows. Judge from that evidence alone whether each problem is fixed; a commit is not proof. Do not edit any file other than the result file.
 
 ${DECIDE} When the evidence does not show the problem fixed, answer "not-fixed".
 

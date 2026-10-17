@@ -116,7 +116,9 @@ export function deck(slides) {
   return build(objs, catalog);
 }
 
-// FINDING lines (the fake assistant's convention): id | title | route | selectors (;) | element | the tester's words.
+// FINDING lines (the fake assistant's convention): tag | title | route | selectors (;) | element | the
+// tester's words. The tag is the id of the finding the page belongs to: the candidate's own id, or an
+// earlier one when the page shows the same element again (the fake says sameAs).
 const F1 = 'FINDING F1 | Search button has no accessible name | /search | #search-btn | the magnifier button in the search bar | The magnifier button in the search bar is announced only as button.';
 const F2 = 'FINDING F2 | Company logo has no text alternative | / | footer img | the logo in the footer | The footer logo image has no alt text.';
 const F3 = 'FINDING F3 | Menu button has no accessible name | / | #menu-btn | the menu button in the header | The hamburger menu button in the header has no name.';
@@ -126,22 +128,46 @@ const T14B = ['14.B Data cells are programmatically associated with their header
 const T13A = ['13.A Color is not used as the only visual means of conveying information, indicating an', 'action, prompting a response, or distinguishing a visual element. - 1.4.1-color-meaning'];
 const FIXED = 'Verified fixed – 9/28/2026';
 const OPEN = 'Still an issue – 9/28/26';
-const caption = (t) => [{ x: 40, y: 88, size: 10, text: t }];
+const caption = (...t) => t.map((text, i) => ({ x: 40, y: 88 - i * 12, size: 10, text }));
+// The deck (docs/plans/read-from-parse.md AC 9), the shape of the tester's real report: 13 slides, a
+// divider before the nine resolved ones and one before the two outstanding. The tool lists 11
+// findings (F1..F11, one per slide with a criterion); the fake merges F2 into F1 and F7 into F4 (the
+// same element again), and F6 has a second problem (F6b): 10 findings, 8 verified fixed, 2 open.
+// The fixture site: F1's search button still has no name (came back); F3..F9 and F6b are fixed
+// (already fixed); F10's chart and F11's map, on the home page, have no text alternative (open).
+const D = {
+  search: 'FINDING F1 | Search button has no accessible name | /search | #search-btn | the magnifier button in the search bar | The magnifier button is announced only as button.',
+  input: 'FINDING F3 | Search field label does not match | /search | #q | the search field | The search field is announced as Search terms.',
+  logo: (tag) => `FINDING ${tag} | Footer logo text has too little contrast | / | footer img | the logo in the footer | The logo text is pale grey on white.`,
+  home: 'FINDING F5 | Home link text has too little contrast | / | header a[href="/"] | the home link in the header | The home link is light grey.',
+  footer: 'FINDING F6 | Footer text has too little contrast | / | footer p | the company name in the footer | The footer text is pale.',
+  searchLink: 'FINDING F6 | Search link text has too little contrast | / | header a[href="/search"] | the search link in the header | The search link is pale too.',
+  heading: 'FINDING F8 | Welcome heading is not marked up | / | main p | the welcome text on the home page | The welcome text is not in a table cell with a header.',
+  results: 'FINDING F9 | Results heading is not associated | /search | main h1 | the heading of the search page | The search heading is not a table header.',
+  chart: 'FINDING F10 | Chart series differ only by colour | / | #chart | the bar chart on the home page | The two series differ only by colour.',
+  map: 'FINDING F11 | Map pins differ only by colour | / | #map | the map on the home page | The pin rings differ only by colour.',
+};
 export const DECK = [
   { divider: 'Resolved Issues' },
-  ...[1, 2, 3, 4, 5].map(() => ({ title: T5C, picture: true, body: caption(F1), verdict: FIXED })),
-  { title: T13C, picture: true, body: caption(F2), verdict: FIXED },
-  { title: T13C, picture: true, body: caption(F2), verdict: FIXED },
+  { title: T5C, picture: true, body: caption(D.search), verdict: FIXED },
+  { title: T5C, picture: true, body: caption(D.search), verdict: FIXED },
+  { title: T5C, picture: true, body: caption(D.input), verdict: FIXED },
+  { title: T13C, picture: true, body: caption(D.logo('F4')), verdict: FIXED },
+  { title: T13C, picture: true, body: caption(D.home), verdict: FIXED },
+  // Two problems on one slide.
+  { title: T13C, picture: true, body: caption(D.footer, D.searchLink), verdict: FIXED },
+  { title: T13C, picture: true, body: caption(D.logo('F4')), verdict: FIXED },
   // The two-column slide: the column on the left reads before the one on the right.
   { title: T14B, picture: true, body: [
     { x: 40, y: 440, size: 14, text: 'Left column, line one' }, { x: 40, y: 422, size: 14, text: 'Left column, line two' }, { x: 40, y: 404, size: 14, text: 'Left column, line three' },
     { x: 520, y: 440, size: 14, text: 'Right column, line one' }, { x: 520, y: 422, size: 14, text: 'Right column, line two' }, { x: 520, y: 404, size: 14, text: 'Right column, line three' },
+    ...caption(D.heading),
   ], verdict: FIXED },
   // No verdict line: its status comes from the section ("Resolved Issues").
-  { title: T14B, picture: true, body: caption('The header cells of the results table are not marked up as headers.'), rotated: 'Screenshot from the staging site' },
+  { title: T14B, picture: true, body: caption(D.results), rotated: 'Screenshot from the staging site' },
   { divider: 'Outstanding Issues' },
-  { title: T13A, picture: true, body: caption(F3), verdict: OPEN },
-  { title: T13A, picture: true, body: caption(F3), verdict: OPEN },
+  { title: T13A, picture: true, body: caption(D.chart), verdict: OPEN },
+  { title: T13A, picture: true, body: caption(D.map), verdict: OPEN },
 ];
 
 // The picture-only deck: two pages, each one screenshot and nothing else (a scan).
@@ -197,14 +223,9 @@ if (isMain) {
     mkdirSync(join(here, 'screens'), { recursive: true });
     for (let k = 1; k <= 12; k++) writeFileSync(join(here, 'screens', `screen-${k}.jpg`), spawnSync('cjpeg', ['-baseline', '-quality', '95', '-optimize'], { input: screenPpm(k) }).stdout);
   }
-  writeFileSync(join(here, 'manual-findings.pdf'), pdf([
-    [
-      'Manual accessibility test report - Example app',
-      'Tested with NVDA and keyboard only.',
-      F1,
-    ],
-    [F2, F3],
-  ]));
+  // No criterion on any page: one finding per page, its first line the tester's words.
+  const words = (f) => f.split(' | ').pop();
+  writeFileSync(join(here, 'manual-findings.pdf'), pdf([[words(F1), F1], [words(F2), F2], [words(F3), F3]]));
   writeFileSync(join(here, 'no-findings.pdf'), pdf([['Manual accessibility test report - Example app', 'No accessibility problems were found.']]));
   writeFileSync(join(here, 'deck.pdf'), deck(DECK));
   writeFileSync(join(here, 'pictures-only.pdf'), deck(PICTURES_ONLY));
