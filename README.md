@@ -51,6 +51,8 @@ It is one screen: the folder and URL, one sentence of what is happening now ("Pu
 
 **Start over**, beside it, erases this app's rounds and log. **Log** holds the build, config, what happened, rounds, routes, findings, the deploy record, changes, assistants, the diary and the last run's output, with **Copy diagnostics** and **Download diagnostics**. At its bottom: **Change folder or URL**, and **Advanced** (the assistant, the crawl's and the loop's settings).
 
+#### Fix from a test report (PDF)
+
 **Fix from a test report (PDF)**, beside Start, fixes what a person testing by hand found. Choose the tester's PDF; the assistant reads it, one finding per issue with its PDF page and the tester's words, and the tool checks each finding in the deployed site from evidence it captures itself (a screenshot, the elements, the Tab order). Findings the deployed site no longer has are reported as already fixed, each with its PDF page. The rest become a plan: the fix, the component, the files. Reviewing and approving that plan is the one decision the tool asks of a person, because a tester's words can be read more than one way and the fixes go into your code; you can edit an item or pick another component, and the assistant says back what it understood. Once approved, each fix is committed and pushed, confirmed in the deployed site, tried once more if it did not hold, and anything still not holding comes back as a revised plan. When it ends, the page lists what was fixed and confirmed, with the commits and the screenshots before and after, and every decision is in **Show decisions**. If the dashboard is closed meanwhile, the run continues from where it was when it comes back.
 
 #### The dashboard runs in its own browser window
