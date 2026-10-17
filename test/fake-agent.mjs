@@ -108,7 +108,8 @@ if (task && /^manual-/.test(task.kind)) {
 // FAKE_MANUAL_PLAN_WRONG: the plan puts F1 (the search button) in HeaderComponent.
 // FAKE_MANUAL_MISUNDERSTAND_ONCE=<file>: the first confirmation answers understood: false.
 // FAKE_MANUAL_READ_FAIL=<n>: the first n reads answer with no list of findings.
-// FAKE_MANUAL_WRONG_PAGE: the read gives a wrong page for F2 and a page past the end for F3.
+// FAKE_MANUAL_WRONG_PAGE: the read gives F1 a quote, status and criterion the report does not have, F2
+// the page before its own, F3 a page past the end.
 // The read takes the FINDING lines from the tool's parse of the PDF (report.md); the check and the verify judge from the evidence the tool
 // captured (a button with no aria-label, an image with no alt, is the problem); a fix edits the
 // approved component's file.
@@ -161,9 +162,9 @@ function manual(task) {
       const shown = pages.filter((p) => p.picture).map((p) => p.n);
       if (shown.length) findings.push({ id: 'F1', title: 'Search button has no accessible name', pages: shown, page: shown[0], status: null, criterion: null, route: '/search', selectors: ['#search-btn'], element: 'the magnifier button in the pictures', quote: '', expected: 'the button has a text alternative', decisions: [{ decision: 'read the problem from the pictures of the pages', reason: 'the PDF has no text' }] });
     }
-    // FAKE_MANUAL_WRONG_PAGE: the second finding is given the page before its own (its quote is not on
-    // it), the third a page the PDF does not have.
     if (process.env.FAKE_MANUAL_WRONG_PAGE) {
+      // The first: a quote that is on no page, a status and a criterion the report does not have.
+      if (findings[0]) Object.assign(findings[0], { quote: 'Words the tester never wrote.', status: 'open', criterion: '9.Z' });
       if (findings[1]) findings[1].pages = [findings[1].pages[0] - 1];
       if (findings[2]) findings[2].pages = [99];
       for (const f of findings) f.page = f.pages[0];

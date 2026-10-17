@@ -706,17 +706,18 @@ test('pdf-parse AC1/5/7/9 / guards e f: the deck is parsed first; the assistant 
     await choosePdf(page, DECK);
     // AC 9: while parsing, the count from the first pass.
     await expect(now(page)).toHaveText('Reading the PDF: 13 pages (11 with pictures).', { timeout: 60_000 });
-    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
     const dir = runDir(dash);
     const id = dir.split(/[\\/]/).pop()!;
-    // AC 1: the parse is in the run's folder.
-    for (const f of ['report.md', 'manifest.json', 'pages/page-02.png', 'pages/page-02-image-1.png', 'pages/page-13.png']) expect(existsSync(join(dir, 'parsed', f)), f).toBe(true);
     // AC 5 / guard e: the prompt points at the parse first and names the PDF last.
+    await expect.poll(() => readPrompts(dash, id).length, { timeout: 60_000 }).toBeGreaterThan(0);
     const prompt = readPrompts(dash, id)[0];
     expect(prompt).toContain('parsed/report.md');
     expect(prompt).toMatch(/parsed\/pages\/page-02\.png/);
     expect(prompt.indexOf('parsed/report.md')).toBeLessThan(prompt.indexOf('source.pdf'));
     expect(prompt).toMatch(/The original PDF is \S+source\.pdf: open it only if the report is not enough\./);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    // AC 1: the parse is in the run's folder.
+    for (const f of ['report.md', 'manifest.json', 'pages/page-02.png', 'pages/page-02-image-1.png', 'pages/page-13.png']) expect(existsSync(join(dir, 'parsed', f)), f).toBe(true);
     // AC 5/6: one finding per problem, all its pages, the report's status and criterion, checked.
     const findings = readJson(join(dir, 'findings.json')).findings;
     expect(findings.map((f: any) => [f.id, f.pages, f.page, f.status, f.criterion])).toEqual([
@@ -773,7 +774,7 @@ test('pdf-parse AC1/5/7/9 / guards e f: the deck is parsed first; the assistant 
   }
 });
 
-test('pdf-parse AC6 / guard c: the answer is checked against the parse: a quote on another page moves the finding there, a page past the end drops it, both logged', async ({ page }) => {
+test('pdf-parse AC6 / guard c: the answer is checked against the parse: a quote on another page moves the finding there, a page past the end drops it, a quote on no page is flagged, the report\'s status and criterion win; each logged', async ({ page }) => {
   test.setTimeout(300_000);
   const app = await manualApp();
   const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_WRONG_PAGE: '1' } });
@@ -783,8 +784,11 @@ test('pdf-parse AC6 / guard c: the answer is checked against the parse: a quote 
     await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
     const dir = runDir(dash);
     const findings = readJson(join(dir, 'findings.json')).findings;
-    expect(findings.map((f: any) => [f.id, f.pages, f.verified])).toEqual([['F1', [2, 3, 4, 5, 6], { pages: true, quote: true }], ['F2', [7], { pages: false, quote: true }]]);
+    expect(findings.map((f: any) => [f.id, f.pages, f.verified, f.quoteVerified, f.status, f.criterion])).toEqual([['F1', [2, 3, 4, 5, 6], { pages: true, quote: false }, false, 'fixed', '5.C'], ['F2', [7], { pages: false, quote: true }, true, 'fixed', '13.C']]);
     const read = decisions(dir).filter((d) => d.stage === 'read' && d.by === 'tool');
+    // F1: its quote is on no page (kept, logged); its status and criterion are the report's (logged with both).
+    expect(read.filter((d) => d.finding === 'F1').map((d) => d.decision)).toEqual(['kept it, although its quote is on no page of the PDF', 'status fixed, not open', 'criterion 5.C, not 9.Z']);
+    expect(read.find((d) => d.finding === 'F1' && /^status/.test(d.decision)).reason).toBe('the report reads "Verified fixed – 9/28/2026" on page 2');
     expect(read.filter((d) => d.finding === 'F2').map((d) => [d.decision, d.reason])).toEqual([['moved to page 7', 'the quote is on page 7, not page 6']]);
     expect(read.filter((d) => d.finding === 'F3').map((d) => [d.decision, d.reason])).toEqual([['dropped', 'the assistant gave page 99 for it; the PDF has 13 pages']]);
     // The corrections are under Decisions so far.
