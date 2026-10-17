@@ -161,6 +161,9 @@ function wordReader(stopped) {
         if (stdin.unref) stdin.unref();
       }
     },
+    drop() {
+      queue.length = 0;
+    },
     close() {
       if (on) stdin.off('data', onData);
       on = false;
@@ -179,6 +182,8 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     return 2;
   }
   for (const l of migrationLines(migrateRepo(cwd))) log.info(l);
+  // From the dashboard the wait for a deployment has no limit unless the config sets one, as the loop's there.
+  if (events && typeof config.deployTimeout !== 'number') cfg.deployTimeout = 0;
   const stopped = () => !!stopSignal.stopped;
   const work = workDir(cwd);
   const taskFolder = tasksDir(cwd);
@@ -470,7 +475,13 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       planEvent(plan);
       stage('review', { version: plan.version, notHeld: plan.notHeld || 0 });
       if (!log.events) log.info(`the plan is at ${join(dir, 'plan.json')}. Write your changes to ${join(dir, 'plan-edit.json')} and type review, or type approve.`);
+      // Words sent while the plan was not waiting (a second tab, a retried request) are not approvals.
+      reader.drop();
+      state.reviewing = plan.version;
+      save();
       const word = await reader.next();
+      state.reviewing = null;
+      save();
       if (word === 'stopped') return false;
       if (word === 'approve') {
         const wrong = plan.items.filter((it) => it.confirm && it.confirm.understood === false);
@@ -539,8 +550,11 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     const roundBase = git(cwd, ['rev-parse', 'HEAD']).out;
     const before = cfg.deployed === 'bundle-change' ? await bundleSignature(cfg.url, { args: browserArgs(), cwd }) : null;
     const commits = [];
+    const key = `${state.cycle || 1}:${attempt}`;
     for (const [i, it] of items.entries()) {
       if (stopped()) break;
+      // Taken up again after an interruption: an item this attempt already committed is not fixed twice.
+      if (itemState(it.finding).commits.some((r) => r.key === key)) continue;
       const f = byId.get(it.finding);
       stage('fix', { n: i + 1, m: items.length, finding: it.finding, title: it.title, attempt });
       log.info(`[${i + 1}/${items.length}] ${it.finding} ${it.title}${attempt > 1 ? ' (again)' : ''}`);
@@ -582,7 +596,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       }
       const sha = git(cwd, ['rev-parse', 'HEAD']).out;
       const short = git(cwd, ['rev-parse', '--short', 'HEAD']).out;
-      const rec = { sha, short, files: changed, attempt, note };
+      const rec = { sha, short, files: changed, attempt, key, note };
       st.commits.push(rec);
       commits.push({ sha, n: i + 1, test: it.finding, message: it.title, rec, it });
       decide('fix', it.finding, 'agent', `committed ${short}: ${changed.join(', ')}`, note);
@@ -609,7 +623,8 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       });
       save();
     }
-    const live = commits.filter((x) => itemState(x.it.finding).commits.includes(x.rec));
+    // This attempt's commits, with any made before an interruption.
+    const live = items.flatMap((it) => itemState(it.finding).commits.filter((r) => r.key === key));
     let marker = null;
     if (live.length && cfg.deployed === 'bundle-change') {
       const indexFile = findIndexHtml(cwd, sourceDirs);
@@ -632,9 +647,11 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       const p = git(cwd, ['push', '-u', 'origin', branch]);
       if (p.code !== 0) throw Object.assign(new Error(`push failed: ${p.err}`), { code: 2 });
       state.pushedAt = new Date().toISOString();
-      save();
     }
-    return { committed: live.length, marker, before };
+    // What the wait needs, kept so a run taken up again waits for this push rather than fixing again.
+    state.awaiting = { key, committed: live.length, marker, before: before ? { signature: before.signature, marker: before.marker || null } : null };
+    save();
+    return state.awaiting;
   };
   // Until the deployment serves this push (exactly the loop's ways: the build marker, else the bundles changing).
   const awaitDeploy = async ({ committed, marker, before }) => {
@@ -716,6 +733,8 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         state.stage = 'fixing';
         state.approved = plan.items;
         state.attempt = 1;
+        state.cycle = (state.cycle || 0) + 1;
+        state.awaiting = null;
         save();
       } else {
         // Taken up again after an interruption: the unfinished fix's uncommitted changes are discarded.
@@ -733,7 +752,9 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         state.attempt = attempt;
         save();
         if (attempt === 2) stage('retry', { count: items.length });
-        const r = await fixAll(items, attempt, prior);
+        // Pushed before an interruption: this attempt waits for its deployment and is verified, not fixed again.
+        const pushed = state.awaiting && state.awaiting.key === `${state.cycle || 1}:${attempt}` ? state.awaiting : null;
+        const r = pushed || (await fixAll(items, attempt, prior));
         if (stopped()) return finish(1);
         const w = await awaitDeploy(r);
         if (w === 'stopped') return finish(1);
@@ -743,6 +764,8 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         }
         const verdicts = await verify(items);
         if (!verdicts) return finish(1);
+        state.awaiting = null;
+        save();
         const notFixed = verdicts.filter((v) => v.verdict !== 'fixed');
         for (const v of notFixed) {
           const a = itemState(v.finding).attempts.slice(-1)[0] || {};

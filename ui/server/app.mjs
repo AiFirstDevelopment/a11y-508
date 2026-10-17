@@ -888,10 +888,9 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > max) {
-        fail(new BadRequest('That PDF is larger than 50 MB.', 413));
-        req.destroy();
-      } else chunks.push(c);
+      // Too large: refused in a sentence; the rest of the upload is read and dropped, so the answer arrives.
+      if (size > max) fail(new BadRequest('That PDF is larger than 50 MB.', 413));
+      else chunks.push(c);
     });
     req.on('end', () => ok(Buffer.concat(chunks)));
     req.on('error', fail);
@@ -900,7 +899,11 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   const currentManual = () => {
     const r = runs.current;
     if (!r || r.kind !== 'manual' || !runs.active || !r.meta || !validId(r.meta.manualId)) throw new BadRequest('no PDF run is waiting for its plan', 409);
-    return manualDir(state.cwd, r.meta.manualId);
+    const dir = manualDir(state.cwd, r.meta.manualId);
+    // Only while the plan waits for the developer: an approve or a review sent at any other time is refused.
+    const st = readJsonFile(join(dir, 'state.json'));
+    if (!st || !st.reviewing) throw new BadRequest('the plan is not waiting for approval right now', 409);
+    return dir;
   };
   const readJsonFile = (f) => {
     try {

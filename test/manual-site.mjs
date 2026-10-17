@@ -31,6 +31,8 @@ function components(dir) {
 export async function startManualSite({ dir, port = 0 } = {}) {
   let snapshot = components(dir);
   let stale = false;
+  // held: the deployment has not arrived (the build marker the fixes committed is not served).
+  let held = false;
   const PAGES = { '/': '<app-home></app-home>', '/search': '<h1>Search</h1>\n<app-search-bar></app-search-bar>' };
   const server = createServer((req, res) => {
     const path = new URL(req.url, 'http://x').pathname;
@@ -49,6 +51,7 @@ export async function startManualSite({ dir, port = 0 } = {}) {
     }
     const comps = stale ? snapshot : components(dir);
     let html = readFileSync(join(dir, 'src', 'index.html'), 'utf8').replace('<!-- PAGE -->', page);
+    if (held) html = html.replace(/<meta name="a11y-508-build"[^>]*>\s*/i, '');
     for (let i = 0; i < 3; i++) html = html.replace(/<(app-[\w-]+)><\/\1>/g, (m, sel) => comps[sel] ?? m);
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
     res.end(html);
@@ -61,6 +64,9 @@ export async function startManualSite({ dir, port = 0 } = {}) {
     setStale(on) {
       if (on) snapshot = components(dir);
       stale = on;
+    },
+    setHeld(on) {
+      held = on;
     },
     close: () => new Promise((r) => server.close(() => r())),
   };

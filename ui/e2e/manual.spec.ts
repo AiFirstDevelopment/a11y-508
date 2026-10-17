@@ -21,7 +21,7 @@ const NOT_A_PDF = 'That file is not a PDF. Choose the PDF report the tester sent
 interface App {
   cwd: string;
   originDir: string;
-  site: { base: string; setStale(on: boolean): void; close(): Promise<void> };
+  site: { base: string; setStale(on: boolean): void; setHeld(on: boolean): void; close(): Promise<void> };
   g: (...args: string[]) => string;
   cleanup(): Promise<void>;
 }
@@ -394,6 +394,55 @@ test('manual AC8 / guards i j: a fix that does not hold in the deployed site get
     await page.getByTestId('approve-plan').click();
     await expect(now(page)).toHaveText('Done: 2 findings from the PDF are fixed and confirmed in the deployed site; 1 was already fixed.', { timeout: 300_000 });
     expect([fixCommits(app, 'Search button').length, fixCommits(app, 'Menu button').length]).toEqual([3, 3]);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('manual AC4: when every finding is already fixed in the deployed site, the run ends with the report open', async ({ page }) => {
+  const app = await manualApp();
+  // The deployed site already has the search and menu buttons named.
+  for (const [f, id, label] of [['src/app/search/search-bar.component.ts', 'search-btn', 'Search'], ['src/app/header/header.component.ts', 'menu-btn', 'Menu']]) {
+    const file = join(app.cwd, f);
+    writeFileSync(file, readFileSync(file, 'utf8').replace(`<button id="${id}"`, `<button id="${id}" aria-label="${label}"`));
+  }
+  app.g('commit', '-q', '-am', 'named');
+  const dash = await dashboard({ cwd: app.cwd });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText('All 3 findings in the PDF are already fixed in the deployed site.', { timeout: 180_000 });
+    await expect(page.getByTestId('already-fixed')).toHaveAttribute('open', '');
+    await expect(page.getByTestId('already-fixed-item')).toHaveCount(3);
+    await expect(page.getByTestId('already-fixed-item').getByTestId('pdf-page')).toHaveText(['PDF page 1', 'PDF page 2', 'PDF page 2']);
+    await expect(page.getByTestId('plan')).toHaveCount(0);
+    expect(app.g('rev-list', '--count', 'HEAD', '^main')).toBe('0');
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('manual AC8 / guard j: a dashboard restart while the fixes wait for their deployment waits again; nothing is fixed twice', async ({ page }) => {
+  test.setTimeout(400_000);
+  const app = await manualApp();
+  let dash = await dashboard({ cwd: app.cwd });
+  try {
+    app.site.setHeld(true);
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    await page.getByTestId('approve-plan').click();
+    await expect(now(page)).toHaveText(/^Pushed 2 fixes to a11y-508; waiting for your deployment/, { timeout: 180_000 });
+    const home = dash.home;
+    await dash.stop();
+    dash = await dashboard({ cwd: app.cwd, env: { A11Y_508_HOME: home } });
+    await open(page, dash);
+    await expect(now(page)).toHaveText(/waiting for your deployment/, { timeout: 60_000 });
+    app.site.setHeld(false);
+    await expect(now(page)).toHaveText('Done: 2 findings from the PDF are fixed and confirmed in the deployed site; 1 was already fixed.', { timeout: 240_000 });
+    expect([fixCommits(app, 'Search button').length, fixCommits(app, 'Menu button').length]).toEqual([1, 1]);
   } finally {
     await dash.stop();
     await app.cleanup();
