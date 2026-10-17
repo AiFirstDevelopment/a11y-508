@@ -46,6 +46,9 @@ function continuingPdf(stage: unknown): string {
       </p>
     }
     <p class="big-status" role="status" data-testid="now">@for (seg of nowParts(); track $index) {@if (seg.link) {<a [href]="seg.link === 'output-link' ? '#assistant-output' : '#pages-so-far'" [attr.data-testid]="seg.link" (click)="seg.link === 'output-link' ? openOutput($event) : openPages($event)">{{ seg.text }}</a>} @else {{{ seg.text }}}}</p>
+    @if (readFailedNow(); as who) {
+      <p data-testid="read-failed-said"><a routerLink="/diagnostics" fragment="assistant-calls" data-testid="see-what-said">See what {{ who }} said</a></p>
+    }
     @if (counts().length) {
       <p data-testid="counts">@for (c of counts(); track c.key) {@if (!$first) {<span aria-hidden="true"> · </span>}@if (c.key === 'unfixed') {<a href="#could-not-be-fixed" data-testid="unfixed-link" (click)="openUnfixed($event)">{{ c.text }}</a>} @else if (c.key === 'verified' || c.key === 'pending') {<a href="#fixes" [attr.data-testid]="c.key + '-link'" (click)="openFixes($event)">{{ c.text }}</a>} @else {<span>{{ c.text }}</span>}}</p>
     }
@@ -247,6 +250,11 @@ export class HomeScreen implements OnDestroy {
   readonly manualEnded = computed(() => {
     if (this.store.kind() !== 'manual' || !this.store.done()) return null;
     return this.store.manual();
+  });
+  // A PDF run that ended because the PDF could not be read: who could not, for the link to what it said.
+  readonly readFailedNow = computed(() => {
+    const m = this.manualEnded();
+    return m?.readFailed && this.now() === m.readFailed ? m.readFailedBy || this.assistant() : null;
   });
   readonly pagesOpen = signal(false);
   readonly fixesOpen = signal(false);

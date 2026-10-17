@@ -1,5 +1,5 @@
 import { Component, ElementRef, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Api } from '../core/api';
 import { Diagnostics, entryTime } from '../core/diagnostics';
 import { Driver } from '../core/driver';
@@ -15,6 +15,26 @@ import { QuitButton } from '../shared/quit-button';
 // Keys whose values are secrets, anywhere in the config; and the crawl options that carry one.
 const SECRET_KEY = /token|secret|password|cookie|authorization|header|^deploy$/i;
 const SECRET_FLAG = /^--(header|cookie|token)/;
+
+// One assistant call of a run, as the server lists it (a PDF run's have label and n, a loop's name, round, kind, index, of).
+export interface AgentCall {
+  label?: string; n?: number; name?: string; round?: number; kind?: string; index?: number; of?: number;
+  at: string | null; code: number | null; timedOut: boolean; quota: boolean; answered: boolean; durationMs: number | null; assistant: string | null;
+}
+export interface AgentCallDetail { header: Record<string, unknown>; stdout: string; stderr: string; prompt: string | null; result: string | null }
+
+// How a call ended, in words.
+export function callOutcome(c: AgentCall): string {
+  if (c.answered) return 'answered';
+  if (c.timedOut) return 'did not answer in time';
+  if (c.quota) return 'refused for quota';
+  return `ended without an answer (exit code ${c.code ?? 'unknown'})`;
+}
+// What the call was for: "read", "fix F2", "round 2 fix 3 of 5".
+export function callTask(c: AgentCall): string {
+  if (c.name) return `round ${c.round} ${c.kind === 'triage' ? 'triage' : 'fix'} ${c.index} of ${c.of}`;
+  return String(c.label || '').replace(/^fix-/, 'fix ');
+}
 
 // The config with its secrets blanked: values under secret-looking keys, and the value after a
 // --header or --cookie in its crawl options.
@@ -165,6 +185,29 @@ export function stripSecrets(c: Record<string, any>): Record<string, any> {
         </ul>
       </section>
 
+      <section aria-labelledby="assistant-calls" data-testid="d-calls"><h2 id="assistant-calls">Assistant calls</h2>
+        @if (calls(); as c) {
+          <p data-testid="d-calls-of">{{ c.kind === 'manual' ? 'The PDF run ' + c.id : 'The latest fix loop' }}: {{ c.rows.length === 1 ? 'one call' : c.rows.length + ' calls' }}.</p>
+          @if (c.rows.length) {
+            <ol class="plain calls" data-testid="d-calls-list">
+              @for (row of c.rows; track key(row)) {
+                <li><details data-testid="d-call" [attr.data-call]="key(row)" [open]="openKey() === key(row)" (toggle)="onToggle(row, $event)">
+                  <summary data-testid="d-call-summary">{{ summary(row) }}</summary>
+                  @if (details()[key(row)]; as d) {
+                    <h3>What it said</h3>
+                    <pre class="wrap" data-testid="d-call-said">{{ said(d) }}</pre>
+                    <details data-testid="d-call-prompt"><summary>The prompt</summary><pre class="wrap">{{ d.prompt || 'none' }}</pre></details>
+                    @if (d.result) {
+                      <details data-testid="d-call-result"><summary>Its answer file</summary><pre class="wrap">{{ d.result }}</pre></details>
+                    } @else { <p data-testid="d-call-result">Its answer file: none.</p> }
+                  } @else { <p role="status">Loading…</p> }
+                </details></li>
+              }
+            </ol>
+          }
+        } @else { <p>No assistant calls yet.</p> }
+      </section>
+
       <section aria-labelledby="d-diary"><h2 id="d-diary">Diagnostics diary</h2>
         @if (diag.entries(); as list) {
           @if (list.length) {
@@ -201,6 +244,8 @@ export function stripSecrets(c: Record<string, any>): Record<string, any> {
     .facts dd { margin: 0; overflow-wrap: anywhere; }
     .output { max-height: 480px; overflow: auto; }
     .diary pre { font-size: 0.85rem; margin: 4px 0; }
+    .calls pre { font-size: 0.85rem; max-height: 480px; overflow: auto; }
+    .calls h3 { font-size: 1rem; }
   `],
 })
 export class DiagnosticsScreen {
@@ -271,6 +316,57 @@ export class DiagnosticsScreen {
     return `${span(ms)}${parts.length ? ` (${parts.join(', ')})` : ''}`;
   }
 
+  // The current or last run's assistant calls, and each call's output once it is opened.
+  readonly calls = signal<{ kind: 'manual' | 'loop'; id: string | null; rows: AgentCall[] } | null>(null);
+  readonly details = signal<Record<string, AgentCallDetail>>({});
+  // The call opened by the page's address (#assistant-calls: the latest one that did not answer).
+  readonly openKey = signal<string | null>(null);
+  private route = inject(ActivatedRoute);
+  key(c: AgentCall): string {
+    return c.name || `${c.label}/${c.n}`;
+  }
+  summary(c: AgentCall): string {
+    return [c.at ? localTime(c.at) : '', callTask(c), (c.assistant || 'the assistant').replace(/^./, (x) => x.toUpperCase()), c.durationMs != null ? span(c.durationMs) : '', callOutcome(c)].filter(Boolean).join(' · ');
+  }
+  said(d: AgentCallDetail): string {
+    const out = d.stdout.replace(/\n+$/, '');
+    const err = d.stderr.replace(/\n+$/, '');
+    return [out || '(it printed nothing)', ...(err ? ['--- its errors ---', err] : [])].join('\n');
+  }
+  private callUrl(c: AgentCall): string {
+    const k = this.calls();
+    return k?.kind === 'manual' ? `/api/manual/${encodeURIComponent(k.id || '')}/agent-calls/${encodeURIComponent(c.label || '')}/${c.n}` : `/api/loop/agent-calls/${encodeURIComponent(c.name || '')}`;
+  }
+  private async detail(c: AgentCall): Promise<AgentCallDetail | null> {
+    const k = this.key(c);
+    const have = this.details()[k];
+    if (have) return have;
+    const d = await this.api.get<AgentCallDetail>(this.callUrl(c)).catch(() => null);
+    if (d) this.details.update((m) => ({ ...m, [k]: d }));
+    return d;
+  }
+  onToggle(c: AgentCall, ev: Event): void {
+    if ((ev.target as HTMLDetailsElement).open) void this.detail(c);
+  }
+  private async loadCalls(): Promise<void> {
+    const s = this.store;
+    const manualId = s.kind() === 'manual' ? s.manual().id || String((s.run()?.['manualId'] as string) || '') || null : null;
+    const rows = manualId
+      ? await this.api.get<AgentCall[]>(`/api/manual/${encodeURIComponent(manualId)}/agent-calls`).catch(() => [] as AgentCall[])
+      : await this.api.get<AgentCall[]>('/api/loop/agent-calls').catch(() => [] as AgentCall[]);
+    this.calls.set({ kind: manualId ? 'manual' : 'loop', id: manualId, rows: rows || [] });
+    if (this.route.snapshot.fragment === 'assistant-calls' && !this.jumped) {
+      this.jumped = true;
+      const failed = [...(rows || [])].reverse().find((r) => !r.answered);
+      if (failed) {
+        this.openKey.set(this.key(failed));
+        void this.detail(failed);
+      }
+      setTimeout(() => document.getElementById('assistant-calls')?.scrollIntoView({ block: 'start' }));
+    }
+  }
+  private jumped = false;
+
   constructor() {
     // Everything again after a switch of folder, and as the loop records rounds.
     effect(() => {
@@ -278,6 +374,15 @@ export class DiagnosticsScreen {
       this.store.ledger();
       this.store.done();
       untracked(() => void this.load());
+    });
+    // The calls again as a PDF run moves on (each of its stages may have asked the assistant).
+    effect(() => {
+      this.env.cwd();
+      this.store.done();
+      this.store.kind();
+      this.store.manual().stage;
+      this.store.manual().last;
+      untracked(() => void this.loadCalls());
     });
   }
 
@@ -305,13 +410,20 @@ export class DiagnosticsScreen {
     }
   }
 
-  // The whole page, as text.
-  text(): string {
-    return (this.pageEl()?.nativeElement.innerText || '').trim() + '\n';
+  // The whole page, as text, and every assistant call's header and what it said.
+  async text(): Promise<string> {
+    const page = (this.pageEl()?.nativeElement.innerText || '').trim();
+    const rows = this.calls()?.rows || [];
+    const full: string[] = [];
+    for (const c of rows) {
+      const d = await this.detail(c);
+      full.push(`${this.summary(c)}\n${d ? JSON.stringify(d.header) : '(its log could not be read)'}\nWhat it said:\n${d ? this.said(d) : ''}`);
+    }
+    return `${page}${full.length ? `\n\nAssistant calls, what each said\n\n${full.join('\n\n')}` : ''}\n`;
   }
 
   async copy(): Promise<void> {
-    const text = this.text();
+    const text = await this.text();
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -329,8 +441,8 @@ export class DiagnosticsScreen {
     this.copied.set('Copied the whole page.');
   }
 
-  download(): void {
-    const blob = new Blob([this.text()], { type: 'text/plain;charset=utf-8' });
+  async download(): Promise<void> {
+    const blob = new Blob([await this.text()], { type: 'text/plain;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `a11y-508-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;

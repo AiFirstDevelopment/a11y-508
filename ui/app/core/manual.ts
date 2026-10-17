@@ -89,6 +89,8 @@ export interface ManualState {
   parsed: { pages: number; withText: number; withPictures: number; notes: string[] } | null;
   parseFailed: string | null;
   noText: boolean;
+  // The assistant that could not read it, by name.
+  readFailedBy: string | null;
   // The read's first answer had no list of findings: why, while it is asked again.
   readAgain: string | null;
   done: { message: string; fixed: number; alreadyFixed: number; all: boolean } | null;
@@ -102,7 +104,7 @@ export interface ManualState {
 
 export const emptyManual = (): ManualState => ({
   id: null, stage: null, last: null, findings: null, alreadyFixed: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
-  noFindings: null, readFailed: null, parse: null, parsed: null, parseFailed: null, noText: false, readAgain: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
+  noFindings: null, readFailed: null, readFailedBy: null, parse: null, parsed: null, parseFailed: null, noText: false, readAgain: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
 });
 
 // The state after one more event.
@@ -138,6 +140,7 @@ export function applyManual(s: ManualState, ev: Record<string, any>): ManualStat
       break;
     case 'read-failed':
       n.readFailed = String(ev['reason'] || '');
+      n.readFailedBy = ev['assistant'] ? String(ev['assistant']) : null;
       break;
     case 'capture':
       n.capture = { n: ev['n'], m: ev['m'], label: ev['label'] };

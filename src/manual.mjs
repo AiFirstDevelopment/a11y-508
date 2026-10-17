@@ -359,8 +359,9 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     const resultFile = join(taskFolder, `result-manual-${id}-${label}-${n}.json`);
     writePrompt(promptFile, prompt(resultFile));
     stage('agent', { task: label, state: 'start' });
+    const at = new Date().toISOString();
     const res = await callAgent(work, `manual-${id}-${label}-${n}`, { command: agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout, quotaDelays: cfg.quotaDelays || QUOTA_DELAYS });
-    writeFileSync(join(dir, `agent-${label}-${n}.log`), agentLog(res));
+    writeFileSync(join(dir, `agent-${label}-${n}.log`), agentLog(res, { at, assistant: agentLabel(cfg.agent) }));
     const why = res.result ? null : res.timedOut ? `${AgentName} did not answer in time` : res.quota ? `${AgentName} was refused for quota or rate limit` : `${AgentName} ended without an answer (exit code ${res.code})`;
     stage('agent', { task: label, state: 'done', ok: !!res.result, ...(why ? { reason: why } : {}) });
     return { result: res.result, why, res };
@@ -490,9 +491,10 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     }
     if (!raw) {
       const reason = whyNot(result, why);
-      const words = `${agentLabel(cfg.agent).replace(/^./, (c) => c.toUpperCase())} could not read the PDF (${reason}). Choose another PDF, or pick another assistant under Advanced.`;
+      const who = agentLabel(cfg.agent).replace(/^./, (c) => c.toUpperCase());
+      const words = `${who} could not read the PDF (${reason}). Choose another PDF, or pick another assistant under Advanced.`;
       decide('read', null, 'agent', 'could not read the PDF', reason);
-      stage('read-failed', { reason: words });
+      stage('read-failed', { reason: words, assistant: who });
       log.error(words);
       return finish(1);
     }

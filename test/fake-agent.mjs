@@ -110,6 +110,7 @@ if (task && /^manual-/.test(task.kind)) {
 // FAKE_MANUAL_READ_FAIL=<n>: the first n reads answer with no list of findings.
 // FAKE_MANUAL_WRONG_PAGE: the read gives F1 a quote, status and criterion the report does not have, F2
 // the page before its own, F3 a page past the end.
+// FAKE_MANUAL_READ_SILENT=1 (with it): those reads say "I cannot open this file" and write no answer at all.
 // The read takes the FINDING lines from the tool's parse of the PDF (report.md); the check and the verify judge from the evidence the tool
 // captured (a button with no aria-label, an image with no alt, is the problem); a fix edits the
 // approved component's file.
@@ -130,6 +131,7 @@ function manual(task) {
       const n = existsSync(count) ? Number(readFileSync(count, 'utf8')) || 0 : 0;
       if (n < fails) {
         writeFileSync(count, String(n + 1));
+        if (process.env.FAKE_MANUAL_READ_SILENT) return console.log(`I cannot open this file (read ${n + 1})`);
         return out({ note: 'I could not make out the findings in this PDF.' });
       }
       // Asked again: a moment before the answer, so the page's sentence for the wait can be seen.

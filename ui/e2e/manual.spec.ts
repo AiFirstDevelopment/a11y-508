@@ -843,3 +843,46 @@ test('pdf-parse AC8 / guard h: a PDF that cannot be opened ends before any assis
     await app.cleanup();
   }
 });
+
+test('assistant calls: a read that ends without an answer twice links from the home screen to what the assistant said, its prompt, and the diagnostics text', async ({ page, context }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_READ_FAIL: '2', FAKE_MANUAL_READ_SILENT: '1' } });
+  try {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: dash.origin });
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText('Node could not read the PDF (it ended without an answer (exit code 0)). Choose another PDF, or pick another assistant under Advanced.', { timeout: 180_000 });
+    // The sentence is followed by the way to what the assistant said.
+    const link = page.getByTestId('see-what-said');
+    await expect(link).toHaveText('See what Node said');
+    await link.click();
+    await expect(page).toHaveURL(/\/diagnostics#assistant-calls$/);
+    await expect(page.locator('#assistant-calls')).toBeInViewport();
+    const calls = page.getByTestId('d-call');
+    await expect(calls).toHaveCount(2);
+    for (const i of [0, 1]) await expect(calls.nth(i).getByTestId('d-call-summary')).toHaveText(/ · read · Node · .+ · ended without an answer \(exit code 0\)$/);
+    // The failed call is open; the first, opened by hand, shows what it said, its prompt, and no answer file.
+    await expect(calls.nth(1)).toHaveAttribute('open', '');
+    await expect(calls.nth(1).getByTestId('d-call-said')).toContainText('I cannot open this file (read 2)');
+    await calls.nth(0).getByTestId('d-call-summary').click();
+    await expect(calls.nth(0).getByTestId('d-call-said')).toContainText('I cannot open this file (read 1)');
+    await calls.nth(0).getByTestId('d-call-prompt').locator('summary').click();
+    await expect(calls.nth(0).getByTestId('d-call-prompt')).toContainText("# Read a tester's accessibility report");
+    await expect(calls.nth(0).getByTestId('d-call-result')).toHaveText('Its answer file: none.');
+    // Copy diagnostics: each call's header line and what it said.
+    await page.getByTestId('copy-diagnostics').click();
+    await expect(page.getByTestId('diagnostics-copied')).toHaveText('Copied the whole page.');
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    const id = runDir(dash).split(/[\\/]/).pop();
+    for (const n of [1, 2]) {
+      const d = (await api(dash, `/api/manual/${id}/agent-calls/read/${n}`)).json;
+      const at = copied.indexOf(`${JSON.stringify(d.header)}\nWhat it said:\n`);
+      expect(at).toBeGreaterThan(-1);
+      expect(copied.slice(at).split('\n\n')[0]).toContain(`I cannot open this file (read ${n})`);
+    }
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});

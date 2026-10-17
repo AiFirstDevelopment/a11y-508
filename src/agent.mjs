@@ -344,8 +344,9 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, ti
 
 // What one agent call left behind, for the work folder: a JSON header line, then the tail of its
 // output. Never the environment or the token (the prompt and the agent never had it).
-export function agentLog(res) {
-  const head = { code: res.code, timedOut: !!res.timedOut, quota: !!res.quota, quotaRetries: res.quotaRetries || 0, result: !!res.result, durationMs: res.durationMs };
+// extra: { at, assistant } -- when the call started, and the assistant's name, for the dashboard's Log.
+export function agentLog(res, extra = {}) {
+  const head = { ...extra, code: res.code, timedOut: !!res.timedOut, quota: !!res.quota, quotaRetries: res.quotaRetries || 0, result: !!res.result, durationMs: res.durationMs };
   return `${JSON.stringify(head)}\n--- stdout (tail)\n${String(res.stdout || '').slice(-8000)}\n--- stderr (tail)\n${String(res.stderr || '').slice(-8000)}\n`;
 }
 

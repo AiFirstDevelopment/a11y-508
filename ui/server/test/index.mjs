@@ -14,3 +14,4 @@ import './journal.test.mjs';
 import './git-web.test.mjs';
 import './unfixed.test.mjs';
 import './parsed.test.mjs';
+import './agent-calls.test.mjs';
