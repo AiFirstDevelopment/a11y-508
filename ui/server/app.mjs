@@ -304,10 +304,12 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       if (!restored || !done.quit || (run.record && run.record.resumedAfterQuit)) return;
       annotateRun(run, { resumedAfterQuit: new Date().toISOString() });
       const request = (run.record && run.record.request) || {};
+      // A11Y_508_RERUN_DELAY (ms): for tests, a longer moment before it starts, to watch what the page says meanwhile.
+      const delay = process.env.A11Y_508_RERUN_DELAY ? Math.max(0, Number(process.env.A11Y_508_RERUN_DELAY) || 0) : 200;
       setTimeout(() => {
         if (runs.current !== run || runs.active) return;
-        startRun({ ...request, kind: 'manual', preface: [{ type: 'rerun', reason: 'dashboard-restart', at: new Date().toISOString() }] }).catch(() => {});
-      }, 200);
+        startRun({ ...request, kind: 'manual', preface: [{ type: 'rerun', reason: 'dashboard-restart', stage: (run.record && run.record.rerun && run.record.rerun.stage) || null, at: new Date().toISOString() }] }).catch(() => {});
+      }, delay);
       return;
     }
     if (run.kind === 'loop' && done.outcome === 'stopped') {
@@ -385,7 +387,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
         const request = (r.record && r.record.request) || {};
         const where = interruptedDetails(state.cwd, r, []);
         resolveRun(r, 'rerun');
-        await startRun({ ...request, kind: 'manual', preface: [{ type: 'rerun', reason: 'interrupted', interruptedAt: where.at, at: new Date().toISOString() }] });
+        await startRun({ ...request, kind: 'manual', preface: [{ type: 'rerun', reason: 'interrupted', stage: (r.record && r.record.rerun && r.record.rerun.stage) || null, interruptedAt: where.at, at: new Date().toISOString() }] });
       } else if (r.kind === 'dry-run') {
         resolveRun(r, 'resolved');
         runs.forget();
@@ -743,7 +745,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     };
   }
   // retry: the try again scheduled after it ({ attempt, at, reason, kind }, cancelled or firedAt once done).
-  const runSummary = (r) => ({ id: r.id, kind: r.kind, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt || null, code: r.code, meta: r.meta, retry: (r.record && r.record.retry) || null });
+  const runSummary = (r) => ({ id: r.id, kind: r.kind, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt || null, code: r.code, meta: r.meta, retry: (r.record && r.record.retry) || null, ...(r.record && r.record.rerun ? { rerun: r.record.rerun } : {}) });
 
   function ledgerInfo() {
     const file = ledgerPath(state.cwd);

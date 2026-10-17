@@ -45,7 +45,7 @@ export const EVENT_SCHEMA = {
   attempt: { round: num, n: num, m: num, test: str, message: str, elements: opt(num), files: arr, outcome: oneOf('committed', 'failed-gate', 'no-change', 'timed-out', 'commit-failed'), commit: opt(str), note: opt(str), agentMs: opt(num), gateMs: opt(num), gateCode: opt(num), gateTail: opt(str) },
   precondition: { code: oneOf('not-a-repo', 'dirty-tree', 'branch'), message: str, remedy: str },
   // The manual flow (docs/plans/manual-findings.md): one event per stage, and one per decision.
-  manual: { stage: oneOf('start', 'read', 'read-failed', 'findings', 'no-findings', 'check', 'capture', 'judge', 'already-fixed', 'planning', 'plan', 'review', 'confirming', 'approve-refused', 'approved', 'agent', 'fix', 'gate', 'commit', 'push', 'deploy', 'await-deploy', 'deploy-check', 'verify', 'verdicts', 'retry', 'replanning', 'done') },
+  manual: { stage: oneOf('start', 'read', 'read-again', 'read-failed', 'findings', 'no-findings', 'check', 'capture', 'judge', 'already-fixed', 'planning', 'plan', 'review', 'confirming', 'approve-refused', 'approved', 'agent', 'fix', 'gate', 'commit', 'push', 'deploy', 'await-deploy', 'deploy-check', 'verify', 'verdicts', 'retry', 'replanning', 'done') },
   'manual-decision': { stage: oneOf('read', 'check', 'plan', 'confirm', 'fix', 'verify', 'replan'), finding: opt(str), by: oneOf('agent', 'developer', 'tool'), decision: str, reason: str, evidence: opt(str) },
   done: { code: num },
 };
