@@ -325,7 +325,11 @@ test('turnkey AC7 / guard k: nothing on the dashboard deletes anything; the serv
 
 test('turnkey AC8: the README documents no removed button', async () => {
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
-  for (const words of ['verify now', 'Keep waiting', 'Stop waiting', 'Verify anyway', 'Start anyway', 'Deployed — continue', 'Fix the remaining', 'Start over', 'Try again', 'Sign in and continue', 'Clear fix-loop history', 'Clear history', 'Crawl again', 'Troubleshoot with these settings', 'Run again', 'Fix the violations', 'Check now', 'Copy summary']) {
+  // Start over is documented: it came back as a link beside Log (f0fb752), never as a button (AC7 above).
+  for (const words of ['verify now', 'Keep waiting', 'Stop waiting', 'Verify anyway', 'Start anyway', 'Deployed — continue', 'Fix the remaining', 'Try again', 'Sign in and continue', 'Clear fix-loop history', 'Clear history', 'Crawl again', 'Troubleshoot with these settings', 'Run again', 'Fix the violations', 'Check now', 'Copy summary']) {
     expect(readme, words).not.toContain(words);
   }
+  // The PDF run is documented, on the dashboard and on the command line (manual-findings-clarity AC 5).
+  expect(readme).toContain('Fix from a test report (PDF)');
+  expect(readme).toContain('a11y-508 manual');
 });

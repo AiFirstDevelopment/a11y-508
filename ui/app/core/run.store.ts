@@ -162,6 +162,8 @@ export class RunStore {
   readonly loginReopened = signal(false);
   // The server's word on the current run once it has ended: the try again it scheduled, if any.
   readonly retry = signal<RetryInfo | null>(null);
+  // A PDF run's promised rerun (its done's rerun) that the server withdrew: it could not start, or Stop cancelled it.
+  readonly rerunWithdrawn = signal(false);
   // The fallback assistant taking a fix (its fallback event): which fix, and by whom.
   readonly fallback = signal<{ round: number; n: number; assistant: string } | null>(null);
   private watching: ReturnType<typeof setTimeout> | null = null;
@@ -227,6 +229,7 @@ export class RunStore {
     this.signInAgain.set(false);
     this.loginReopened.set(false);
     this.retry.set(null);
+    this.rerunWithdrawn.set(false);
     this.fallback.set(null);
     this.manual.set(emptyManual());
   }
@@ -551,7 +554,8 @@ export class RunStore {
       if (cur && cur.id === id) this.retry.set(cur.retry || null);
       // An interruption the server has not taken up yet: asking for the environment is what makes it go on.
       if (cur && cur.status === 'interrupted' && ++asked % 3 === 1) void this.api.get('/api/env').catch(() => {});
-      const coming = (cur && cur.status === 'interrupted') || this.retryPending() || (!!this.retry()?.firedAt && !this.retry()?.cancelled);
+      if (cur && cur.id === id && this.done()?.['rerun'] && !(cur as RunInfo & { rerun?: unknown }).rerun) this.rerunWithdrawn.set(true);
+      const coming = (cur && cur.status === 'interrupted') || (!!this.done()?.['rerun'] && !this.rerunWithdrawn()) || this.retryPending() || (!!this.retry()?.firedAt && !this.retry()?.cancelled);
       if (coming || Date.now() < until) this.watching = setTimeout(tick, 1000);
     };
     this.watching = setTimeout(tick, 0);
@@ -594,6 +598,7 @@ export class RunStore {
     if (r && r.cancelled) {
       const cur = this.retry();
       if (cur) this.retry.set({ ...cur, cancelled: true });
+      if (this.done()?.['rerun']) this.rerunWithdrawn.set(true);
       this.watch(Date.now() + 2000);
     }
   }

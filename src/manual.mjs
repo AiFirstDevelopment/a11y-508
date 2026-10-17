@@ -16,7 +16,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readF
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  PRESET_INFO, QUOTA_DELAYS, agentLog, manualCheckPrompt, manualConfirmPrompt, manualFixPrompt, manualPlanPrompt, manualReadPrompt, manualReplanPrompt, manualVerifyPrompt, resolveAgentCommand, writePrompt,
+  PRESET_INFO, QUOTA_DELAYS, agentLabel, agentLog, manualCheckPrompt, manualConfirmPrompt, manualFixPrompt, manualPlanPrompt, manualReadPrompt, manualReplanPrompt, manualVerifyPrompt, resolveAgentCommand, writePrompt,
 } from './agent.mjs';
 import { callAgent, findIndexHtml, frameworkLine, git, gitChanged, normalizeConfig, prepareRepo, sessionArgs, sh, signInOnly, splitCheck, stampBuildMarker, testRoundFixes, waitForEnter } from './loop.mjs';
 import { migrateRepo, migrationLines, reportDir, shortenHome, tasksDir, workDir } from './home.mjs';
@@ -71,6 +71,17 @@ export function knownRoutes(cwd) {
   return [...urls];
 }
 
+// Where a run had got to, from its own files: read, check, review, fix, deploy or verify (the
+// dashboard's sentence after a restart names it).
+export function savedStage(dir) {
+  const st = readJson(join(dir, 'state.json'), null) || {};
+  if (!existsSync(join(dir, 'findings.json'))) return 'read';
+  if (!existsSync(join(dir, 'check.json'))) return 'check';
+  if (st.stage !== 'fixing') return 'review';
+  if (st.verifying) return 'verify';
+  return st.awaiting ? 'deploy' : 'fix';
+}
+
 // Every decision of the run, as decisions.ndjson holds them.
 export function readDecisions(dir) {
   const f = join(dir, 'decisions.ndjson');
@@ -97,7 +108,7 @@ export function decisionGroups(dir, web = null) {
       .filter((d) => existsSync(join(base, d, 'screenshot.png'))).map((d) => ({ label: d === 'before' ? 'Before' : `After, try ${d.slice(6)}`, path: `evidence/${id}/${d}/screenshot.png` }));
   };
   const groups = findings.map((f) => ({
-    finding: f.id, title: f.title, page: f.page, quote: f.quote, status: (state.items && state.items[f.id] && state.items[f.id].status) || null,
+    finding: f.id, title: f.title, page: f.page, quote: f.quote, url: f.url || null, status: (state.items && state.items[f.id] && state.items[f.id].status) || null,
     decisions: all.filter((d) => d.finding === f.id),
     commits: ((state.items && state.items[f.id] && state.items[f.id].commits) || []).map((c) => ({ ...c, url: commitWebUrl(web, c.sha) })),
     screenshots: shots(f.id),
@@ -340,14 +351,28 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     log.info(`reading the PDF with ${agentName}`);
     const pdfCopy = join(taskFolder, `manual-${id}.pdf`);
     copyFileSync(join(dir, 'source.pdf'), pdfCopy);
-    const { result, why } = await ask('read', (resultFile) => manualReadPrompt({ pdfFile: pdfCopy, startUrl: cfg.url, routes: knownRoutes(cwd), resultFile }));
+    const readOnce = () => ask('read', (resultFile) => manualReadPrompt({ pdfFile: pdfCopy, startUrl: cfg.url, routes: knownRoutes(cwd), resultFile }));
+    const listOf = (result) => (Array.isArray(result) ? result : result && Array.isArray(result.findings) ? result.findings : null);
+    const whyNot = (result, why) => (result && result.error) || (why ? why.replace(AgentName, 'it') : '') || 'its answer had no list of findings';
+    let { result, why } = await readOnce();
     if (stopped()) return 1;
-    const raw = Array.isArray(result) ? result : result && Array.isArray(result.findings) ? result.findings : null;
+    let raw = listOf(result);
+    // No list of findings (or no answer at all): asked once more before the run ends.
     if (!raw) {
-      const reason = (result && result.error) || why || 'its answer had no list of findings';
+      const first = whyNot(result, why);
+      decide('read', null, 'tool', 'asked again', `the first answer could not be used: ${first}`);
+      stage('read-again', { reason: first });
+      log.warn(`${AgentName} could not read the PDF (${first}); asking it again`);
+      ({ result, why } = await readOnce());
+      if (stopped()) return 1;
+      raw = listOf(result);
+    }
+    if (!raw) {
+      const reason = whyNot(result, why);
+      const words = `${agentLabel(cfg.agent).replace(/^./, (c) => c.toUpperCase())} could not read the PDF (${reason}). Choose another PDF, or pick another assistant under Advanced.`;
       decide('read', null, 'agent', 'could not read the PDF', reason);
-      stage('read-failed', { reason: `The assistant could not read the PDF: ${reason}` });
-      log.error(`The assistant could not read the PDF: ${reason}`);
+      stage('read-failed', { reason: words });
+      log.error(words);
       return finish(1);
     }
     const ids = new Set();
@@ -700,6 +725,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   };
   const verify = async (items) => {
     const label = `after-${++state.after}`;
+    state.verifying = label;
     save();
     stage('verify', { label, count: items.length });
     log.info(`checking the deployed site for ${plural(items.length, 'fix', 'fixes')}`);
@@ -765,6 +791,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         const verdicts = await verify(items);
         if (!verdicts) return finish(1);
         state.awaiting = null;
+        state.verifying = null;
         save();
         const notFixed = verdicts.filter((v) => v.verdict !== 'fixed');
         for (const v of notFixed) {

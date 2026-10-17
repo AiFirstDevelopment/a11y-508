@@ -19,6 +19,7 @@ import { loadLedger, saveLedger } from '../../src/ledger.mjs';
 import { BadRequest } from './args.mjs';
 import { killTreeWindows } from './runs.mjs';
 import { recordKill, refuseKill } from '../../src/kills.mjs';
+import { manualDir, savedStage, validId } from '../../src/manual.mjs';
 
 export const RUN_CHILD = join(dirname(fileURLToPath(import.meta.url)), 'run-child.mjs');
 export const RUNS_DIR = 'runs';
@@ -169,8 +170,11 @@ export class JournalRun {
     this.read();
     if (this.status !== 'running') return;
     if (this.stopRequests > 0) {
-      // quit: ended because the dashboard itself ended (a PDF run is taken up again when it comes back).
-      const ev = { type: 'done', at: new Date().toISOString(), code: null, signal: null, stopped: true, outcome: 'stopped', ...(this.quitting ? { quit: true } : {}) };
+      // quit: ended because the dashboard itself ended (a PDF run is taken up again when it comes back,
+      // and says so from the first moment: its record and its done carry rerun before anything reads them).
+      const rerun = this.quitting ? this.manualRerun('dashboard-restart') : null;
+      const ev = { type: 'done', at: new Date().toISOString(), code: null, signal: null, stopped: true, outcome: 'stopped', ...(this.quitting ? { quit: true } : {}), ...(rerun ? { rerun } : {}) };
+      if (rerun) annotateRun(this, { rerun });
       try {
         appendFileSync(this.files.events, line(ev));
       } catch {}
@@ -178,7 +182,20 @@ export class JournalRun {
       if (this.status === 'running') this.end('done', ev);
       return;
     }
-    this.end('interrupted', { type: 'done', at: new Date().toISOString(), code: null, signal: null, stopped: false, outcome: 'interrupted', interrupted: interruptionOf(this) });
+    const rerun = this.manualRerun('interrupted');
+    if (rerun) annotateRun(this, { rerun });
+    this.end('interrupted', { type: 'done', at: new Date().toISOString(), code: null, signal: null, stopped: false, outcome: 'interrupted', interrupted: interruptionOf(this), ...(rerun ? { rerun } : {}) });
+  }
+
+  // A PDF run the dashboard takes up again: why, and the stage its own files say it had reached.
+  manualRerun(reason) {
+    if (this.kind !== 'manual') return null;
+    const id = this.meta && this.meta.manualId;
+    let stage = null;
+    try {
+      if (validId(id)) stage = savedStage(manualDir(this.cwd, id));
+    } catch {}
+    return { reason, stage };
   }
 
   tail(ms = 200) {

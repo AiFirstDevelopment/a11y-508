@@ -43,6 +43,19 @@ export interface ManualDecision {
   evidence?: string;
 }
 
+// One finding of a PDF run as GET /api/manual/:id/decisions groups it (decisions.md's sections).
+export interface DecisionGroup {
+  finding: string;
+  title: string;
+  page: number;
+  quote: string;
+  url?: string | null;
+  status: string | null;
+  decisions: ManualDecision[];
+  commits: { sha: string; short: string; files: string[]; url: string | null }[];
+  screenshots: { label: string; path: string }[];
+}
+
 export interface ManualState {
   id: string | null;
   // The latest stage event's stage, and the event itself.
@@ -59,6 +72,8 @@ export interface ManualState {
   decisions: ManualDecision[];
   noFindings: string | null;
   readFailed: string | null;
+  // The read's first answer had no list of findings: why, while it is asked again.
+  readAgain: string | null;
   done: { message: string; fixed: number; alreadyFixed: number; all: boolean } | null;
   commits: number;
   fix: { n: number; m: number; finding: string; title: string; attempt: number } | null;
@@ -70,7 +85,7 @@ export interface ManualState {
 
 export const emptyManual = (): ManualState => ({
   id: null, stage: null, last: null, findings: null, alreadyFixed: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
-  noFindings: null, readFailed: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
+  noFindings: null, readFailed: null, readAgain: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
 });
 
 // The state after one more event.
@@ -87,6 +102,9 @@ export function applyManual(s: ManualState, ev: Record<string, any>): ManualStat
       break;
     case 'no-findings':
       n.noFindings = String(ev['message'] || '');
+      break;
+    case 'read-again':
+      n.readAgain = String(ev['reason'] || '');
       break;
     case 'read-failed':
       n.readFailed = String(ev['reason'] || '');

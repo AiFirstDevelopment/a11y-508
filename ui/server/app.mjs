@@ -301,13 +301,21 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     // A PDF run ended by the dashboard's own end (Quit, Ctrl+C) is taken up again when the dashboard
     // is back: from its own files, so a plan waiting for approval waits again (docs/plans/manual-findings.md AC 6).
     if (run.kind === 'manual') {
-      if (!restored || !done.quit || (run.record && run.record.resumedAfterQuit)) return;
+      if (!restored || !done.quit) return;
+      // Taken up once already and still the latest run (its rerun never started): it no longer promises one.
+      if (run.record && run.record.resumedAfterQuit) {
+        if (run.record.rerun) annotateRun(run, { rerun: null });
+        return;
+      }
       annotateRun(run, { resumedAfterQuit: new Date().toISOString() });
       const request = (run.record && run.record.request) || {};
+      // A11Y_508_RERUN_DELAY (ms): for tests, a longer moment before it starts, to watch what the page says meanwhile.
+      const delay = process.env.A11Y_508_RERUN_DELAY ? Math.max(0, Number(process.env.A11Y_508_RERUN_DELAY) || 0) : 200;
       setTimeout(() => {
-        if (runs.current !== run || runs.active) return;
-        startRun({ ...request, kind: 'manual', preface: [{ type: 'rerun', reason: 'dashboard-restart', at: new Date().toISOString() }] }).catch(() => {});
-      }, 200);
+        if (runs.current !== run || runs.active || !(run.record && run.record.rerun)) return;
+        // A rerun that cannot start: the run is a stopped one again (the page says Stopped. and offers Start).
+        startRun({ ...request, kind: 'manual', preface: [{ type: 'rerun', reason: 'dashboard-restart', stage: run.record.rerun.stage || null, at: new Date().toISOString() }] }).catch(() => annotateRun(run, { rerun: null }));
+      }, delay);
       return;
     }
     if (run.kind === 'loop' && done.outcome === 'stopped') {
@@ -385,7 +393,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
         const request = (r.record && r.record.request) || {};
         const where = interruptedDetails(state.cwd, r, []);
         resolveRun(r, 'rerun');
-        await startRun({ ...request, kind: 'manual', preface: [{ type: 'rerun', reason: 'interrupted', interruptedAt: where.at, at: new Date().toISOString() }] });
+        await startRun({ ...request, kind: 'manual', preface: [{ type: 'rerun', reason: 'interrupted', stage: (r.record && r.record.rerun && r.record.rerun.stage) || null, interruptedAt: where.at, at: new Date().toISOString() }] });
       } else if (r.kind === 'dry-run') {
         resolveRun(r, 'resolved');
         runs.forget();
@@ -743,7 +751,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     };
   }
   // retry: the try again scheduled after it ({ attempt, at, reason, kind }, cancelled or firedAt once done).
-  const runSummary = (r) => ({ id: r.id, kind: r.kind, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt || null, code: r.code, meta: r.meta, retry: (r.record && r.record.retry) || null });
+  const runSummary = (r) => ({ id: r.id, kind: r.kind, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt || null, code: r.code, meta: r.meta, retry: (r.record && r.record.retry) || null, ...(r.record && r.record.rerun ? { rerun: r.record.rerun } : {}) });
 
   function ledgerInfo() {
     const file = ledgerPath(state.cwd);
@@ -1041,6 +1049,12 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (m === 'POST' && path === '/api/runs/current/stop') {
       // Between tries: Stop cancels the next one.
       if (!runs.active && cancelRetry()) return send(res, 200, { signal: null, cancelled: true });
+      // Before a quit PDF run is taken up again: Stop cancels that.
+      const cur = runs.current;
+      if (!runs.active && cur && cur.kind === 'manual' && cur.status === 'done' && cur.record && cur.record.rerun) {
+        annotateRun(cur, { rerun: null });
+        return send(res, 200, { signal: null, cancelled: true });
+      }
       return send(res, 200, { signal: runs.stop() });
     }
     if (m === 'POST' && path === '/api/runs/current/continue') {

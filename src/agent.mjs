@@ -25,6 +25,17 @@ export const PRESET_INFO = {
   codex: { label: 'Codex', bin: 'codex', package: '@openai/codex' },
 };
 
+// The assistant's name in a sentence: a preset's label (also for its command at an absolute path),
+// else the custom command's first word (its file name, without the folder).
+export function agentLabel(agent) {
+  const a = String(agent || '').trim();
+  if (PRESET_INFO[a]) return PRESET_INFO[a].label;
+  const first = (/^"([^"]*)"|^'([^']*)'|^(\S+)/.exec(a) || []).slice(1).find((x) => x !== undefined) || '';
+  const base = first.split(/[\\/]/).pop().replace(/\.(cmd|exe|bat|ps1)$/i, '');
+  const preset = Object.values(PRESET_INFO).find((p) => p.bin === base);
+  return preset ? preset.label : base || 'the assistant';
+}
+
 // The install command per preset and operating system. Fixed here, never
 // taken from a request.
 export const INSTALL = Object.fromEntries(

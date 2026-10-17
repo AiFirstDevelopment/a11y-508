@@ -21,6 +21,15 @@ function short(text: string, max = 72): string {
   return `${cut.slice(0, cut.lastIndexOf(' ') > 40 ? cut.lastIndexOf(' ') : max).replace(/[\s,;:.]+$/, '')}…`;
 }
 
+// Where a PDF run was when the dashboard was closed, from the stage its own files saved.
+const PDF_STAGES: Record<string, string> = {
+  read: 'while reading the PDF', check: 'while checking the deployed site', review: 'at the plan review', fix: 'while fixing', deploy: 'while waiting for the deployment', verify: 'while verifying',
+};
+function continuingPdf(stage: unknown): string {
+  const at = PDF_STAGES[String(stage || '')];
+  return `The dashboard was closed during the PDF run${at ? ` (${at})` : ''}; continuing from there.`;
+}
+
 // The one screen (docs/plans/simple-screen.md): the folder and URL, one sentence of what is happening
 // now, one line of numbers, one button (Start, or Stop while anything runs), and Diagnostics.
 @Component({
@@ -50,7 +59,7 @@ function short(text: string, max = 72): string {
       }
       <!-- The second way in (docs/plans/manual-findings.md): a tester's PDF, chosen with the system's file chooser. -->
       @if (!running()) {
-        <button type="button" class="secondary" data-testid="manual-pdf" (click)="pdfInput.click()" [disabled]="!driver.url()">{{ manualEnded()?.noFindings ? 'Choose another PDF' : 'Fix from a test report (PDF)' }}</button>
+        <button type="button" class="secondary" data-testid="manual-pdf" (click)="pdfInput.click()" [disabled]="!driver.url()">{{ manualEnded()?.noFindings || manualEnded()?.readFailed ? 'Choose another PDF' : 'Fix from a test report (PDF)' }}</button>
       }
       <input #pdfInput type="file" accept="application/pdf" hidden data-testid="manual-pdf-input" (change)="onPdf($event)" />
     </div>
@@ -286,11 +295,13 @@ export class HomeScreen implements OnDestroy {
     clearInterval(this.ticker);
   }
 
-  // Anything running, about to run again, or being started: the button is Stop.
+  // Anything running, about to run again, or being started: the button is Stop. A PDF run the
+  // dashboard's restart ended is about to run again from the moment it ended (its done says so).
   readonly running = computed(() => {
     const s = this.store;
     const r = s.retry();
-    return s.active() || s.retryPending() || (!!s.done() && (s.done()!['outcome'] === 'interrupted' || (!!r && !!r.firedAt && !r.cancelled))) || this.driver.starting();
+    const d = s.done();
+    return s.active() || s.retryPending() || (!!d && (d['outcome'] === 'interrupted' || (!!d['rerun'] && !s.rerunWithdrawn()) || (!!r && !!r.firedAt && !r.cancelled))) || this.driver.starting();
   });
   readonly signingIn = computed(() => this.store.loginWaiting() && this.store.active());
 
@@ -504,11 +515,18 @@ export class HomeScreen implements OnDestroy {
     const who = this.assistant();
     const ev = m.last || {};
     const n = (k: string) => Number(ev[k]) || 0;
+    // Taken up again after the dashboard was closed: said until the run is back at its own stage.
+    const o = this.store.origin();
+    if (o && o.type === 'rerun' && [null, 'start', 'findings', 'already-fixed'].includes(m.stage)) return continuingPdf(o['stage']);
     switch (m.stage) {
       case null:
       case 'start':
       case 'read':
         return `Reading the PDF with ${who}`;
+      case 'read-again': {
+        const why = m.readAgain || '';
+        return !why || why === 'its answer had no list of findings' ? "The assistant's answer had no list of findings; asking it again." : `The assistant could not read the PDF (${why}); asking it again.`;
+      }
       case 'findings':
       case 'check':
         return `Checking the deployed site for ${plural(m.findings || 0, 'finding')} from the PDF`;
@@ -567,8 +585,8 @@ export class HomeScreen implements OnDestroy {
       const m = s.manual();
       if (m.done) return m.done.message;
       if (m.noFindings) return m.noFindings;
-      if (d['outcome'] === 'interrupted') return 'The PDF run was interrupted (the dashboard was closed); continuing from there';
-      if (d['outcome'] === 'stopped') return 'Stopped';
+      if ((d['rerun'] && !s.rerunWithdrawn()) || d['outcome'] === 'interrupted') return continuingPdf((d['rerun'] as Record<string, unknown> | undefined)?.['stage']);
+      if (d['outcome'] === 'stopped') return 'Stopped.';
       if (m.readFailed) return m.readFailed;
       const errors = s.notices().filter((x) => x.level === 'error' && !/^The run failed( \(exit code|: )/.test(x.message)).map((x) => x.message);
       const pre = s.precondition();

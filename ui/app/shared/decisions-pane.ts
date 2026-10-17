@@ -1,17 +1,6 @@
 import { Component, ElementRef, inject, signal, viewChild } from '@angular/core';
 import { Api } from '../core/api';
-import { ManualDecision, manualFileUrl, pdfPageUrl } from '../core/manual';
-
-interface Group {
-  finding: string;
-  title: string;
-  page: number;
-  quote: string;
-  status: string | null;
-  decisions: ManualDecision[];
-  commits: { sha: string; short: string; files: string[]; url: string | null }[];
-  screenshots: { label: string; path: string }[];
-}
+import { DecisionGroup as Group, ManualDecision, manualFileUrl, pdfPageUrl } from '../core/manual';
 
 // Show decisions (docs/plans/manual-findings.md AC 9): a PDF run's decision log, grouped by finding,
 // each headed by its title and its PDF page, then its decisions in order, its commits and its
