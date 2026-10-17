@@ -150,6 +150,21 @@ test('manual AC2/3/4/5/7/8/9 / guards b c d: findings tied to PDF pages, checked
     const dir = runDir(dash);
     const id = dir.split(/[\\/]/).pop()!;
 
+    // Guard b: every plan item links to its page of the PDF.
+    await expect(item(page, 'F1').getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=1`);
+    await expect(item(page, 'F3').getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=2`);
+    await expect(item(page, 'F3').getByTestId('pdf-page')).toHaveText('PDF page 2');
+    // Guard c: the finding the deployed site no longer has is in Already fixed, from evidence the tool captured.
+    const fixedSection = page.getByTestId('already-fixed');
+    await expect(fixedSection.locator('summary')).toHaveText('Already fixed in the deployed site (1)');
+    const row = fixedSection.getByTestId('already-fixed-item');
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('F2 Company logo has no text alternative');
+    await expect(row.getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=2`);
+    expect(readdirSync(join(dir, 'evidence', 'F2', 'before')).sort()).toEqual(['ax.json', 'elements.html', 'elements.json', 'screenshot.png', 'summary.json', 'tab-order.json']);
+    // Guard d: it never enters the plan.
+    await expect(item(page, 'F2')).toHaveCount(0);
+
     // AC 2: one finding per issue, each with its PDF page and the tester's words.
     const findings = readJson(join(dir, 'findings.json')).findings;
     expect(findings.map((f: any) => [f.id, f.page])).toEqual([['F1', 1], ['F2', 2], ['F3', 2]]);
@@ -168,16 +183,10 @@ test('manual AC2/3/4/5/7/8/9 / guards b c d: findings tied to PDF pages, checked
     expect(readFileSync(join(dir, 'evidence', 'F1', 'before', 'elements.html'), 'utf8')).toContain('id="search-btn"');
     expect(readJson(join(dir, 'check.json')).results.map((r: any) => [r.finding, r.verdict])).toEqual([['F1', 'present'], ['F2', 'gone'], ['F3', 'present']]);
 
-    // AC 4 / guards b c: the gone finding is in Already fixed, linked to its PDF page, and not in the plan.
-    const fixedSection = page.getByTestId('already-fixed');
-    await expect(fixedSection.locator('summary')).toHaveText('Already fixed in the deployed site (1)');
+    // AC 4: the already-fixed row: title, the tester's words, its PDF page, the URL and time checked, why, the screenshot.
     await fixedSection.locator('summary').click();
-    const row = fixedSection.getByTestId('already-fixed-item');
-    await expect(row).toHaveCount(1);
-    await expect(row).toContainText('F2 Company logo has no text alternative');
     await expect(row.getByTestId('quote')).toHaveText('The footer logo image has no alt text.');
     await expect(row.getByTestId('pdf-page')).toHaveText('PDF page 2');
-    await expect(row.getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=2`);
     await expect(row.getByTestId('checked')).toContainText(app.site.base);
     await expect(row.getByTestId('reason')).toContainText('the element has a name now');
     await expect.poll(() => row.getByTestId('screenshot').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBeGreaterThan(0);
@@ -185,11 +194,8 @@ test('manual AC2/3/4/5/7/8/9 / guards b c d: findings tied to PDF pages, checked
     expect(report).toContain('[PDF page 2](source.pdf#page=2)');
     expect(report).toContain('The footer logo image has no alt text.');
 
-    // AC 5 / guards b c d: the plan has the present findings only, each with its PDF page and screenshot.
+    // AC 5: the plan has the present findings, each with its PDF page, screenshot, fix, component, files and decisions.
     await expect(page.getByTestId('plan-item')).toHaveCount(2);
-    await expect(item(page, 'F2')).toHaveCount(0);
-    await expect(item(page, 'F1').getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=1`);
-    await expect(item(page, 'F3').getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=2`);
     await expect.poll(() => item(page, 'F1').getByTestId('screenshot').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBeGreaterThan(0);
     await expect(item(page, 'F1').getByTestId('plan-fix')).toHaveValue(/accessible name in SearchBarComponent/);
     await expect(item(page, 'F1').getByTestId('component-chosen')).toHaveText(/SearchBarComponent <app-search-bar> · src\/app\/search\/search-bar\.component\.ts/);
@@ -219,8 +225,9 @@ test('manual AC2/3/4/5/7/8/9 / guards b c d: findings tied to PDF pages, checked
     expect(app.g('log', '-1', '--format=%s', f1[0])).toBe('a11y-508: manual <PDF p.1> Search button has no accessible name');
     expect(filesOf(app, f1[0])).toEqual(['src/app/search/search-bar.component.ts']);
     expect(filesOf(app, f3[0])).toEqual(['src/app/header/header.component.ts']);
-    // Guard d: the already-fixed finding got no commit.
+    // Guard d: the already-fixed finding got no fix and no commit.
     expect(fixCommits(app, 'Company logo')).toEqual([]);
+    expect(decisions(dir).filter((d) => d.finding === 'F2' && d.stage === 'fix')).toEqual([]);
     expect(app.g('log', '--format=%s', `${base}..a11y-508`).split('\n').filter((s) => /^a11y-508: manual /.test(s))).toHaveLength(2);
     // Pushed, with the build marker the wait looked for.
     expect(spawnSync('git', ['rev-parse', 'a11y-508'], { cwd: app.originDir, encoding: 'utf8' }).stdout.trim()).toBe(app.g('rev-parse', 'a11y-508'));
@@ -264,14 +271,14 @@ test('manual AC1/6 / guards e f g h k: the developer edits the plan with the pic
   try {
     await open(page, dash);
     await choosePdf(page, PDF);
-    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    await expect.poll(() => existsSync(join(dash.dirs().work, 'manual')) && readdirSync(join(dash.dirs().work, 'manual')).length > 0 && existsSync(join(runDir(dash), 'plan-v1.json')), { timeout: 180_000 }).toBe(true);
     const dir = runDir(dash);
-    await expect(item(page, 'F1').getByTestId('component-chosen')).toHaveText(/^HeaderComponent/);
 
     // Guard g: no commit without approval; the run sits in review (5 s, and across a dashboard restart).
     await page.waitForTimeout(5000);
     await expect(now(page)).toHaveText(REVIEW);
     expect(commitsSinceBase()).toBe('0');
+    await expect(item(page, 'F1').getByTestId('component-chosen')).toHaveText(/^HeaderComponent/);
     const before = (await api(dash, '/api/runs/current')).json;
     const home = dash.home;
     // The dashboard ends (as Ctrl+C ends it) and comes back: the PDF run is taken up again from its
@@ -323,11 +330,12 @@ test('manual AC1/6 / guards e f g h k: the developer edits the plan with the pic
     expect(commitsSinceBase()).toBe('0');
 
     await page.getByTestId('approve-plan').click();
-    await expect(now(page)).toHaveText('Done: 1 finding from the PDF is fixed and confirmed in the deployed site; 1 was already fixed.', { timeout: 240_000 });
     // Guard e: the commit touches the chosen component's file, not the assistant's first choice.
+    await expect.poll(() => fixCommits(app, 'Search button has no accessible name').length, { timeout: 120_000 }).toBeGreaterThan(0);
     const f1 = fixCommits(app, 'Search button has no accessible name');
-    expect(f1).toHaveLength(1);
-    expect(filesOf(app, f1[0])).toEqual(['src/app/search/search-bar.component.ts']);
+    expect(filesOf(app, f1[f1.length - 1])).toEqual(['src/app/search/search-bar.component.ts']);
+    await expect(now(page)).toHaveText('Done: 1 finding from the PDF is fixed and confirmed in the deployed site; 1 was already fixed.', { timeout: 240_000 });
+    expect(fixCommits(app, 'Search button has no accessible name')).toHaveLength(1);
     expect(fixCommits(app, 'Menu button')).toEqual([]);
     // Guard k: the developer's edits are in the log, before → after; the removal and the approval too.
     const md = readFileSync(join(dir, 'decisions.md'), 'utf8');
@@ -353,16 +361,18 @@ test('manual AC8 / guards i j: a fix that does not hold in the deployed site get
     await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
     const dir = runDir(dash);
     await page.getByTestId('approve-plan').click();
+    // Guard i: the first verification judges the deployed page, not the commit: not fixed.
+    const verifies = () => decisions(dir).filter((d) => d.stage === 'verify');
+    await expect.poll(() => verifies().length, { timeout: 200_000 }).toBeGreaterThanOrEqual(2);
+    expect(verifies().slice(0, 2).map((d) => [d.finding, d.decision, d.evidence])).toEqual([['F1', 'not fixed in the deployed site', 'evidence/F1/after-1'], ['F3', 'not fixed in the deployed site', 'evidence/F3/after-1']]);
     await expect(now(page)).toHaveText('2 fixes did not hold in the deployed site after two tries. Review the revised plan.', { timeout: 300_000 });
     await expect(page.getByTestId('review-step')).toHaveText('2 fixes did not hold in the deployed site after two tries. Review the revised plan.');
-    // Guard i: the first verification judged the deployed page, not the commit: not fixed, and a second round ran.
-    const verdicts = decisions(dir).filter((d) => d.stage === 'verify');
-    expect(verdicts.map((d) => [d.finding, d.decision, d.evidence])).toEqual([
+    // Guard j: exactly one automatic retry: two fix commits for each before the revised plan, and no third without a new approval.
+    expect([fixCommits(app, 'Search button').length, fixCommits(app, 'Menu button').length]).toEqual([2, 2]);
+    expect(verifies().map((d) => [d.finding, d.decision, d.evidence])).toEqual([
       ['F1', 'not fixed in the deployed site', 'evidence/F1/after-1'], ['F3', 'not fixed in the deployed site', 'evidence/F3/after-1'],
       ['F1', 'not fixed in the deployed site', 'evidence/F1/after-2'], ['F3', 'not fixed in the deployed site', 'evidence/F3/after-2'],
     ]);
-    // Guard j: exactly two fix commits for each before the revised plan, and no third without a new approval.
-    expect([fixCommits(app, 'Search button').length, fixCommits(app, 'Menu button').length]).toEqual([2, 2]);
     await page.waitForTimeout(5000);
     expect([fixCommits(app, 'Search button').length, fixCommits(app, 'Menu button').length]).toEqual([2, 2]);
     expect(existsSync(join(dir, 'evidence', 'F1', 'after-3'))).toBe(false);
