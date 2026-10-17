@@ -9,7 +9,7 @@
 // src/vendor/ only ever runs inside that page. Reading order, the recognisers and the writers are
 // pure functions below, so the node tests cover them without a browser.
 
-import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -403,6 +403,9 @@ const TYPES = { '.mjs': 'text/javascript', '.js': 'text/javascript', '.bcmap': '
 
 // One-shot server on 127.0.0.1 (a random port): the page, pdf.js and the PDF; nothing else.
 function serve(pdfBytes) {
+  // Required, not imported: an ESM import of node:http loads undici (its WebSocket export), which
+  // prints a warning under FORCE_COLOR plus NO_COLOR into every command's output.
+  const { createServer } = createRequire(import.meta.url)('node:http');
   const server = createServer((req, res) => {
     const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     const send = (code, type, body) => {
