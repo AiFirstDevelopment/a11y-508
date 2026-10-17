@@ -1125,6 +1125,9 @@ test('pictures-and-routes AC1/2/4 / guards a b c e j: the describe goes in batch
     await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
     const dir = runDir(dash);
     const id = dir.split(/[\\/]/).pop()!;
+    // Guards a b / AC 1: the stream showed each picture opened (F3 and F5 on the second call): every finding has seen its picture.
+    const findings = readJson(join(dir, 'findings.json')).findings;
+    expect(findings.map((f: any) => [f.id, f.seenPicture])).toEqual(DECK_FINDINGS.map((f) => [f, true]));
     const prompts = readPrompts(dash, id);
     // Guard c: 11 candidates, at most 4 a call: three calls, then the fourth for the two answered unseen.
     expect(prompts.map(headings)).toEqual([['F1', 'F2', 'F3', 'F4'], ['F5', 'F6', 'F7', 'F8'], ['F9', 'F10', 'F11'], ['F3', 'F5']]);
@@ -1136,9 +1139,6 @@ test('pictures-and-routes AC1/2/4 / guards a b c e j: the describe goes in batch
     expect(prompts[3]).not.toContain('You did not answer for');
     expect(machine(prompts[3]).unopened).toEqual(['F3', 'F5']);
     expect(decisions(dir).filter((d) => d.decision === 'asked again').map((d) => d.reason)).toEqual(['it answered for F3 and F5 without opening the pictures of pages 4 and 6']);
-    // Guard a / AC 1: the stream showed each picture opened (F3 and F5 on the second call): every finding has seen its picture.
-    const findings = readJson(join(dir, 'findings.json')).findings;
-    expect(findings.map((f: any) => [f.id, f.seenPicture])).toEqual(DECK_FINDINGS.map((f) => [f, true]));
     expect(decisions(dir).filter((d) => /without opening the picture of page/.test(d.decision))).toEqual([]);
     expect(decisions(dir).find((d) => d.finding === null && /read from the PDF/.test(d.decision)).decision).toBe(COUNTS);
     await expect(page.getByTestId('seen-unseen')).toHaveCount(0);
@@ -1220,11 +1220,11 @@ test('pictures-and-routes AC5/6/7 / guards f g i: a route not on the list is the
     const id = dir.split(/[\\/]/).pop()!;
     const base = app.site.base;
     // Guard f / AC 5: F1's made-up route became the start page, said so; it was looked for there, never on the Not Found view.
-    expect(decisions(dir).filter((d) => d.finding === 'F1' && /^took the start page/.test(d.decision)).map((d) => [d.stage, d.by, d.decision, d.reason])).toEqual([['read', 'tool', 'took the start page instead of /layout/form-panel', 'it is not a route of the application']]);
     const locate = tasksFile(dash, `prompt-manual-${id}-locate-1.md`);
     expect(locate).toContain(`## F1: Search button has no accessible name (PDF page 1)\n\nWhat you said the page shows: A fixture page showing The magnifier button in the search bar is announced only as button.\nElement: the magnifier button in the search bar\nPicture of the PDF page: `);
     expect(locate).toMatch(new RegExp(`^Looked for on: ${base.replace(/[.]/g, '\\.')}\\nSelectors that matched nothing there: #search-btn$`, 'm'));
     expect(locate).toContain(`These are the only routes to choose from. ${ROUTE_RULE}.`);
+    expect(decisions(dir).filter((d) => d.finding === 'F1' && /^took the start page/.test(d.decision)).map((d) => [d.stage, d.by, d.decision, d.reason])).toEqual([['read', 'tool', 'took the start page instead of /layout/form-panel', 'it is not a route of the application']]);
     // The locate's route is on the list: F1 is found on /search.
     expect(readJson(join(dir, 'findings.json')).findings.find((f: any) => f.id === 'F1')).toMatchObject({ located: true, url: `${base}search` });
     // Guard g / AC 6: /gone answered HTTP 404 and /reports is the app's own Not Found view: neither loaded; both kept their screenshot.
