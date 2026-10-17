@@ -9,9 +9,9 @@ endobj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
 endobj
 4 0 obj
-<< /Length 132 >>
+<< /Length 130 >>
 stream
-BT /F1 11 Tf 50 780 Td 14 TL
+BT /F1 6 Tf 40 780 Td 9 TL
 (Manual accessibility test report - Example app) Tj T*
 (No accessibility problems were found.) Tj T*
 ET
@@ -27,9 +27,9 @@ xref
 0000000058 00000 n 
 0000000115 00000 n 
 0000000185 00000 n 
-0000000368 00000 n 
+0000000366 00000 n 
 trailer
 << /Size 6 /Root 1 0 R >>
 startxref
-494
+492
 %%EOF
