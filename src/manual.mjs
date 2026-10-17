@@ -645,6 +645,8 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       if (d.code !== 0) throw Object.assign(new Error(`deploy command failed (exit ${d.code}): ${d.out.slice(-800)}`), { code: 2 });
       return 'live';
     }
+    // From the dashboard nobody presses Enter: it goes on at once, as the loop does there.
+    if (cfg.deployed === 'enter' && events) return 'live';
     if (cfg.deployed === 'enter') {
       await waitForEnter(`\n${plural(committed, 'fix', 'fixes')} committed. Deploy them, then press Enter to verify them in the deployed site... `, null);
       return 'live';
