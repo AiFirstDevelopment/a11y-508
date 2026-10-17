@@ -9,7 +9,7 @@ const FILE_EXT = /\.(ts|tsx|js|jsx|vue|svelte|html)$/i;
 const SKIP = new Set(['node_modules', 'dist', 'build', 'coverage', 'out', '.angular', '.next']);
 const MAX_FILES = 8000;
 
-function isAngular(cwd) {
+export function isAngular(cwd) {
   try {
     const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8'));
     return !!({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) })['@angular/core'];
@@ -18,7 +18,7 @@ function isAngular(cwd) {
   }
 }
 
-function walk(cwd, dirs, onFile) {
+export function walk(cwd, dirs, onFile) {
   let seen = 0;
   const go = (dir, depth) => {
     if (seen > MAX_FILES || depth > 14) return;

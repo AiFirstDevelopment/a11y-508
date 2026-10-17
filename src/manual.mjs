@@ -27,7 +27,8 @@ import {
 import { callAgent, findIndexHtml, frameworkLine, git, gitChanged, normalizeConfig, prepareRepo, sessionArgs, sh, signInOnly, splitCheck, stampBuildMarker, testRoundFixes, waitForEnter } from './loop.mjs';
 import { migrateRepo, migrationLines, reportDir, shortenHome, tasksDir, workDir } from './home.mjs';
 import { evidenceBrowser } from './evidence.mjs';
-import { listComponents, findComponent } from './components.mjs';
+import { isAngular, listComponents, findComponent } from './components.mjs';
+import { routeUrls, scanRoutes } from './routes.mjs';
 import { bundleSignature, sameBuild } from './deploy-check.mjs';
 import { sleep } from './page.mjs';
 import { commitWebUrl, remoteWeb } from './git-web.mjs';
@@ -208,19 +209,49 @@ const writeJson = (f, v) => writeFileSync(f, JSON.stringify(v, null, 2) + '\n');
 const str = (v, max = 2000) => (typeof v === 'string' ? v.trim().slice(0, max) : v == null ? '' : String(v).trim().slice(0, max));
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-// The routes the tool knows for the app: every page its crawls reached (the loop's rounds and the
-// latest report), as full URLs.
-export function knownRoutes(cwd) {
-  const urls = new Set();
-  const add = (file) => {
+// The routes the tool knows for the app, as full URLs with where each came from (docs/plans/
+// pictures-and-routes.md AC 4), in order: every page its crawls reached (the loop's rounds and the
+// latest report); for an Angular application, the routes its router configuration names under the
+// source folders, resolved under the start URL; then the start URL. The same route twice (a trailing
+// slash apart) is one; at most 200.
+export const MAX_ROUTES = 200;
+const routeKey = (url) => {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname.replace(/\/+$/, '')}${u.search}`;
+  } catch {
+    return null;
+  }
+};
+export function routeSources(cwd, { startUrl = null, sourceDirs = ['src'] } = {}) {
+  const out = [];
+  const seen = new Set();
+  const add = (url, from) => {
+    const k = routeKey(url);
+    if (!k || seen.has(k) || out.length >= MAX_ROUTES) return;
+    seen.add(k);
+    out.push({ url, from });
+  };
+  const crawl = (file) => {
     const r = readJson(file);
-    for (const p of (r && r.pages) || []) if (p && (p.finalUrl || p.url)) urls.add(p.finalUrl || p.url);
+    for (const p of (r && r.pages) || []) if (p && (p.finalUrl || p.url)) add(p.finalUrl || p.url, 'crawl');
   };
   try {
-    for (const d of readdirSync(workDir(cwd))) if (/^round-\d+$/.test(d)) add(join(workDir(cwd), d, 'report.json'));
+    for (const d of readdirSync(workDir(cwd))) if (/^round-\d+$/.test(d)) crawl(join(workDir(cwd), d, 'report.json'));
   } catch {}
-  add(join(reportDir(cwd), 'report.json'));
-  return [...urls];
+  crawl(join(reportDir(cwd), 'report.json'));
+  if (startUrl && isAngular(cwd)) for (const url of routeUrls(startUrl, scanRoutes(cwd, sourceDirs))) add(url, 'router');
+  if (startUrl) add(startUrl, 'start');
+  return out;
+}
+export function knownRoutes(cwd, opts = {}) {
+  return routeSources(cwd, opts).map((r) => r.url);
+}
+// "Routes the tool knew: 5 (from the application's router)", for the decisions pane and decisions.md.
+export function routesLine(routes) {
+  const from = new Set(routes.map((r) => r.from));
+  const words = from.has('crawl') && from.has('router') ? "from the crawl and the application's router" : from.has('crawl') ? 'from the crawl' : from.has('router') ? "from the application's router" : 'the start page only';
+  return `Routes the tool knew: ${routes.length} (${words})`;
 }
 
 // Where a run had got to, from its own files: read, check, review, fix, deploy or verify (the
