@@ -108,7 +108,8 @@ if (task && /^manual-/.test(task.kind)) {
 // FAKE_MANUAL_PLAN_WRONG: the plan puts F1 (the search button) in HeaderComponent.
 // FAKE_MANUAL_MISUNDERSTAND_ONCE=<file>: the first confirmation answers understood: false.
 // FAKE_MANUAL_READ_FAIL=<n>: the first n reads answer with no list of findings.
-// The read parses the PDF's FINDING lines; the check and the verify judge from the evidence the tool
+// FAKE_MANUAL_WRONG_PAGE: the read gives a wrong page for F2 and a page past the end for F3.
+// The read takes the FINDING lines from the tool's parse of the PDF (report.md); the check and the verify judge from the evidence the tool
 // captured (a button with no aria-label, an image with no alt, is the problem); a fix edits the
 // approved component's file.
 function manual(task) {
@@ -133,15 +134,40 @@ function manual(task) {
       // Asked again: a moment before the answer, so the page's sentence for the wait can be seen.
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
     }
-    const text = readFileSync(task.pdf, 'latin1');
-    const pages = [...text.matchAll(/stream\n([\s\S]*?)\nendstream/g)].map((m) => [...m[1].matchAll(/\(((?:\\.|[^\\)])*)\) Tj/g)].map((x) => x[1].replace(/\\(.)/g, '$1')));
-    const findings = [];
-    pages.forEach((lines, i) => {
-      for (const l of lines) {
-        const m = /^FINDING (\S+) \| (.*?) \| (.*?) \| (.*?) \| (.*?) \| (.*)$/.exec(l);
-        if (m) findings.push({ id: m[1], title: m[2], page: i + 1, route: m[3], selectors: m[4].split(';').map((x) => x.trim()), element: m[5], quote: m[6], expected: `${m[5]} has a text alternative`, decisions: m[3] === '/' ? [{ decision: `took the home page for ${m[1]}`, reason: 'the tester names no page; the header and footer are on every page' }] : [] });
-      }
+    // It reads the tool's parse, never the PDF: the prompt must name report.md and a picture of a page.
+    const picture = new RegExp(`${(task.parsed || '\0').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/pages/page-\\d+(-image-\\d+)?\\.png`);
+    if (!task.report || !/report\.md$/.test(task.report) || !existsSync(task.report) || !prompt.includes(task.report) || !picture.test(prompt)) return out({ error: 'the prompt names no parsed report (report.md) and no picture of a page' });
+    const report = readFileSync(task.report, 'utf8');
+    // The pages: "## Page N of M", then its Status:, Criterion:, Picture lines and "> " text lines.
+    const pages = report.split(/^## Page /m).slice(1).map((b) => {
+      const n = Number(/^(\d+) of \d+/.exec(b)[1]);
+      return { n, status: (/^Status: (fixed|open)\b/m.exec(b) || [])[1] || null, criterion: (/^Criterion: (\S+)/m.exec(b) || [])[1] || null, picture: /^Picture of the page: /m.test(b), lines: [...b.matchAll(/^> (.*)$/gm)].map((m) => m[1]) };
     });
+    const findings = [];
+    for (const p of pages) {
+      for (const l of p.lines) {
+        const m = /^FINDING (\S+) \| (.*?) \| (.*?) \| (.*?) \| (.*?) \| (.*)$/.exec(l);
+        if (!m) continue;
+        const had = findings.find((f) => f.id === m[1]);
+        if (had) {
+          if (!had.pages.includes(p.n)) had.pages.push(p.n);
+          continue;
+        }
+        findings.push({ id: m[1], title: m[2], pages: [p.n], page: p.n, status: p.status, criterion: p.criterion, route: m[3], selectors: m[4].split(';').map((x) => x.trim()), element: m[5], quote: m[6], expected: `${m[5]} has a text alternative`, decisions: m[3] === '/' ? [{ decision: `took the home page for ${m[1]}`, reason: 'the tester names no page; the header and footer are on every page' }] : [] });
+      }
+    }
+    // A PDF with no text (a scan): one finding from the pictures of its pages.
+    if (!pages.some((p) => p.lines.length)) {
+      const shown = pages.filter((p) => p.picture).map((p) => p.n);
+      if (shown.length) findings.push({ id: 'F1', title: 'Search button has no accessible name', pages: shown, page: shown[0], status: null, criterion: null, route: '/search', selectors: ['#search-btn'], element: 'the magnifier button in the pictures', quote: '', expected: 'the button has a text alternative', decisions: [{ decision: 'read the problem from the pictures of the pages', reason: 'the PDF has no text' }] });
+    }
+    // FAKE_MANUAL_WRONG_PAGE: the second finding is given the page before its own (its quote is not on
+    // it), the third a page the PDF does not have.
+    if (process.env.FAKE_MANUAL_WRONG_PAGE) {
+      if (findings[1]) findings[1].pages = [findings[1].pages[0] - 1];
+      if (findings[2]) findings[2].pages = [99];
+      for (const f of findings) f.page = f.pages[0];
+    }
     return out({ findings });
   }
   if (task.kind === 'manual-check' || task.kind === 'manual-verify') {

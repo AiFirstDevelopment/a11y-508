@@ -7,7 +7,11 @@
 // plan for what still did not hold. Every decision is logged in decisions.ndjson and, at the end,
 // decisions.md. The plan approval is the one thing a person decides.
 //
-// Files, under <work>/manual/<id>/: source.pdf, findings.json, check.json, already-fixed.md,
+// The PDF is parsed first (docs/plans/pdf-parse.md): parsed/report.md, the one file the read prompt
+// points at, with each page's text, recognised facts and pictures; the tool checks the assistant's
+// pages, quotes, statuses and criteria against it and logs every correction.
+//
+// Files, under <work>/manual/<id>/: source.pdf, parsed/ (report.md, manifest.json, pages/*.png), findings.json, check.json, already-fixed.md,
 // plan.json (the current version) and plan-v1.json, plan-v2.json, ..., plan-edit.json (the
 // developer's edits, written by the dashboard), state.json, decisions.ndjson, decisions.md, and
 // evidence/<finding>/{before,after-1,after-2,...}/.
@@ -25,12 +29,91 @@ import { listComponents, findComponent } from './components.mjs';
 import { bundleSignature, sameBuild } from './deploy-check.mjs';
 import { sleep } from './page.mjs';
 import { commitWebUrl, remoteWeb } from './git-web.mjs';
+import { parsePdf } from './pdf-parse.mjs';
 
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 export const MANUAL_DIR = 'manual';
 export const MAX_PDF_BYTES = 50 * 1024 * 1024;
 export const NOT_A_PDF = 'That file is not a PDF. Choose the PDF report the tester sent.';
 export const NO_FINDINGS = 'The PDF names no accessibility findings the assistant could read.';
+export const PARSED_DIR = 'parsed';
+
+// "28 Sep 2026" from 2026-09-28.
+const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const dayOf = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  return m ? `${Number(m[3])} ${MONTH[Number(m[2]) - 1]} ${m[1]}` : null;
+};
+// What the tester's verdict and the deployed site together say (AC 7 of docs/plans/pdf-parse.md).
+export const testerVerified = (f) => `The tester verified this fixed${dayOf(f.statusDate) ? ` on ${dayOf(f.statusDate)}` : ''}; the deployed site agrees.`;
+export const cameBackLine = (f) => `Came back: the tester verified this fixed${dayOf(f.statusDate) ? ` on ${dayOf(f.statusDate)}` : ''}, but the deployed site has it again`;
+// The words "N was/were already fixed (V of them the tester had verified)", for the Done lines.
+export function alreadyWords(g, v) {
+  const was = `${g} ${g === 1 ? 'was' : 'were'} already fixed`;
+  if (!v) return was;
+  return `${was} (${v === g ? (g === 1 ? 'the tester had verified it' : 'the tester had verified all of them') : `${v} of them the tester had verified`})`;
+}
+const squash = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+const pagesWords = (ns) => (ns.length === 1 ? `page ${ns[0]}` : `pages ${ns.slice(0, -1).join(', ')} and ${ns[ns.length - 1]}`);
+
+// The assistant's findings checked against the parse (AC 6): pages that exist, a quote that is on one of
+// them (else moved to the page it is on, or kept with quoteVerified false), and the status and
+// criterion the report recognised for those pages. decide(stage, finding, by, decision, reason).
+export function checkFindings(findings, manifest, decide) {
+  const pages = (manifest && manifest.pages) || [];
+  const M = (manifest && manifest.pageCount) || pages.length;
+  const byN = new Map(pages.map((p) => [p.n, p]));
+  const textOf = (n) => squash((byN.get(n) || { lines: [] }).lines.join(' '));
+  const hasText = pages.some((p) => p.lines && p.lines.length);
+  const out = [];
+  for (const f of findings) {
+    const given = f.pages;
+    const ok = given.filter((n) => n >= 1 && n <= M);
+    const bad = given.filter((n) => !(n >= 1 && n <= M));
+    if (!ok.length) {
+      decide('read', f.id, 'tool', 'dropped', `the assistant gave ${pagesWords(bad)} for it; the PDF has ${M} page${M === 1 ? '' : 's'}`);
+      continue;
+    }
+    if (bad.length) decide('read', f.id, 'tool', `left out ${pagesWords(bad)}`, `the PDF has ${M} page${M === 1 ? '' : 's'}`);
+    let list = ok;
+    let pagesOk = !bad.length;
+    let quote = null;
+    if (f.quote && hasText) {
+      const q = squash(f.quote);
+      if (list.some((n) => textOf(n).includes(q))) quote = true;
+      else {
+        const other = pages.find((p) => !list.includes(p.n) && textOf(p.n).includes(q));
+        if (other) {
+          decide('read', f.id, 'tool', `moved to page ${other.n}`, `the quote is on page ${other.n}, not ${pagesWords(list)}`);
+          list = [other.n];
+          pagesOk = false;
+          quote = true;
+        } else {
+          quote = false;
+          decide('read', f.id, 'tool', 'kept it, although its quote is on no page of the PDF', `"${f.quote.slice(0, 120)}" is not in the text of ${pagesWords(list)} or any other page`);
+        }
+      }
+    }
+    // The report's facts for its pages: the first status, the criteria.
+    const withStatus = list.map((n) => byN.get(n)).find((p) => p && p.status);
+    const known = withStatus ? withStatus.status : null;
+    let status = f.status;
+    let statusDate = null;
+    if (known) {
+      if (status && status !== known.value) decide('read', f.id, 'tool', `status ${known.value}, not ${status}`, `the report reads "${known.words}" on page ${withStatus.n}`);
+      status = known.value;
+      statusDate = known.date || null;
+    }
+    const ids = [...new Set(list.flatMap((n) => ((byN.get(n) || {}).criteria || []).map((c) => c.id)))];
+    let criterion = f.criterion;
+    if (ids.length && !ids.includes(criterion)) {
+      if (criterion) decide('read', f.id, 'tool', `criterion ${ids[0]}, not ${criterion}`, `the report names ${ids.join(', ')} on ${pagesWords(list)}`);
+      criterion = ids[0];
+    }
+    out.push({ ...f, pages: list, page: list[0], status, statusDate, criterion: criterion || null, quoteVerified: quote, verified: { pages: pagesOk, quote } });
+  }
+  return out;
+}
 
 export const isPdf = (buf) => !!buf && buf.length >= 5 && buf.subarray(0, 5).toString('latin1') === '%PDF-';
 export const manualRoot = (cwd) => join(workDir(cwd), MANUAL_DIR);
@@ -107,20 +190,23 @@ export function decisionGroups(dir, web = null) {
     return readdirSync(base).filter((d) => d === 'before' || /^after-\d+$/.test(d)).sort((a, b) => (a === 'before' ? -1 : b === 'before' ? 1 : Number(a.slice(6)) - Number(b.slice(6))))
       .filter((d) => existsSync(join(base, d, 'screenshot.png'))).map((d) => ({ label: d === 'before' ? 'Before' : `After, try ${d.slice(6)}`, path: `evidence/${id}/${d}/screenshot.png` }));
   };
+  const manifest = readJson(join(dir, PARSED_DIR, 'manifest.json'), null);
+  const pictureOf = (n) => ((manifest && manifest.pages) || []).find((p) => p.n === n)?.picture || null;
   const groups = findings.map((f) => ({
-    finding: f.id, title: f.title, page: f.page, quote: f.quote, url: f.url || null, status: (state.items && state.items[f.id] && state.items[f.id].status) || null,
+    picture: pictureOf(f.page),
+    finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], tester: f.status || null, quote: f.quote, url: f.url || null, status: (state.items && state.items[f.id] && state.items[f.id].status) || null,
     decisions: all.filter((d) => d.finding === f.id),
     commits: ((state.items && state.items[f.id] && state.items[f.id].commits) || []).map((c) => ({ ...c, url: commitWebUrl(web, c.sha) })),
     screenshots: shots(f.id),
   }));
   const general = all.filter((d) => !d.finding || !findings.some((f) => f.id === d.finding));
-  return { groups, general, pdf: 'source.pdf' };
+  return { groups, general, pdf: 'source.pdf', parsed: existsSync(join(dir, PARSED_DIR, 'report.md')) ? `${PARSED_DIR}/report.md` : null };
 }
 
 export function decisionsMarkdown(dir, web = null) {
   const { groups, general } = decisionGroups(dir, web);
   const line = (d) => `- ${d.at} · ${d.stage} · ${d.by}: ${d.decision}${d.reason ? ` — ${d.reason}` : ''}${d.evidence ? ` (evidence: ${d.evidence})` : ''}`;
-  const out = ['# Decisions', '', `From the tester's PDF: [source.pdf](source.pdf)`, ''];
+  const out = ['# Decisions', '', `From the tester's PDF: [source.pdf](source.pdf)${existsSync(join(dir, PARSED_DIR, 'report.md')) ? ` (parsed: [${PARSED_DIR}/report.md](${PARSED_DIR}/report.md))` : ''}`, ''];
   if (general.length) out.push('## The run', '', ...general.map(line), '');
   for (const g of groups) {
     out.push(`## ${g.finding}: ${g.title} — [PDF page ${g.page}](source.pdf#page=${g.page})`, '');
@@ -344,14 +430,44 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   log.info(`a11y-508 manual: ${shortenHome(join(dir, 'source.pdf'))}  ${cfg.url}  agent: ${cfg.agent}`);
   if (state.done) return finish(0, state.doneLine || 'Done.');
 
-  // ---- 1. Read the PDF.
+  // ---- 1. Parse the PDF (docs/plans/pdf-parse.md), then read the parse with the assistant.
   let findings = readJson(join(dir, 'findings.json'), null)?.findings || null;
+  const parsedDir = join(dir, PARSED_DIR);
+  let manifest = readJson(join(parsedDir, 'manifest.json'), null);
+  if (!findings && !manifest) {
+    stage('parse', {});
+    log.info('reading the PDF');
+    try {
+      manifest = await parsePdf({
+        file: join(dir, 'source.pdf'), outDir: parsedDir, chromePath: browserArgs().includes('--chrome') ? browserArgs()[browserArgs().indexOf('--chrome') + 1] : null, log,
+        onOpened: ({ pages, total, withPictures }) => stage('parse', { pages, total, withPictures }),
+      });
+    } catch (e) {
+      const unreadable = !!e.unreadable;
+      const words = unreadable ? `${e.message} Choose another PDF.` : `The PDF could not be read: ${e.message}`;
+      decide('parse', null, 'tool', unreadable ? 'could not open the PDF' : 'could not parse the PDF', unreadable ? e.reason : e.message);
+      stage('parse-failed', { reason: words, unreadable });
+      log.error(words);
+      return finish(unreadable ? 1 : 2);
+    }
+    if (process.env.A11Y_508_PDF_OPENED_DELAY) await sleep(Number(process.env.A11Y_508_PDF_OPENED_DELAY) || 0);
+    if (stopped()) return 1;
+  }
+  const parsedFacts = (m) => ({ pages: m.pageCount, parsed: m.parsed, withText: m.pages.filter((p) => p.lines.length).length, withPictures: m.pages.filter((p) => p.images.length).length, dividers: m.dividers, notes: m.notes || [] });
+  if (manifest) stage('parsed', parsedFacts(manifest));
+  const noText = !!manifest && manifest.pages.length > 0 && !manifest.pages.some((p) => p.lines.length);
   if (!findings) {
-    stage('read');
-    log.info(`reading the PDF with ${agentName}`);
-    const pdfCopy = join(taskFolder, `manual-${id}.pdf`);
-    copyFileSync(join(dir, 'source.pdf'), pdfCopy);
-    const readOnce = () => ask('read', (resultFile) => manualReadPrompt({ pdfFile: pdfCopy, startUrl: cfg.url, routes: knownRoutes(cwd), resultFile }));
+    stage('read', { noText, pages: manifest.pageCount });
+    log.info(noText ? `The PDF has no text; ${agentName} is working from the pictures of its ${plural(manifest.pageCount, 'page')}.` : `reading the parsed PDF with ${agentName}`);
+    // What the assistant reads, in the tasks folder (the one folder of the tool's it can read):
+    // the parse (report.md and its pictures) and, last, the PDF.
+    const copyDir = join(taskFolder, `manual-${id}`);
+    mkdirSync(join(copyDir, PARSED_DIR, 'pages'), { recursive: true });
+    copyFileSync(join(dir, 'source.pdf'), join(copyDir, 'source.pdf'));
+    for (const f of ['report.md', 'manifest.json']) copyFileSync(join(parsedDir, f), join(copyDir, PARSED_DIR, f));
+    for (const f of readdirSync(join(parsedDir, 'pages'))) if (/\.png$/.test(f)) copyFileSync(join(parsedDir, 'pages', f), join(copyDir, PARSED_DIR, 'pages', f));
+    const example = (manifest.pages.find((p) => p.images.length) || manifest.pages.find((p) => p.picture) || {}).picture || null;
+    const readOnce = () => ask('read', (resultFile) => manualReadPrompt({ reportFile: join(copyDir, PARSED_DIR, 'report.md'), parsedDir: join(copyDir, PARSED_DIR), example, pdfFile: join(copyDir, 'source.pdf'), pageCount: manifest.pageCount, noText, startUrl: cfg.url, routes: knownRoutes(cwd), resultFile }));
     const listOf = (result) => (Array.isArray(result) ? result : result && Array.isArray(result.findings) ? result.findings : null);
     const whyNot = (result, why) => (result && result.error) || (why ? why.replace(AgentName, 'it') : '') || 'its answer had no list of findings';
     let { result, why } = await readOnce();
@@ -376,21 +492,26 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       return finish(1);
     }
     const ids = new Set();
-    findings = raw.filter((f) => f && typeof f === 'object').map((f, i) => {
+    const read = raw.filter((f) => f && typeof f === 'object').map((f, i) => {
       let fid = str(f.id, 20).replace(/[^\w-]/g, '') || `F${i + 1}`;
       while (ids.has(fid)) fid = `${fid}-${i + 1}`;
       ids.add(fid);
-      const page = Number.isInteger(Number(f.page)) && Number(f.page) > 0 ? Number(f.page) : null;
+      const int = (v) => (Number.isInteger(Number(v)) && v !== null && v !== '' ? Number(v) : null);
+      const given = [...new Set((Array.isArray(f.pages) ? f.pages : []).map(int).filter((n) => n !== null))].sort((a, b) => a - b);
+      if (!given.length && int(f.page) !== null) given.push(int(f.page));
+      const status = /^(fixed|open)$/i.test(String(f.status || '')) ? String(f.status).toLowerCase() : null;
       const out = {
-        id: fid, title: str(f.title, 120) || `Finding ${i + 1}`, page: page || 1, quote: str(f.quote, 300), route: str(f.route || f.url, 500), url: null,
+        id: fid, title: str(f.title, 120) || `Finding ${i + 1}`, page: given[0] || 1, pages: given.length ? given : [1], quote: str(f.quote, 300), route: str(f.route || f.url, 500), url: null,
         element: str(f.element, 300), selectors: (Array.isArray(f.selectors) ? f.selectors : []).map((x) => str(x, 300)).filter(Boolean).slice(0, 5), wcag: str(f.wcag, 40) || null, expected: str(f.expected, 400),
+        status, criterion: str(f.criterion, 12) || null,
       };
       out.url = urlOf(out);
       for (const d of Array.isArray(f.decisions) ? f.decisions : []) if (d && d.decision) decide('read', fid, 'agent', d.decision, d.reason);
-      if (!page) decide('read', fid, 'tool', 'tied the finding to PDF page 1', 'the assistant gave no page number for it');
-      decide('read', fid, 'agent', `read "${out.title}" from PDF page ${out.page}`, out.quote ? `the tester wrote: "${out.quote}"` : '');
+      if (!given.length) decide('read', fid, 'tool', 'tied the finding to PDF page 1', 'the assistant gave no page number for it');
       return out;
     });
+    findings = checkFindings(read, manifest, decide);
+    for (const f of findings) decide('read', f.id, 'agent', `read "${f.title}" from PDF ${pagesWords(f.pages)}`, f.quote ? `the tester wrote: "${f.quote}"` : '');
     writeJson(join(dir, 'findings.json'), { at: new Date().toISOString(), findings });
   }
   stage('findings', { count: findings.length, findings });
@@ -432,22 +553,42 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   const gone = check.results.filter((r) => r.verdict === 'gone');
   const present = check.results.filter((r) => r.verdict !== 'gone').map((r) => byId.get(r.finding)).filter(Boolean);
   for (const r of gone) itemState(r.finding).status = 'already-fixed';
+  // The tester's verdict beside the deployed site's (docs/plans/pdf-parse.md AC 7): verified fixed and
+  // gone is confirmed; verified fixed and present came back, and is planned as a return.
+  const verifiedGone = gone.filter((r) => (byId.get(r.finding) || {}).status === 'fixed');
+  const cameBack = present.filter((f) => f.status === 'fixed');
+  for (const f of cameBack) {
+    f.cameBack = cameBackLine(f);
+    if (!state.cameBackLogged || !state.cameBackLogged.includes(f.id)) {
+      decide('check', f.id, 'tool', f.cameBack, 'the tester marked it fixed in the PDF and the deployed site still has it', `evidence/${f.id}/before`);
+      (state.cameBackLogged ||= []).push(f.id);
+    }
+  }
   save();
 
   // ---- 3. The already-fixed report.
-  const goneRows = gone.map((r) => ({ ...r, title: byId.get(r.finding).title, quote: byId.get(r.finding).quote, page: byId.get(r.finding).page }));
+  const pictureOf = (n) => {
+    const p = manifest && manifest.pages.find((x) => x.n === n);
+    return p && p.picture ? p.picture : null;
+  };
+  const goneRows = gone.map((r) => {
+    const f = byId.get(r.finding);
+    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), tester: f.status === 'fixed' ? testerVerified(f) : null };
+  });
   writeFileSync(join(dir, 'already-fixed.md'), [
     `# Already fixed in the deployed site (${goneRows.length})`, '', `From the tester's PDF: [source.pdf](source.pdf)`, '',
-    ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [PDF page ${r.page}](source.pdf#page=${r.page})`, '', r.quote ? `> ${r.quote}` : '', '', `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
+    ...(verifiedGone.length || cameBack.length ? [`${verifiedGone.length} of them the tester had verified fixed; ${cameBack.length} the tester had verified fixed came back (${cameBack.length === 1 ? 'it is' : 'they are'} in the plan).`, ''] : []),
+    ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [PDF page ${r.page}](source.pdf#page=${r.page})`, '', r.quote ? `> ${r.quote}` : '', '', ...(r.tester ? [`- ${r.tester}`] : []), `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
   ].join('\n'));
   const all = gone.length === findings.length;
   stage('already-fixed', { rows: goneRows, total: findings.length, all });
   if (all) {
-    const line = findings.length === 1 ? 'The one finding in the PDF is already fixed in the deployed site.' : `All ${findings.length} findings in the PDF are already fixed in the deployed site.`;
+    const v = verifiedGone.length;
+    const line = (findings.length === 1 ? 'The one finding in the PDF is already fixed in the deployed site' : `All ${findings.length} findings in the PDF are already fixed in the deployed site`) + (v ? ` (${v === findings.length ? (v === 1 ? 'the tester had verified it' : 'the tester had verified all of them') : `${v} of them the tester had verified`})` : '') + '.';
     state.done = true;
     state.doneLine = line;
     save();
-    stage('done', { all: true, fixed: 0, alreadyFixed: gone.length, message: line });
+    stage('done', { all: true, fixed: 0, alreadyFixed: gone.length, testerVerified: v, cameBack: 0, message: line });
     return finish(0, line);
   }
   if (gone.length) log.info(`${plural(gone.length, 'finding is', 'findings are')} already fixed in the deployed site (already-fixed.md)`);
@@ -470,7 +611,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     if (!a) decide(stg, f.id, 'tool', 'planned it with the tester\'s expectation as the fix', 'the assistant gave no plan for this finding');
     for (const d of Array.isArray(a && a.decisions) ? a.decisions : []) if (d && d.decision) decide(stg, f.id, 'agent', d.decision, d.reason);
     decide(stg, f.id, 'agent', `fix in ${component ? `${component.name} (${component.file || 'no file'})` : 'no named component'}: ${fix}`, files.length ? `files: ${files.join(', ')}` : '');
-    return { finding: f.id, title: f.title, page: f.page, quote: f.quote, url: f.url, fix, component, files, decisions: (Array.isArray(a && a.decisions) ? a.decisions : []).filter((d) => d && d.decision).map((d) => ({ decision: str(d.decision, 400), reason: str(d.reason, 400) })), confirm: null, screenshot: existsSync(join(dir, 'evidence', f.id, 'before', 'screenshot.png')) ? `evidence/${f.id}/before/screenshot.png` : null };
+    return { finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], status: f.status || null, criterion: f.criterion || null, cameBack: f.cameBack || null, picture: pictureOf(f.page), quote: f.quote, url: f.url, fix, component, files, decisions: (Array.isArray(a && a.decisions) ? a.decisions : []).filter((d) => d && d.decision).map((d) => ({ decision: str(d.decision, 400), reason: str(d.reason, 400) })), confirm: null, screenshot: existsSync(join(dir, 'evidence', f.id, 'before', 'screenshot.png')) ? `evidence/${f.id}/before/screenshot.png` : null };
   };
   const savePlan = (plan) => {
     state.version = plan.version;
@@ -822,11 +963,11 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     reader.close();
   }
   const fixed = Object.values(state.items).filter((s) => s.status === 'fixed').length;
-  const line = `Done: ${plural(fixed, 'finding')} from the PDF ${fixed === 1 ? 'is' : 'are'} fixed and confirmed in the deployed site${gone.length ? `; ${gone.length} ${gone.length === 1 ? 'was' : 'were'} already fixed` : ''}.`;
+  const line = `Done: ${plural(fixed, 'finding')} from the PDF ${fixed === 1 ? 'is' : 'are'} fixed and confirmed in the deployed site${gone.length ? `; ${alreadyWords(gone.length, verifiedGone.length)}` : ''}${cameBack.length ? `; ${cameBack.length} had come back` : ''}.`;
   state.done = true;
   state.doneLine = line;
   state.stage = 'done';
   save();
-  stage('done', { all: false, fixed, alreadyFixed: gone.length, message: line });
+  stage('done', { all: false, fixed, alreadyFixed: gone.length, testerVerified: verifiedGone.length, cameBack: cameBack.length, message: line });
   return finish(0, line);
 }

@@ -460,42 +460,64 @@ function evidenceText(ev) {
   const tabs = (ev.tabOrder || []).slice(0, 60).map((s, i) => `${i + 1}. ${s.role} "${s.name}" ${s.selector}`).join('\n');
   return `${head}${ev.screenshot ? `\nScreenshot: ${ev.screenshot}` : ''}\n\nElements matching the finding's selectors:\n\n${els || '(none)'}\n\nTab order (first ${Math.min(60, (ev.tabOrder || []).length)} stops):\n\n${tabs || '(no stop)'}`;
 }
-const findingText = (f) => `${f.id}: ${f.title} (PDF page ${f.page})\nThe tester wrote: "${f.quote}"\nWhere: ${f.url || f.route || '(not said)'}\nElement: ${f.element || '(not said)'}${f.wcag ? `\nWCAG: ${f.wcag}` : ''}${f.expected ? `\nExpected: ${f.expected}` : ''}`;
+const pagesText = (f) => {
+  const ps = Array.isArray(f.pages) && f.pages.length ? f.pages : [f.page];
+  return ps.length === 1 ? `PDF page ${ps[0]}` : `PDF pages ${ps.join(', ')}`;
+};
+const findingText = (f) => `${f.id}: ${f.title} (${pagesText(f)})${f.cameBack ? `\n${f.cameBack}.` : ''}\nThe tester wrote: "${f.quote}"\nWhere: ${f.url || f.route || '(not said)'}\nElement: ${f.element || '(not said)'}${f.criterion ? `\nTrusted Tester criterion: ${f.criterion}` : ''}${f.status ? `\nThe tester's status: ${f.status}` : ''}${f.wcag ? `\nWCAG: ${f.wcag}` : ''}${f.expected ? `\nExpected: ${f.expected}` : ''}`;
 const componentList = (components) => components.slice(0, 600).map((c) => `- ${c.name}${c.selector ? ` <${c.selector}>` : ''}: ${c.file}`).join('\n');
 
-export function manualReadPrompt({ pdfFile, startUrl, routes = [], resultFile }) {
+// reportFile: the tool's parse of the PDF (docs/plans/pdf-parse.md); pdfFile: the PDF itself, named last.
+export function manualReadPrompt({ reportFile, parsedDir, example = null, pdfFile, pageCount = null, noText = false, startUrl, routes = [], resultFile }) {
   return `# Read a tester's accessibility report
 
-The PDF at ${pdfFile} was written by a person who tested the application at ${startUrl} by hand. Read it and list every specific accessibility problem it reports. Do not edit any file other than the result file.
+A person tested the application at ${startUrl} by hand and wrote a report, a PDF${pageCount ? ` of ${pageCount} page${pageCount === 1 ? '' : 's'}` : ''}. The tool has already read that PDF into one plain file: ${reportFile}. Read it first; it is all you need. List every specific accessibility problem it reports. Do not edit any file other than the result file.
 
-Everything you need is in this prompt and that PDF. ${DECIDE}
+How the report is laid out:
+
+- One block per page of the PDF, headed "## Page N of M".
+- "Status:" and "Criterion:" lines are facts the tool read on that page: copy them into your answer, do not guess others.
+- "Picture of the page:" is the page as the tester saw it: look at it whenever the text does not name the element (the callouts, the ANDI output, the colours and the arrows are only in the picture).
+- "Pictures on the page:" are the screenshots on that page, as they were embedded, without the shapes drawn over them.
+- The quoted text ("> " lines) is the page's own text in reading order: every quote you give must be copied from it, verbatim.
+
+The paths in it are relative to ${parsedDir}${example ? `: ${example} is ${parsedDir}/${example}` : ''}.${noText ? `\n\nThe PDF has no text: every page is a picture only. Work from the pictures; give an empty quote.` : ''}
+
+${DECIDE}
+
+One finding per distinct problem. A problem shown on several pages (five slides of unlabelled fields on one form) is one finding with all its pages, unless the pages name different elements: then each element gets its own finding.
 
 For each problem:
 
-- id: F1, F2, ... in the order the PDF has them.
+- id: F1, F2, ... in the order the report has them.
 - title: a short title of your own (under 80 characters).
-- page: the number of the PDF page that describes it (the first page is 1). Always give it.
-- quote: the tester's own words about it, verbatim, at most 300 characters.
+- pages: every page about it, in order (the first page is 1). Always give at least one.
+- page: the first of those pages.
+- status: "fixed" or "open", copied from its page's "Status:" line; null when the page has none.
+- criterion: the Trusted Tester id from its page's "Criterion:" line (for example "13.A"); null when there is none.
+- quote: the tester's own words about it, verbatim from the quoted text of one of its pages, at most 300 characters.
 - route: the page of the application it is on, as a path or a full URL; use one of the known routes below when one matches.
-- element: how the tester describes the element.
+- element: how the tester describes the element (from the picture when the text does not say).
 - selectors: up to 5 CSS selectors that would match that element on the page (best guesses are fine).
 - wcag: the WCAG success criterion, when the tester names one or it is clear.
 - expected: what the tester expects instead, in one sentence.
-- decisions: where the PDF is vague (no route, two possible elements), what you chose and why: [{ "decision": "...", "reason": "..." }].
+- decisions: where the report is vague (no route, two possible elements), what you chose and why: [{ "decision": "...", "reason": "..." }].
 
 Known routes of the application:
 
 ${routes.length ? routes.slice(0, 200).map((r) => `- ${r}`).join('\n') : `- ${startUrl}`}
 
+The original PDF is ${pdfFile}: open it only if the report is not enough.
+
 ## When you are done
 
-Write a JSON file at ${resultFile} with exactly this shape and nothing else. If the PDF names no accessibility problem, write an empty list. If you cannot read the PDF at all, write an empty list and say why in "error".
+Write a JSON file at ${resultFile} with exactly this shape and nothing else. If the report names no accessibility problem, write an empty list. If you cannot read it at all, write an empty list and say why in "error".
 
-${block({ findings: [{ id: 'F1', title: 'Search button has no accessible name', page: 1, quote: 'the words of the tester', route: '/search', element: 'the magnifier button in the search bar', selectors: ['#search-btn'], wcag: '4.1.2', expected: 'The button is announced as "Search".', decisions: [{ decision: 'took the search page', reason: 'the PDF names no page; only /search has a search bar' }] }], error: null })}
+${block({ findings: [{ id: 'F1', title: 'Search button has no accessible name', pages: [2, 3], page: 2, status: 'open', criterion: '5.C', quote: 'the words of the tester', route: '/search', element: 'the magnifier button in the search bar', selectors: ['#search-btn'], wcag: '4.1.2', expected: 'The button is announced as "Search".', decisions: [{ decision: 'took the search page', reason: 'the report names no page; only /search has a search bar' }] }], error: null })}
 
 Machine-readable copy:
 
-${block({ kind: 'manual-read', pdf: pdfFile, startUrl, routes, resultFile })}
+${block({ kind: 'manual-read', report: reportFile, parsed: parsedDir, pdf: pdfFile, startUrl, routes, resultFile })}
 `;
 }
 

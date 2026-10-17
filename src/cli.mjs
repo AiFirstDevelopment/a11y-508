@@ -1,7 +1,7 @@
 // Command-line entry: argument parsing and orchestration.
 
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchChrome, browserField, connectChrome } from './chrome.mjs';
 import { crawl, deathText } from './crawler.mjs';
@@ -9,7 +9,8 @@ import { addDiarySecrets, writeDiary } from './diary.mjs';
 import { interactiveLogin, loadState, saveState, stateSummary } from './login.mjs';
 import { troubleshoot, formatTroubleshoot } from './troubleshoot.mjs';
 import { loadConfig, printStatus, runLoop } from './loop.mjs';
-import { runManual } from './manual.mjs';
+import { isPdf, runManual } from './manual.mjs';
+import { parsePdf, summaryLines } from './pdf-parse.mjs';
 import { gitDirOf, migrateRepo, migrationLines, reportDir } from './home.mjs';
 import { siteChecks } from './site-checks.mjs';
 import { summarize, shouldFail, writeReports, makeLogger, coverage, eventWriter } from './report.mjs';
@@ -27,6 +28,7 @@ Usage: a11y-508 <url> [options]
        a11y-508 loop [url] [--config <file>] [--max-rounds <n>] [--agent <spec>] [--dry-run] [--sign-in-first] [--from-report [file]] [--verify | --verify-anyway | --wait] [crawl options]
        a11y-508 status
        a11y-508 manual <pdf> [--config <file>] [--agent <spec>] [--events] [crawl options]
+       a11y-508 pdf <file> [--out <dir>] [--chrome <path>]
 
 Crawls every same-origin page reachable from <url> in headless Chrome, runs the
 automatable Trusted Tester checks on each page, and writes a report with
@@ -136,6 +138,11 @@ Fix loop
                 pushed, the deployment is awaited and each fix verified in it (one more try, then a
                 revised plan to approve). Every decision is logged in decisions.md. Files are in
                 the tool's folder for the repository, work/manual/<id>/. Uses the loop's config.
+  pdf <file>    Parse a PDF the way the manual flow does, with no repository and no config: its
+                text in reading order, the facts recognised on each page (criterion, status,
+                section), a picture of every page and each embedded picture, into report.md and
+                manifest.json in --out (default ./<file-name>.parsed/). Prints the report's header
+                and one line per page.
   status        Print the ledger: what is open, pending, verified, and skipped, and
                 where the tool keeps its files for this repository.
 
@@ -327,6 +334,61 @@ export function splitManualArgs(argv) {
   return { manual, remaining };
 }
 
+// "pdf <file> [--out <dir>] [--chrome <path>]" (docs/plans/pdf-parse.md AC 10).
+export function splitPdfArgs(argv) {
+  const [command, ...rest] = argv;
+  if (command !== 'pdf') return null;
+  const o = { file: null, out: null, chrome: null, help: false, extra: [] };
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    const eq = a.startsWith('--') ? a.indexOf('=') : -1;
+    const key = eq > 0 ? a.slice(0, eq) : a;
+    const val = () => {
+      const v = eq > 0 ? a.slice(eq + 1) : rest[++i];
+      if (v === undefined) throw new Error(`${key} requires a value`);
+      return v;
+    };
+    if (key === '--out') o.out = val();
+    else if (key === '--chrome') o.chrome = val();
+    else if (key === '-h' || key === '--help') o.help = true;
+    else if (!a.startsWith('-') && !o.file) o.file = a;
+    else o.extra.push(a);
+  }
+  return o;
+}
+
+async function pdfMain(o) {
+  if (o.help) {
+    process.stdout.write(HELP);
+    return 0;
+  }
+  if (!o.file || o.extra.length) {
+    process.stderr.write(`error: ${o.file ? `unknown argument ${o.extra[0]}` : 'a PDF is required: a11y-508 pdf <file> [--out <dir>]'}\n`);
+    return 2;
+  }
+  const file = resolve(o.file);
+  let head;
+  try {
+    head = readFileSync(file).subarray(0, 8);
+  } catch (e) {
+    process.stderr.write(`error: cannot read ${o.file}: ${e.message}\n`);
+    return 2;
+  }
+  if (!isPdf(head)) {
+    process.stderr.write(`error: ${o.file} is not a PDF\n`);
+    return 2;
+  }
+  const out = resolve(o.out || `${basename(file).replace(/\.pdf$/i, '')}.parsed`);
+  try {
+    const m = await parsePdf({ file, outDir: out, chromePath: o.chrome || undefined });
+    process.stdout.write(`${summaryLines(m).join('\n')}\nreport: ${join(out, 'report.md')}\n`);
+    return 0;
+  } catch (e) {
+    process.stderr.write(`error: ${e.message}\n`);
+    return e.unreadable ? 2 : 3;
+  }
+}
+
 async function manualMain({ manual, remaining }) {
   if (manual.help) {
     process.stdout.write(HELP);
@@ -450,6 +512,14 @@ async function run(argv) {
   if (split) return loopMain(split);
   const manualSplit = splitManualArgs(argv);
   if (manualSplit) return manualMain(manualSplit);
+  let pdfSplit;
+  try {
+    pdfSplit = splitPdfArgs(argv);
+  } catch (e) {
+    process.stderr.write(`error: ${e.message}\n`);
+    return 2;
+  }
+  if (pdfSplit) return pdfMain(pdfSplit);
   let opts;
   try {
     opts = parseArgs(argv);

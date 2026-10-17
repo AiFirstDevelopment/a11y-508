@@ -231,6 +231,30 @@ test('guard l: the vendored pdf.js is pinned and licensed', async () => {
   for (const f of ['pdf.mjs', 'pdf.worker.mjs', 'cmaps', 'standard_fonts']) assert.ok(existsSync(join(PDFJS_DIR, f)), f);
 });
 
+test('AC10: a11y-508 pdf <file> parses with no repository and no config, and prints the header and a line per page', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const cwd = temp();
+  const r = spawnSync(process.execPath, [join(ROOT, 'bin', 'a11y-508.mjs'), 'pdf', join(FIX, 'deck.pdf')], { cwd, encoding: 'utf8', timeout: 120000 });
+  assert.equal(r.status, 0, r.stderr);
+  const out = join(cwd, 'deck.parsed');
+  assert.ok(existsSync(join(out, 'report.md')) && existsSync(join(out, 'manifest.json')));
+  const lines = r.stdout.split('\n');
+  assert.deepEqual(lines.slice(0, 3), ["# The tester's PDF, parsed: deck.pdf", '13 pages: 13 with text, 11 with pictures.', 'Section dividers: pages 1 and 11.']);
+  assert.ok(lines.includes('page 12: open, 13.A, 1 picture, 4 lines'), r.stdout);
+  assert.ok(lines.includes('page 1: divider "Resolved Issues", 0 pictures, 1 line'), r.stdout);
+  const other = join(cwd, 'elsewhere');
+  const e = spawnSync(process.execPath, [join(ROOT, 'bin', 'a11y-508.mjs'), 'pdf', join(FIX, 'encrypted.pdf'), '--out', other], { cwd, encoding: 'utf8', timeout: 120000 });
+  assert.equal(e.status, 2);
+  assert.match(e.stderr, /The PDF could not be opened: it is protected by a password\./);
+});
+
+test('AC1: the core installs nothing: no dependencies, and pdf.js ships under src/', () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  assert.equal(pkg.dependencies, undefined);
+  assert.ok(pkg.files.includes('src'));
+  assert.ok(PDFJS_DIR.startsWith(join(ROOT, 'src')));
+});
+
 let failed = 0;
 for (const t of tests) {
   if (only && !t.name.includes(only)) continue;
