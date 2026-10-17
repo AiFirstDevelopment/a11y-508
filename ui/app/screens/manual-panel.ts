@@ -1,7 +1,7 @@
 import { Component, computed, effect, inject, output, signal, untracked } from '@angular/core';
 import { Api } from '../core/api';
 import { RunStore } from '../core/run.store';
-import { DecisionGroup, ManualComponent, ManualDecision, PlanItem, manualFileUrl, pdfPageUrl } from '../core/manual';
+import { DecisionGroup, ManualComponent, ManualDecision, PlanItem, manualFileUrl, parsedFileUrl, pdfPageUrl } from '../core/manual';
 import { EnvStore } from '../core/env.store';
 import { commitUrl } from '../core/git-links';
 import { ComponentPicker } from '../shared/component-picker';
@@ -34,6 +34,9 @@ interface Draft {
                 <p data-testid="fixed-commits"><span class="label">{{ r.commits.length === 1 ? 'Commit' : 'Commits' }}: </span>@for (c of r.commits; track c.sha; let last = $last) {@if (commitLink(c); as u) {<a [href]="u" target="_blank" rel="noopener" data-testid="fixed-commit">{{ c.short }}</a>} @else {<code data-testid="fixed-commit">{{ c.short }}</code>}@if (!last) {, }}@if (!r.commits.length) {none}</p>
                 <p data-testid="reason"><span class="label">Why it counts as fixed: </span>{{ r.reason || 'no reason was given' }}</p>
                 <div class="pair">
+                  @if (r.picture) {
+                    <figure><a [href]="parsed(r.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(r.picture)" [alt]="'PDF page ' + r.page + ', as the tester saw it'" data-testid="page-picture" /></a><figcaption>PDF page {{ r.page }}</figcaption></figure>
+                  }
                   @for (s of r.shots; track s.path) {
                     <figure><a [href]="file(s.path)" target="_blank" rel="noopener"><img class="thumb" [src]="file(s.path)" [alt]="r.finding + ' ' + s.label.toLowerCase() + ' in the deployed site'" data-testid="fixed-shot" /></a><figcaption>{{ s.label }}</figcaption></figure>
                   }
@@ -51,9 +54,13 @@ interface Draft {
               <li data-testid="already-fixed-item">
                 <p class="what"><strong>{{ r.finding }}</strong> {{ r.title }} · <a [href]="page(r.page)" target="_blank" rel="noopener" data-testid="pdf-page">PDF page {{ r.page }}</a></p>
                 @if (r.quote) { <blockquote data-testid="quote">{{ r.quote }}</blockquote> }
+                @if (r.tester) { <p data-testid="tester-verified">{{ r.tester }}</p> }
                 <p data-testid="checked"><span class="label">Checked: </span><a [href]="r.url" target="_blank" rel="noopener">{{ r.url }}</a> at {{ time(r.checkedAt) }}</p>
                 <p data-testid="reason"><span class="label">Why it counts as fixed: </span>{{ r.reason || 'no reason was given' }}</p>
-                @if (r.screenshot) { <img class="shot" [src]="file(r.screenshot)" [alt]="r.finding + ' in the deployed site'" data-testid="screenshot" /> }
+                <div class="pair">
+                  @if (r.picture) { <a [href]="parsed(r.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(r.picture)" [alt]="'PDF page ' + r.page + ', as the tester saw it'" data-testid="page-picture" /></a> }
+                  @if (r.screenshot) { <img class="shot" [src]="file(r.screenshot)" [alt]="r.finding + ' in the deployed site'" data-testid="screenshot" /> }
+                </div>
               </li>
             }
           </ol>
@@ -66,9 +73,13 @@ interface Draft {
           <ol>
             @for (it of m.plan.items; track it.finding) {
               <li data-testid="plan-item" [attr.data-finding]="it.finding" [class.removed]="draft(it).remove">
+                @if (it.cameBack) { <p class="came-back" data-testid="came-back">{{ it.cameBack }}</p> }
                 <p class="what"><strong>{{ it.finding }}</strong> {{ it.title }} · <a [href]="page(it.page)" target="_blank" rel="noopener" data-testid="pdf-page">PDF page {{ it.page }}</a></p>
                 @if (it.quote) { <blockquote data-testid="quote">{{ it.quote }}</blockquote> }
-                @if (it.screenshot) { <img class="shot" [src]="file(it.screenshot)" [alt]="it.finding + ' in the deployed site before the fix'" data-testid="screenshot" /> }
+                <div class="pair">
+                  @if (it.picture) { <a [href]="parsed(it.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(it.picture)" [alt]="'PDF page ' + it.page + ', as the tester saw it'" data-testid="page-picture" /></a> }
+                  @if (it.screenshot) { <img class="shot" [src]="file(it.screenshot)" [alt]="it.finding + ' in the deployed site before the fix'" data-testid="screenshot" /> }
+                </div>
                 @if (draft(it).remove) {
                   <p data-testid="plan-removed">Removed from the plan (sent with your changes).</p>
                 } @else {
@@ -137,6 +148,7 @@ interface Draft {
     .shot { max-width: 320px; border: 1px solid var(--muted); display: block; margin: 4px 0; }
     .removed .what { text-decoration: line-through; }
     .wrong { color: var(--error, #b00020); }
+    .came-back { font-weight: 600; }
     .decisions { margin: 2px 0; padding-left: 18px; }
     blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--muted); }
     .actions { display: flex; gap: 8px; }
@@ -293,6 +305,9 @@ export class ManualPanel {
   }
   page(n: number): string {
     return pdfPageUrl(this.m()?.id || null, n);
+  }
+  parsed(rel: string): string {
+    return parsedFileUrl(this.m()?.id || null, rel);
   }
   time(at: string): string {
     const d = new Date(at);

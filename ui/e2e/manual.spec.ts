@@ -124,7 +124,7 @@ test('manual AC1 / guard a: the PDF is chosen with a file chooser, stored, serve
   }
 });
 
-test('manual AC2: a PDF that names no finding ends the run with the sentence and Choose another PDF', async ({ page }) => {
+test('manual AC2: a PDF that names no finding ends the run with the sentence and Choose a PDF', async ({ page }) => {
   const app = await manualApp();
   const dash = await dashboard({ cwd: app.cwd });
   try {
@@ -132,7 +132,7 @@ test('manual AC2: a PDF that names no finding ends the run with the sentence and
     await choosePdf(page, NO_FINDINGS_PDF);
     await expect(now(page)).toHaveText('The PDF names no accessibility findings the assistant could read.', { timeout: 120_000 });
     await expect(go(page)).toHaveText('Start', { timeout: 30_000 });
-    await expect(page.getByTestId('manual-pdf')).toHaveText('Choose another PDF');
+    await expect(page.getByTestId('manual-pdf')).toHaveText('Choose a PDF');
     expect(readJson(join(runDir(dash), 'findings.json')).findings).toEqual([]);
   } finally {
     await dash.stop();
@@ -662,7 +662,7 @@ test('clarity AC4 / guard d: a read answer with no list of findings is asked aga
   }
 });
 
-test('clarity AC4 / guard e: a read that fails twice ends naming the assistant and Advanced, and the one button is Choose another PDF', async ({ page }) => {
+test('clarity AC4 / guard e: a read that fails twice ends naming the assistant and Advanced, and the one button is Choose a PDF', async ({ page }) => {
   test.setTimeout(300_000);
   const app = await manualApp();
   const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_READ_FAIL: '2' } });
@@ -670,13 +670,174 @@ test('clarity AC4 / guard e: a read that fails twice ends naming the assistant a
     await open(page, dash);
     await choosePdf(page, PDF);
     // The fake assistant is a custom command: its first word names it.
-    await expect(now(page)).toHaveText('Node could not read the PDF (its answer had no list of findings). Choose another PDF, or pick another assistant under Advanced.', { timeout: 180_000 });
+    await expect(now(page)).toHaveText('Node could not read the PDF (its answer had no list of findings). Choose a PDF, or pick another assistant under Advanced.', { timeout: 180_000 });
     await expect(go(page)).toHaveText('Start', { timeout: 30_000 });
-    await expect(page.getByTestId('manual-pdf')).toHaveText('Choose another PDF');
+    await expect(page.getByTestId('manual-pdf')).toHaveText('Choose a PDF');
     const chooser = page.waitForEvent('filechooser', { timeout: 10_000 });
     await page.getByTestId('manual-pdf').click();
     expect((await chooser).isMultiple()).toBe(false);
     expect(decisions(runDir(dash)).filter((d) => d.decision === 'asked again')).toHaveLength(1);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+// ---- docs/plans/pdf-parse.md: the PDF is parsed first, and the assistant reads the parse.
+
+const DECK = join(FIXTURES, 'deck.pdf');
+const PICTURES_ONLY = join(FIXTURES, 'pictures-only.pdf');
+const ENCRYPTED = join(FIXTURES, 'encrypted.pdf');
+const TRUNCATED = join(FIXTURES, 'truncated.pdf');
+const loaded = (img: ReturnType<Page['locator']>) => expect.poll(() => img.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth), { timeout: 15_000 }).toBeGreaterThan(0);
+// The read prompts of a run, from the tasks folder, oldest first.
+const readPrompts = (dash: Dash, id: string): string[] => {
+  const tasks = join(dash.dirs().work, 'tasks');
+  return readdirSync(tasks).filter((f) => f.startsWith(`prompt-manual-${id}-read-`)).sort().map((f) => readFileSync(join(tasks, f), 'utf8'));
+};
+
+test('pdf-parse AC1/5/7/9 / guards e f: the deck is parsed first; the assistant reads report.md; a finding the tester verified fixed is confirmed or planned as come back; the parse is on screen', async ({ page }) => {
+  test.setTimeout(400_000);
+  const app = await manualApp();
+  // The parse waits 3 s after its first pass, so its sentence can be seen.
+  const dash = await dashboard({ cwd: app.cwd, env: { A11Y_508_PDF_OPENED_DELAY: '3000' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, DECK);
+    // AC 9: while parsing, the count from the first pass.
+    await expect(now(page)).toHaveText('Reading the PDF: 13 pages (11 with pictures).', { timeout: 60_000 });
+    const dir = runDir(dash);
+    const id = dir.split(/[\\/]/).pop()!;
+    // AC 5 / guard e: the prompt points at the parse first and names the PDF last.
+    await expect.poll(() => readPrompts(dash, id).length, { timeout: 60_000 }).toBeGreaterThan(0);
+    const prompt = readPrompts(dash, id)[0];
+    expect(prompt).toContain('parsed/report.md');
+    expect(prompt).toMatch(/parsed\/pages\/page-02\.png/);
+    expect(prompt.indexOf('parsed/report.md')).toBeLessThan(prompt.indexOf('source.pdf'));
+    expect(prompt).toMatch(/The original PDF is \S+source\.pdf: open it only if the report is not enough\./);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    // AC 1: the parse is in the run's folder.
+    for (const f of ['report.md', 'manifest.json', 'pages/page-02.png', 'pages/page-02-image-1.png', 'pages/page-13.png']) expect(existsSync(join(dir, 'parsed', f)), f).toBe(true);
+    // AC 5/6: one finding per problem, all its pages, the report's status and criterion, checked.
+    const findings = readJson(join(dir, 'findings.json')).findings;
+    expect(findings.map((f: any) => [f.id, f.pages, f.page, f.status, f.criterion])).toEqual([
+      ['F1', [2, 3, 4, 5, 6], 2, 'fixed', '5.C'], ['F2', [7, 8], 7, 'fixed', '13.C'], ['F3', [12, 13], 12, 'open', '13.A'],
+    ]);
+    expect(findings.map((f: any) => f.verified)).toEqual([{ pages: true, quote: true }, { pages: true, quote: true }, { pages: true, quote: true }]);
+    expect(readJson(join(dir, 'check.json')).results.map((r: any) => [r.finding, r.verdict])).toEqual([['F1', 'present'], ['F2', 'gone'], ['F3', 'present']]);
+
+    // AC 7 / guard f: F2, verified fixed and gone, is already fixed and says so; F1, verified fixed and
+    // present, came back and is planned, headed so; F3, open, is planned as any other.
+    const fixedSection = page.getByTestId('already-fixed');
+    await fixedSection.locator('summary').click();
+    const row = fixedSection.getByTestId('already-fixed-item');
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('F2 Company logo has no text alternative');
+    await expect(row.getByTestId('tester-verified')).toHaveText('The tester verified this fixed on 28 Sep 2026; the deployed site agrees.');
+    await expect(item(page, 'F1').getByTestId('came-back')).toHaveText('Came back: the tester verified this fixed on 28 Sep 2026, but the deployed site has it again');
+    await expect(item(page, 'F3').getByTestId('came-back')).toHaveCount(0);
+    await expect(page.getByTestId('plan-item')).toHaveCount(2);
+    expect(decisions(dir).filter((d) => d.stage === 'check' && d.finding === 'F1' && /^Came back: /.test(d.decision))).toHaveLength(1);
+    expect(readFileSync(join(dir, 'already-fixed.md'), 'utf8')).toContain('- The tester verified this fixed on 28 Sep 2026; the deployed site agrees.');
+
+    // AC 9: each plan item and already-fixed row shows its page's picture (a link to it full size), beside the PDF page link.
+    for (const [loc, n] of [[item(page, 'F1'), '02'], [item(page, 'F3'), '12'], [row, '07']] as const) {
+      const pic = loc.getByTestId('page-picture');
+      await expect(pic).toHaveAttribute('src', `/api/manual/${id}/parsed/pages/page-${n}.png`);
+      await expect(pic.locator('xpath=..')).toHaveAttribute('href', `/api/manual/${id}/parsed/pages/page-${n}.png`);
+      await loaded(pic);
+      await expect(loc.getByTestId('pdf-page')).toHaveText(`PDF page ${Number(n)}`);
+    }
+    // Show the parsed report: report.md rendered, every page with its facts, its text, its picture and thumbnails.
+    await page.getByTestId('show-parsed').click();
+    const pane = page.getByTestId('parsed-panel');
+    await expect(pane.getByTestId('parsed-page')).toHaveCount(13);
+    await expect(pane.getByTestId('parsed-head').first()).toHaveText("The tester's PDF, parsed: source.pdf");
+    const p12 = pane.locator('[data-testid="parsed-page"][data-page="12"]');
+    await expect(p12.getByTestId('parsed-fact')).toHaveText(['Section: Outstanding Issues', 'Status: open — "Still an issue – 9/28/26" (2026-09-28)', 'Criterion: 13.A 1.4.1-color-meaning (WCAG 1.4.1)']);
+    await expect(p12.getByTestId('parsed-text')).toContainText('Still an issue – 9/28/26');
+    await loaded(p12.getByTestId('parsed-picture'));
+    await loaded(p12.getByTestId('parsed-image'));
+    await pane.getByTestId('parsed-close').click();
+
+    await page.getByTestId('approve-plan').click();
+    // AC 7: the Done summary counts the three cases apart.
+    await expect(now(page)).toHaveText('Done: 2 findings from the PDF are fixed and confirmed in the deployed site; 1 was already fixed (the tester had verified it); 1 had come back.', { timeout: 240_000 });
+    const done = page.locator('[data-testid="fixed-item"][data-finding="F1"]');
+    await expect(done.getByTestId('page-picture')).toHaveAttribute('src', `/api/manual/${id}/parsed/pages/page-02.png`);
+    await loaded(done.getByTestId('page-picture'));
+    await expect(done.getByTestId('pdf-page')).toHaveText('PDF page 2');
+    expect(readFileSync(join(dir, 'decisions.md'), 'utf8')).toContain('check · tool: Came back: the tester verified this fixed on 28 Sep 2026, but the deployed site has it again');
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('pdf-parse AC6 / guard c: the answer is checked against the parse: a quote on another page moves the finding there, a page past the end drops it, a quote on no page is flagged, the report\'s status and criterion win; each logged', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_WRONG_PAGE: '1' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, DECK);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    const dir = runDir(dash);
+    const findings = readJson(join(dir, 'findings.json')).findings;
+    expect(findings.map((f: any) => [f.id, f.pages, f.verified, f.quoteVerified, f.status, f.criterion])).toEqual([['F1', [2, 3, 4, 5, 6], { pages: true, quote: false }, false, 'fixed', '5.C'], ['F2', [7], { pages: false, quote: true }, true, 'fixed', '13.C']]);
+    const read = decisions(dir).filter((d) => d.stage === 'read' && d.by === 'tool');
+    // F1: its quote is on no page (kept, logged); its status and criterion are the report's (logged with both).
+    expect(read.filter((d) => d.finding === 'F1').map((d) => d.decision)).toEqual(['kept it, although its quote is on no page of the PDF', 'status fixed, not open', 'criterion 5.C, not 9.Z']);
+    expect(read.find((d) => d.finding === 'F1' && /^status/.test(d.decision)).reason).toBe('the report reads "Verified fixed – 9/28/2026" on page 2');
+    expect(read.filter((d) => d.finding === 'F2').map((d) => [d.decision, d.reason])).toEqual([['moved to page 7', 'the quote is on page 7, not page 6']]);
+    expect(read.filter((d) => d.finding === 'F3').map((d) => [d.decision, d.reason])).toEqual([['dropped', 'the assistant gave page 99 for it; the PDF has 13 pages']]);
+    // The corrections are under Decisions so far.
+    await page.getByTestId('decision-log').locator('summary').click();
+    await expect(page.getByTestId('decision-log')).toContainText('F2 · read · tool: moved to page 7 — the quote is on page 7, not page 6');
+    await expect(page.getByTestId('decision-log')).toContainText('F3 · read · tool: dropped');
+    await expect(item(page, 'F3')).toHaveCount(0);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('pdf-parse AC8 / guard g: a PDF with no text is read from its pictures and reaches the plan', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  // Each assistant call takes 3 s, so the read's sentence can be seen.
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_AGENT_DELAY_MS: '3000' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PICTURES_ONLY);
+    await expect(now(page)).toHaveText('The PDF has no text; the assistant is working from the pictures of its 2 pages.', { timeout: 120_000 });
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    const dir = runDir(dash);
+    expect(readFileSync(join(dir, 'parsed', 'report.md'), 'utf8')).toContain('The PDF has no text: every page is a picture only.');
+    expect(readJson(join(dir, 'findings.json')).findings.map((f: any) => [f.id, f.pages])).toEqual([['F1', [1, 2]]]);
+    await expect(item(page, 'F1')).toBeVisible();
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('pdf-parse AC8 / guard h: a PDF that cannot be opened ends before any assistant call, in one sentence, with Choose a PDF', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd });
+  try {
+    await open(page, dash);
+    for (const [file, why] of [[ENCRYPTED, 'it is protected by a password'], [TRUNCATED, 'it is damaged or incomplete']]) {
+      await choosePdf(page, file);
+      await expect(now(page)).toHaveText(`The PDF could not be opened: ${why}. Choose a PDF.`, { timeout: 120_000 });
+      await expect(go(page)).toHaveText('Start', { timeout: 30_000 });
+      await expect(page.getByTestId('manual-pdf')).toHaveText('Choose a PDF');
+      const dir = runDir(dash);
+      expect(readdirSync(dir).filter((f) => /^agent-/.test(f))).toEqual([]);
+      expect(existsSync(join(dir, 'findings.json'))).toBe(false);
+      expect(decisions(dir).map((d) => [d.stage, d.by, d.decision, d.reason])).toEqual([['parse', 'tool', 'could not open the PDF', why]]);
+    }
   } finally {
     await dash.stop();
     await app.cleanup();
@@ -691,7 +852,7 @@ test('assistant calls: a read that ends without an answer twice links from the h
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: dash.origin });
     await open(page, dash);
     await choosePdf(page, PDF);
-    await expect(now(page)).toHaveText('Node could not read the PDF (it ended without an answer (exit code 0)). Choose another PDF, or pick another assistant under Advanced.', { timeout: 180_000 });
+    await expect(now(page)).toHaveText('Node could not read the PDF (it ended without an answer (exit code 0)). Choose a PDF, or pick another assistant under Advanced.', { timeout: 180_000 });
     // The sentence is followed by the way to what the assistant said.
     const link = page.getByTestId('see-what-said');
     await expect(link).toHaveText('See what Node said');
@@ -720,6 +881,27 @@ test('assistant calls: a read that ends without an answer twice links from the h
       expect(at).toBeGreaterThan(-1);
       expect(copied.slice(at).split('\n\n')[0]).toContain(`I cannot open this file (read ${n})`);
     }
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('read retry / guard m: an answer that only echoes ("Here is the original image:", no answer file) is quoted back in the second prompt, which says it is not the task; the second answer is read', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_READ_ECHO: '1' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, DECK);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    const dir = runDir(dash);
+    const prompts = readPrompts(dash, dir.split(/[\\/]/).pop()!);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain('Your previous answer was');
+    expect(prompts[1]).toMatch(/^# Read a tester's accessibility report\n\nYour previous answer was: .*Here is the original image:\. That is not the task\. Do not describe, return or echo the PDF or the pictures; read the report and write the JSON file at \S+result-manual-\S+-read-2\.json\.\n/);
+    expect(decisions(dir).filter((d) => d.decision === 'asked again')).toHaveLength(1);
+    expect(readJson(join(dir, 'findings.json')).findings.map((f: any) => f.id)).toEqual(['F1', 'F2', 'F3']);
   } finally {
     await dash.stop();
     await app.cleanup();
