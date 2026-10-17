@@ -3,6 +3,7 @@ import { Api } from './api';
 import { readSse } from './sse';
 import { CANNOT_GET_IN, Discovery, OFF_ORIGIN, PhaseEvent, Progress, cumulative, spoken } from './format';
 import { ByImpact, Remedy, RetryInfo, RunEvent, RunInfo } from './types';
+import { ManualState, applyManual, emptyManual } from './manual';
 
 // One fix attempt of the loop: the finding, the files changed, what became of them, and how long the
 // assistant and the check took.
@@ -87,6 +88,7 @@ export const KNOWN_EVENTS = new Set([
   'run', 'raw', 'stopping', 'done', 'start', 'info', 'warn', 'error', 'page', 'coverage', 'summary', 'troubleshoot',
   'login-waiting', 'session-saved', 'round', 'step', 'task', 'ledger', 'await-deploy', 'agent-output', 'progress', 'precondition', 'agent-wait', 'agent-result', 'gate', 'gate-output', 'commit', 'changes', 'attempt', 'bisect',
   'resume', 'deployment', 'deploy-check', 'marker', 'fallback', 'retry', 'rerun', 'sign-in-again', 'sign-in-opening', 'sign-in-failed',
+  'manual', 'manual-decision',
 ]);
 
 // The current run, built from its event stream.
@@ -96,6 +98,8 @@ export class RunStore {
   private abort: AbortController | null = null;
 
   readonly run = signal<RunEvent | null>(null);
+  // A run of kind "manual" (a tester's PDF): its stages, plan and decisions.
+  readonly manual = signal<ManualState>(emptyManual());
   readonly pages = signal<PageRow[]>([]);
   readonly progress = signal<Progress>({ done: 0, discovered: 0, limit: null, finished: false, result: null });
   readonly notices = signal<Notice[]>([]);
@@ -224,6 +228,7 @@ export class RunStore {
     this.loginReopened.set(false);
     this.retry.set(null);
     this.fallback.set(null);
+    this.manual.set(emptyManual());
   }
 
   // Appends to the pane: text as it is, or a line of its own (started on a new line).
@@ -467,6 +472,10 @@ export class RunStore {
         if (ev['state'] === 'verify-anyway' && ev['reason'] !== 'no-baseline') this.pane(ev['reason'] === 'unreachable' ? 'Could not read the start page to check its build; going by your word that the site is updated' : 'Verifying anyway: fixes not yet deployed count as not holding', true);
         break;
       // Continue after an interruption: the unfinished fix's changes it discarded, in the pane.
+      case 'manual':
+      case 'manual-decision':
+        this.manual.update((m) => applyManual(m, ev));
+        break;
       case 'resume':
         this.origin.set(ev);
         for (const f of (ev['discarded'] as string[]) || []) this.pane(`Discarded the unfinished change to ${f}`, true);
@@ -561,6 +570,11 @@ export class RunStore {
   // store holds it as started (active, of its kind), so no screen offers to start another meanwhile.
   async start(body: unknown): Promise<void> {
     const r = await this.api.post<{ id?: string; kind?: string; status?: string } | null>('/api/runs', body);
+    await this.adoptStarted(r);
+  }
+
+  // A run the server has just started (POST /api/runs, or a PDF's upload): this page's from now on.
+  async adoptStarted(r: { id?: string; kind?: string; status?: string } | null): Promise<void> {
     if (r && r.id && r.status === 'running' && this.run()?.['id'] !== r.id) {
       this.reset();
       this.run.set({ type: 'run', seq: -1, id: r.id, kind: r.kind });

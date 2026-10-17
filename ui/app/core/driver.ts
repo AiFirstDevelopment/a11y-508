@@ -6,8 +6,8 @@ import { RunStore, askToNotify } from './run.store';
 import { SignInFlow } from './sign-in';
 import { LedgerInfo, LoopDefaults, Preset } from './types';
 
-// The installed assistant chosen when nothing names one, in this order.
-export const PREFERENCE = ['claude', 'gemini', 'codex'];
+// The installed assistant chosen when nothing names one, in this order (docs/plans/manual-findings.md AC 10).
+export const PREFERENCE = ['gemini', 'claude', 'codex'];
 
 // The one thing the dashboard does (docs/plans/simple-screen.md): Start runs the fix loop (it crawls,
 // fixes, pushes, waits for the build, verifies, and goes round again until nothing is left), or, in a
@@ -201,6 +201,43 @@ export class Driver {
       this.error.set(e?.body?.errors?.join('; ') || e?.message || String(e));
     } finally {
       this.form.clearToken();
+      this.starting.set(false);
+    }
+  }
+
+  // Fix from a test report (PDF): the same preparation as Start (the config, the assistant), then the
+  // file goes to the server, which keeps it and starts the run. The refusal of a file that is not a
+  // PDF is the server's one sentence.
+  async startManual(file: File): Promise<void> {
+    askToNotify();
+    if (this.starting() || this.store.active()) return;
+    this.starting.set(true);
+    this.error.set('');
+    try {
+      if (!this.form.url().trim() && this.url()) this.form.url.set(this.url());
+      this.form.rememberUrl();
+      if (this.loadedFor !== this.env.cwd()) await this.load();
+      await this.ready();
+      if (this.store.active()) return;
+      const why = this.whyNoFix();
+      if (why) throw new Error(`Fixing from a PDF needs what fixing needs: ${why}.`);
+      if (!this.repoConfig()) {
+        const r = await this.api.put<{ config: Record<string, any> }>('/api/config', { config: this.completed() });
+        this.cfg.set(r.config);
+        this.configExists.set(true);
+      }
+      await this.api.put('/api/settings', { agent: this.agent() }).catch(() => {});
+      const res = await fetch(`/api/manual/pdf?agent=${encodeURIComponent(this.agent())}`, { method: 'POST', headers: this.api.headers({ 'content-type': 'application/pdf' }), body: file, credentials: 'same-origin' });
+      const text = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch {}
+      if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+      await this.store.adoptStarted(data);
+    } catch (e: any) {
+      this.error.set(e?.message || String(e));
+    } finally {
       this.starting.set(false);
     }
   }

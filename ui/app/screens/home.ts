@@ -10,6 +10,8 @@ import { plainReason } from '../core/outcome';
 import { LedgerItem } from '../core/types';
 import { commitUrl } from '../core/git-links';
 import { clockOf, countsParts, hostOf, lowerFirst, plural, span, upperFirst, type CountsPart } from '../core/now';
+import { ManualPanel } from './manual-panel';
+import { DecisionsPane } from '../shared/decisions-pane';
 
 // A finding's words, cut at a word once they are long.
 function short(text: string, max = 72): string {
@@ -23,7 +25,7 @@ function short(text: string, max = 72): string {
 // now, one line of numbers, one button (Start, or Stop while anything runs), and Diagnostics.
 @Component({
   selector: 'app-home-screen',
-  imports: [RouterLink],
+  imports: [RouterLink, ManualPanel, DecisionsPane],
   template: `
     <h1 class="app-name">a11y-508@if (env.env()?.revision; as rev) {{{ ' ' }}<span class="build" data-testid="build-revision" title="The commit this dashboard runs">build {{ rev }}</span> }</h1>
     @if (env.env(); as e) {
@@ -46,7 +48,17 @@ function short(text: string, max = 72): string {
       @if (signingIn()) {
         <button type="button" class="secondary" data-testid="show-sign-in-tab" (click)="showSignIn()">Show the sign-in tab</button>
       }
+      <!-- The second way in (docs/plans/manual-findings.md): a tester's PDF, chosen with the system's file chooser. -->
+      @if (!running()) {
+        <button type="button" class="secondary" data-testid="manual-pdf" (click)="pdfInput.click()" [disabled]="!driver.url()">{{ manualEnded()?.noFindings ? 'Choose another PDF' : 'Fix from a test report (PDF)' }}</button>
+      }
+      <input #pdfInput type="file" accept="application/pdf" hidden data-testid="manual-pdf-input" (change)="onPdf($event)" />
     </div>
+    @if (store.kind() === 'manual' || lastManual()) {
+      <p class="manual-links">@if (decisionsFor(); as id) {<a href="#decisions" data-testid="show-decisions" (click)="openDecisions($event, id)">{{ store.kind() === 'manual' ? 'Show decisions' : 'Show decisions from the last PDF run' }}</a>}</p>
+    }
+    <app-manual-panel />
+    <app-decisions-pane #decisions />
     @if (driver.error() || missed()) { <p class="notice error" role="alert" data-testid="start-error">{{ driver.error() || missed() }}</p> }
     <p class="diagnostics-link"><a routerLink="/diagnostics" data-testid="diagnostics-link">Log</a><span aria-hidden="true"> · </span><a href="#start-over" data-testid="start-over" (click)="startOver($event)">Start over</a></p>
     @if (resetError()) { <p class="notice error" role="alert">{{ resetError() }}</p> }
@@ -181,6 +193,39 @@ export class HomeScreen implements OnDestroy {
       this.resetError.set(`Could not start over: ${e?.message || e}`);
     }
   }
+  // The PDF the person chose: it goes to the server, which starts the run (or refuses it in one sentence).
+  onPdf(ev: Event): void {
+    const input = ev.target as HTMLInputElement;
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (file) void this.driver.startManual(file);
+  }
+  private decisionsPane = viewChild.required<DecisionsPane>('decisions');
+  // The latest PDF run on record, for Show decisions when the current run is another.
+  readonly lastManual = signal<string | null>(null);
+  private loadManualRuns = async () => {
+    try {
+      const list = await this.api.get<{ id: string; decisions: boolean }[]>('/api/manual/runs');
+      this.lastManual.set(list.find((r) => r.decisions)?.id || null);
+    } catch {}
+  };
+  // The PDF run whose decisions Show decisions opens: the current one once it has any, else the last.
+  readonly decisionsFor = computed(() => {
+    if (this.store.kind() === 'manual') {
+      const m = this.store.manual();
+      return m.id && (m.decisions.length || this.store.done()) ? m.id : null;
+    }
+    return this.lastManual();
+  });
+  openDecisions(ev: Event, id: string): void {
+    ev.preventDefault();
+    void this.decisionsPane().open(id);
+  }
+  // A PDF run that has ended: how.
+  readonly manualEnded = computed(() => {
+    if (this.store.kind() !== 'manual' || !this.store.done()) return null;
+    return this.store.manual();
+  });
   readonly pagesOpen = signal(false);
   readonly fixesOpen = signal(false);
   private fixesPanel = viewChild.required<ElementRef<HTMLDialogElement>>('fixesPanel');
@@ -222,6 +267,12 @@ export class HomeScreen implements OnDestroy {
       const el = this.outputText()?.nativeElement;
       if (el) setTimeout(() => (el.scrollTop = el.scrollHeight));
     });
+    // The PDF runs on record, at first and whenever a run ends.
+    effect(() => {
+      this.store.done();
+      this.env.cwd();
+      untracked(() => void this.loadManualRuns());
+    });
     // Nothing known to crawl: Set up, as on a first visit.
     effect(() => {
       const missing = !this.driver.pending() && !this.driver.url() && !this.store.run() && !this.env.env()?.run;
@@ -257,6 +308,8 @@ export class HomeScreen implements OnDestroy {
 
   // The ledger's counts, live while the loop runs; a crawl alone has only what it found.
   readonly counts = computed<CountsPart[]>(() => {
+    // A PDF run has its own numbers in its sentence; the crawl loop's ledger is not its.
+    if (this.store.kind() === 'manual') return [];
     const live = this.store.ledger()?.['counts'] as Record<string, number> | undefined;
     const c = live || this.driver.ledger()?.counts;
     if (c && Object.keys(c).length) return countsParts(c, this.loopEnded());
@@ -357,6 +410,7 @@ export class HomeScreen implements OnDestroy {
       return s.signInAgain() || s.origin()?.type === 'sign-in-again' ? `Your sign-in expired: sign in in ${tab}; this continues by itself` : `Sign in in ${tab}; this continues by itself`;
     }
     if (s.kind() === 'install') return `Installing ${String(s.run()?.['agent'] || 'the assistant')}…`;
+    if (s.kind() === 'manual') return this.manualNow();
     if (!this.loopKind()) return this.crawling();
     return this.looping();
   });
@@ -444,9 +498,82 @@ export class HomeScreen implements OnDestroy {
     return `${pushed ? 'Pushed' : 'Committed'} ${plural(n, 'fix', 'fixes')} ${pushed ? 'to' : 'on'} ${this.branch()}; waiting for your deployment (${when})`;
   }
 
+  // A PDF run, as it goes (docs/plans/manual-findings.md).
+  private manualNow(): string {
+    const m = this.store.manual();
+    const who = this.assistant();
+    const ev = m.last || {};
+    const n = (k: string) => Number(ev[k]) || 0;
+    switch (m.stage) {
+      case null:
+      case 'start':
+      case 'read':
+        return `Reading the PDF with ${who}`;
+      case 'findings':
+      case 'check':
+        return `Checking the deployed site for ${plural(m.findings || 0, 'finding')} from the PDF`;
+      case 'capture':
+        return ev['label'] === 'before' ? `Checking the deployed site for ${plural(m.findings || n('m'), 'finding')} from the PDF (${n('n')} of ${n('m')})` : `Checking the deployed site for ${plural(n('m'), 'fix', 'fixes')} (${n('n')} of ${n('m')})`;
+      case 'judge':
+        return `Asking ${who} which findings the deployed site still has`;
+      case 'already-fixed':
+      case 'planning':
+        return `Writing the plan with ${who}`;
+      case 'plan':
+      case 'review':
+      case 'approve-refused': {
+        const held = m.plan?.reason === 'revised' ? m.plan.notHeld : 0;
+        return held ? `${plural(held, 'fix', 'fixes')} did not hold in the deployed site after two tries. Review the revised plan.` : 'Approve the plan to start fixing, or edit an item and send it to the assistant.';
+      }
+      case 'confirming':
+        return `Asking ${who} to confirm your ${n('count') === 1 ? 'change' : 'changes'}`;
+      case 'approved':
+        return 'Approved: starting the fixes';
+      case 'fix':
+        return `Fixing ${short(String(ev['title'] || ev['finding'] || ''))} (${n('n')} of ${n('m')})${n('attempt') > 1 ? ' again' : ''} with ${who}`;
+      case 'gate':
+        return `Checking the fix: ${String(ev['check'] || '')}`;
+      case 'commit':
+        return `Committed the fix for ${String(ev['finding'] || '')}`;
+      case 'push':
+        return `Pushing ${plural(n('committed'), 'fix', 'fixes')} to ${String(ev['branch'] || 'the branch')}`;
+      case 'deploy':
+      case 'await-deploy':
+      case 'deploy-check': {
+        const c = m.deployCheck;
+        const checked = c ? `checked ${clockOf(c['at']) || 'just now'}: ${c['result'] === 'changed' ? 'the new build is live' : c['result'] === 'unreadable' ? 'the start page could not be read' : 'still the old build'}` : 'not checked yet';
+        return `Pushed ${plural(m.commits, 'fix', 'fixes')}; waiting for your deployment (${checked})`;
+      }
+      case 'verify':
+        return `Checking the deployed site for ${plural(n('count'), 'fix', 'fixes')}`;
+      case 'verdicts': {
+        const not = (ev['items'] || []).filter((v: any) => v.verdict !== 'fixed').length;
+        return not ? `${plural(not, 'fix', 'fixes')} did not hold in the deployed site` : 'Every fix holds in the deployed site';
+      }
+      case 'retry':
+        return `${plural(n('count'), 'fix', 'fixes')} did not hold in the deployed site; fixing ${n('count') === 1 ? 'it' : 'them'} again`;
+      case 'replanning':
+        return `Writing a revised plan with ${who} for ${plural(n('count'), 'fix', 'fixes')} that did not hold`;
+      default:
+        return `Working on the PDF with ${who}`;
+    }
+  }
+
   private ended(): string {
     const s = this.store;
     const d = s.done()!;
+    if (s.kind() === 'manual') {
+      const m = s.manual();
+      if (m.done) return m.done.message;
+      if (m.noFindings) return m.noFindings;
+      if (d['outcome'] === 'interrupted') return 'The PDF run was interrupted (the dashboard was closed); continuing from there';
+      if (d['outcome'] === 'stopped') return 'Stopped';
+      if (m.readFailed) return m.readFailed;
+      const errors = s.notices().filter((x) => x.level === 'error' && !/^The run failed( \(exit code|: )/.test(x.message)).map((x) => x.message);
+      const pre = s.precondition();
+      if (pre) return `Could not start: ${String(pre['message'] || '')}. ${String(pre['remedy'] || '')}`;
+      return `Stopped: ${lowerFirst(plainReason(errors[errors.length - 1] || String(d['reason'] || `the PDF run ended with exit code ${d['code']}`)).replace(/\.$/, ''))}`;
+    }
     const r = s.retry();
     const now = this.tick();
     const errors = s.notices().filter((n) => n.level === 'error' && !/^The run failed( \(exit code|: )/.test(n.message)).map((n) => n.message);

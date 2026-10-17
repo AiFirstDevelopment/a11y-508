@@ -146,3 +146,24 @@ export function commandLine({ cwd, args, token, shell = 'sh' }) {
   const env = none ? '' : 'TOKEN=$TOKEN ';
   return `${env}node ${shq(bin)} ${args.map(shq).join(' ')}`;
 }
+
+// The manual flow (docs/plans/manual-findings.md): `manual <pdf>`, with the loop's config and the
+// crawl's way in for the evidence browser (the dashboard's session file, its own browser for a sign-in).
+export function manualArgs({ pdf, url = null, options, auth, agent = null, config = null, stateFile = null, connect = null }) {
+  if (!pdf || typeof pdf !== 'string') throw new BadRequest('a PDF is required');
+  const a = authArgs(auth);
+  const args = ['manual', pdf];
+  if (url) args.push(validateUrl(url));
+  if (agent) args.push('--agent', agent);
+  if (config) args.push('--config', config);
+  const crawl = [...optionArgs(options), ...a.args];
+  if (stateFile && !crawl.some((x) => /^--(state|login|login-only|cookie)$/.test(x))) crawl.push('--state', stateFile);
+  if (connect) crawl.push('--connect', String(connect));
+  args.push(...crawl);
+  try {
+    parseArgs(crawl);
+  } catch (e) {
+    throw new BadRequest(e.message);
+  }
+  return { args, token: a.token };
+}

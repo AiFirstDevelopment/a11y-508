@@ -5,7 +5,7 @@
 import { createServer } from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { createReadStream, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import { findChrome } from '../../src/chrome.mjs';
@@ -14,7 +14,9 @@ import { loadConfig, normalizeConfig, summaryLine } from '../../src/loop.mjs';
 import { migrateRepo, migrationLines, tasksDir, repoHome } from '../../src/home.mjs';
 import { readable } from '../../src/agent-stream.mjs';
 import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
-import { BIN, BadRequest, DEFAULT_STATE_FILE, TOOL_DIR, crawlArgs, loopArgs, commandLine } from './args.mjs';
+import { BIN, BadRequest, DEFAULT_STATE_FILE, TOOL_DIR, crawlArgs, loopArgs, manualArgs, commandLine } from './args.mjs';
+import { MAX_PDF_BYTES, NOT_A_PDF, decisionGroups, isPdf, manualDir, manualRoot, newManualId, validId } from '../../src/manual.mjs';
+import { listComponents } from '../../src/components.mjs';
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
 import { JOURNALED, LOOP_KINDS, annotateRun, discardInterrupted, interruptedDetails, latestRun, removeRun, resolveRun, runsDir, startJournaled } from './run-journal.mjs';
@@ -42,6 +44,7 @@ const TOOL_REVISION = (() => {
 })();
 export const SECRET_HEADER = 'x-a11y-508-secret';
 const TYPES = {
+  '.pdf': 'application/pdf',
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8',
 };
@@ -176,7 +179,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       noteRunEnd(run);
       annotateRun(run, { diaryNoted: true });
     }
-    if (run.status === 'running' || LOOP_KINDS.has(run.kind) || (run.kind === 'crawl' && run.status === 'interrupted')) runs.adopt(run);
+    if (run.status === 'running' || LOOP_KINDS.has(run.kind) || run.kind === 'manual' || (run.kind === 'crawl' && run.status === 'interrupted')) runs.adopt(run);
     // A live loop started by an earlier version of this dashboard: stopped, to start again with this one.
     if (runs.current === run && run.status === 'running' && LOOP_KINDS.has(run.kind)) restartIfUpdated(run);
     // What the run that ended while no dashboard watched still has coming: a try again, or its continuation.
@@ -295,6 +298,18 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const rec = (run.record && run.record.retry) || null;
     // Cancelled (Stop), or already started again.
     if (rec && (rec.cancelled || rec.firedAt)) return;
+    // A PDF run ended by the dashboard's own end (Quit, Ctrl+C) is taken up again when the dashboard
+    // is back: from its own files, so a plan waiting for approval waits again (docs/plans/manual-findings.md AC 6).
+    if (run.kind === 'manual') {
+      if (!restored || !done.quit || (run.record && run.record.resumedAfterQuit)) return;
+      annotateRun(run, { resumedAfterQuit: new Date().toISOString() });
+      const request = (run.record && run.record.request) || {};
+      setTimeout(() => {
+        if (runs.current !== run || runs.active) return;
+        startRun({ ...request, kind: 'manual', preface: [{ type: 'rerun', reason: 'dashboard-restart', at: new Date().toISOString() }] }).catch(() => {});
+      }, 200);
+      return;
+    }
     if (run.kind === 'loop' && done.outcome === 'stopped') {
       // Stopped by the dashboard for an update: started again with the new version.
       const upd = run.record && run.record.update;
@@ -365,7 +380,13 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     continuing = true;
     try {
       if (r.kind === 'loop') await resume();
-      else if (r.kind === 'dry-run') {
+      else if (r.kind === 'manual') {
+        // The same PDF again: the run goes on from its own files (the stage it had reached).
+        const request = (r.record && r.record.request) || {};
+        const where = interruptedDetails(state.cwd, r, []);
+        resolveRun(r, 'rerun');
+        await startRun({ ...request, kind: 'manual', preface: [{ type: 'rerun', reason: 'interrupted', interruptedAt: where.at, at: new Date().toISOString() }] });
+      } else if (r.kind === 'dry-run') {
         resolveRun(r, 'resolved');
         runs.forget();
       } else if (r.kind === 'crawl') {
@@ -527,7 +548,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   async function startRun(body) {
     const kind = body.kind;
     const cwd = state.cwd;
-    if (!['crawl', 'troubleshoot', 'login', 'loop', 'dry-run'].includes(kind)) throw new BadRequest(`unknown run kind "${kind}"`);
+    if (!['crawl', 'troubleshoot', 'login', 'loop', 'dry-run', 'manual'].includes(kind)) throw new BadRequest(`unknown run kind "${kind}"`);
     if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is already active`, 409);
     // A run started now replaces any try again that was scheduled.
     clearRetry();
@@ -539,7 +560,19 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (auth.mode === 'token' && typeof auth.token === 'string' && auth.token.trim()) state.token = auth.token.trim();
     let built;
     let meta;
-    if (kind === 'loop' || kind === 'dry-run') {
+    if (kind === 'manual') {
+      // A tester's PDF (docs/plans/manual-findings.md): the loop's config and assistant, the dashboard's session.
+      await detect();
+      if (!body.pdf || !validId(body.manualId) || resolve(body.pdf) !== join(manualDir(cwd, body.manualId), 'source.pdf') || !existsSync(body.pdf)) throw new BadRequest('the PDF to fix from is missing; choose it again');
+      const cfg = loadConfig(configPath(), cwd);
+      const chosen = body.agent || readSettings(sp().settings).agent || cfg.agent || null;
+      const resolved = agentCommand(chosen);
+      let agentArg = null;
+      if (resolved && PRESETS[chosen] && resolved !== PRESETS[chosen]) agentArg = resolved;
+      else if (resolved && chosen !== cfg.agent) agentArg = chosen;
+      built = manualArgs({ pdf: body.pdf, options: body.options, auth, agent: agentArg, config: configPath(), stateFile: existsSync(sp().state) ? sp().state : null, connect: state.browserPort || null });
+      meta = { agent: resolved, manualId: body.manualId };
+    } else if (kind === 'loop' || kind === 'dry-run') {
       if (kind === 'loop') await detect();
       // The dashboard's own config from before the wait had no limit: its 30 minutes becomes none, so a
       // fix loop from here never ends waiting for a deployment (a repository's config is used as is).
@@ -848,12 +881,116 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     return { ...info, cleared: true };
   }
 
+  // ---- The manual flow (docs/plans/manual-findings.md)
+  // The upload: the raw PDF, at most 50 MB, refused with one sentence unless it starts with %PDF-.
+  const readRaw = (req, max) => new Promise((ok, fail) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > max) {
+        fail(new BadRequest('That PDF is larger than 50 MB.', 413));
+        req.destroy();
+      } else chunks.push(c);
+    });
+    req.on('end', () => ok(Buffer.concat(chunks)));
+    req.on('error', fail);
+  });
+  // The manual run the dashboard follows, and its folder.
+  const currentManual = () => {
+    const r = runs.current;
+    if (!r || r.kind !== 'manual' || !runs.active || !r.meta || !validId(r.meta.manualId)) throw new BadRequest('no PDF run is waiting for its plan', 409);
+    return manualDir(state.cwd, r.meta.manualId);
+  };
+  const readJsonFile = (f) => {
+    try {
+      return JSON.parse(readFileSync(f, 'utf8'));
+    } catch {
+      return null;
+    }
+  };
+  async function manualApi(req, res, url) {
+    const path = url.pathname;
+    const m = req.method;
+    if (m === 'POST' && path === '/api/manual/pdf') {
+      if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is already active`, 409);
+      const buf = await readRaw(req, MAX_PDF_BYTES);
+      if (!isPdf(buf)) throw new BadRequest(NOT_A_PDF);
+      const id = newManualId(state.cwd);
+      const dir = manualDir(state.cwd, id);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const pdf = join(dir, 'source.pdf');
+      writeFileSync(pdf, buf);
+      try {
+        const run = await startRun({ kind: 'manual', pdf, manualId: id, agent: url.searchParams.get('agent') || undefined });
+        return send(res, 202, { ...runSummary(run), manualId: id });
+      } catch (e) {
+        // Not started: the folder made for it just now goes again.
+        rmSync(pdf, { force: true });
+        try {
+          if (!readdirSync(dir).length) rmSync(dir, { recursive: false, force: true });
+        } catch {}
+        throw e;
+      }
+    }
+    if (m === 'GET' && path === '/api/manual/components') return send(res, 200, listComponents(state.cwd, sourceDirs()));
+    if (m === 'GET' && path === '/api/manual/runs') {
+      let ids = [];
+      try {
+        ids = readdirSync(manualRoot(state.cwd)).filter(validId).sort().reverse();
+      } catch {}
+      return send(res, 200, ids.map((id) => {
+        const st = readJsonFile(join(manualDir(state.cwd, id), 'state.json')) || {};
+        return { id, done: !!st.done, line: st.doneLine || null, decisions: existsSync(join(manualDir(state.cwd, id), 'decisions.ndjson')) };
+      }));
+    }
+    const dm = /^\/api\/manual\/([^/]+)\/decisions$/.exec(path);
+    if (m === 'GET' && dm) {
+      if (!validId(dm[1]) || !existsSync(manualDir(state.cwd, dm[1]))) return send(res, 404, { error: 'no such PDF run' });
+      return send(res, 200, { id: dm[1], ...decisionGroups(manualDir(state.cwd, dm[1]), inGitRepo(state.cwd) ? remoteWeb(state.cwd) : null) });
+    }
+    if (m === 'POST' && path === '/api/manual/review') {
+      const dir = currentManual();
+      const body = await readBody(req);
+      const items = Array.isArray(body && body.items) ? body.items : null;
+      if (!items || !items.length) throw new BadRequest('body must be { "items": [{ "finding", "fix"?, "component"?, "remove"? }] }');
+      const clean = items.filter((it) => it && typeof it.finding === 'string').map((it) => ({
+        finding: it.finding.slice(0, 40),
+        ...(typeof it.fix === 'string' ? { fix: it.fix.slice(0, 2000) } : {}),
+        ...(it.component && typeof it.component === 'object' && typeof it.component.file === 'string' ? { component: { name: String(it.component.name || '').slice(0, 200), file: it.component.file.slice(0, 500) } } : {}),
+        ...(it.remove === true ? { remove: true } : {}),
+      }));
+      const plan = readJsonFile(join(dir, 'plan.json'));
+      writeFileSync(join(dir, 'plan-edit.json'), JSON.stringify({ version: plan ? plan.version : null, at: new Date().toISOString(), items: clean }, null, 2));
+      runs.continue('review');
+      return send(res, 200, { ok: true });
+    }
+    if (m === 'POST' && path === '/api/manual/approve') {
+      const dir = currentManual();
+      const plan = readJsonFile(join(dir, 'plan.json'));
+      const wrong = ((plan && plan.items) || []).filter((it) => it.confirm && it.confirm.understood === false);
+      if (wrong.length) throw new BadRequest(`the assistant did not understand the change to ${wrong.map((it) => it.finding).join(', ')}; edit it and send it again before approving`, 409);
+      runs.continue('approve');
+      return send(res, 200, { ok: true, version: plan ? plan.version : null });
+    }
+    return send(res, 404, { error: 'not found' });
+  }
+
   // ---- routing
   async function api(req, res, url) {
     const path = url.pathname;
     const m = req.method;
     const reportFile = /^\/api\/reports\/([^/]+)\/(report\.html)$/.exec(path);
-    if (!authorized(req, m === 'GET' && !!reportFile)) return send(res, 401, { error: 'missing or wrong session secret' });
+    // The manual flow's files a page opens as a link or an <img>: the PDF, screenshots, the reports.
+    const manualFile = /^\/api\/manual\/([^/]+)\/file\/(source\.pdf|decisions\.md|already-fixed\.md|evidence\/[\w-]+\/(?:before|after-\d+)\/screenshot\.png)$/.exec(path);
+    if (!authorized(req, m === 'GET' && (!!reportFile || !!manualFile))) return send(res, 401, { error: 'missing or wrong session secret' });
+    if (manualFile) {
+      if (!validId(manualFile[1])) return send(res, 404, { error: 'not found' });
+      const file = join(manualDir(state.cwd, manualFile[1]), ...manualFile[2].split('/'));
+      if (!existsSync(file)) return send(res, 404, { error: 'not found' });
+      return sendFile(res, file, { 'cache-control': 'no-store' });
+    }
+    if (path.startsWith('/api/manual/')) return manualApi(req, res, url);
 
     if (reportFile) {
       let rel;
@@ -874,7 +1011,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       const pending = detect(refresh);
       pending.catch(() => {});
       const d = refresh || url.searchParams.get('wait') === '1' ? await pending : state.presets;
-      return send(res, 200, envInfo(d), { 'set-cookie': `${cookieName()}=${fileSecret}; Path=/api/reports; HttpOnly; SameSite=Strict` });
+      return send(res, 200, envInfo(d), { 'set-cookie': [`${cookieName()}=${fileSecret}; Path=/api/reports; HttpOnly; SameSite=Strict`, `${cookieName()}=${fileSecret}; Path=/api/manual; HttpOnly; SameSite=Strict`] });
     }
     if (m === 'GET' && path === '/api/dirs') return send(res, 200, listDirs(url.searchParams.get('path'), platform));
     if (m === 'PUT' && path === '/api/cwd') return send(res, 200, await switchCwd(await readBody(req)));
