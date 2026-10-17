@@ -12,6 +12,7 @@ import { commitUrl } from '../core/git-links';
 import { clockOf, countsParts, hostOf, lowerFirst, plural, span, upperFirst, type CountsPart } from '../core/now';
 import { ManualPanel } from './manual-panel';
 import { DecisionsPane } from '../shared/decisions-pane';
+import { ParsedReportPane } from '../shared/parsed-report-pane';
 
 // A finding's words, cut at a word once they are long.
 function short(text: string, max = 72): string {
@@ -34,7 +35,7 @@ function continuingPdf(stage: unknown): string {
 // now, one line of numbers, one button (Start, or Stop while anything runs), and Diagnostics.
 @Component({
   selector: 'app-home-screen',
-  imports: [RouterLink, ManualPanel, DecisionsPane],
+  imports: [RouterLink, ManualPanel, DecisionsPane, ParsedReportPane],
   template: `
     <h1 class="app-name">a11y-508@if (env.env()?.revision; as rev) {{{ ' ' }}<span class="build" data-testid="build-revision" title="The commit this dashboard runs">build {{ rev }}</span> }</h1>
     @if (env.env(); as e) {
@@ -59,15 +60,16 @@ function continuingPdf(stage: unknown): string {
       }
       <!-- The second way in (docs/plans/manual-findings.md): a tester's PDF, chosen with the system's file chooser. -->
       @if (!running()) {
-        <button type="button" class="secondary" data-testid="manual-pdf" (click)="pdfInput.click()" [disabled]="!driver.url()">{{ manualEnded()?.noFindings || manualEnded()?.readFailed ? 'Choose another PDF' : 'Fix from a test report (PDF)' }}</button>
+        <button type="button" class="secondary" data-testid="manual-pdf" (click)="pdfInput.click()" [disabled]="!driver.url()">{{ manualEnded()?.noFindings || manualEnded()?.readFailed || manualEnded()?.parseFailed ? 'Choose another PDF' : 'Fix from a test report (PDF)' }}</button>
       }
       <input #pdfInput type="file" accept="application/pdf" hidden data-testid="manual-pdf-input" (change)="onPdf($event)" />
     </div>
     @if (store.kind() === 'manual' || lastManual()) {
-      <p class="manual-links">@if (decisionsFor(); as id) {<a href="#decisions" data-testid="show-decisions" (click)="openDecisions($event, id)">{{ store.kind() === 'manual' ? 'Show decisions' : 'Show decisions from the last PDF run' }}</a>}</p>
+      <p class="manual-links">@if (decisionsFor(); as id) {<a href="#decisions" data-testid="show-decisions" (click)="openDecisions($event, id)">{{ store.kind() === 'manual' ? 'Show decisions' : 'Show decisions from the last PDF run' }}</a>}@if (parsedFor(); as id) {@if (decisionsFor()) {<span aria-hidden="true"> · </span>}<a href="#parsed-report" data-testid="show-parsed" (click)="openParsed($event, id)">Show the parsed report</a>}</p>
     }
     <app-manual-panel />
     <app-decisions-pane #decisions />
+    <app-parsed-report-pane #parsedPane />
     @if (driver.error() || missed()) { <p class="notice error" role="alert" data-testid="start-error">{{ driver.error() || missed() }}</p> }
     <p class="diagnostics-link"><a routerLink="/diagnostics" data-testid="diagnostics-link">Log</a><span aria-hidden="true"> · </span><a href="#start-over" data-testid="start-over" (click)="startOver($event)">Start over</a></p>
     @if (resetError()) { <p class="notice error" role="alert">{{ resetError() }}</p> }
@@ -229,6 +231,17 @@ export class HomeScreen implements OnDestroy {
   openDecisions(ev: Event, id: string): void {
     ev.preventDefault();
     void this.decisionsPane().open(id);
+  }
+  // Show the parsed report (docs/plans/pdf-parse.md AC 9): once the current PDF run's PDF is parsed.
+  private parsedPane = viewChild.required<ParsedReportPane>('parsedPane');
+  readonly parsedFor = computed(() => {
+    if (this.store.kind() !== 'manual') return null;
+    const m = this.store.manual();
+    return m.id && m.parsed ? m.id : null;
+  });
+  openParsed(ev: Event, id: string): void {
+    ev.preventDefault();
+    void this.parsedPane().open(id);
   }
   // A PDF run that has ended: how.
   readonly manualEnded = computed(() => {
@@ -517,12 +530,19 @@ export class HomeScreen implements OnDestroy {
     const n = (k: string) => Number(ev[k]) || 0;
     // Taken up again after the dashboard was closed: said until the run is back at its own stage.
     const o = this.store.origin();
-    if (o && o.type === 'rerun' && [null, 'start', 'findings', 'already-fixed'].includes(m.stage)) return continuingPdf(o['stage']);
+    if (o && o.type === 'rerun' && [null, 'start', 'parsed', 'findings', 'already-fixed'].includes(m.stage)) return continuingPdf(o['stage']);
     switch (m.stage) {
       case null:
       case 'start':
+        return 'Reading the PDF';
+      // The parse (docs/plans/pdf-parse.md AC 8/9): the first pass's count, then the assistant reads the parse.
+      case 'parse':
+      case 'parsed': {
+        const p = m.parse || (m.parsed ? { pages: m.parsed.pages, withPictures: m.parsed.withPictures } : null);
+        return p ? `Reading the PDF: ${plural(p.pages, 'page')} (${p.withPictures} with pictures).` : 'Reading the PDF';
+      }
       case 'read':
-        return `Reading the PDF with ${who}`;
+        return m.noText ? `The PDF has no text; the assistant is working from the pictures of its ${plural(m.parsed?.pages || n('pages'), 'page')}.` : `Reading the PDF with ${who}`;
       case 'read-again': {
         const why = m.readAgain || '';
         return !why || why === 'its answer had no list of findings' ? "The assistant's answer had no list of findings; asking it again." : `The assistant could not read the PDF (${why}); asking it again.`;
@@ -588,6 +608,7 @@ export class HomeScreen implements OnDestroy {
       if ((d['rerun'] && !s.rerunWithdrawn()) || d['outcome'] === 'interrupted') return continuingPdf((d['rerun'] as Record<string, unknown> | undefined)?.['stage']);
       if (d['outcome'] === 'stopped') return 'Stopped.';
       if (m.readFailed) return m.readFailed;
+      if (m.parseFailed) return m.parseFailed;
       const errors = s.notices().filter((x) => x.level === 'error' && !/^The run failed( \(exit code|: )/.test(x.message)).map((x) => x.message);
       const pre = s.precondition();
       if (pre) return `Could not start: ${String(pre['message'] || '')}. ${String(pre['remedy'] || '')}`;

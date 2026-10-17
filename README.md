@@ -1,6 +1,6 @@
 # a11y-508
 
-A Section 508 crawler with **no dependencies**. It drives the Chrome, Chromium, or Edge already installed on the machine over the DevTools Protocol, crawls every same-origin page it can reach, runs the automatable [DHS Trusted Tester v5](https://section508coordinators.github.io/TrustedTester/) test conditions on each page, and writes a report that separates:
+A Section 508 crawler with **no dependencies** (pdf.js is vendored under `src/vendor/`, so nothing is installed). It drives the Chrome, Chromium, or Edge already installed on the machine over the DevTools Protocol, crawls every same-origin page it can reach, runs the automatable [DHS Trusted Tester v5](https://section508coordinators.github.io/TrustedTester/) test conditions on each page, and writes a report that separates:
 
 - **Violations**: determinate failures of a Trusted Tester test condition.
 - **Review items**: escalations for a human. The tool found something it cannot judge (an alt text, a link name, a form's error handling) and says exactly what to check, with the element and its HTML.
@@ -54,6 +54,8 @@ It is one screen: the folder and URL, one sentence of what is happening now ("Pu
 #### Fix from a test report (PDF)
 
 **Fix from a test report (PDF)**, beside Start, fixes what a person testing by hand found. Choose the tester's PDF; the assistant reads it, one finding per issue with its PDF page and the tester's words, and the tool checks each finding in the deployed site from evidence it captures itself (a screenshot, the elements, the Tab order). Findings the deployed site no longer has are reported as already fixed, each with its PDF page. The rest become a plan: the fix, the component, the files. Reviewing and approving that plan is the one decision the tool asks of a person, because a tester's words can be read more than one way and the fixes go into your code; you can edit an item or pick another component, and the assistant says back what it understood. Once approved, each fix is committed and pushed, confirmed in the deployed site, tried once more if it did not hold, and anything still not holding comes back as a revised plan. When it ends, the page lists what was fixed and confirmed, with the commits and the screenshots before and after, and every decision is in **Show decisions**. If the dashboard is closed meanwhile, the run continues from where it was when it comes back.
+
+The tool parses the PDF before the assistant sees it, in its own Chrome: `parsed/report.md` holds each page's text in reading order, the criterion, verdict and section it recognised there, a picture of the page and each screenshot on it, and the assistant reads that instead of the PDF while the tool checks the pages and quotes it gives against it (**Show the parsed report** shows the file). `a11y-508 pdf <file>` makes the same parse on its own, with no repository and no config, into `./<file-name>.parsed/`.
 
 #### The dashboard runs in its own browser window
 
@@ -159,6 +161,7 @@ a11y-508 loop --dry-run                  # crawl and update the ledger, nothing 
 a11y-508 loop --max-rounds 1 --agent gemini
 a11y-508 status                          # what is open, pending, verified, skipped
 a11y-508 manual report.pdf               # fix what a tester found, from their PDF
+a11y-508 pdf report.pdf                  # just parse it: report.md, manifest.json, page pictures
 ```
 
 `a11y-508 manual <pdf>` runs the dashboard's **Fix from a test report (PDF)** from the terminal: it prints where the plan is (`plan.json`), and you type `approve` to approve it, or write your changes to `plan-edit.json` and type `review`.

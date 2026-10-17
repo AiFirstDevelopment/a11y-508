@@ -20,6 +20,12 @@ export interface PlanItem {
   decisions: { decision: string; reason: string }[];
   confirm: { understood: boolean; text: string } | null;
   screenshot: string | null;
+  // From the parse (docs/plans/pdf-parse.md): every PDF page about it, the tester's status, the
+  // picture of its first page (under parsed/), and "Came back: ..." when the tester had verified it fixed.
+  pages?: number[];
+  status?: 'fixed' | 'open' | null;
+  picture?: string | null;
+  cameBack?: string | null;
 }
 
 export interface AlreadyFixedRow {
@@ -31,6 +37,10 @@ export interface AlreadyFixedRow {
   checkedAt: string;
   reason: string;
   screenshot: string | null;
+  pages?: number[];
+  picture?: string | null;
+  // "The tester verified this fixed on 28 Sep 2026; the deployed site agrees." when they had.
+  tester?: string | null;
 }
 
 export interface ManualDecision {
@@ -54,6 +64,7 @@ export interface DecisionGroup {
   decisions: ManualDecision[];
   commits: { sha: string; short: string; files: string[]; url: string | null }[];
   screenshots: { label: string; path: string }[];
+  picture?: string | null;
 }
 
 export interface ManualState {
@@ -72,6 +83,12 @@ export interface ManualState {
   decisions: ManualDecision[];
   noFindings: string | null;
   readFailed: string | null;
+  // The parse (docs/plans/pdf-parse.md): its first count while it runs, its facts once done, or why
+  // the PDF could not be opened.
+  parse: { pages: number; withPictures: number } | null;
+  parsed: { pages: number; withText: number; withPictures: number; notes: string[] } | null;
+  parseFailed: string | null;
+  noText: boolean;
   // The read's first answer had no list of findings: why, while it is asked again.
   readAgain: string | null;
   done: { message: string; fixed: number; alreadyFixed: number; all: boolean } | null;
@@ -85,7 +102,7 @@ export interface ManualState {
 
 export const emptyManual = (): ManualState => ({
   id: null, stage: null, last: null, findings: null, alreadyFixed: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
-  noFindings: null, readFailed: null, readAgain: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
+  noFindings: null, readFailed: null, parse: null, parsed: null, parseFailed: null, noText: false, readAgain: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
 });
 
 // The state after one more event.
@@ -102,6 +119,19 @@ export function applyManual(s: ManualState, ev: Record<string, any>): ManualStat
       break;
     case 'no-findings':
       n.noFindings = String(ev['message'] || '');
+      break;
+    case 'parse':
+      if (ev['pages'] !== undefined) n.parse = { pages: Number(ev['pages']) || 0, withPictures: Number(ev['withPictures']) || 0 };
+      break;
+    case 'parsed':
+      n.parsed = { pages: Number(ev['pages']) || 0, withText: Number(ev['withText']) || 0, withPictures: Number(ev['withPictures']) || 0, notes: ev['notes'] || [] };
+      n.noText = !!n.parsed.pages && !n.parsed.withText;
+      break;
+    case 'parse-failed':
+      n.parseFailed = String(ev['reason'] || '');
+      break;
+    case 'read':
+      if (ev['noText'] !== undefined) n.noText = !!ev['noText'];
       break;
     case 'read-again':
       n.readAgain = String(ev['reason'] || '');
@@ -160,3 +190,5 @@ export function applyManual(s: ManualState, ev: Record<string, any>): ManualStat
 // The path of one of the run's files, as the server serves it (a link or an <img> sends the cookie).
 export const manualFileUrl = (id: string | null, rel: string) => (id ? `/api/manual/${encodeURIComponent(id)}/file/${rel.split('/').map(encodeURIComponent).join('/')}` : '');
 export const pdfPageUrl = (id: string | null, page: number) => `${manualFileUrl(id, 'source.pdf')}#page=${page}`;
+// One file of the run's parse: report.md, manifest.json or pages/<name>.png.
+export const parsedFileUrl = (id: string | null, rel: string) => (id ? `/api/manual/${encodeURIComponent(id)}/parsed/${rel.split('/').map(encodeURIComponent).join('/')}` : '');
