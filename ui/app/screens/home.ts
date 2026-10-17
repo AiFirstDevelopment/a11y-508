@@ -542,7 +542,8 @@ export class HomeScreen implements OnDestroy {
       case 'deploy-check': {
         const c = m.deployCheck;
         const checked = c ? `checked ${clockOf(c['at']) || 'just now'}: ${c['result'] === 'changed' ? 'the new build is live' : c['result'] === 'unreadable' ? 'the start page could not be read' : 'still the old build'}` : 'not checked yet';
-        return `Pushed ${plural(m.commits, 'fix', 'fixes')}; waiting for your deployment (${checked})`;
+        const w = m.deployWait || {};
+        return `Pushed ${plural(Number(w['committed']) || m.commits, 'fix', 'fixes')} to ${String(w['branch'] || 'the branch')}; waiting for your deployment (${checked})`;
       }
       case 'verify':
         return `Checking the deployed site for ${plural(n('count'), 'fix', 'fixes')}`;

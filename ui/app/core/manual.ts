@@ -64,11 +64,13 @@ export interface ManualState {
   fix: { n: number; m: number; finding: string; title: string; attempt: number } | null;
   capture: { n: number; m: number; label: string } | null;
   deployCheck: Record<string, any> | null;
+  // The wait for the deployment of the latest push: how many fixes, on which branch.
+  deployWait: Record<string, any> | null;
 }
 
 export const emptyManual = (): ManualState => ({
   id: null, stage: null, last: null, findings: null, alreadyFixed: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
-  noFindings: null, readFailed: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null,
+  noFindings: null, readFailed: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
 });
 
 // The state after one more event.
@@ -118,6 +120,10 @@ export function applyManual(s: ManualState, ev: Record<string, any>): ManualStat
       break;
     case 'commit':
       n.commits = s.commits + 1;
+      break;
+    case 'await-deploy':
+      n.deployWait = ev;
+      n.deployCheck = null;
       break;
     case 'deploy-check':
       n.deployCheck = ev;

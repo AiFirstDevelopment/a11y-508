@@ -82,7 +82,8 @@ test('manual AC1 / guard a: the PDF is chosen with a file chooser, stored, serve
     await expect(page.getByTestId('manual-pdf')).toHaveText('Fix from a test report (PDF)');
     await expect(page.locator('input[data-testid="manual-pdf-input"]')).toHaveAttribute('accept', 'application/pdf');
     // Guard a: a text file named .pdf is refused, with the sentence, and no run starts.
-    const fake = join(tempDir('a11y-508-manual-notpdf-'), 'notes.pdf');
+    const notes = tempDir('a11y-508-manual-notpdf-');
+    const fake = join(notes, 'notes.pdf');
     writeFileSync(fake, 'These are my notes, not a PDF.\n');
     await choosePdf(page, fake);
     await expect(page.getByTestId('start-error')).toHaveText(NOT_A_PDF);
@@ -116,6 +117,7 @@ test('manual AC1 / guard a: the PDF is chosen with a file chooser, stored, serve
     expect((await api(dash, '/api/runs/current')).json.id).toBe(run.id);
     await go(page).click();
     await expect(now(page)).toHaveText('Stopped', { timeout: 30_000 });
+    removeTemp(notes);
   } finally {
     await dash.stop();
     await app.cleanup();
@@ -264,7 +266,8 @@ test('manual AC1/6 / guards e f g h k: the developer edits the plan with the pic
   test.setTimeout(400_000);
   const app = await manualApp();
   const base = app.g('rev-parse', 'HEAD');
-  const marker = join(tempDir('a11y-508-manual-once-'), 'refused');
+  const onceDir = tempDir('a11y-508-manual-once-');
+  const marker = join(onceDir, 'refused');
   const env = { FAKE_MANUAL_PLAN_WRONG: '1', FAKE_MANUAL_MISUNDERSTAND_ONCE: marker };
   let dash = await dashboard({ cwd: app.cwd, env });
   const commitsSinceBase = () => app.g('rev-list', '--count', `${base}..HEAD`);
@@ -298,6 +301,11 @@ test('manual AC1/6 / guards e f g h k: the developer edits the plan with the pic
     await picker.fill('NotAComponent');
     await expect(item(page, 'F1').getByTestId('component-none')).toHaveText('No component matches “NotAComponent”');
     await picker.press('Enter');
+    // Nothing should change, so the screen is given a moment to show a change before it is checked.
+    await page.waitForTimeout(1000);
+    // Enter chose nothing: what was typed is still there, unmatched, and the component is unchanged.
+    await expect(picker).toHaveValue('NotAComponent');
+    await expect(item(page, 'F1').getByTestId('component-none')).toBeVisible();
     await expect(item(page, 'F1').getByTestId('component-chosen')).toHaveText(/^HeaderComponent/);
     await expect(page.getByTestId('send-changes')).toHaveCount(0);
     // The override: SearchBarComponent, from the list.
@@ -346,6 +354,7 @@ test('manual AC1/6 / guards e f g h k: the developer edits the plan with the pic
   } finally {
     await dash.stop();
     await app.cleanup();
+    removeTemp(onceDir);
   }
 });
 
