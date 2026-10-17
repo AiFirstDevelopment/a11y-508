@@ -120,6 +120,12 @@ if (task && /^manual-/.test(task.kind)) {
 // FAKE_MANUAL_ROUTE_DOWN=F2 (the describe puts F2 on a page that does not load, with selectors that
 // match nothing), FAKE_MANUAL_VERIFY_SKIP=F1 and FAKE_MANUAL_CONFIRM_SKIP=F3 (the first verify or
 // confirmation leaves that id out), FAKE_MANUAL_DESCRIBE_NO_ELEMENT=1 (no answer names an element).
+// docs/plans/pictures-and-routes.md AC 8: the describe opens each candidate's picture (it reads the
+// file and prints a Gemini CLI read_file tool_use event for it, which is what the tool checks), except
+// FAKE_MANUAL_SKIP_PICTURE=F3,F5 (not on the first ask; the ask that names the picture opens it) and
+// FAKE_MANUAL_SKIP_PICTURE_ALWAYS=F5 (never). FAKE_MANUAL_BAD_ROUTE=F1: F1's route is not one of the
+// known routes. FAKE_MANUAL_ROUTE_DOWN=F2 puts F2 on /gone (HTTP 404) and FAKE_MANUAL_ROUTE_NOT_FOUND=F3
+// on /reports (the app's Not Found view), in the describe and the locate alike.
 // The describe answers each candidate from its page's FINDING line (id | title | route | selectors |
 // element | words): a tag other than the candidate's own id says the page shows that earlier finding
 // (sameAs); a second FINDING line on a page is a second problem (extra); a page with none names no
@@ -158,6 +164,14 @@ function manual(task) {
     // It reads the tool's parse, never the PDF: the prompt names report.md and the picture of each page, which exist.
     if (!task.report || !/report\.md$/.test(task.report) || !existsSync(task.report) || !prompt.includes(task.report)) return out({ error: 'the prompt names no parsed report (report.md)' });
     for (const c of task.candidates) if (!c.picture || !existsSync(c.picture) || !prompt.includes(c.picture)) return out({ error: `the prompt names no picture of page ${c.page}` });
+    // The pictures it opens, as a read tool's events in the stream.
+    const reasked = Array.isArray(task.unopened) && task.unopened.length > 0;
+    const notOpened = [...ids(process.env.FAKE_MANUAL_SKIP_PICTURE_ALWAYS), ...(reasked ? [] : ids(process.env.FAKE_MANUAL_SKIP_PICTURE))];
+    for (const c of task.candidates) {
+      if (notOpened.includes(c.id)) continue;
+      readFileSync(c.picture);
+      process.stdout.write(JSON.stringify({ type: 'tool_use', timestamp: new Date().toISOString(), tool_name: 'read_file', tool_id: `pic-${c.id}`, parameters: { absolute_path: c.picture } }) + '\n');
+    }
     const skip = second ? [] : ids(process.env.FAKE_MANUAL_DESCRIBE_SKIP);
     const sameAs = Object.fromEntries(ids(process.env.FAKE_MANUAL_SAME_AS).map((p) => p.split(':')));
     const wrong = ids(process.env.FAKE_MANUAL_SELECTORS_WRONG);
@@ -183,7 +197,9 @@ function manual(task) {
       if (wrong.includes(c.id)) a.selectors = ['#not-on-this-page'];
       // FAKE_MANUAL_DESCRIBE_NO_ELEMENT: every answer says what it saw but names no element.
       if (process.env.FAKE_MANUAL_DESCRIBE_NO_ELEMENT) delete a.element;
-      if (ids(process.env.FAKE_MANUAL_ROUTE_DOWN).includes(c.id)) Object.assign(a, { route: 'http://127.0.0.1:9/', selectors: ['#not-on-this-page'] });
+      if (ids(process.env.FAKE_MANUAL_ROUTE_DOWN).includes(c.id)) Object.assign(a, { route: '/gone', selectors: ['#not-on-this-page'] });
+      if (ids(process.env.FAKE_MANUAL_ROUTE_NOT_FOUND).includes(c.id)) Object.assign(a, { route: '/reports', selectors: ['#not-on-this-page'] });
+      if (ids(process.env.FAKE_MANUAL_BAD_ROUTE).includes(c.id)) a.route = '/layout/form-panel';
       answers.push(a);
     }
     const extra = ids(process.env.FAKE_MANUAL_DESCRIBE_EXTRA);
@@ -197,6 +213,8 @@ function manual(task) {
     // The fixture's real route and selectors, from the finding's FINDING line.
     return out({ answers: task.items.map((it) => {
       const m = it.lines.map((l) => FINDING.exec(l)).filter(Boolean)[0];
+      if (ids(process.env.FAKE_MANUAL_ROUTE_DOWN).includes(it.id)) return { id: it.id, route: '/gone', selectors: ['#not-on-this-page'], reason: 'the page is /gone' };
+      if (ids(process.env.FAKE_MANUAL_ROUTE_NOT_FOUND).includes(it.id)) return { id: it.id, route: '/reports', selectors: ['#not-on-this-page'], reason: 'the page is /reports' };
       if (ids(process.env.FAKE_MANUAL_LOCATE_WRONG).includes(it.id)) return { id: it.id, route: m ? m[3] : '/', selectors: ['#still-not-on-this-page'], reason: 'a guess' };
       return m ? { id: it.id, route: m[3], selectors: m[4].split(';').map((x) => x.trim()), notOnThisRoute: false, reason: 'the element is in the deployed page under these selectors' } : { id: it.id, route: '/', selectors: [], reason: 'cannot tell' };
     }) });

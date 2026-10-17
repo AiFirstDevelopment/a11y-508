@@ -29,8 +29,10 @@ export interface PlanItem {
   // docs/plans/read-from-parse.md: what the assistant said the page shows (AC 6), and, when the tool
   // could not find the element on the deployed page, the line that says so (AC 4).
   seen?: string | null;
+  // false when the assistant answered without opening the page's picture (docs/plans/pictures-and-routes.md AC 3).
+  seenPicture?: boolean | null;
   // For a finding merged from several pages: what the assistant saw on each of the others.
-  seenMore?: { page: number; seen: string | null }[];
+  seenMore?: { page: number; seen: string | null; seenPicture?: boolean | null }[];
   located?: boolean | null;
   notLocated?: string | null;
 }
@@ -49,8 +51,26 @@ export interface AlreadyFixedRow {
   // "The tester verified this fixed on 28 Sep 2026; the deployed site agrees." when they had.
   tester?: string | null;
   seen?: string | null;
-  seenMore?: { page: number; seen: string | null }[];
+  seenPicture?: boolean | null;
+  seenMore?: { page: number; seen: string | null; seenPicture?: boolean | null }[];
   notLocated?: string | null;
+}
+
+// A tester-verified-fixed finding whose page did not load (docs/plans/pictures-and-routes.md AC 7).
+export interface UncheckedRow {
+  finding: string;
+  title: string;
+  quote: string;
+  page: number;
+  url: string;
+  checkedAt: string;
+  // "The tester verified this fixed on 28 Sep 2026; the tool could not open /x (...), so it could not confirm it."
+  line: string;
+  screenshot: string | null;
+  picture?: string | null;
+  seen?: string | null;
+  seenPicture?: boolean | null;
+  seenMore?: { page: number; seen: string | null; seenPicture?: boolean | null }[];
 }
 
 export interface ManualDecision {
@@ -76,11 +96,13 @@ export interface DecisionGroup {
   screenshots: { label: string; path: string }[];
   picture?: string | null;
   seen?: string | null;
-  seenMore?: { page: number; seen: string | null }[];
+  seenPicture?: boolean | null;
+  seenMore?: { page: number; seen: string | null; seenPicture?: boolean | null }[];
 }
 
-// "What the assistant saw on page 12: ..." (docs/plans/read-from-parse.md AC 6).
-export const seenWords = (r: { page: number; seen?: string | null }) => (r.seen ? `What the assistant saw on page ${r.page}: ${r.seen}` : 'The assistant did not describe this page.');
+// "What the assistant saw on page 12: ..." (docs/plans/read-from-parse.md AC 6), or, when it answered
+// without opening the picture, that it did not (docs/plans/pictures-and-routes.md AC 3).
+export const seenWords = (r: { page: number; seen?: string | null; seenPicture?: boolean | null }) => (r.seen ? (r.seenPicture === false ? `The assistant did not open the picture of page ${r.page}; what it says below is a guess from the text: ${r.seen}` : `What the assistant saw on page ${r.page}: ${r.seen}`) : 'The assistant did not describe this page.');
 
 export interface ManualState {
   id: string | null;
@@ -89,6 +111,8 @@ export interface ManualState {
   last: Record<string, any> | null;
   findings: number | null;
   alreadyFixed: AlreadyFixedRow[];
+  // Could not be checked: verified fixed by the tester, but the page did not load.
+  unchecked: UncheckedRow[];
   allGone: boolean;
   plan: { version: number; reason: string; notHeld: number; items: PlanItem[] } | null;
   // Waiting for the developer: the plan is shown with its edit controls.
@@ -120,7 +144,7 @@ export interface ManualState {
 }
 
 export const emptyManual = (): ManualState => ({
-  id: null, stage: null, last: null, findings: null, alreadyFixed: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
+  id: null, stage: null, last: null, findings: null, alreadyFixed: [], unchecked: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
   noFindings: null, readFailed: null, readFailedBy: null, parse: null, parsed: null, parseFailed: null, noText: false, readAgain: null, candidates: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
 });
 
@@ -165,6 +189,7 @@ export function applyManual(s: ManualState, ev: Record<string, any>): ManualStat
       break;
     case 'already-fixed':
       n.alreadyFixed = ev['rows'] || [];
+      n.unchecked = ev['unchecked'] || [];
       n.allGone = !!ev['all'];
       break;
     case 'plan':

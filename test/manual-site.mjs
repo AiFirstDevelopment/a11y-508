@@ -8,6 +8,8 @@ import { createServer } from 'node:http';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+// The app's own Not Found view: a heading and a sentence.
+const NOT_FOUND = '<h2>Page not found</h2>\n<p>The page you asked for does not exist.</p>';
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
 function components(dir) {
@@ -44,13 +46,16 @@ export async function startManualSite({ dir, port = 0 } = {}) {
       res.writeHead(200, { 'content-type': 'image/png' });
       return res.end(PNG);
     }
+    // /gone answers HTTP 404; any other path the app has no page for is its own Not Found view, with
+    // HTTP 200, as a single-page app's router shows it (docs/plans/pictures-and-routes.md AC 8).
     const page = PAGES[path.replace(/\/+$/, '') || '/'];
-    if (!page || !existsSync(join(dir, 'src', 'index.html'))) {
+    if (path.replace(/\/+$/, '') === '/gone' || !existsSync(join(dir, 'src', 'index.html'))) {
       res.writeHead(404, { 'content-type': 'text/html' });
       return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
     }
     const comps = stale ? snapshot : components(dir);
-    let html = readFileSync(join(dir, 'src', 'index.html'), 'utf8').replace('<!-- PAGE -->', page);
+    let html = readFileSync(join(dir, 'src', 'index.html'), 'utf8').replace('<!-- PAGE -->', page || NOT_FOUND);
+    if (!page) html = html.replace(/<title>[^<]*<\/title>/, '<title>Not Found</title>');
     if (held) html = html.replace(/<meta name="a11y-508-build"[^>]*>\s*/i, '');
     for (let i = 0; i < 3; i++) html = html.replace(/<(app-[\w-]+)><\/\1>/g, (m, sel) => comps[sel] ?? m);
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });

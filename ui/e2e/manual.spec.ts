@@ -9,7 +9,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { api, dashboard, gitRepo, go, now, open, removeTemp, tempDir, BIN, ROOT, type Dash } from './harness';
+import { api, dashboard, gitRepo, go, now, open, removeTemp, runEvents, tempDir, BIN, ROOT, type Dash } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const FIXTURES = join(ROOT, 'test', 'fixtures', 'manual');
@@ -732,8 +732,12 @@ test('read-from-parse AC1/2/3/6/9 / guards g i: the deck: the tool lists 11 find
     // AC 2: the prompt lists them as blocks, each with its picture, and points at the parse before the PDF.
     await expect.poll(() => readPrompts(dash, id).length, { timeout: 60_000 }).toBeGreaterThan(0);
     const prompt = readPrompts(dash, id)[0];
-    expect(headings(prompt)).toEqual(cand.map((c: any) => c.id));
-    expect(prompt).toMatch(/^## F10 — page 12 — 13\.A 1\.4\.1-color-meaning — open \("Still an issue – 9\/28\/26"\)\nPicture of the page: \S+parsed\/pages\/page-12\.png {3}\(look at it; the callouts and arrows are only there\)$/m);
+    // In batches of four (docs/plans/pictures-and-routes.md AC 2).
+    expect(headings(prompt)).toEqual(['F1', 'F2', 'F3', 'F4']);
+    expect(prompt).toMatch(/^## F2 — page 3 — 5\.C 1\.3\.1-programmatic-label — fixed \("Verified fixed – 9\/28\/2026"\)\nPicture of the page: \S+parsed\/pages\/page-03\.png {3}\(look at it; the callouts and arrows are only there\)$/m);
+    await expect.poll(() => readPrompts(dash, id).length, { timeout: 60_000 }).toBeGreaterThan(2);
+    expect(readPrompts(dash, id).flatMap(headings)).toEqual(cand.map((c: any) => c.id));
+    expect(readPrompts(dash, id)[2]).toMatch(/^## F10 — page 12 — 13\.A 1\.4\.1-color-meaning — open \("Still an issue – 9\/28\/26"\)\nPicture of the page: \S+parsed\/pages\/page-12\.png {3}\(look at it; the callouts and arrows are only there\)$/m);
     expect(prompt.indexOf('parsed/report.md')).toBeLessThan(prompt.indexOf('source.pdf'));
     expect(prompt).toMatch(/The original PDF is \S+source\.pdf: open it only if the report is not enough\./);
     await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
@@ -840,9 +844,9 @@ test('read-from-parse guards a b: the assistant leaves F3 and F5 out; the tool k
     // Guard a: the tool's list, not the answer's: every criterion page is a finding (or merged into one).
     expect(findings.map((f: any) => f.id)).toEqual(DECK_FINDINGS);
     expect(decisions(dir).find((d) => d.finding === null && /read from the PDF/.test(d.decision)).decision).toBe(COUNTS);
-    // Guard b: asked again for just F3 and F5, which are then described.
-    expect(existsSync(join(dir, 'agent-describe-2.log'))).toBe(true);
-    const second = tasksFile(dash, `prompt-manual-${id}-describe-2.md`);
+    // Guard b: asked again for just F3 and F5, which are then described (after the three batches of the first asking).
+    expect(readdirSync(dir).filter((f) => /^agent-describe-/.test(f)).sort()).toEqual(['agent-describe-1.log', 'agent-describe-2.log', 'agent-describe-3.log', 'agent-describe-4.log']);
+    const second = tasksFile(dash, `prompt-manual-${id}-describe-4.md`);
     expect(headings(second)).toEqual(['F3', 'F5']);
     expect(second).toContain('You did not answer for F3 and F5. Answer for each of them.');
     for (const f of ['F3', 'F5']) expect(findings.find((x: any) => x.id === f).seen, f).toMatch(/^A fixture page showing /);
@@ -915,7 +919,7 @@ test('read-from-parse AC4/5/7 / guards e f h: an element the tool cannot find go
   }
 });
 
-test('read-from-parse AC4: an element still not found after the second look is kept with the line on its plan item; a page that did not load is never sent back, and its item says so', async ({ page }) => {
+test('read-from-parse AC4 / pictures-and-routes AC7: an element still not found after the second look is kept with the line on its plan item; a page that did not load goes back once with the known routes, is not judged by the assistant, and its item says so', async ({ page }) => {
   test.setTimeout(300_000);
   const app = await manualApp();
   const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_SELECTORS_WRONG: 'F1', FAKE_MANUAL_LOCATE_WRONG: 'F1', FAKE_MANUAL_ROUTE_DOWN: 'F2' } });
@@ -927,13 +931,20 @@ test('read-from-parse AC4: an element still not found after the second look is k
     const id = dir.split(/[\\/]/).pop()!;
     const findings = readJson(join(dir, 'findings.json')).findings;
     expect(findings.map((f: any) => [f.id, f.located])).toEqual([['F1', false], ['F2', null], ['F3', true]]);
-    // Only F1 went back: F2's page did not load.
-    expect(headings(tasksFile(dash, `prompt-manual-${id}-locate-1.md`).replace(/^## (F\w+): /gm, '## $1 — page '))).toEqual(['F1']);
+    // F1 went back, and F2 too: its page did not load (HTTP 404), so it is asked for a route from the known ones, once.
+    const locate = tasksFile(dash, `prompt-manual-${id}-locate-1.md`);
+    expect(headings(locate.replace(/^## (F\w+): /gm, '## $1 — page '))).toEqual(['F1', 'F2']);
+    expect(locate).toContain(`Looked for on: ${app.site.base}gone\nThat page did not load: HTTP 404. It is not a page of the application the tool can open; pick the route from the known routes below.`);
+    expect(locate).toContain(`These are the only routes to choose from.`);
+    expect(locate).toContain(`- ${app.site.base}search\n`);
     expect(readdirSync(dir).filter((f) => /^agent-locate-/.test(f))).toEqual(['agent-locate-1.log']);
+    // F2 is not open by the tester's account, so it is planned; the assistant never judged it: the tool did.
+    expect(readJson(join(dir, 'check.json')).results.map((r: any) => [r.finding, r.verdict])).toEqual([['F1', 'present'], ['F2', 'unreachable'], ['F3', 'present']]);
+    expect(decisions(dir).filter((d) => d.finding === 'F2' && d.stage === 'check' && d.by === 'tool').map((d) => d.decision)).toEqual(['could not open /gone', 'could not be checked in the deployed site']);
     expect(decisions(dir).filter((d) => d.finding === 'F1' && d.stage === 'check' && d.by === 'tool' && /^could not find/.test(d.decision)).map((d) => [d.decision, d.reason])).toEqual([['could not find the element on /search', "the assistant's selectors matched nothing twice"]]);
     await expect(item(page, 'F1').getByTestId('not-located')).toHaveText("The tool could not find this element on /search: the assistant's selectors matched nothing. Check the component before approving.");
     // F2's page did not load: its item says the tool could not look.
-    await expect(item(page, 'F2').getByTestId('not-located')).toHaveText('The tool could not open http://127.0.0.1:9/ in the deployed site, so it could not look for this element. Check the component before approving.');
+    await expect(item(page, 'F2').getByTestId('not-located')).toHaveText('The tool could not open /gone in the deployed site, so it could not look for this element. Check the component before approving.');
   } finally {
     await dash.stop();
     await app.cleanup();
@@ -1083,11 +1094,195 @@ test('read retry / guard m: an answer that only echoes ("Here is the original im
     await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
     const dir = runDir(dash);
     const prompts = readPrompts(dash, dir.split(/[\\/]/).pop()!);
-    expect(prompts).toHaveLength(2);
-    expect(prompts[0]).not.toContain('Your previous answer was');
-    expect(prompts[1]).toMatch(/^# Say what each page of a tester's report shows\n\nYour previous answer was: .*Here is the original image:\. That is not the task\. Do not describe, return or echo the PDF or the pictures; read the report and write the JSON file at \S+result-manual-\S+-describe-2\.json\.\n/);
+    // The first asking is three batches of four (docs/plans/pictures-and-routes.md AC 2); each echoes; the second asking quotes it back.
+    expect(prompts).toHaveLength(6);
+    for (const p of prompts.slice(0, 3)) expect(p).not.toContain('Your previous answer was');
+    expect(prompts[3]).toMatch(/^# Say what each page of a tester's report shows\n\nYour previous answer was: .*Here is the original image:\. That is not the task\. Do not describe, return or echo the PDF or the pictures; read the report and write the JSON file at \S+result-manual-\S+-describe-4\.json\.\n/);
     expect(decisions(dir).filter((d) => d.decision === 'asked again')).toHaveLength(1);
     expect(readJson(join(dir, 'findings.json')).findings.map((f: any) => f.id)).toEqual(DECK_FINDINGS);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+// ---- docs/plans/pictures-and-routes.md: the assistant must open each page's picture (the stream
+// says which files it opened), and a page that is not there is no evidence.
+
+// The machine-readable block of a prompt (its last JSON block).
+const machine = (prompt: string) => JSON.parse([...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)].pop()![1]);
+const OPEN_FIRST = 'For each finding: first open its picture with your file-reading tool, then answer. An answer for a page whose picture you did not open is wrong and will be sent back.';
+const ROUTE_RULE = 'route: one of the known routes below, exactly as written; if none fits, give the closest and say so in decisions';
+const unopenedSays = (id: string, page: number) => new RegExp(`^You answered for ${id} without opening the picture of page ${page} \\(\\S+parsed/pages/page-${String(page).padStart(2, '0')}\\.png\\)\\. Open it with your file-reading tool and look at it before answering; the callout's words and the arrows are only there\\.$`, 'm');
+
+test('pictures-and-routes AC1/2/4 / guards a b c e j: the describe goes in batches of four; the stream says which pictures were opened; F3 and F5, answered unseen, are asked again with their pictures named; the router\'s routes are the choices and the decisions say how many', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_SKIP_PICTURE: 'F3,F5' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, DECK);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    const dir = runDir(dash);
+    const id = dir.split(/[\\/]/).pop()!;
+    const prompts = readPrompts(dash, id);
+    // Guard c: 11 candidates, at most 4 a call: three calls, then the fourth for the two answered unseen.
+    expect(prompts.map(headings)).toEqual([['F1', 'F2', 'F3', 'F4'], ['F5', 'F6', 'F7', 'F8'], ['F9', 'F10', 'F11'], ['F3', 'F5']]);
+    // AC 2: every describe prompt opens with the rule.
+    for (const p of prompts) expect(p).toContain(`\n${OPEN_FIRST}\n`);
+    // Guard b: the second asking names only F3 and F5, each with its picture, and why.
+    expect(prompts[3]).toMatch(unopenedSays('F3', 4));
+    expect(prompts[3]).toMatch(unopenedSays('F5', 6));
+    expect(prompts[3]).not.toContain('You did not answer for');
+    expect(machine(prompts[3]).unopened).toEqual(['F3', 'F5']);
+    expect(decisions(dir).filter((d) => d.decision === 'asked again').map((d) => d.reason)).toEqual(['it answered for F3 and F5 without opening the pictures of pages 4 and 6']);
+    // Guard a / AC 1: the stream showed each picture opened (F3 and F5 on the second call): every finding has seen its picture.
+    const findings = readJson(join(dir, 'findings.json')).findings;
+    expect(findings.map((f: any) => [f.id, f.seenPicture])).toEqual(DECK_FINDINGS.map((f) => [f, true]));
+    expect(decisions(dir).filter((d) => /without opening the picture of page/.test(d.decision))).toEqual([]);
+    expect(decisions(dir).find((d) => d.finding === null && /read from the PDF/.test(d.decision)).decision).toBe(COUNTS);
+    await expect(page.getByTestId('seen-unseen')).toHaveCount(0);
+
+    // AC 4 / guard e: no crawl has run; the routes come from the fixture app's router (no :id, no **), then the start URL.
+    const base = app.site.base;
+    const routes = readJson(join(dir, 'routes.json'));
+    expect(routes.routes).toEqual([`${base}`, `${base}search`, `${base}reports`, `${base}gone`].map((url) => ({ url, from: 'router' })));
+    expect(prompts[0]).toContain(`## Known routes of the application\n\nThese are the only routes to choose from. ${ROUTE_RULE}.\n\n- ${base}\n- ${base}search\n- ${base}reports\n- ${base}gone\n`);
+    expect(prompts[0]).toContain(`- ${ROUTE_RULE}.\n`);
+    expect(machine(prompts[0]).routes).toEqual([`${base}`, `${base}search`, `${base}reports`, `${base}gone`]);
+    // Guard j: the decisions pane says how many routes the tool knew, and from where.
+    await page.getByTestId('show-decisions').click();
+    await expect(page.getByTestId('decisions-panel').getByTestId('decision').filter({ hasText: 'Routes the tool knew' })).toHaveText([/read · tool: Routes the tool knew: 4 \(from the application's router\) — /]);
+    await page.getByTestId('decisions-close').click();
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('pictures-and-routes AC2/3 / guard d: answers given without opening the picture of pages 5 and 12, even when asked again, are kept, logged and said so on the plan item, the already-fixed row, the Done row, the decisions pane and decisions.md', async ({ page }) => {
+  test.setTimeout(500_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_SKIP_PICTURE_ALWAYS: 'F4,F10' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, DECK);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    const dir = runDir(dash);
+    const id = dir.split(/[\\/]/).pop()!;
+    // Asked again once, both in one call; no third ask.
+    const prompts = readPrompts(dash, id);
+    expect(prompts.map(headings)).toEqual([['F1', 'F2', 'F3', 'F4'], ['F5', 'F6', 'F7', 'F8'], ['F9', 'F10', 'F11'], ['F4', 'F10']]);
+    expect(prompts[3]).toMatch(unopenedSays('F4', 5));
+    expect(prompts[3]).toMatch(unopenedSays('F10', 12));
+    // AC 2: kept, with seenPicture false and the tool's decision.
+    const findings = readJson(join(dir, 'findings.json')).findings;
+    expect(findings.filter((f: any) => f.seenPicture !== true).map((f: any) => [f.id, f.seenPicture])).toEqual([['F4', false], ['F10', false]]);
+    expect(decisions(dir).filter((d) => /without opening the picture of page/.test(d.decision)).map((d) => [d.stage, d.finding, d.by, d.decision])).toEqual([
+      ['read', 'F4', 'tool', 'the assistant answered without opening the picture of page 5'], ['read', 'F10', 'tool', 'the assistant answered without opening the picture of page 12'],
+    ]);
+    // AC 3: the step's sentence after the read counts them.
+    const sentence = `${COUNTS} The assistant did not open the pictures of 2 pages.`;
+    expect(decisions(dir).find((d) => d.finding === null && /read from the PDF/.test(d.decision)).decision).toBe(sentence);
+    expect((await runEvents(dash)).filter((e) => e.type === 'manual' && e.stage === 'findings').map((e) => e.message)).toEqual([sentence]);
+    // Guard d / AC 3: on the plan item and the already-fixed row, the answer is said to be a guess.
+    const unseen10 = `The assistant did not open the picture of page 12; what it says below is a guess from the text: ${SEEN_13A}`;
+    await expect(item(page, 'F10').getByTestId('seen-unseen')).toHaveText(unseen10);
+    await expect(item(page, 'F10').getByTestId('seen')).toHaveCount(0);
+    await expect(item(page, 'F11').getByTestId('seen')).toHaveText(/^What the assistant saw on page 13: /);
+    await page.getByTestId('already-fixed').locator('summary').click();
+    await expect(fixedRow(page, 'F4').getByTestId('seen-unseen')).toHaveText(`The assistant did not open the picture of page 5; what it says below is a guess from the text: ${SEEN_13C}`);
+    // Its merged page 8 was opened: that line is as before.
+    await expect(fixedRow(page, 'F4').getByTestId('seen-more')).toHaveText([`What the assistant saw on page 8: ${SEEN_13C}`]);
+    expect(readFileSync(join(dir, 'already-fixed.md'), 'utf8')).toContain(`## F4: Footer logo text has too little contrast — [PDF page 5](source.pdf#page=5)\n\nThe assistant did not open the picture of page 5; what it says below is a guess from the text: ${SEEN_13C}\n`);
+    // Walked to Done: the Done row, the decisions pane and decisions.md say it too.
+    await page.getByTestId('approve-plan').click();
+    await expect(now(page)).toHaveText(/^Done: 3 findings from the PDF are fixed and confirmed in the deployed site; /, { timeout: 300_000 });
+    await expect(page.locator('[data-testid="fixed-item"][data-finding="F10"]').getByTestId('seen-unseen')).toHaveText(unseen10, { timeout: 30_000 });
+    await page.getByTestId('show-decisions').click();
+    await expect(page.getByTestId('decisions-panel').getByTestId('decisions-group').filter({ hasText: 'F10: Chart series' }).getByTestId('seen-unseen')).toHaveText(unseen10);
+    expect(readFileSync(join(dir, 'decisions.md'), 'utf8')).toContain(`— [PDF page 12](source.pdf#page=12)\n\n${unseen10}\n`);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('pictures-and-routes AC5/6/7 / guards f g i: a route not on the list is the start page; a 404 and the app\'s Not Found view are not loaded, keep their screenshot, and are never judged by the assistant', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_BAD_ROUTE: 'F1', FAKE_MANUAL_ROUTE_DOWN: 'F2', FAKE_MANUAL_ROUTE_NOT_FOUND: 'F3' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    const dir = runDir(dash);
+    const id = dir.split(/[\\/]/).pop()!;
+    const base = app.site.base;
+    // Guard f / AC 5: F1's made-up route became the start page, said so; it was looked for there, never on the Not Found view.
+    expect(decisions(dir).filter((d) => d.finding === 'F1' && /^took the start page/.test(d.decision)).map((d) => [d.stage, d.by, d.decision, d.reason])).toEqual([['read', 'tool', 'took the start page instead of /layout/form-panel', 'it is not a route of the application']]);
+    const locate = tasksFile(dash, `prompt-manual-${id}-locate-1.md`);
+    expect(locate).toContain(`## F1: Search button has no accessible name (PDF page 1)\n\nWhat you said the page shows: A fixture page showing The magnifier button in the search bar is announced only as button.\nElement: the magnifier button in the search bar\nPicture of the PDF page: `);
+    expect(locate).toMatch(new RegExp(`^Looked for on: ${base.replace(/[.]/g, '\\.')}\\nSelectors that matched nothing there: #search-btn$`, 'm'));
+    expect(locate).toContain(`These are the only routes to choose from. ${ROUTE_RULE}.`);
+    // The locate's route is on the list: F1 is found on /search.
+    expect(readJson(join(dir, 'findings.json')).findings.find((f: any) => f.id === 'F1')).toMatchObject({ located: true, url: `${base}search` });
+    // Guard g / AC 6: /gone answered HTTP 404 and /reports is the app's own Not Found view: neither loaded; both kept their screenshot.
+    const f2 = readJson(join(dir, 'evidence', 'F2', 'before', 'summary.json'));
+    expect([f2.status, f2.loaded, f2.notFound, f2.error]).toEqual([404, false, false, 'HTTP 404']);
+    const f3 = readJson(join(dir, 'evidence', 'F3', 'before', 'summary.json'));
+    expect([f3.status, f3.loaded, f3.notFound, f3.error, f3.title, f3.heading]).toEqual([200, false, true, 'the application shows its Not Found page', 'Not Found', 'Page not found']);
+    expect(f3.mainWords).toBeLessThan(60);
+    for (const f of ['F2', 'F3']) expect(existsSync(join(dir, 'evidence', f, 'before', 'screenshot.png')), f).toBe(true);
+    expect(readJson(join(dir, 'check.json')).results.map((r: any) => [r.finding, r.verdict, r.reason])).toEqual([
+      ['F1', 'present', 'the element still has no name'],
+      ['F2', 'unreachable', 'the tool could not open /gone (HTTP 404)'],
+      ['F3', 'unreachable', 'the tool could not open /reports (the application shows its Not Found page)'],
+    ]);
+    // Guard i: the assistant was asked only about the finding whose page loaded.
+    const check = machine(tasksFile(dash, `prompt-manual-${id}-check-1.md`));
+    expect(check.findings.map((f: any) => [f.id, f.evidence.loaded])).toEqual([['F1', true]]);
+    // AC 7: not verified fixed by the tester, so planned, with the line that the tool could not open the page.
+    await expect(item(page, 'F3').getByTestId('not-located')).toHaveText('The tool could not open /reports in the deployed site, so it could not look for this element. Check the component before approving.');
+    await expect(page.getByTestId('could-not-check')).toHaveCount(0);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('pictures-and-routes AC7 / guard h: a finding the tester verified fixed whose page shows Not Found could not be checked: neither planned nor already fixed, listed on the screen and in the report, and counted at Done', async ({ page }) => {
+  test.setTimeout(500_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_ROUTE_NOT_FOUND: 'F4' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, DECK);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    const dir = runDir(dash);
+    const id = dir.split(/[\\/]/).pop()!;
+    const line = 'The tester verified this fixed on 28 Sep 2026; the tool could not open /reports (the application shows its Not Found page), so it could not confirm it.';
+    const section = page.getByTestId('could-not-check');
+    await expect(section.locator('summary')).toHaveText('Could not be checked (1)');
+    const row = section.locator('[data-testid="unchecked-item"][data-finding="F4"]');
+    await expect(row.getByTestId('unchecked-line')).toHaveText(line);
+    await expect(row.getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=5`);
+    await expect(section.getByTestId('unchecked-item')).toHaveCount(1);
+    // Not planned, not already fixed, and not "came back".
+    await expect(item(page, 'F4')).toHaveCount(0);
+    await expect(fixedRow(page, 'F4')).toHaveCount(0);
+    await expect(page.getByTestId('already-fixed').locator('summary')).toHaveText('Already fixed in the deployed site (6)');
+    await expect(page.getByTestId('came-back')).toHaveCount(1);
+    expect(readJson(join(dir, 'check.json')).results.find((r: any) => r.finding === 'F4')).toMatchObject({ verdict: 'unreachable', said: null });
+    // The locate step asked once for a route for it.
+    expect(headings(tasksFile(dash, `prompt-manual-${id}-locate-1.md`).replace(/^## (F\w+): /gm, '## $1 — page '))).toEqual(['F4']);
+    const report = readFileSync(join(dir, 'already-fixed.md'), 'utf8');
+    expect(report).toContain(`# Could not be checked (1)\n\n## F4: Footer logo text has too little contrast — [PDF page 5](source.pdf#page=5)\n`);
+    expect(report).toContain(`- ${line}\n`);
+    // Done counts it.
+    await page.getByTestId('approve-plan').click();
+    await expect(now(page)).toHaveText('Done: 3 findings from the PDF are fixed and confirmed in the deployed site; 6 were already fixed (the tester had verified all of them); 1 had come back; 1 could not be checked.', { timeout: 300_000 });
+    await expect(section.locator('summary')).toHaveText('Could not be checked (1)');
   } finally {
     await dash.stop();
     await app.cleanup();

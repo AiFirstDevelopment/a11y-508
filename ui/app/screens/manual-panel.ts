@@ -41,7 +41,7 @@ interface Draft {
                     <figure><a [href]="file(s.path)" target="_blank" rel="noopener"><img class="thumb" [src]="file(s.path)" [alt]="r.finding + ' ' + s.label.toLowerCase() + ' in the deployed site'" data-testid="fixed-shot" /></a><figcaption>{{ s.label }}</figcaption></figure>
                   }
                 </div>
-                <p class="seen" data-testid="seen">{{ seen(r) }}</p>
+                <p class="seen" [attr.data-testid]="r.seenPicture === false ? 'seen-unseen' : 'seen'">{{ seen(r) }}</p>
                 @for (x of r.seenMore || []; track x.page) { <p class="seen" data-testid="seen-more">{{ seen(x) }}</p> }
               </li>
             }
@@ -63,9 +63,29 @@ interface Draft {
                   @if (r.picture) { <a [href]="parsed(r.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(r.picture)" [alt]="'PDF page ' + r.page + ', as the tester saw it'" data-testid="page-picture" /></a> }
                   @if (r.screenshot) { <img class="shot" [src]="file(r.screenshot)" [alt]="r.finding + ' in the deployed site'" data-testid="screenshot" /> }
                 </div>
-                <p class="seen" data-testid="seen">{{ seen(r) }}</p>
+                <p class="seen" [attr.data-testid]="r.seenPicture === false ? 'seen-unseen' : 'seen'">{{ seen(r) }}</p>
                 @for (x of r.seenMore || []; track x.page) { <p class="seen" data-testid="seen-more">{{ seen(x) }}</p> }
                 @if (r.notLocated) { <p class="wrong" data-testid="not-located">{{ r.notLocated }}</p> }
+              </li>
+            }
+          </ol>
+        </details>
+      }
+      @if (m.unchecked.length) {
+        <details class="section" data-testid="could-not-check" [open]="!!m.done">
+          <summary>Could not be checked ({{ m.unchecked.length }})</summary>
+          <ol>
+            @for (r of m.unchecked; track r.finding) {
+              <li data-testid="unchecked-item" [attr.data-finding]="r.finding">
+                <p class="what"><strong>{{ r.finding }}</strong> {{ r.title }} · <a [href]="page(r.page)" target="_blank" rel="noopener" data-testid="pdf-page">PDF page {{ r.page }}</a></p>
+                @if (r.quote) { <blockquote data-testid="quote">{{ r.quote }}</blockquote> }
+                <p class="wrong" data-testid="unchecked-line">{{ r.line }}</p>
+                <div class="pair">
+                  @if (r.picture) { <a [href]="parsed(r.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(r.picture)" [alt]="'PDF page ' + r.page + ', as the tester saw it'" data-testid="page-picture" /></a> }
+                  @if (r.screenshot) { <img class="shot" [src]="file(r.screenshot)" [alt]="'What the tool saw at ' + r.url" data-testid="screenshot" /> }
+                </div>
+                <p class="seen" [attr.data-testid]="r.seenPicture === false ? 'seen-unseen' : 'seen'">{{ seen(r) }}</p>
+                @for (x of r.seenMore || []; track x.page) { <p class="seen" data-testid="seen-more">{{ seen(x) }}</p> }
               </li>
             }
           </ol>
@@ -85,7 +105,7 @@ interface Draft {
                   @if (it.picture) { <a [href]="parsed(it.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(it.picture)" [alt]="'PDF page ' + it.page + ', as the tester saw it'" data-testid="page-picture" /></a> }
                   @if (it.screenshot) { <img class="shot" [src]="file(it.screenshot)" [alt]="it.finding + ' in the deployed site before the fix'" data-testid="screenshot" /> }
                 </div>
-                <p class="seen" data-testid="seen">{{ seen(it) }}</p>
+                <p class="seen" [attr.data-testid]="it.seenPicture === false ? 'seen-unseen' : 'seen'">{{ seen(it) }}</p>
                 @for (x of it.seenMore || []; track x.page) { <p class="seen" data-testid="seen-more">{{ seen(x) }}</p> }
                 @if (it.notLocated) { <p class="wrong" data-testid="not-located">{{ it.notLocated }}</p> }
                 @if (draft(it).remove) {
@@ -318,7 +338,7 @@ export class ManualPanel {
   parsed(rel: string): string {
     return parsedFileUrl(this.m()?.id || null, rel);
   }
-  seen(r: { page: number; seen?: string | null }): string {
+  seen(r: { page: number; seen?: string | null; seenPicture?: boolean | null }): string {
     return seenWords(r);
   }
   time(at: string): string {

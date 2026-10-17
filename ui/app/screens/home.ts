@@ -554,6 +554,7 @@ export class HomeScreen implements OnDestroy {
         return m.candidates ? `Reading the PDF: ${plural(m.candidates.findings, 'finding')} on ${plural(m.candidates.pages, 'page')}; asking the assistant what each page shows.` : `Reading the PDF with ${who}`;
       case 'read-again': {
         const why = m.readAgain || '';
+        if (ev['unopened']) return `The assistant ${why.slice(3)}; asking it again to look at ${(ev['missing'] || []).length === 1 ? 'that picture' : 'those pictures'}.`;
         if (/^it did not answer for /.test(why)) return `The assistant ${why.slice(3)}; asking it again for ${(ev['missing'] || []).length === 1 ? 'that page' : 'those pages'}.`;
         return !why || why === 'its answer had no list of findings' ? "The assistant's answer had no list of findings; asking it again." : `The assistant could not read the PDF (${why}); asking it again.`;
       }

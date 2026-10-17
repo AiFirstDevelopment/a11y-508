@@ -5,7 +5,8 @@
 
 import assert from 'node:assert/strict';
 import { agentEnvFor, MANUAL_GEMINI_MODEL, streamModel, agentLog } from '../src/agent.mjs';
-import { buildCandidates, countsSentence, describedEnough, foldAnswers, seenLine, seenLines } from '../src/manual.mjs';
+import { buildCandidates, countsSentence, describedEnough, foldAnswers, onRouteList, readSentence, seenLine, seenLines, uncheckedLine, unseenPages } from '../src/manual.mjs';
+import { notFoundView } from '../src/evidence.mjs';
 
 const only = process.argv.includes('-g') ? process.argv[process.argv.indexOf('-g') + 1] : null;
 const tests = [];
@@ -156,6 +157,41 @@ test('AC7: the model a stream names in its init event goes in the call log\'s he
   assert.equal(streamModel('plain words\n{"type":"message","content":"init"}'), null);
   assert.equal(JSON.parse(agentLog({ code: 0, result: {}, stdout: '', model: 'gemini-2.5-pro' }).split('\n')[0]).model, 'gemini-2.5-pro');
   assert.equal(JSON.parse(agentLog({ code: 0, result: {}, stdout: '' }).split('\n')[0]).model, undefined);
+});
+
+test('pictures-and-routes AC2/3: a finding keeps whether its picture was opened; the read sentence counts the pages it was not; the seen line says it is a guess', () => {
+  const cands = [1, 2, 3].map((n) => ({ id: `F${n}`, pages: [n + 1], page: n + 1, status: 'fixed', criterion: '5.C', quote: 'q', picture: `pages/page-0${n + 1}.png`, images: [], lines: [] }));
+  const { decide } = log();
+  const seen = new Map([['F1', true], ['F2', false], ['F3', false]]);
+  const f = foldAnswers(cands, new Map(cands.map((c) => [c.id, answer(c.id, c.id === 'F3' ? { sameAs: 'F2', element: 'the element of F2', selectors: ['#f2'] } : {})])), decide, (x) => (seen.has(x) ? seen.get(x) : null));
+  assert.deepEqual(f.map((x) => [x.id, x.seenPicture, (x.seenMore || []).map((m) => [m.page, m.seenPicture])]), [['F1', true, []], ['F2', false, [[4, false]]]]);
+  assert.deepEqual(unseenPages(f), [3, 4]);
+  assert.equal(readSentence(f), `${countsSentence(f)} The assistant did not open the pictures of 2 pages.`);
+  assert.equal(readSentence([f[0]]), countsSentence([f[0]]));
+  assert.equal(seenLine(f[1]), 'The assistant did not open the picture of page 3; what it says below is a guess from the text: Page of F2.');
+  assert.equal(seenLine(f[0]), 'What the assistant saw on page 2: Page of F1.');
+  // Without the check (the old call), no finding carries it.
+  assert.equal('seenPicture' in foldAnswers(cands, new Map([['F1', answer('F1')]]), decide)[0], false);
+  assert.equal(uncheckedLine({ statusDate: '2026-09-28' }, '/reports', 'the application shows its Not Found page'), 'The tester verified this fixed on 28 Sep 2026; the tool could not open /reports (the application shows its Not Found page), so it could not confirm it.');
+});
+
+test('pictures-and-routes AC5: a route is on the list when it is the same path, ignoring a trailing slash and the query', () => {
+  const routes = ['http://h.test/app/', 'http://h.test/app/search', 'http://h.test/app/layout/default'];
+  for (const r of ['/app/search', '/app/search/', 'http://h.test/app/search?q=1', 'layout/default', '', '/app']) assert.equal(onRouteList(r, routes, 'http://h.test/app/'), true, r);
+  for (const r of ['/app/layout/form-panel', '/layout/default', 'http://other.test/app/search', 'http://[bad']) assert.equal(onRouteList(r, routes, 'http://h.test/app/'), false, r);
+});
+
+test('pictures-and-routes AC6: the app\'s own Not Found view is told from its title, first heading or main text, when the main region is short', () => {
+  assert.equal(notFoundView({ title: 'Not Found', heading: '', main: 'Nothing here', mainWords: 2 }), true);
+  assert.equal(notFoundView({ title: 'My app', heading: 'Page not found', main: 'Go home', mainWords: 2 }), true);
+  // Either apostrophe.
+  assert.equal(notFoundView({ title: 'My app', heading: 'Oops', main: 'This page doesn’t exist. Go home.', mainWords: 6 }), true);
+  assert.equal(notFoundView({ title: 'My app', heading: 'Oops', main: "This page doesn't exist. Go home.", mainWords: 6 }), true);
+  assert.equal(notFoundView({ title: 'My app', heading: 'Error 404', main: '', mainWords: 0 }), true);
+  // A real page that mentions "not found" in a long main region is a page.
+  assert.equal(notFoundView({ title: 'Search', heading: 'Results', main: 'No results found for "x". Not found? Try again.', mainWords: 80 }), false);
+  assert.equal(notFoundView({ title: 'Welcome', heading: 'Welcome', main: 'Find what you need', mainWords: 4 }), false);
+  assert.equal(notFoundView({}), false);
 });
 
 let failed = 0;

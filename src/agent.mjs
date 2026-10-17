@@ -364,7 +364,8 @@ async function runAgentOnce({ command, promptFile, resultFile, cwd, tasksDir, ti
   if (!result && existsSync(resultFile)) result = parse(readFileSync(resultFile, 'utf8'), 'file');
   if (result) answerError = undefined;
   else result = lastJson(decoder.recognized ? decoder.text : stdout);
-  return { code, timedOut, circled, result, stdout, stderr, text: decoder.text, model: streamModel(head), ...(answerError ? { answerError } : {}) };
+  // opened: the files its read tools opened, as the stream showed them (docs/plans/pictures-and-routes.md AC 1).
+  return { code, timedOut, circled, result, stdout, stderr, text: decoder.text, opened: [...decoder.opened], model: streamModel(head), ...(answerError ? { answerError } : {}) };
 }
 
 // Why a call gave no answer, after the assistant's name: it wrote one that is not valid JSON (the
@@ -516,6 +517,13 @@ const componentList = (components) => components.slice(0, 600).map((c) => `- ${c
 
 // The sentence a second asking starts with (docs/plans/read-from-parse.md AC 2 and 5).
 const againLine = (ids) => (ids && ids.length ? `You did not answer for ${ids.length === 1 ? ids[0] : `${ids.slice(0, -1).join(', ')} and ${ids[ids.length - 1]}`}. Answer for each of them.\n\n` : '');
+// The lines a second asking starts with when the first answer was given without opening the page's
+// picture (docs/plans/pictures-and-routes.md AC 2). unopened: [{ id, page, picture }].
+export const unopenedLine = ({ id, page, picture }) => `You answered for ${id} without opening the picture of page ${page} (${picture}). Open it with your file-reading tool and look at it before answering; the callout's words and the arrows are only there.`;
+const unopenedLines = (list) => (list && list.length ? `${list.map(unopenedLine).join('\n')}\n\n` : '');
+// The rule every describe prompt opens with (AC 2), and the route rule (AC 5).
+export const OPEN_FIRST = 'For each finding: first open its picture with your file-reading tool, then answer. An answer for a page whose picture you did not open is wrong and will be sent back.';
+export const ROUTE_RULE = 'one of the known routes below, exactly as written; if none fits, give the closest and say so in decisions';
 
 // The tool's findings, read from the parse (docs/plans/read-from-parse.md AC 2): the tool built the
 // list, one per page; the assistant says what each page's picture shows, which element the tester
@@ -523,7 +531,8 @@ const againLine = (ids) => (ids && ids.length ? `You did not answer for ${ids.le
 // previous: what the first answer said when it could not be used at all. fallback: the PDF names no
 // criterion, so each page is a candidate and may be one that names no problem.
 // reportFile: the tool's parse of the PDF; parsedDir: its folder (the pictures); pdfFile: the PDF itself, named last.
-export function manualDescribePrompt({ candidates, reportFile, parsedDir, pdfFile, pageCount = null, noText = false, fallback = false, startUrl, routes = [], resultFile, previous = null, again = null }) {
+// unopened: the candidates asked again because the first answer was given without opening the picture.
+export function manualDescribePrompt({ candidates, reportFile, parsedDir, pdfFile, pageCount = null, noText = false, fallback = false, startUrl, routes = [], resultFile, previous = null, again = null, unopened = null }) {
   const abs = (rel) => (rel ? join(parsedDir, rel) : null);
   const status = (c) => (c.status ? `${c.status}${c.statusWords ? ` ("${c.statusWords}")` : ''}` : 'no status');
   const head = (c) => `## ${c.id} — page ${c.page} — ${c.criterion ? `${c.criterion}${c.criterionName ? ` ${c.criterionName}` : ''}` : 'no criterion'} — ${status(c)}`;
@@ -535,7 +544,9 @@ export function manualDescribePrompt({ candidates, reportFile, parsedDir, pdfFil
   ].join('\n');
   return `# Say what each page of a tester's report shows
 
-${previous ? `Your previous answer was: ${previous}. That is not the task. Do not describe, return or echo the PDF or the pictures; read the report and write the JSON file at ${resultFile}.\n\n` : ''}${againLine(again)}A person tested the application at ${startUrl} by hand and wrote a report, a PDF${pageCount ? ` of ${pageCount} page${pageCount === 1 ? '' : 's'}` : ''}. The tool has read that PDF into one plain file, ${reportFile}, and listed its findings below: ${fallback ? 'the PDF names no Trusted Tester criterion, so there is one per page' : 'one per page that names a Trusted Tester criterion'}. Each finding's page, status, date, criterion and quote are the tool's, read from the PDF exactly; do not repeat or change them. Your job is what only you can do: look at the picture of each page and say what it shows, which element of the application the tester means, where it is, and how to find it. Do not edit any file other than the result file.${noText ? '\n\nThe PDF has no text: every page is a picture only. Work from the pictures.' : ''}
+${previous ? `Your previous answer was: ${previous}. That is not the task. Do not describe, return or echo the PDF or the pictures; read the report and write the JSON file at ${resultFile}.\n\n` : ''}${unopenedLines(unopened)}${againLine(again)}${OPEN_FIRST}
+
+A person tested the application at ${startUrl} by hand and wrote a report, a PDF${pageCount ? ` of ${pageCount} page${pageCount === 1 ? '' : 's'}` : ''}. The tool has read that PDF into one plain file, ${reportFile}, and listed its findings below: ${fallback ? 'the PDF names no Trusted Tester criterion, so there is one per page' : 'one per page that names a Trusted Tester criterion'}. Each finding's page, status, date, criterion and quote are the tool's, read from the PDF exactly; do not repeat or change them. Your job is what only you can do: look at the picture of each page and say what it shows, which element of the application the tester means, where it is, and how to find it. Do not edit any file other than the result file.${noText ? '\n\nThe PDF has no text: every page is a picture only. Work from the pictures.' : ''}
 
 ${DECIDE}
 
@@ -545,7 +556,7 @@ Answer for every finding below, by its id; the tool asks again for any you leave
 - seen: two or three sentences: what screen the picture shows, the callout's words as you read them in the picture, and what the arrows point at.
 - title: a short title of your own (under 80 characters).
 - element: which element of the application the tester means, in a few words.
-- route: the page of the application it is on, as a path or a full URL; one of the known routes below when one fits.
+- route: ${ROUTE_RULE}.
 - selectors: up to 5 CSS selectors that would match that element on that page.
 - expected: what the tester expects instead, in one sentence.
 - sameAs: the id of an earlier finding when this page shows the same element with the same problem (two slides of one unlabelled field); otherwise null. Only findings with the same criterion are merged.
@@ -555,6 +566,8 @@ Answer for every finding below, by its id; the tool asks again for any you leave
 ${candidates.map(blockOf).join('\n\n')}
 
 ## Known routes of the application
+
+These are the only routes to choose from. route: ${ROUTE_RULE}.
 
 ${routes.length ? routes.slice(0, 200).map((r) => `- ${r}`).join('\n') : `- ${startUrl}`}
 
@@ -568,7 +581,7 @@ ${block({ answers: [{ id: candidates[0] ? candidates[0].id : 'F1', seen: 'The se
 
 Machine-readable copy:
 
-${block({ kind: 'manual-describe', report: reportFile, parsed: parsedDir, pdf: pdfFile, startUrl, routes, fallback, candidates: candidates.map((c) => ({ id: c.id, page: c.page, criterion: c.criterion, status: c.status, quote: c.quote, picture: abs(c.picture), lines: c.lines || [] })), resultFile })}
+${block({ kind: 'manual-describe', report: reportFile, parsed: parsedDir, pdf: pdfFile, startUrl, routes, fallback, unopened: (unopened || []).map((u) => u.id), candidates: candidates.map((c) => ({ id: c.id, page: c.page, criterion: c.criterion, status: c.status, quote: c.quote, picture: abs(c.picture), lines: c.lines || [] })), resultFile })}
 `;
 }
 
@@ -576,16 +589,28 @@ ${block({ kind: 'manual-describe', report: reportFile, parsed: parsedDir, pdf: p
 const INVENTORY = new Set(['banner', 'navigation', 'main', 'contentinfo', 'complementary', 'search', 'form', 'region', 'heading', 'button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'tab', 'menuitem', 'image', 'img', 'table', 'figure']);
 
 // The findings whose selectors matched nothing on a page that loaded (docs/plans/read-from-parse.md
-// AC 4), asked once: where is the element, really? items: [{ finding, picture, evidence }].
+// AC 4), and those whose page did not load (docs/plans/pictures-and-routes.md AC 7), asked once:
+// where is the element, really? items: [{ finding, picture, evidence }].
 export function manualLocatePrompt({ items, startUrl, routes = [], resultFile }) {
   const itemText = ({ finding: f, picture, evidence: ev }) => {
     const inv = (ev && ev.ax ? ev.ax : []).filter((n) => n && INVENTORY.has(n.role)).slice(0, 120).map((n) => `- ${n.role}${n.name ? ` "${String(n.name).slice(0, 80)}"` : ''}`).join('\n');
+    const where = (ev && (ev.finalUrl || ev.url)) || f.url || f.route || startUrl;
+    if (ev && !ev.loaded) {
+      return `## ${f.id}: ${f.title} (${pagesText(f)})
+
+What you said the page shows: ${f.seen || '(you did not describe it)'}
+Element: ${f.element || '(not said)'}
+Picture of the PDF page: ${picture || '(none)'}
+Looked for on: ${where}
+That page did not load: ${ev.error || 'unknown reason'}. It is not a page of the application the tool can open; pick the route from the known routes below.
+${ev.screenshot ? `Screenshot of what the tool saw there: ${ev.screenshot}\n` : ''}`;
+    }
     return `## ${f.id}: ${f.title} (${pagesText(f)})
 
 What you said the page shows: ${f.seen || '(you did not describe it)'}
 Element: ${f.element || '(not said)'}
 Picture of the PDF page: ${picture || '(none)'}
-Looked for on: ${(ev && (ev.finalUrl || ev.url)) || f.url || f.route || startUrl}
+Looked for on: ${where}
 Selectors that matched nothing there: ${(f.selectors || []).join(', ') || '(none were given)'}
 ${ev && ev.screenshot ? `Screenshot of the deployed page: ${ev.screenshot}\n` : ''}
 The page's landmarks and controls:
@@ -598,13 +623,15 @@ ${((ev && ev.tabOrder) || []).slice(0, 60).map((s, i) => `${i + 1}. ${s.role} "$
   };
   return `# Find the elements the tool could not find
 
-You described the pages of a tester's report, and for each finding below gave CSS selectors for the element the tester means. The tool opened that page in the deployed site at ${startUrl} and your selectors matched nothing on it. Look at the picture of the PDF page, the deployed page's screenshot and its landmarks and controls, and say where the element really is: the route it is on and selectors that match it there. If it is on another page of the application, say notOnThisRoute: true and give that page's route. Do not edit any file other than the result file.
+You described the pages of a tester's report, and for each finding below gave the route and CSS selectors for the element the tester means. The tool opened that route in the deployed site at ${startUrl}, and either the page did not load or your selectors matched nothing on it. Look at the picture of the PDF page, the deployed page's screenshot and its landmarks and controls, and say where the element really is: the route it is on and selectors that match it there. If it is on another page of the application, say notOnThisRoute: true and give that page's route. The route must be ${ROUTE_RULE}. Do not edit any file other than the result file.
 
 ${DECIDE}
 
 ${items.map(itemText).join('\n\n')}
 
 ## Known routes of the application
+
+These are the only routes to choose from. route: ${ROUTE_RULE}.
 
 ${routes.length ? routes.slice(0, 200).map((r) => `- ${r}`).join('\n') : `- ${startUrl}`}
 
@@ -616,7 +643,7 @@ ${block({ answers: [{ id: items[0] ? items[0].finding.id : 'F1', route: '/search
 
 Machine-readable copy:
 
-${block({ kind: 'manual-locate', startUrl, routes, items: items.map(({ finding: f }) => ({ id: f.id, page: f.page, route: f.route || null, selectors: f.selectors || [], lines: f.lines || [] })), resultFile })}
+${block({ kind: 'manual-locate', startUrl, routes, items: items.map(({ finding: f, evidence: ev }) => ({ id: f.id, page: f.page, route: f.route || null, selectors: f.selectors || [], loaded: !!(ev && ev.loaded), lines: f.lines || [] })), resultFile })}
 `;
 }
 

@@ -33,7 +33,7 @@ import { bundleSignature, sameBuild } from './deploy-check.mjs';
 import { sleep } from './page.mjs';
 import { commitWebUrl, remoteWeb } from './git-web.mjs';
 import { parsePdf } from './pdf-parse.mjs';
-import { readable } from './agent-stream.mjs';
+import { readable, samePath } from './agent-stream.mjs';
 
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 export const MANUAL_DIR = 'manual';
@@ -101,7 +101,9 @@ const NOT_DESCRIBED = 'not described by the assistant';
 // for ids the tool issued, only those that count). Nothing is lost: an unanswered candidate is kept
 // undescribed. sameAs merges only pages with the same criterion and status, described alike; extra
 // adds <id>b with the page's facts. decide(stage, finding, by, decision, reason).
-export function foldAnswers(candidates, answers, decide) {
+// seenOf(id): whether the assistant opened that candidate's picture (true/false), or null when it
+// cannot be told (docs/plans/pictures-and-routes.md AC 2); a finding keeps seenPicture only when known.
+export function foldAnswers(candidates, answers, decide, seenOf = () => null) {
   const out = [];
   const into = new Map();
   const own = (c, a) => {
@@ -109,8 +111,9 @@ export function foldAnswers(candidates, answers, decide) {
     const element = described ? str(a.element, 300) : NOT_DESCRIBED;
     const title = (a && str(a.title, 120)) || (described ? element.replace(/^./, (x) => x.toUpperCase()) : '') || (c.criterion ? `${c.criterion} ${c.criterionName || ''}`.trim() : `PDF page ${c.page}`);
     const { lines, statusWords, ...facts } = c;
+    const pic = described ? seenOf(c.id) : null;
     return {
-      ...facts, pages: [...c.pages], images: [...(c.images || [])], title, seen: described ? str(a.seen, 1200) : null, element,
+      ...facts, pages: [...c.pages], images: [...(c.images || [])], title, seen: described ? str(a.seen, 1200) : null, ...(typeof pic === 'boolean' ? { seenPicture: pic } : {}), element,
       route: described ? str(a.route || a.url, 500) : '', url: null, selectors: described ? selectorsOf(a.selectors) : [], expected: described ? str(a.expected, 400) : '',
       located: null,
     };
@@ -147,7 +150,7 @@ export function foldAnswers(candidates, answers, decide) {
         root.images = [...root.images, ...f.images];
         (root.merged ||= []).push(c.id);
         // What it saw on each merged page stays on the finding, so a merge of two different pictures shows.
-        (root.seenMore ||= []).push({ page: c.page, seen: f.seen });
+        (root.seenMore ||= []).push({ page: c.page, seen: f.seen, ...('seenPicture' in f ? { seenPicture: f.seenPicture } : {}) });
         into.set(c.id, root);
         decide('read', root.id, 'agent', `merged ${c.id} (PDF page ${c.page}) into ${root.id}`, `page ${c.page} shows the same element with the same problem as page ${root.page}`);
         merged = true;
@@ -162,6 +165,8 @@ export function foldAnswers(candidates, answers, decide) {
       else {
         const e = own({ ...c, id: `${c.id}b` }, { ...x, seen: str(x.seen) || str(a.seen) });
         e.extraOf = c.id;
+        if ('seenPicture' in f) e.seenPicture = f.seenPicture;
+        else delete e.seenPicture;
         out.push(e);
         decide('read', e.id, 'agent', `a second problem on PDF page ${c.page}: ${e.element}`, str(x.seen, 400));
       }
@@ -177,12 +182,42 @@ export function countsSentence(findings) {
   const parts = [fixed ? `${fixed} the tester verified fixed` : '', open ? `${open} open` : '', none && (fixed || open) ? `${none} with no status` : ''].filter(Boolean);
   return `${plural(findings.length, 'finding')} read from the PDF${parts.length ? `: ${parts.join(', ')}` : ''}.`;
 }
+// The pages whose picture the assistant did not open (docs/plans/pictures-and-routes.md AC 3).
+export const unseenPages = (findings) => [...new Set(findings.flatMap((f) => [...(f.seenPicture === false ? [f.page] : []), ...((f.seenMore || []).filter((x) => x.seenPicture === false).map((x) => x.page))]))].sort((a, b) => a - b);
+// The step's sentence after the read: the counts, then how many pictures the assistant did not open.
+export function readSentence(findings) {
+  const n = unseenPages(findings).length;
+  return `${countsSentence(findings)}${n ? ` The assistant did not open the ${n === 1 ? 'picture of 1 page' : `pictures of ${n} pages`}.` : ''}`;
+}
 // "The tool could not find this element on /search: ..." (AC 4), for a plan item or an already-fixed row.
 export const notLocatedLine = (where) => `The tool could not find this element on ${where}: the assistant's selectors matched nothing. Check the component before approving.`;
 // The same when the page did not load: nothing could be looked for.
 export const unreachableLine = (where) => `The tool could not open ${where} in the deployed site, so it could not look for this element. Check the component before approving.`;
 // "What the assistant saw on page 12: ..." (AC 6); and, for a finding merged from several pages, a line per page.
-export const seenLine = (f) => (f && f.seen ? `What the assistant saw on page ${f.page}: ${f.seen}` : 'The assistant did not describe this page.');
+// An answer given without opening the picture says so (docs/plans/pictures-and-routes.md AC 3).
+export const seenLine = (f) => (f && f.seen ? (f.seenPicture === false ? `The assistant did not open the picture of page ${f.page}; what it says below is a guess from the text: ${f.seen}` : `What the assistant saw on page ${f.page}: ${f.seen}`) : 'The assistant did not describe this page.');
+// A tester-verified-fixed finding whose page did not load (docs/plans/pictures-and-routes.md AC 7).
+export const uncheckedLine = (f, where, error) => `The tester verified this fixed${dayOf(f.statusDate) ? ` on ${dayOf(f.statusDate)}` : ''}; the tool could not open ${where}${error ? ` (${error})` : ''}, so it could not confirm it.`;
+// "Routes the tool knew" keys: the same page ignoring a trailing slash and the query (AC 5).
+const pathKey = (url) => {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return null;
+  }
+};
+// Whether a route the assistant gave (a path or a full URL) is one of the known routes.
+export function onRouteList(route, routes, startUrl) {
+  if (!route) return true;
+  let k;
+  try {
+    k = pathKey(new URL(route, startUrl).href);
+  } catch {
+    return false;
+  }
+  return !!k && routes.some((r) => pathKey(r) === k);
+}
 export const seenLines = (f) => [seenLine(f), ...((f && f.seenMore) || []).map((x) => seenLine(x))];
 
 export const isPdf = (buf) => !!buf && buf.length >= 5 && buf.subarray(0, 5).toString('latin1') === '%PDF-';
@@ -293,7 +328,7 @@ export function decisionGroups(dir, web = null) {
   const manifest = readJson(join(dir, PARSED_DIR, 'manifest.json'), null);
   const pictureOf = (n) => ((manifest && manifest.pages) || []).find((p) => p.n === n)?.picture || null;
   const groups = findings.map((f) => ({
-    picture: pictureOf(f.page), seen: f.seen || null, seenMore: f.seenMore || [], located: f.located ?? null,
+    picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], located: f.located ?? null,
     finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], tester: f.status || null, quote: f.quote, url: f.url || null, status: (state.items && state.items[f.id] && state.items[f.id].status) || null,
     decisions: all.filter((d) => d.finding === f.id),
     commits: ((state.items && state.items[f.id] && state.items[f.id].commits) || []).map((c) => ({ ...c, url: commitWebUrl(web, c.sha) })),
@@ -646,6 +681,77 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       for (const f of readdirSync(join(parsedDir, 'pages'))) if (/\.png$/.test(f)) copyFileSync(join(parsedDir, 'pages', f), join(copyDir, PARSED_DIR, 'pages', f));
     } catch {}
   };
+  // The routes the tool knows before the assistant is asked (docs/plans/pictures-and-routes.md AC 4):
+  // from the crawl, the application's router and the start URL, kept in routes.json and said once.
+  let routeList = readJson(join(dir, 'routes.json'), null)?.routes || null;
+  if (!routeList) {
+    routeList = routeSources(cwd, { startUrl: cfg.url, sourceDirs });
+    writeJson(join(dir, 'routes.json'), { at: new Date().toISOString(), line: routesLine(routeList), routes: routeList });
+    decide('read', null, 'tool', routesLine(routeList), 'the assistant picks each finding\'s route from these');
+  }
+  const routes = routeList.map((r) => r.url);
+  // AC 2: the describe, in batches of at most A11Y_508_DESCRIBE_BATCH (4) candidates, so the assistant
+  // looks at each picture; the stream says which pictures it opened. A candidate it did not answer for
+  // is asked again once, and one it answered for without opening the picture is asked again once, in
+  // a batch of its own kind. Returns { got, last, listed }, or null when stopped.
+  const describeAll = async (candidates, byC, seenPic) => {
+    const size = Math.max(1, Math.floor(Number(process.env.A11Y_508_DESCRIBE_BATCH)) || 4);
+    const batches = (ids) => Array.from({ length: Math.ceil(ids.length / size) }, (_, k) => ids.slice(k * size, k * size + size));
+    const pictureFile = (c) => (c.picture ? join(copyDir, PARSED_DIR, c.picture) : null);
+    // Whether this call's stream shows the picture opened (true when the page has none to open).
+    const opened = (r, c) => !pictureFile(c) || ((r && r.res && r.res.opened) || []).some((o) => samePath(o, pictureFile(c), { cwd }));
+    const got = new Map();
+    let first = null;
+    let last = null;
+    let listed = false;
+    const one = async (ids, again, previous, unopened) => {
+      const r = await ask('describe', (resultFile) => manualDescribePrompt({
+        candidates: ids.map((x) => byC.get(x)), reportFile: join(copyDir, PARSED_DIR, 'report.md'), parsedDir: join(copyDir, PARSED_DIR), pdfFile: join(copyDir, 'source.pdf'),
+        pageCount: manifest.pageCount, noText, fallback: !candidates.some((c) => c.criterion), startUrl: cfg.url, routes, resultFile, previous, again,
+        unopened: unopened ? unopened.map((x) => ({ id: x, page: byC.get(x).page, picture: pictureFile(byC.get(x)) })) : null,
+      }));
+      if (stopped()) return false;
+      first ||= r;
+      last = r;
+      if (answersOf(r.result)) listed = true;
+      for (const a of answersOf(r.result) || []) {
+        if (!a || typeof a !== 'object') continue;
+        const aid = str(a.id ?? a.finding, 40);
+        if (!ids.includes(aid)) {
+          decide('read', null, 'tool', `dropped an answer for ${aid || 'no id'}`, `the tool asked about ${idsWords(ids)} only`);
+          continue;
+        }
+        if (!describedEnough(a, byC.get(aid))) continue;
+        got.set(aid, a);
+        seenPic.set(aid, opened(r, byC.get(aid)));
+      }
+      return true;
+    };
+    const all = candidates.map((c) => c.id);
+    for (const ids of batches(all)) if (!(await one(ids, null, null, null))) return null;
+    // Left out: asked again once.
+    const missing = all.filter((x) => !got.has(x));
+    if (missing.length) {
+      const whole = !got.size;
+      const reason = whole ? `the first answer could not be used: ${(first.result && typeof first.result.error === 'string' && first.result.error) || (first.why ? first.why.replace(AgentName, 'it') : '') || 'its answer had no list of findings'}` : `it did not answer for ${idsWords(missing)}`;
+      decide('read', null, 'tool', 'asked again', reason);
+      stage('read-again', { reason: whole ? reason.replace(/^the first answer could not be used: /, '') : reason, missing });
+      if (!log.events) log.warn(`${AgentName} ${whole ? 'gave no answer that could be used' : `did not answer for ${idsWords(missing)}`}; asking it again`);
+      const previous = whole ? said(first) : null;
+      for (const ids of batches(missing)) if (!(await one(ids, ids, previous, null))) return null;
+    }
+    // Answered without opening the picture: asked again once, with the picture named.
+    const unopened = all.filter((x) => !missing.includes(x) && got.has(x) && seenPic.get(x) === false);
+    if (unopened.length) {
+      const pages = unopened.map((x) => byC.get(x).page);
+      const reason = `it answered for ${idsWords(unopened)} without opening the ${pages.length === 1 ? 'picture' : 'pictures'} of ${pagesWords(pages)}`;
+      decide('read', null, 'tool', 'asked again', reason);
+      stage('read-again', { reason, missing: unopened, unopened: true });
+      if (!log.events) log.warn(`${AgentName} ${reason.slice(3)}; asking it again`);
+      for (const ids of batches(unopened)) if (!(await one(ids, null, null, ids))) return null;
+    }
+    return { got, last, listed };
+  };
   if (!findings) {
     // AC 1: the tool lists the findings; the assistant cannot add, drop or renumber them.
     const candidates = buildCandidates(manifest);
@@ -654,16 +760,12 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     stage('read', { noText, pages: manifest.pageCount, candidates: candidates.length });
     log.info(noText ? `The PDF has no text; ${agentName} is working from the pictures of its ${plural(manifest.pageCount, 'page')}.` : `Reading the PDF: ${plural(candidates.length, 'finding')} on ${plural(manifest.pageCount, 'page')}; asking ${agentName} what each page shows.`);
     let answers = new Map();
+    // Whether the assistant opened each candidate's picture, by id (docs/plans/pictures-and-routes.md AC 2).
+    const seenPic = new Map();
     if (candidates.length) {
       copyParse();
       const byC = new Map(candidates.map((c) => [c.id, c]));
-      const asked = await askForAll('describe', 'read', candidates.map((c) => c.id), (resultFile, ids, again, previous) => manualDescribePrompt({
-        candidates: ids.map((x) => byC.get(x)), reportFile: join(copyDir, PARSED_DIR, 'report.md'), parsedDir: join(copyDir, PARSED_DIR), pdfFile: join(copyDir, 'source.pdf'),
-        pageCount: manifest.pageCount, noText, fallback, startUrl: cfg.url, routes: knownRoutes(cwd), resultFile, previous, again,
-      }), {
-        complete: (a, x) => describedEnough(a, byC.get(x)), empty: 'its answer had no list of findings',
-        onAgain: ({ whole, reason, want }) => stage('read-again', { reason: whole ? reason.replace(/^the first answer could not be used: /, '') : reason, missing: want }),
-      });
+      const asked = await describeAll(candidates, byC, seenPic);
       if (!asked) return 1;
       answers = asked.got;
       // Nothing usable in either answer: the assistant could not read the PDF at all.
@@ -678,15 +780,24 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         return finish(1);
       }
     }
-    findings = foldAnswers(candidates, answers, decide);
+    for (const c of candidates) {
+      if (seenPic.get(c.id) !== false) continue;
+      decide('read', c.id, 'tool', `the assistant answered without opening the picture of page ${c.page}`, `${c.picture}: what it says the page shows is a guess from the text`);
+    }
+    findings = foldAnswers(candidates, answers, decide, (x) => (seenPic.has(x) ? seenPic.get(x) : null));
     for (const f of findings) {
+      // AC 5: a route that is not one of the known routes is the start page.
+      if (f.route && !onRouteList(f.route, routes, cfg.url)) {
+        decide('read', f.id, 'tool', `took the start page instead of ${f.route}`, 'it is not a route of the application');
+        f.route = '';
+      }
       f.url = urlOf(f);
       decide('read', f.id, f.seen ? 'agent' : 'tool', `read "${f.title}" from PDF ${pagesWords(f.pages)}`, f.seen ? `what it saw: ${f.seen}` : 'it did not describe the page');
     }
-    if (findings.length) decide('read', null, 'tool', countsSentence(findings), `the tool listed ${plural(candidates.length, 'finding')} from ${plural(manifest.pageCount, 'page')}${fallback ? ' (one per page: the PDF names no criterion)' : ' (one per page that names a criterion)'}`);
+    if (findings.length) decide('read', null, 'tool', readSentence(findings), `the tool listed ${plural(candidates.length, 'finding')} from ${plural(manifest.pageCount, 'page')}${fallback ? ' (one per page: the PDF names no criterion)' : ' (one per page that names a criterion)'}`);
     writeJson(join(dir, 'findings.json'), { at: new Date().toISOString(), findings });
   }
-  stage('findings', { count: findings.length, findings, message: findings.length ? countsSentence(findings) : null });
+  stage('findings', { count: findings.length, findings, message: findings.length ? readSentence(findings) : null });
   if (!findings.length) {
     stage('no-findings', { message: NO_FINDINGS });
     state.done = true;
@@ -694,7 +805,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     save();
     return finish(0, NO_FINDINGS);
   }
-  log.info(countsSentence(findings));
+  log.info(readSentence(findings));
   const byId = new Map(findings.map((f) => [f.id, f]));
 
   // ---- 2. Check the deployed site: present or gone, from evidence the tool captures.
@@ -706,20 +817,21 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     if (stopped()) return 1;
     // AC 4: a finding whose selectors matched nothing on a page that loaded goes back to the assistant
     // once, with the page picture, the deployed page and its controls in front of it; then it is
-    // captured again. Never for a page that did not load.
+    // captured again. So does one whose page did not load, with the known routes to pick from
+    // (docs/plans/pictures-and-routes.md AC 7).
     for (const f of findings) {
       const e = evidence.get(f.id);
       f.located = e && e.loaded ? e.matched > 0 : null;
       f.unreachable = !!(e && !e.loaded);
     }
-    const unlocated = findings.filter((f) => f.located === false);
+    const unlocated = findings.filter((f) => f.located === false || f.unreachable);
     if (unlocated.length) {
       stage('locate', { count: unlocated.length, findings: unlocated.map((f) => f.id) });
       log.info(`${plural(unlocated.length, 'element')} the tool could not find on the deployed site (${idsWords(unlocated.map((f) => f.id))}); asking ${agentName} where ${unlocated.length === 1 ? 'it is' : 'they are'}`);
       copyParse();
       const { result } = await ask('locate', (resultFile) => manualLocatePrompt({
         items: unlocated.map((f) => ({ finding: { ...f, lines: ((manifest && manifest.pages.find((p) => p.n === f.page)) || {}).lines || [] }, picture: pictureOf(f.page) ? join(copyDir, PARSED_DIR, pictureOf(f.page)) : null, evidence: evidence.get(f.id) })),
-        startUrl: cfg.url, routes: knownRoutes(cwd), resultFile,
+        startUrl: cfg.url, routes, resultFile,
       }));
       if (stopped()) return 1;
       const answers = answersOf(result) || [];
@@ -730,7 +842,12 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         const sels = a ? selectorsOf(a.selectors) : [];
         const route = a ? str(a.route || a.url, 500) : '';
         if (!a || (!sels.length && !route)) continue;
-        if (route) {
+        if (route && !onRouteList(route, routes, cfg.url)) {
+          decide('check', f.id, 'tool', `took the start page instead of ${route}`, 'it is not a route of the application');
+          f.route = '';
+          f.url = null;
+          f.url = urlOf(f);
+        } else if (route) {
           f.route = route;
           f.url = null;
           f.url = urlOf(f);
@@ -755,33 +872,52 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       }
     }
     writeJson(join(dir, 'findings.json'), { at: new Date().toISOString(), findings });
-    stage('judge', { count: findings.length });
-    const VERDICTS = ['present', 'gone', 'unreachable'];
-    const asked = await askForAll('check', 'check', findings.map((f) => f.id), (resultFile, ids, again) => manualCheckPrompt({ findings: findings.filter((f) => ids.includes(f.id)).map((f) => ({ ...f, evidence: evidence.get(f.id) })), resultFile, again }), {
-      complete: (a) => VERDICTS.includes(String(a.verdict || '').toLowerCase()), empty: 'its answer had no verdicts',
+    // The assistant judges only the findings whose page loaded (docs/plans/pictures-and-routes.md AC 7):
+    // a page that is not there is no evidence, and the tool says so itself.
+    const judged = findings.filter((f) => {
+      const e = evidence.get(f.id);
+      return !!(e && e.loaded);
     });
-    if (!asked) return 1;
+    stage('judge', { count: judged.length });
+    const VERDICTS = ['present', 'gone', 'unreachable'];
+    let asked = { got: new Map() };
+    if (judged.length) {
+      asked = await askForAll('check', 'check', judged.map((f) => f.id), (resultFile, ids, again) => manualCheckPrompt({ findings: judged.filter((f) => ids.includes(f.id)).map((f) => ({ ...f, evidence: evidence.get(f.id) })), resultFile, again }), {
+        complete: (a) => VERDICTS.includes(String(a.verdict || '').toLowerCase()), empty: 'its answer had no verdicts',
+      });
+      if (!asked) return 1;
+    }
     const results = findings.map((f) => {
+      const e = evidence.get(f.id);
+      const shot = e && e.files && e.files.includes('screenshot.png') ? `evidence/${f.id}/before/screenshot.png` : null;
+      if (!e || !e.loaded) {
+        const error = (e && e.error) || 'the page did not load';
+        decide('check', f.id, 'tool', 'could not be checked in the deployed site', `the tool could not open ${whereOf(f)} (${error})`, `evidence/${f.id}/before`);
+        return { finding: f.id, verdict: 'unreachable', said: null, reason: `the tool could not open ${whereOf(f)} (${error})`, error, url: (e && (e.finalUrl || e.url)) || f.url, checkedAt: (e && e.at) || new Date().toISOString(), screenshot: shot };
+      }
       const v = asked.got.get(f.id) || null;
       const said = v ? String(v.verdict).toLowerCase() : null;
-      const e = evidence.get(f.id);
       const verdict = said === 'gone' ? 'gone' : 'present';
       let reason = v && v.reason ? str(v.reason, 400) : '';
-      if (said === 'unreachable') reason = `the page could not be checked (${(e && e.error) || reason || 'it did not load'}); treated as present`;
+      if (said === 'unreachable') reason = `the assistant could not judge the page (${reason || 'it gave no reason'}); treated as present`;
       else if (!said) reason = 'no verdict from the assistant after two asks; treated as present';
       decide('check', f.id, said === 'gone' || said === 'present' ? 'agent' : 'tool', verdict === 'gone' ? 'already fixed in the deployed site' : 'still present in the deployed site', reason, `evidence/${f.id}/before`);
-      return { finding: f.id, verdict, said, reason, url: (e && (e.finalUrl || e.url)) || f.url, checkedAt: (e && e.at) || new Date().toISOString(), screenshot: e && e.files && e.files.includes('screenshot.png') ? `evidence/${f.id}/before/screenshot.png` : null };
+      return { finding: f.id, verdict, said, reason, url: (e && (e.finalUrl || e.url)) || f.url, checkedAt: (e && e.at) || new Date().toISOString(), screenshot: shot };
     });
     check = { at: new Date().toISOString(), results };
     writeJson(join(dir, 'check.json'), check);
   }
   const gone = check.results.filter((r) => r.verdict === 'gone');
-  const present = check.results.filter((r) => r.verdict !== 'gone').map((r) => byId.get(r.finding)).filter(Boolean);
+  // Could not be checked (docs/plans/pictures-and-routes.md AC 7): a tester-verified-fixed finding whose
+  // page did not load is neither planned nor already fixed; any other unreachable one is planned.
+  const unchecked = check.results.filter((r) => r.verdict === 'unreachable' && (byId.get(r.finding) || {}).status === 'fixed');
+  const present = check.results.filter((r) => r.verdict !== 'gone' && !unchecked.includes(r)).map((r) => byId.get(r.finding)).filter(Boolean);
   for (const r of gone) itemState(r.finding).status = 'already-fixed';
+  for (const r of unchecked) itemState(r.finding).status = 'unchecked';
   // The tester's verdict beside the deployed site's (docs/plans/pdf-parse.md AC 7): verified fixed and
   // gone is confirmed; verified fixed and present came back, and is planned as a return.
   const verifiedGone = gone.filter((r) => (byId.get(r.finding) || {}).status === 'fixed');
-  const cameBack = present.filter((f) => f.status === 'fixed');
+  const cameBack = present.filter((f) => f.status === 'fixed' && check.results.some((r) => r.finding === f.id && r.verdict === 'present'));
   for (const f of cameBack) {
     f.cameBack = cameBackLine(f);
     if (!state.cameBackLogged || !state.cameBackLogged.includes(f.id)) {
@@ -794,22 +930,29 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   // ---- 3. The already-fixed report.
   const goneRows = gone.map((r) => {
     const f = byId.get(r.finding);
-    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), tester: f.status === 'fixed' ? testerVerified(f) : null, seen: f.seen || null, seenMore: f.seenMore || [], notLocated: lookedLine(f) };
+    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), tester: f.status === 'fixed' ? testerVerified(f) : null, seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], notLocated: lookedLine(f) };
+  });
+  const uncheckedRows = unchecked.map((r) => {
+    const f = byId.get(r.finding);
+    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], line: uncheckedLine(f, whereOf(f), r.error || null) };
   });
   writeFileSync(join(dir, 'already-fixed.md'), [
     `# Already fixed in the deployed site (${goneRows.length})`, '', `From the tester's PDF: [source.pdf](source.pdf)`, '',
     ...(verifiedGone.length || cameBack.length ? [`${verifiedGone.length} of them the tester had verified fixed; ${cameBack.length} the tester had verified fixed came back (${cameBack.length === 1 ? 'it is' : 'they are'} in the plan).`, ''] : []),
     ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [PDF page ${r.page}](source.pdf#page=${r.page})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', ...(r.tester ? [`- ${r.tester}`] : []), ...(r.notLocated ? [`- ${r.notLocated}`] : []), `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
+    ...(uncheckedRows.length ? [`# Could not be checked (${uncheckedRows.length})`, '', ...uncheckedRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [PDF page ${r.page}](source.pdf#page=${r.page})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', `- ${r.line}`, `- Tried: ${r.url} at ${r.checkedAt}`, r.screenshot ? `\n![What the tool saw at ${r.url}](${r.screenshot})` : '', ''])] : []),
   ].join('\n'));
   const all = gone.length === findings.length;
-  stage('already-fixed', { rows: goneRows, total: findings.length, all });
-  if (all) {
+  stage('already-fixed', { rows: goneRows, total: findings.length, all, unchecked: uncheckedRows });
+  if (!present.length) {
     const v = verifiedGone.length;
-    const line = (findings.length === 1 ? 'The one finding in the PDF is already fixed in the deployed site' : `All ${findings.length} findings in the PDF are already fixed in the deployed site`) + (v ? ` (${v === findings.length ? (v === 1 ? 'the tester had verified it' : 'the tester had verified all of them') : `${v} of them the tester had verified`})` : '') + '.';
+    const line = all
+      ? (findings.length === 1 ? 'The one finding in the PDF is already fixed in the deployed site' : `All ${findings.length} findings in the PDF are already fixed in the deployed site`) + (v ? ` (${v === findings.length ? (v === 1 ? 'the tester had verified it' : 'the tester had verified all of them') : `${v} of them the tester had verified`})` : '') + '.'
+      : `Nothing to fix: ${gone.length ? `${alreadyWords(gone.length, v)}; ` : ''}${unchecked.length} could not be checked.`;
     state.done = true;
     state.doneLine = line;
     save();
-    stage('done', { all: true, fixed: 0, alreadyFixed: gone.length, testerVerified: v, cameBack: 0, message: line });
+    stage('done', { all: true, fixed: 0, alreadyFixed: gone.length, testerVerified: v, cameBack: 0, unchecked: unchecked.length, message: line });
     return finish(0, line);
   }
   if (gone.length) log.info(`${plural(gone.length, 'finding is', 'findings are')} already fixed in the deployed site (already-fixed.md)`);
@@ -832,7 +975,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     if (!a) decide(stg, f.id, 'tool', 'planned it with the tester\'s expectation as the fix', 'the assistant gave no plan for this finding');
     for (const d of Array.isArray(a && a.decisions) ? a.decisions : []) if (d && d.decision) decide(stg, f.id, 'agent', d.decision, d.reason);
     decide(stg, f.id, 'agent', `fix in ${component ? `${component.name} (${component.file || 'no file'})` : 'no named component'}: ${fix}`, files.length ? `files: ${files.join(', ')}` : '');
-    return { finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], status: f.status || null, criterion: f.criterion || null, cameBack: f.cameBack || null, picture: pictureOf(f.page), seen: f.seen || null, seenMore: f.seenMore || [], located: f.located ?? null, notLocated: lookedLine(f), quote: f.quote, url: f.url, fix, component, files, decisions: (Array.isArray(a && a.decisions) ? a.decisions : []).filter((d) => d && d.decision).map((d) => ({ decision: str(d.decision, 400), reason: str(d.reason, 400) })), confirm: null, screenshot: existsSync(join(dir, 'evidence', f.id, 'before', 'screenshot.png')) ? `evidence/${f.id}/before/screenshot.png` : null };
+    return { finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], status: f.status || null, criterion: f.criterion || null, cameBack: f.cameBack || null, picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], located: f.located ?? null, notLocated: lookedLine(f), quote: f.quote, url: f.url, fix, component, files, decisions: (Array.isArray(a && a.decisions) ? a.decisions : []).filter((d) => d && d.decision).map((d) => ({ decision: str(d.decision, 400), reason: str(d.reason, 400) })), confirm: null, screenshot: existsSync(join(dir, 'evidence', f.id, 'before', 'screenshot.png')) ? `evidence/${f.id}/before/screenshot.png` : null };
   };
   const savePlan = (plan) => {
     state.version = plan.version;
@@ -1187,11 +1330,11 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     reader.close();
   }
   const fixed = Object.values(state.items).filter((s) => s.status === 'fixed').length;
-  const line = `Done: ${plural(fixed, 'finding')} from the PDF ${fixed === 1 ? 'is' : 'are'} fixed and confirmed in the deployed site${gone.length ? `; ${alreadyWords(gone.length, verifiedGone.length)}` : ''}${cameBack.length ? `; ${cameBack.length} had come back` : ''}.`;
+  const line = `Done: ${plural(fixed, 'finding')} from the PDF ${fixed === 1 ? 'is' : 'are'} fixed and confirmed in the deployed site${gone.length ? `; ${alreadyWords(gone.length, verifiedGone.length)}` : ''}${cameBack.length ? `; ${cameBack.length} had come back` : ''}${unchecked.length ? `; ${unchecked.length} could not be checked` : ''}.`;
   state.done = true;
   state.doneLine = line;
   state.stage = 'done';
   save();
-  stage('done', { all: false, fixed, alreadyFixed: gone.length, testerVerified: verifiedGone.length, cameBack: cameBack.length, message: line });
+  stage('done', { all: false, fixed, alreadyFixed: gone.length, testerVerified: verifiedGone.length, cameBack: cameBack.length, unchecked: unchecked.length, message: line });
   return finish(0, line);
 }
