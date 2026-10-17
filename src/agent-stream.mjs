@@ -28,6 +28,10 @@ const TOOLS = [
 ];
 const CHANGES = /^(write_file|replace|edit|Write|Edit|MultiEdit|NotebookEdit)$/;
 const WRITES = /^(write_file|Write)$/;
+// The tools that open a file: what the assistant read, so the manual flow can tell whether it opened
+// a page's picture before answering for it (docs/plans/pictures-and-routes.md AC 1).
+const READS = /^(read_file|read_many_files|Read|NotebookRead)$/;
+const readPaths = (p) => [p.file_path, p.absolute_path, p.path, p.notebook_path, ...(Array.isArray(p.paths) ? p.paths : [])].map(str).filter(Boolean);
 
 // Whether two paths name the same file, each resolved against cwd. On Windows the letter case and
 // the direction of the slashes do not matter: C:\Users\dev\r.json is c:/users/dev/r.json.
@@ -49,10 +53,12 @@ export function samePath(a, b, { cwd = process.cwd(), platform = process.platfor
 // ignore: folders whose files do not count as changed (the loop's own task folder, where the result file goes).
 // resultFile: the file the assistant answers in; what it last wrote there, as the stream shows it, is
 // answer (Gemini CLI's write_file unescapes \" before saving, so the file on disk may not parse).
+// opened: every file a read tool opened, as absolute paths resolved against cwd (compare with samePath).
 export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null, ignore = [], resultFile = null } = {}) {
   let partial = '';
   let said = ''; // the assistant's words not yet ended by a newline
   const changed = new Set();
+  const opened = new Set();
   const state = { recognized: false, text: '', answer: null };
   const path = (p) => {
     const s = str(p);
@@ -81,6 +87,7 @@ export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null, ig
       if (WRITES.test(name) && typeof p.content === 'string') state.answer = p.content;
       else if (CHANGES.test(name)) state.answer = null;
     }
+    if (READS.test(name)) for (const s of readPaths(p)) opened.add(resolve(cwd, s));
     const row = TOOLS.find(([re]) => re.test(name));
     return row ? row[1](p, path) : `Using ${name}`;
   };
@@ -176,14 +183,18 @@ export function streamDecoder(onLine, { cwd = process.cwd(), doneLine = null, ig
     get answer() {
       return state.answer;
     },
+    // The files its read tools opened, as absolute paths (a Set).
+    get opened() {
+      return opened;
+    },
   };
 }
 
-// A whole call's stdout as readable lines, its decoded words and its streamed answer.
+// A whole call's stdout as readable lines, its decoded words, its streamed answer and the files it opened.
 export function readable(stdout, opts) {
   const lines = [];
   const d = streamDecoder((l) => lines.push(l), opts);
   d.push(String(stdout || ''));
   d.end();
-  return { lines, recognized: d.recognized, text: d.text, answer: d.answer };
+  return { lines, recognized: d.recognized, text: d.text, answer: d.answer, opened: [...d.opened] };
 }

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PRESETS, QUOTA } from '../src/agent.mjs';
-import { readable, streamDecoder } from '../src/agent-stream.mjs';
+import { readable, samePath, streamDecoder } from '../src/agent-stream.mjs';
 
 let failures = 0;
 const check = (name, fn) => {
@@ -119,6 +119,29 @@ check('the result file and files outside the checkout do not count as changed', 
   assert.equal(readable(only, { cwd, ignore: [tasks] }).lines.at(-1), 'Done: no files changed');
   const one = jsonl(...write('a', join(tasks, 'result-r1-fix-1.json')), ...write('b', 'src/app/x.html'), end);
   assert.equal(readable(one, { cwd, ignore: [tasks] }).lines.at(-1), 'Done: 1 file changed');
+});
+check('pictures-and-routes AC1: the files the read tools opened are kept as absolute paths, resolved against cwd, for Gemini CLI and Claude Code alike', () => {
+  const g = readable(GEMINI, { cwd });
+  assert.deepEqual(g.opened, [join(cwd, 'src', 'app', 'header.component.html')]);
+  const c = readable(CLAUDE, { cwd });
+  assert.deepEqual(c.opened, [join(cwd, 'a11y-508-work', 'prompt-r1-fix-0.md')]);
+  // Relative paths, read_many_files' list and absolute_path all count; a grep or a write does not.
+  const many = jsonl(
+    { type: 'tool_use', timestamp: 't', tool_name: 'read_many_files', tool_id: 'a', parameters: { paths: ['parsed/pages/page-02.png', join(cwd, 'parsed', 'pages', 'page-03.png')] } },
+    { type: 'tool_use', timestamp: 't', tool_name: 'read_file', tool_id: 'b', parameters: { file_path: 'parsed/pages/page-04.png' } },
+    { type: 'tool_use', timestamp: 't', tool_name: 'write_file', tool_id: 'c', parameters: { file_path: 'result.json', content: '{}' } },
+    { type: 'tool_use', timestamp: 't', tool_name: 'grep_search', tool_id: 'd', parameters: { pattern: 'x', path: 'parsed/pages/page-05.png' } },
+    { type: 'result', timestamp: 't', status: 'success' },
+  );
+  const r = readable(many, { cwd });
+  assert.deepEqual(r.opened, [join(cwd, 'parsed', 'pages', 'page-02.png'), join(cwd, 'parsed', 'pages', 'page-03.png'), join(cwd, 'parsed', 'pages', 'page-04.png')]);
+  assert.ok(r.opened.some((o) => samePath(o, 'parsed/pages/page-04.png', { cwd })));
+  assert.ok(!r.opened.some((o) => samePath(o, 'parsed/pages/page-05.png', { cwd })));
+  // The same helper, on Windows: case and slashes do not matter.
+  assert.equal(samePath('C:\\Users\\dev\\Parsed\\pages\\page-02.png', 'c:/users/dev/parsed/pages/PAGE-02.PNG', { cwd: 'C:\\Users\\dev', platform: 'win32' }), true);
+  assert.equal(samePath('page-02.png', 'C:\\Users\\dev\\page-02.png', { cwd: 'C:\\Users\\dev', platform: 'win32' }), true);
+  // Nothing opened: an empty list, not a missing one.
+  assert.deepEqual(readable('plain words\n', { cwd }).opened, []);
 });
 check('loop-resilience AC12: the Gemini and Claude presets ask for the stream', () => {
   assert.match(PRESETS.gemini, / --output-format stream-json /);
