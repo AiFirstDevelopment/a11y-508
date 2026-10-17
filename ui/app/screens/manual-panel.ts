@@ -42,6 +42,7 @@ interface Draft {
                   }
                 </div>
                 <p class="seen" data-testid="seen">{{ seen(r) }}</p>
+                @for (x of r.seenMore || []; track x.page) { <p class="seen" data-testid="seen-more">{{ seen(x) }}</p> }
               </li>
             }
           </ol>
@@ -63,6 +64,7 @@ interface Draft {
                   @if (r.screenshot) { <img class="shot" [src]="file(r.screenshot)" [alt]="r.finding + ' in the deployed site'" data-testid="screenshot" /> }
                 </div>
                 <p class="seen" data-testid="seen">{{ seen(r) }}</p>
+                @for (x of r.seenMore || []; track x.page) { <p class="seen" data-testid="seen-more">{{ seen(x) }}</p> }
                 @if (r.notLocated) { <p class="wrong" data-testid="not-located">{{ r.notLocated }}</p> }
               </li>
             }
@@ -84,6 +86,7 @@ interface Draft {
                   @if (it.screenshot) { <img class="shot" [src]="file(it.screenshot)" [alt]="it.finding + ' in the deployed site before the fix'" data-testid="screenshot" /> }
                 </div>
                 <p class="seen" data-testid="seen">{{ seen(it) }}</p>
+                @for (x of it.seenMore || []; track x.page) { <p class="seen" data-testid="seen-more">{{ seen(x) }}</p> }
                 @if (it.notLocated) { <p class="wrong" data-testid="not-located">{{ it.notLocated }}</p> }
                 @if (draft(it).remove) {
                   <p data-testid="plan-removed">Removed from the plan (sent with your changes).</p>

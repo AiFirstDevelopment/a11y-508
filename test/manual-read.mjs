@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { agentEnvFor, MANUAL_GEMINI_MODEL, streamModel, agentLog } from '../src/agent.mjs';
-import { buildCandidates, countsSentence, describedEnough, foldAnswers, seenLine } from '../src/manual.mjs';
+import { buildCandidates, countsSentence, describedEnough, foldAnswers, seenLine, seenLines } from '../src/manual.mjs';
 
 const only = process.argv.includes('-g') ? process.argv[process.argv.indexOf('-g') + 1] : null;
 const tests = [];
@@ -85,7 +85,15 @@ test('AC3: sameAs merges pages with the same criterion and status; pages in orde
   const f = foldAnswers(four(), new Map([['F1', answer('F1')], ['F2', answer('F1', { id: 'F2', sameAs: 'F1' })], ['F3', answer('F3')], ['F4', answer('F4')], ['F5', answer('F1', { id: 'F5', sameAs: 'F2' })]]), decide);
   assert.deepEqual(f.map((x) => [x.id, x.pages, x.page, x.status]), [['F1', [1, 2, 5], 1, 'fixed'], ['F3', [3], 3, 'fixed'], ['F4', [4], 4, 'open']]);
   assert.deepEqual(f[0].merged, ['F2', 'F5']);
+  // What it saw on the merged pages stays, a line per page.
+  assert.deepEqual(seenLines(f[0]), ['What the assistant saw on page 1: Page of F1.', 'What the assistant saw on page 2: Page of F1.', 'What the assistant saw on page 5: Page of F1.']);
   assert.equal(all.filter((d) => /^merged /.test(d.decision)).length, 2);
+});
+
+test('AC3: the assistant\'s decisions for a merged page are logged under the finding it was merged into', () => {
+  const { all, decide } = log();
+  foldAnswers(four(), new Map([['F1', answer('F1')], ['F2', answer('F1', { id: 'F2', sameAs: 'F1', decisions: [{ decision: 'took the home page', reason: 'r' }] })]]), decide);
+  assert.deepEqual(all.filter((d) => d.decision === 'took the home page').map((d) => [d.finding, d.by]), [['F1', 'agent']]);
 });
 
 test('guard d: sameAs across different criteria is ignored, with the decision', () => {

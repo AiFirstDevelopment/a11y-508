@@ -24,6 +24,7 @@ import { DecisionGroup as Group, ManualDecision, manualFileUrl, pdfPageUrl, seen
           <section data-testid="decisions-group">
             <h3>{{ g.finding }}: {{ g.title }} — <a [href]="page(g.page)" target="_blank" rel="noopener" data-testid="pdf-page">PDF page {{ g.page }}</a></h3>
             <p class="seen" data-testid="seen">{{ seen(g) }}</p>
+            @for (x of g.seenMore || []; track x.page) { <p class="seen" data-testid="seen-more">{{ seen(x) }}</p> }
             @if (g.quote) { <blockquote>{{ g.quote }}</blockquote> }
             <ul>@for (d of g.decisions; track $index) { <li data-testid="decision">{{ line(d) }}</li> }</ul>
             @for (c of g.commits; track c.sha) {
@@ -89,7 +90,7 @@ export class DecisionsPane {
   page(n: number): string {
     return pdfPageUrl(this.id(), n);
   }
-  seen(g: Group): string {
+  seen(g: { page: number; seen?: string | null }): string {
     return seenWords(g);
   }
   line(d: ManualDecision): string {

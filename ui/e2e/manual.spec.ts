@@ -774,6 +774,11 @@ test('read-from-parse AC1/2/3/6/9 / guards g i: the deck: the tool lists 11 find
     await expect(item(page, 'F10').getByTestId('seen')).toHaveText(`What the assistant saw on page 12: ${SEEN_13A}`);
     await expect(fixedRow(page, 'F4').getByTestId('seen')).toHaveText(`What the assistant saw on page 5: ${SEEN_13C}`);
     await expect(fixedSection.getByTestId('seen')).toHaveCount(7);
+    // A merged finding shows what the assistant saw on each of its pages; its decisions are under it.
+    await expect(item(page, 'F1').getByTestId('seen-more')).toHaveText([`What the assistant saw on page 3: ${SEEN_5C}`]);
+    await expect(fixedRow(page, 'F4').getByTestId('seen-more')).toHaveText([`What the assistant saw on page 8: ${SEEN_13C}`]);
+    expect(decisions(dir).some((d) => d.finding === 'F4' && d.by === 'agent' && d.decision === 'took the home page for F7')).toBe(true);
+    expect(decisions(dir).filter((d) => d.finding === null && d.by === 'agent')).toEqual([]);
     for (const [loc, n] of [[item(page, 'F1'), '02'], [item(page, 'F10'), '12'], [fixedRow(page, 'F4'), '05']] as const) {
       const pic = loc.getByTestId('page-picture');
       await expect(pic).toHaveAttribute('src', `/api/manual/${id}/parsed/pages/page-${n}.png`);
@@ -809,7 +814,7 @@ test('read-from-parse AC1/2/3/6/9 / guards g i: the deck: the tool lists 11 find
     await expect(g.getByTestId('seen')).toHaveText(`What the assistant saw on page 13: A fixture page showing 13.A Color is not used as the only visual means of conveying information, indicating an`);
     await expect(page.getByTestId('decisions-panel').getByTestId('decisions-group')).toHaveCount(10);
     const md = readFileSync(join(dir, 'decisions.md'), 'utf8');
-    expect(md).toContain(`## F1: Search button has no accessible name — [PDF page 2](source.pdf#page=2)\n\nWhat the assistant saw on page 2: ${SEEN_5C}\n`);
+    expect(md).toContain(`## F1: Search button has no accessible name — [PDF page 2](source.pdf#page=2)\n\nWhat the assistant saw on page 2: ${SEEN_5C}\n\nWhat the assistant saw on page 3: ${SEEN_5C}\n`);
     expect(md).toContain(`read · tool: ${COUNTS}`);
     expect(md).toContain('check · tool: Came back: the tester verified this fixed on 28 Sep 2026, but the deployed site has it again');
     const f1 = page.locator('[data-testid="fixed-item"][data-finding="F1"]');
@@ -910,7 +915,7 @@ test('read-from-parse AC4/5/7 / guards e f h: an element the tool cannot find go
   }
 });
 
-test('read-from-parse AC4: an element still not found after the second look is kept with the line on its plan item; a page that did not load is never sent back', async ({ page }) => {
+test('read-from-parse AC4: an element still not found after the second look is kept with the line on its plan item; a page that did not load is never sent back, and its item says so', async ({ page }) => {
   test.setTimeout(300_000);
   const app = await manualApp();
   const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_SELECTORS_WRONG: 'F1', FAKE_MANUAL_LOCATE_WRONG: 'F1', FAKE_MANUAL_ROUTE_DOWN: 'F2' } });
@@ -927,7 +932,8 @@ test('read-from-parse AC4: an element still not found after the second look is k
     expect(readdirSync(dir).filter((f) => /^agent-locate-/.test(f))).toEqual(['agent-locate-1.log']);
     expect(decisions(dir).filter((d) => d.finding === 'F1' && d.stage === 'check' && d.by === 'tool' && /^could not find/.test(d.decision)).map((d) => [d.decision, d.reason])).toEqual([['could not find the element on /search', "the assistant's selectors matched nothing twice"]]);
     await expect(item(page, 'F1').getByTestId('not-located')).toHaveText("The tool could not find this element on /search: the assistant's selectors matched nothing. Check the component before approving.");
-    await expect(item(page, 'F2').getByTestId('not-located')).toHaveCount(0);
+    // F2's page did not load: its item says the tool could not look.
+    await expect(item(page, 'F2').getByTestId('not-located')).toHaveText('The tool could not open http://127.0.0.1:9/ in the deployed site, so it could not look for this element. Check the component before approving.');
   } finally {
     await dash.stop();
     await app.cleanup();

@@ -130,7 +130,6 @@ export function foldAnswers(candidates, answers, decide) {
       decide('read', c.id, 'agent', `left out PDF page ${c.page}: it names no accessibility problem`, str(a.seen, 400));
       continue;
     }
-    for (const d of Array.isArray(a.decisions) ? a.decisions : []) if (d && d.decision) decide('read', c.id, 'agent', d.decision, d.reason);
     const f = own(c, a);
     let merged = false;
     const target = typeof a.sameAs === 'string' ? str(a.sameAs, 20) : '';
@@ -146,12 +145,16 @@ export function foldAnswers(candidates, answers, decide) {
         root.pages = [...new Set([...root.pages, ...c.pages])].sort((x, y) => x - y);
         root.images = [...root.images, ...f.images];
         (root.merged ||= []).push(c.id);
+        // What it saw on each merged page stays on the finding, so a merge of two different pictures shows.
+        (root.seenMore ||= []).push({ page: c.page, seen: f.seen });
         into.set(c.id, root);
         decide('read', root.id, 'agent', `merged ${c.id} (PDF page ${c.page}) into ${root.id}`, `page ${c.page} shows the same element with the same problem as page ${root.page}`);
         merged = true;
       }
     }
     if (!merged) out.push(f);
+    // The assistant's decisions for the page, under the finding it ended up in.
+    for (const d of Array.isArray(a.decisions) ? a.decisions : []) if (d && d.decision) decide('read', merged ? into.get(c.id).id : c.id, 'agent', d.decision, d.reason);
     const x = a.extra && typeof a.extra === 'object' && !Array.isArray(a.extra) ? a.extra : null;
     if (x) {
       if (!str(x.element)) decide('read', c.id, 'tool', 'left out a second problem on its page', 'the assistant named no element for it');
@@ -175,8 +178,11 @@ export function countsSentence(findings) {
 }
 // "The tool could not find this element on /search: ..." (AC 4), for a plan item or an already-fixed row.
 export const notLocatedLine = (where) => `The tool could not find this element on ${where}: the assistant's selectors matched nothing. Check the component before approving.`;
-// "What the assistant saw on page 12: ..." (AC 6).
+// The same when the page did not load: nothing could be looked for.
+export const unreachableLine = (where) => `The tool could not open ${where} in the deployed site, so it could not look for this element. Check the component before approving.`;
+// "What the assistant saw on page 12: ..." (AC 6); and, for a finding merged from several pages, a line per page.
 export const seenLine = (f) => (f && f.seen ? `What the assistant saw on page ${f.page}: ${f.seen}` : 'The assistant did not describe this page.');
+export const seenLines = (f) => [seenLine(f), ...((f && f.seenMore) || []).map((x) => seenLine(x))];
 
 export const isPdf = (buf) => !!buf && buf.length >= 5 && buf.subarray(0, 5).toString('latin1') === '%PDF-';
 export const manualRoot = (cwd) => join(workDir(cwd), MANUAL_DIR);
@@ -256,7 +262,7 @@ export function decisionGroups(dir, web = null) {
   const manifest = readJson(join(dir, PARSED_DIR, 'manifest.json'), null);
   const pictureOf = (n) => ((manifest && manifest.pages) || []).find((p) => p.n === n)?.picture || null;
   const groups = findings.map((f) => ({
-    picture: pictureOf(f.page), seen: f.seen || null, located: f.located ?? null,
+    picture: pictureOf(f.page), seen: f.seen || null, seenMore: f.seenMore || [], located: f.located ?? null,
     finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], tester: f.status || null, quote: f.quote, url: f.url || null, status: (state.items && state.items[f.id] && state.items[f.id].status) || null,
     decisions: all.filter((d) => d.finding === f.id),
     commits: ((state.items && state.items[f.id] && state.items[f.id].commits) || []).map((c) => ({ ...c, url: commitWebUrl(web, c.sha) })),
@@ -272,7 +278,7 @@ export function decisionsMarkdown(dir, web = null) {
   const out = ['# Decisions', '', `From the tester's PDF: [source.pdf](source.pdf)${existsSync(join(dir, PARSED_DIR, 'report.md')) ? ` (parsed: [${PARSED_DIR}/report.md](${PARSED_DIR}/report.md))` : ''}`, ''];
   if (general.length) out.push('## The run', '', ...general.map(line), '');
   for (const g of groups) {
-    out.push(`## ${g.finding}: ${g.title} — [PDF page ${g.page}](source.pdf#page=${g.page})`, '', seenLine(g), '');
+    out.push(`## ${g.finding}: ${g.title} — [PDF page ${g.page}](source.pdf#page=${g.page})`, '', ...seenLines(g).flatMap((l) => [l, '']));
     if (g.quote) out.push(`> ${g.quote}`, '');
     out.push(...(g.decisions.length ? g.decisions.map(line) : ['- No decision recorded.']), '');
     if (g.commits.length) out.push('Commits:', '', ...g.commits.map((c) => `- ${c.url ? `[${c.short}](${c.url})` : c.short}: ${(c.files || []).join(', ') || 'no files'}`), '');
@@ -497,6 +503,8 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       return f.url || f.route || cfg.url;
     }
   };
+  // The line a plan item or an already-fixed row carries when the tool could not find its element (AC 4).
+  const lookedLine = (f) => (f.located === false ? notLocatedLine(whereOf(f)) : f.unreachable ? unreachableLine(whereOf(f)) : null);
   // A finding's page, as a full URL in the deployed site.
   const urlOf = (f) => {
     const raw = f.url || f.route || '';
@@ -668,6 +676,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     for (const f of findings) {
       const e = evidence.get(f.id);
       f.located = e && e.loaded ? e.matched > 0 : null;
+      f.unreachable = !!(e && !e.loaded);
     }
     const unlocated = findings.filter((f) => f.located === false);
     if (unlocated.length) {
@@ -703,6 +712,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         if (second.has(f.id)) evidence.set(f.id, second.get(f.id));
         const e = evidence.get(f.id);
         f.located = !!(e && e.loaded && e.matched > 0);
+        f.unreachable = false;
         if (f.located) decide('check', f.id, 'tool', `found the element on ${whereOf(f)}`, `the assistant's second selectors matched ${plural(e.matched, 'element')}`, `evidence/${f.id}/before`);
         else decide('check', f.id, 'tool', `could not find the element on ${whereOf(f)}`, gave.has(f.id) ? "the assistant's selectors matched nothing twice" : "the assistant's selectors matched nothing and it gave no others", `evidence/${f.id}/before`);
       }
@@ -747,12 +757,12 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   // ---- 3. The already-fixed report.
   const goneRows = gone.map((r) => {
     const f = byId.get(r.finding);
-    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), tester: f.status === 'fixed' ? testerVerified(f) : null, seen: f.seen || null, notLocated: f.located === false ? notLocatedLine(whereOf(f)) : null };
+    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), tester: f.status === 'fixed' ? testerVerified(f) : null, seen: f.seen || null, seenMore: f.seenMore || [], notLocated: lookedLine(f) };
   });
   writeFileSync(join(dir, 'already-fixed.md'), [
     `# Already fixed in the deployed site (${goneRows.length})`, '', `From the tester's PDF: [source.pdf](source.pdf)`, '',
     ...(verifiedGone.length || cameBack.length ? [`${verifiedGone.length} of them the tester had verified fixed; ${cameBack.length} the tester had verified fixed came back (${cameBack.length === 1 ? 'it is' : 'they are'} in the plan).`, ''] : []),
-    ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [PDF page ${r.page}](source.pdf#page=${r.page})`, '', seenLine(r), '', r.quote ? `> ${r.quote}` : '', '', ...(r.tester ? [`- ${r.tester}`] : []), ...(r.notLocated ? [`- ${r.notLocated}`] : []), `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
+    ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [PDF page ${r.page}](source.pdf#page=${r.page})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', ...(r.tester ? [`- ${r.tester}`] : []), ...(r.notLocated ? [`- ${r.notLocated}`] : []), `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
   ].join('\n'));
   const all = gone.length === findings.length;
   stage('already-fixed', { rows: goneRows, total: findings.length, all });
@@ -785,7 +795,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     if (!a) decide(stg, f.id, 'tool', 'planned it with the tester\'s expectation as the fix', 'the assistant gave no plan for this finding');
     for (const d of Array.isArray(a && a.decisions) ? a.decisions : []) if (d && d.decision) decide(stg, f.id, 'agent', d.decision, d.reason);
     decide(stg, f.id, 'agent', `fix in ${component ? `${component.name} (${component.file || 'no file'})` : 'no named component'}: ${fix}`, files.length ? `files: ${files.join(', ')}` : '');
-    return { finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], status: f.status || null, criterion: f.criterion || null, cameBack: f.cameBack || null, picture: pictureOf(f.page), seen: f.seen || null, located: f.located ?? null, notLocated: f.located === false ? notLocatedLine(whereOf(f)) : null, quote: f.quote, url: f.url, fix, component, files, decisions: (Array.isArray(a && a.decisions) ? a.decisions : []).filter((d) => d && d.decision).map((d) => ({ decision: str(d.decision, 400), reason: str(d.reason, 400) })), confirm: null, screenshot: existsSync(join(dir, 'evidence', f.id, 'before', 'screenshot.png')) ? `evidence/${f.id}/before/screenshot.png` : null };
+    return { finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], status: f.status || null, criterion: f.criterion || null, cameBack: f.cameBack || null, picture: pictureOf(f.page), seen: f.seen || null, seenMore: f.seenMore || [], located: f.located ?? null, notLocated: lookedLine(f), quote: f.quote, url: f.url, fix, component, files, decisions: (Array.isArray(a && a.decisions) ? a.decisions : []).filter((d) => d && d.decision).map((d) => ({ decision: str(d.decision, 400), reason: str(d.reason, 400) })), confirm: null, screenshot: existsSync(join(dir, 'evidence', f.id, 'before', 'screenshot.png')) ? `evidence/${f.id}/before/screenshot.png` : null };
   };
   const savePlan = (plan) => {
     state.version = plan.version;

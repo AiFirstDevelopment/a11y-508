@@ -29,6 +29,8 @@ export interface PlanItem {
   // docs/plans/read-from-parse.md: what the assistant said the page shows (AC 6), and, when the tool
   // could not find the element on the deployed page, the line that says so (AC 4).
   seen?: string | null;
+  // For a finding merged from several pages: what the assistant saw on each of the others.
+  seenMore?: { page: number; seen: string | null }[];
   located?: boolean | null;
   notLocated?: string | null;
 }
@@ -47,6 +49,7 @@ export interface AlreadyFixedRow {
   // "The tester verified this fixed on 28 Sep 2026; the deployed site agrees." when they had.
   tester?: string | null;
   seen?: string | null;
+  seenMore?: { page: number; seen: string | null }[];
   notLocated?: string | null;
 }
 
@@ -73,6 +76,7 @@ export interface DecisionGroup {
   screenshots: { label: string; path: string }[];
   picture?: string | null;
   seen?: string | null;
+  seenMore?: { page: number; seen: string | null }[];
 }
 
 // "What the assistant saw on page 12: ..." (docs/plans/read-from-parse.md AC 6).
