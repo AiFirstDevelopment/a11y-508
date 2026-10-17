@@ -861,11 +861,12 @@ test('read-from-parse guards c d: an answer for an id the tool did not issue is 
     const findings = readJson(join(dir, 'findings.json')).findings;
     const all = decisions(dir);
     // Guard c: F99 was not issued: not a finding, and said so.
-    expect(findings.map((f: any) => f.id)).toEqual(DECK_FINDINGS);
+    expect(findings.filter((f: any) => !/^F\d+b?$/.test(f.id) || Number(/\d+/.exec(f.id)![0]) > 11).map((f: any) => f.id)).toEqual([]);
     expect(all.some((d) => d.stage === 'read' && d.by === 'tool' && d.decision === 'dropped an answer for F99')).toBe(true);
     // Guard d: F4 (13.C) said sameAs F1 (5.C): kept apart, logged.
     expect(findings.filter((f: any) => ['F1', 'F4'].includes(f.id)).map((f: any) => [f.id, f.pages])).toEqual([['F1', [2, 3]], ['F4', [5, 8]]]);
     expect(all.filter((d) => d.finding === 'F4' && /^kept /.test(d.decision)).map((d) => [d.by, d.decision, d.reason])).toEqual([['tool', 'kept F4 separate from F1', 'they are different criteria']]);
+    expect(findings.map((f: any) => f.id)).toEqual(DECK_FINDINGS);
   } finally {
     await dash.stop();
     await app.cleanup();
