@@ -37,6 +37,11 @@ export const MAX_PDF_BYTES = 50 * 1024 * 1024;
 export const NOT_A_PDF = 'That file is not a PDF. Choose the PDF report the tester sent.';
 export const NO_FINDINGS = 'The PDF names no accessibility findings the assistant could read.';
 export const PARSED_DIR = 'parsed';
+// The browser a run's arguments name (--chrome <path> or --chrome=<path>), or null.
+export const chromeOf = (args) => {
+  const i = args.findIndex((a) => a === '--chrome' || a.startsWith('--chrome='));
+  return i < 0 ? null : args[i].startsWith('--chrome=') ? args[i].slice(9) : args[i + 1] || null;
+};
 
 // "28 Sep 2026" from 2026-09-28.
 const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -439,7 +444,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     log.info('reading the PDF');
     try {
       manifest = await parsePdf({
-        file: join(dir, 'source.pdf'), outDir: parsedDir, chromePath: browserArgs().includes('--chrome') ? browserArgs()[browserArgs().indexOf('--chrome') + 1] : null, log,
+        file: join(dir, 'source.pdf'), outDir: parsedDir, chromePath: chromeOf(browserArgs()), log,
         onOpened: ({ pages, total, withPictures }) => stage('parse', { pages, total, withPictures }),
       });
     } catch (e) {

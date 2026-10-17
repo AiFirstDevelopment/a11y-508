@@ -464,7 +464,22 @@ export async function parsePdf({ file, outDir, chromePath, log = null, maxPages,
       await new Promise((r) => setTimeout(r, 100));
     }
     const left = () => limit - (Date.now() - started);
-    const opened = await session.evaluate(`window.__parse.open(${cap})`, { timeout: Math.max(1000, left()) });
+    // The time limit bounds each call in the page (Runtime.evaluate's own timeout does not bound a promise).
+    const within = (expr) => {
+      let timer;
+      const late = new Promise((_, fail) => {
+        timer = setTimeout(() => fail(Object.assign(new Error('the time limit was reached'), { timedOut: true })), Math.max(0, left()));
+      });
+      return Promise.race([session.evaluate(expr), late]).finally(() => clearTimeout(timer));
+    };
+    const spell = limit >= 60000 ? `${Math.round(limit / 60000)} min` : limit >= 1000 ? `${Math.round(limit / 1000)} s` : `${limit} ms`;
+    let opened;
+    try {
+      opened = await within(`window.__parse.open(${cap})`);
+    } catch (e) {
+      if (e.timedOut) throw new Error(`the PDF did not open within the time limit (${spell})`);
+      throw e;
+    }
     if (opened.error) throw new PdfUnreadable(opened.error);
     const total = opened.numPages;
     const want = Math.min(total, cap);
@@ -474,15 +489,16 @@ export async function parsePdf({ file, outDir, chromePath, log = null, maxPages,
     for (let n = 1; n <= want; n++) {
       if (left() <= 0) break;
       try {
-        raw.push(await session.evaluate(`window.__parse.page(${n}, ${PAGE_WIDTH_PX})`, { timeout: Math.max(1000, left()) }));
+        raw.push(await within(`window.__parse.page(${n}, ${PAGE_WIDTH_PX})`));
       } catch (e) {
-        if (left() <= 0) break;
+        if (e.timedOut || left() <= 0) break;
         notes.push(`Page ${n} could not be parsed: ${e.message}.`);
         raw.push({ n, width: 0, height: 0, items: [], picture: null, images: [], small: 0, over: 0, failures: [], failed: true });
       }
     }
     if (want < total) notes.unshift(`Stopped after ${want} pages; the PDF has ${total}.`);
-    if (raw.length < want) notes.unshift(`Stopped at the time limit (${Math.round(limit / 60000) || 1} min): ${raw.length ? `pages ${raw.length + 1}–${want}` : 'every page'} not parsed.`);
+    if (!raw.length) throw new Error(`no page was parsed within the time limit (${spell})`);
+    if (raw.length < want) notes.unshift(`Stopped at the time limit (${spell}): pages ${raw.length + 1}–${want} not parsed.`);
     // Pictures repeated on REPEATED_ON or more pages are logos and bullets, not screenshots.
     const seenOn = new Map();
     for (const p of raw) for (const h of new Set(p.images.map((im) => im.hash))) seenOn.set(h, (seenOn.get(h) || 0) + 1);
