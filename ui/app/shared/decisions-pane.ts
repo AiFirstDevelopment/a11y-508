@@ -1,6 +1,6 @@
 import { Component, ElementRef, inject, signal, viewChild } from '@angular/core';
 import { Api } from '../core/api';
-import { DecisionGroup as Group, ManualDecision, manualFileUrl, pdfPageUrl } from '../core/manual';
+import { DecisionGroup as Group, ManualDecision, manualFileUrl, pdfPageUrl, seenWords } from '../core/manual';
 
 // Show decisions (docs/plans/manual-findings.md AC 9): a PDF run's decision log, grouped by finding,
 // each headed by its title and its PDF page, then its decisions in order, its commits and its
@@ -23,6 +23,7 @@ import { DecisionGroup as Group, ManualDecision, manualFileUrl, pdfPageUrl } fro
         @for (g of groups(); track g.finding) {
           <section data-testid="decisions-group">
             <h3>{{ g.finding }}: {{ g.title }} — <a [href]="page(g.page)" target="_blank" rel="noopener" data-testid="pdf-page">PDF page {{ g.page }}</a></h3>
+            <p class="seen" data-testid="seen">{{ seen(g) }}</p>
             @if (g.quote) { <blockquote>{{ g.quote }}</blockquote> }
             <ul>@for (d of g.decisions; track $index) { <li data-testid="decision">{{ line(d) }}</li> }</ul>
             @for (c of g.commits; track c.sha) {
@@ -49,6 +50,7 @@ import { DecisionGroup as Group, ManualDecision, manualFileUrl, pdfPageUrl } fro
     figure { margin: 0; }
     figure img { max-width: 300px; border: 1px solid var(--muted); }
     blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--muted); }
+    .seen { font-style: italic; margin: 4px 0; overflow-wrap: anywhere; }
   `],
 })
 export class DecisionsPane {
@@ -86,6 +88,9 @@ export class DecisionsPane {
   }
   page(n: number): string {
     return pdfPageUrl(this.id(), n);
+  }
+  seen(g: Group): string {
+    return seenWords(g);
   }
   line(d: ManualDecision): string {
     const at = new Date(d.at);

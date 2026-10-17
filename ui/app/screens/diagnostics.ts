@@ -20,6 +20,8 @@ const SECRET_FLAG = /^--(header|cookie|token)/;
 export interface AgentCall {
   label?: string; n?: number; name?: string; round?: number; kind?: string; index?: number; of?: number;
   at: string | null; code: number | null; timedOut: boolean; quota: boolean; answered: boolean; durationMs: number | null; assistant: string | null;
+  // The model the call's stream named in its init event (docs/plans/read-from-parse.md AC 7).
+  model?: string | null;
 }
 export interface AgentCallDetail { header: Record<string, unknown>; stdout: string; stderr: string; prompt: string | null; result: string | null }
 
@@ -33,7 +35,8 @@ export function callOutcome(c: AgentCall): string {
 // What the call was for: "read", "fix F2", "round 2 fix 3 of 5".
 export function callTask(c: AgentCall): string {
   if (c.name) return `round ${c.round} ${c.kind === 'triage' ? 'triage' : 'fix'} ${c.index} of ${c.of}`;
-  return String(c.label || '').replace(/^fix-/, 'fix ');
+  // The describe call reads the PDF (docs/plans/read-from-parse.md): it is listed as the read.
+  return String(c.label || '').replace(/^fix-/, 'fix ').replace(/^describe$/, 'read');
 }
 
 // The config with its secrets blanked: values under secret-looking keys, and the value after a
@@ -326,7 +329,7 @@ export class DiagnosticsScreen {
     return c.name || `${c.label}/${c.n}`;
   }
   summary(c: AgentCall): string {
-    return [c.at ? localTime(c.at) : '', callTask(c), (c.assistant || 'the assistant').replace(/^./, (x) => x.toUpperCase()), c.durationMs != null ? span(c.durationMs) : '', callOutcome(c)].filter(Boolean).join(' · ');
+    return [c.at ? localTime(c.at) : '', callTask(c), `${(c.assistant || 'the assistant').replace(/^./, (x) => x.toUpperCase())}${c.model ? ` (${c.model})` : ''}`, c.durationMs != null ? span(c.durationMs) : '', callOutcome(c)].filter(Boolean).join(' · ');
   }
   said(d: AgentCallDetail): string {
     const out = d.stdout.replace(/\n+$/, '');

@@ -27,7 +27,7 @@ test('assistant calls: listed and read back for a PDF run and a loop; a path tha
 
     const list = await s.call('GET', `/api/manual/${id}/agent-calls`);
     assert.equal(list.status, 200);
-    assert.deepEqual(JSON.parse(list.text), [{ label: 'read', n: 1, at: '2026-10-17T12:00:01.000Z', code: 0, timedOut: false, quota: false, answered: false, durationMs: 1200, assistant: 'Gemini CLI' }]);
+    assert.deepEqual(JSON.parse(list.text), [{ label: 'read', n: 1, at: '2026-10-17T12:00:01.000Z', code: 0, timedOut: false, quota: false, answered: false, durationMs: 1200, assistant: 'Gemini CLI', model: null }]);
     const one = JSON.parse((await s.call('GET', `/api/manual/${id}/agent-calls/read/1`)).text);
     assert.equal(one.stdout, 'I cannot open this file');
     assert.equal(one.stderr, 'warn');
@@ -48,6 +48,23 @@ test('assistant calls: listed and read back for a PDF run and a loop; a path tha
       assert.equal(r.status, 404, p);
       assert.ok(!r.text.includes('outside'), p);
     }
+  } finally {
+    await s.stop();
+  }
+});
+
+// docs/plans/read-from-parse.md AC 7: the model a call ran on, from its header or its stream's init line.
+test('assistant calls: the model a call ran on is listed, from the log header or the stream\'s init line', async () => {
+  const s = await startServer();
+  try {
+    const id = '20261017-130000';
+    const dir = join(s.dirs().work, 'manual', id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'agent-describe-1.log'), agentLog({ code: 0, result: {}, stdout: 'ok', durationMs: 60000, model: 'gemini-2.5-pro' }, { at: '2026-10-17T13:00:01.000Z', assistant: 'Gemini CLI' }));
+    writeFileSync(join(dir, 'agent-check-1.log'), agentLog({ code: 0, result: {}, stdout: '{"type":"init","session_id":"s","model":"fake-1"}\n{"type":"result"}', durationMs: 50 }, { at: '2026-10-17T13:00:02.000Z', assistant: 'Node' }));
+    writeFileSync(join(dir, 'agent-plan-1.log'), agentLog({ code: 0, result: {}, stdout: 'plain words', durationMs: 50 }, { at: '2026-10-17T13:00:03.000Z', assistant: 'Node' }));
+    const list = JSON.parse((await s.call('GET', `/api/manual/${id}/agent-calls`)).text);
+    assert.deepEqual(list.map((c) => [c.label, c.model]), [['describe', 'gemini-2.5-pro'], ['check', 'fake-1'], ['plan', null]]);
   } finally {
     await s.stop();
   }

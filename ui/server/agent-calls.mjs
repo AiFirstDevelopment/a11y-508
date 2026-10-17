@@ -4,6 +4,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tasksDir, workDir } from '../../src/home.mjs';
+import { streamModel } from '../../src/agent.mjs';
 import { runsDir } from './run-journal.mjs';
 
 // A PDF run's call: read, check, plan, confirm, verify, replan, fix-<finding>; n is its number in the run.
@@ -54,6 +55,8 @@ function row(file, extra) {
   return {
     ...extra, at, code: typeof h.code === 'number' ? h.code : null, timedOut: !!h.timedOut, quota: !!h.quota, answered: !!h.result,
     durationMs: typeof h.durationMs === 'number' ? h.durationMs : null, assistant: typeof h.assistant === 'string' ? h.assistant : null,
+    // The model, from the header, else from the stream's init line (docs/plans/read-from-parse.md AC 7).
+    model: typeof h.model === 'string' && h.model ? h.model : streamModel(parsed.stdout),
   };
 }
 

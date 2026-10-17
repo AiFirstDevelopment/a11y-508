@@ -116,6 +116,10 @@ if (task && /^manual-/.test(task.kind)) {
 // FAKE_MANUAL_SAME_AS=F4:F1: F4's answer says sameAs F1.
 // FAKE_MANUAL_SELECTORS_WRONG=F1: the describe gives F1 selectors that match nothing; the locate gives the right ones.
 // FAKE_MANUAL_CHECK_SKIP=F2: the first check leaves F2's verdict out.
+// Besides the plan's: FAKE_MANUAL_LOCATE_WRONG=F1 (the locate's selectors match nothing either),
+// FAKE_MANUAL_ROUTE_DOWN=F2 (the describe puts F2 on a page that does not load, with selectors that
+// match nothing), FAKE_MANUAL_VERIFY_SKIP=F1 and FAKE_MANUAL_CONFIRM_SKIP=F3 (the first verify or
+// confirmation leaves that id out).
 // The describe answers each candidate from its page's FINDING line (id | title | route | selectors |
 // element | words): a tag other than the candidate's own id says the page shows that earlier finding
 // (sameAs); a second FINDING line on a page is a second problem (extra); a page with none names no
@@ -177,6 +181,7 @@ function manual(task) {
       }
       if (sameAs[c.id]) a.sameAs = sameAs[c.id];
       if (wrong.includes(c.id)) a.selectors = ['#not-on-this-page'];
+      if (ids(process.env.FAKE_MANUAL_ROUTE_DOWN).includes(c.id)) Object.assign(a, { route: 'http://127.0.0.1:9/', selectors: ['#not-on-this-page'] });
       answers.push(a);
     }
     const extra = ids(process.env.FAKE_MANUAL_DESCRIBE_EXTRA);
@@ -190,11 +195,12 @@ function manual(task) {
     // The fixture's real route and selectors, from the finding's FINDING line.
     return out({ answers: task.items.map((it) => {
       const m = it.lines.map((l) => FINDING.exec(l)).filter(Boolean)[0];
+      if (ids(process.env.FAKE_MANUAL_LOCATE_WRONG).includes(it.id)) return { id: it.id, route: m ? m[3] : '/', selectors: ['#still-not-on-this-page'], reason: 'a guess' };
       return m ? { id: it.id, route: m[3], selectors: m[4].split(';').map((x) => x.trim()), notOnThisRoute: false, reason: 'the element is in the deployed page under these selectors' } : { id: it.id, route: '/', selectors: [], reason: 'cannot tell' };
     }) });
   }
   if (task.kind === 'manual-check' || task.kind === 'manual-verify') {
-    const skip = task.kind === 'manual-check' && !second ? ids(process.env.FAKE_MANUAL_CHECK_SKIP) : [];
+    const skip = second ? [] : ids(process.env[task.kind === 'manual-check' ? 'FAKE_MANUAL_CHECK_SKIP' : 'FAKE_MANUAL_VERIFY_SKIP']);
     const list = (task.kind === 'manual-check' ? task.findings : task.items).filter((f) => !skip.includes(f.id || f.finding));
     return out(list.map((f) => {
       const p = problem(f.evidence);
@@ -223,7 +229,8 @@ function manual(task) {
     const once = process.env.FAKE_MANUAL_MISUNDERSTAND_ONCE;
     const refuse = once && !existsSync(once);
     if (refuse) writeFileSync(once, 'refused');
-    return out(task.items.map((it) => (refuse
+    const skip = second ? [] : ids(process.env.FAKE_MANUAL_CONFIRM_SKIP);
+    return out(task.items.filter((it) => !skip.includes(it.finding)).map((it) => (refuse
       ? { finding: it.finding, understood: false, text: `${it.edit.component.name} does not render the element the tester describes.`, files: [] }
       : { finding: it.finding, understood: true, text: `I will ${it.edit.fix.replace(/^./, (c) => c.toLowerCase()).replace(/\.$/, '')} in ${it.edit.component.name}, ${it.edit.component.file}${it.original.component && it.original.component.name !== it.edit.component.name ? `, instead of ${it.original.component.name}` : ''}.`, files: [it.edit.component.file] })));
   }
