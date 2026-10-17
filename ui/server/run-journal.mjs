@@ -24,8 +24,8 @@ export const RUN_CHILD = join(dirname(fileURLToPath(import.meta.url)), 'run-chil
 export const RUNS_DIR = 'runs';
 // Kinds whose run is journaled; an assistant's install stays a child of the server.
 // The words the control file carries to a run (run-child.mjs passes them on to the CLI's stdin).
-export const CONTROL_WORDS = new Set(['continue', 'check', 'sign-in', 'fix-remaining', 'stop-waiting']);
-export const JOURNALED = new Set(['crawl', 'troubleshoot', 'login', 'loop', 'dry-run']);
+export const CONTROL_WORDS = new Set(['continue', 'check', 'sign-in', 'fix-remaining', 'stop-waiting', 'review', 'approve']);
+export const JOURNALED = new Set(['crawl', 'troubleshoot', 'login', 'loop', 'dry-run', 'manual']);
 const LOOP_KINDS = new Set(['loop', 'dry-run']);
 
 export const runsDir = (cwd) => join(workDir(cwd), RUNS_DIR);
@@ -169,7 +169,8 @@ export class JournalRun {
     this.read();
     if (this.status !== 'running') return;
     if (this.stopRequests > 0) {
-      const ev = { type: 'done', at: new Date().toISOString(), code: null, signal: null, stopped: true, outcome: 'stopped' };
+      // quit: ended because the dashboard itself ended (a PDF run is taken up again when it comes back).
+      const ev = { type: 'done', at: new Date().toISOString(), code: null, signal: null, stopped: true, outcome: 'stopped', ...(this.quitting ? { quit: true } : {}) };
       try {
         appendFileSync(this.files.events, line(ev));
       } catch {}
@@ -231,6 +232,7 @@ export class JournalRun {
   async kill() {
     if (this.status !== 'running') return;
     this.stopRequests++;
+    this.quitting = true;
     recordKill('quit', { run: this.kind, target: this.pid });
     await signalTree(this.pid, 'SIGKILL', 'quit');
     this.gone();

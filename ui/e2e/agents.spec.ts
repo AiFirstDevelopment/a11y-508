@@ -92,15 +92,15 @@ test('AC 12: the picker under Advanced lists every preset, live or greyed as ins
     writeFileSync(sessionFile, JSON.stringify({ version: 1, origins: ['http://127.0.0.1:9'], cookies: [], storage: {} }));
     expect((await api(dash, '/api/config', { method: 'PUT', body: { config: { url: 'http://127.0.0.1:9/', check: 'true' } } })).status).toBe(200);
     await open(page, dash);
-    // Claude Code is installed, so it is the one the loop runs; nothing asks.
+    // Gemini CLI is installed, so it is the one the loop runs (the default since docs/plans/manual-findings.md AC 10); nothing asks.
     await expect(now(page)).toHaveText(/^Ready to crawl 127\.0\.0\.1:9 and fix what it finds\.$/, { timeout: 60_000 });
     await goInApp(page, '/diagnostics');
-    await expect(page.getByTestId('d-assistant')).toHaveText(/^Runs: Claude Code \(claude\) · fallback: Gemini CLI$/, { timeout: 60_000 });
+    await expect(page.getByTestId('d-assistant')).toHaveText(/^Runs: Gemini CLI \(gemini\) · fallback: Claude Code$/, { timeout: 60_000 });
     await openPicker(page);
     await expect(page.getByTestId('picker').locator('.preset label')).toHaveCount(4);
     const names = await page.getByTestId('picker').locator('.preset label').allTextContents();
     expect(names).toEqual(['Claude Code', 'Gemini CLI', 'Codex', 'Custom command']);
-    await expect(entry(page, 'claude').getByRole('radio')).toBeChecked();
+    await expect(entry(page, 'gemini').getByRole('radio')).toBeChecked();
 
     await expect(entry(page, 'claude')).toHaveAttribute('data-found', 'true');
     await expect(entry(page, 'claude').getByTestId('version')).toHaveText('9.9.9 (stub claude)');
@@ -125,16 +125,16 @@ test('AC 12: the picker under Advanced lists every preset, live or greyed as ins
     await expect(entry(page, 'codex')).toContainText('not installed');
 
     // A choice is saved, and the one screen says what it means.
-    await entry(page, 'gemini').getByRole('radio').check();
-    await expect.poll(async () => (await config(dash)).agent).toBe('gemini');
-    expect((await api(dash, '/api/settings')).json.agent).toBe('gemini');
+    await entry(page, 'claude').getByRole('radio').check();
+    await expect.poll(async () => (await config(dash)).agent).toBe('claude');
+    expect((await api(dash, '/api/settings')).json.agent).toBe('claude');
     await entry(page, 'codex').getByRole('radio').check();
     await expect.poll(async () => (await config(dash)).agent).toBe('codex');
     await goInApp(page, '/');
     await expect(now(page)).toHaveText(/^Ready to crawl 127\.0\.0\.1:9; nothing will be fixed: Codex is not installed\.$/);
     await openPicker(page);
-    await entry(page, 'claude').getByRole('radio').check();
-    await expect.poll(async () => (await config(dash)).agent).toBe('claude');
+    await entry(page, 'gemini').getByRole('radio').check();
+    await expect.poll(async () => (await config(dash)).agent).toBe('gemini');
     await goInApp(page, '/');
     await expect(now(page)).toHaveText(/^Ready to crawl 127\.0\.0\.1:9 and fix what it finds\.$/);
   } finally {
@@ -166,7 +166,7 @@ test('AC 12: a preset found only in npm prefix -g is run by that path when the l
   mkdirSync(join(cwd, 'src'));
   writeFileSync(join(cwd, 'src', 'index.html'), '<!doctype html><title>x</title>');
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
-  writeFileSync(join(cwd, 'a11y-508.config.json'), JSON.stringify({ url: site.base + 'about.html', args: ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots'], agent: 'gemini', check: 'true', push: false, deployed: 'none' }));
+  writeFileSync(join(cwd, 'a11y-508.config.json'), JSON.stringify({ url: site.base + 'about.html', args: ['--max-pages', '1', '--no-interact', '--no-zoom', '--no-screenshots'], agent: 'gemini', check: 'true', push: false, deployed: 'none', reviews: 'triage' }));
   g('add', '-A');
   g('commit', '-q', '-m', 'init');
   const dash = await dashboard({ cwd, env: { ...r.env, PATH: `${r.env.PATH}${delimiter}${dirname(process.execPath)}` } });

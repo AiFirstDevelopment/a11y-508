@@ -282,7 +282,8 @@ export async function record(page: Page, testids: string[] = ['now']): Promise<v
       const n = document.querySelector('[data-testid="now"]');
       if (n) {
         const visible = (b: Element) => !!((b as HTMLElement).offsetWidth || (b as HTMLElement).offsetHeight || (b as HTMLElement).getClientRects().length);
-        const buttons = [...document.querySelectorAll('main button')].filter(visible).filter((b) => !b.closest('dialog')).filter((b) => (b as HTMLElement).dataset['testid'] !== 'show-sign-in-tab').map((b) => b.textContent!.trim());
+        // The PDF button beside Start is the second way in (docs/plans/manual-findings.md), not a question.
+        const buttons = [...document.querySelectorAll('main button')].filter(visible).filter((b) => !b.closest('dialog')).filter((b) => !['show-sign-in-tab', 'manual-pdf'].includes((b as HTMLElement).dataset['testid'] || '')).map((b) => b.textContent!.trim());
         const last = w.__buttons[w.__buttons.length - 1];
         const t = n.textContent!.trim();
         if (!last || last.now !== t || last.buttons.join('|') !== buttons.join('|')) w.__buttons.push({ now: t, buttons });
@@ -350,7 +351,8 @@ export async function asksNothing(page: Page): Promise<void> {
   await expect(page.getByRole('button', { name: REMOVED_BUTTONS })).toHaveCount(0);
   // The screen has rendered its button before the buttons are counted.
   await expect(go(page)).toBeVisible();
-  const buttons = page.locator('main button:visible:not([data-testid="show-sign-in-tab"]):not(dialog button)');
+  // Besides Start or Stop: Show the sign-in tab, and the PDF button beside Start (docs/plans/manual-findings.md).
+  const buttons = page.locator('main button:visible:not([data-testid="show-sign-in-tab"]):not([data-testid="manual-pdf"]):not(dialog button)');
   expect(await buttons.count(), (await buttons.allTextContents()).join(' | ')).toBe(1);
   await expect(go(page)).toHaveText(/^(Start|Stop)$/);
 }

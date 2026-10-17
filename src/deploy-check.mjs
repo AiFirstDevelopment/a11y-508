@@ -113,7 +113,7 @@ async function byFetch(url) {
 }
 
 // The crawl options that say how a crawl gets in, read from the crawl's own arguments.
-async function crawlOptions(url, args, cwd) {
+export async function crawlOptions(url, args, cwd) {
   const { parseArgs } = await import('./cli.mjs');
   let o;
   try {

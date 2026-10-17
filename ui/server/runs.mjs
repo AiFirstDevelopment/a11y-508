@@ -15,7 +15,8 @@ export function outcomeOf({ kind, code, signal, stopped }) {
   if (code === 0) return 'ok';
   // The fix loop's fixes are committed and wait for a deployment someone else runs: not a failure.
   if (code === 4 && (kind === 'loop' || kind === 'dry-run')) return 'awaiting-deploy';
-  if (code === 1 && kind !== 'install') return 'findings';
+  // A PDF run (the manual flow) has no findings exit: 1 is a run that could not go on.
+  if (code === 1 && kind !== 'install' && kind !== 'manual') return 'findings';
   return 'error';
 }
 

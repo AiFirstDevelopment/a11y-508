@@ -183,21 +183,21 @@ export function normalizeConfig(c, overrides = {}, { interactive = !!process.std
   return { cfg, errors };
 }
 
-const git = (cwd, args, opts = {}) => {
+export const git = (cwd, args, opts = {}) => {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, ...opts });
   return { code: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
 
 // Changed paths under the given directories, from porcelain output (which
 // must not be trimmed: the first two columns can be spaces).
-const gitChanged = (cwd, paths = []) => {
+export const gitChanged = (cwd, paths = []) => {
   const r = spawnSync('git', ['status', '--porcelain', '--', ...paths], { cwd, encoding: 'utf8' });
   return (r.stdout || '').split('\n').filter((l) => l.length > 3).map((l) => l.slice(3).replace(/^"(.*)"$/, '$1'));
 };
 
 // timeoutMs: past it the command and everything it started are ended (taskkill /T on Windows) and
 // the result says timedOut.
-const sh = (cwd, command, env, onData = null, timeoutMs = 0) =>
+export const sh = (cwd, command, env, onData = null, timeoutMs = 0) =>
   new Promise((r) => {
     const child = spawn(command, { cwd, shell: true, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let out = '';
@@ -315,7 +315,7 @@ async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = 
 // is crawled. Its sign-in events reach the dashboard with --events. true when a session was saved;
 // false when no sign-in happened within the usual wait (or the window could not open).
 // connectArgs (the dashboard's own browser): the sign-in is a tab in that window, not a window of its own.
-async function signInOnly({ cfg, cwd, log, events, stateFile, passthrough = [], connectArgs = [] }) {
+export async function signInOnly({ cfg, cwd, log, events, stateFile, passthrough = [], connectArgs = [] }) {
   const args = [BIN, cfg.url, ...cfg.args.filter((a, i, all) => a !== '--state' && all[i - 1] !== '--state'), ...passthrough, ...connectArgs, '--login-only', '--state', stateFile, '--quiet'];
   if (events) args.push('--events');
   const child = spawn(process.execPath, args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -378,7 +378,7 @@ function dashboardWords(onWord) {
   };
 }
 
-function waitForEnter(message, prompt) {
+export function waitForEnter(message, prompt) {
   if (prompt) prompt();
   else process.stdout.write(message);
   return new Promise((resolve) => {
@@ -402,7 +402,7 @@ function waitForEnter(message, prompt) {
 // One line when each assistant call starts and one when it ends (exit code, time, quota, the last
 // lines of its output), in the work folder's agent-calls.log: a call that hangs shows as a start with no
 // end, while the loop is still running and afterwards.
-async function callAgent(work, label, args, onOutput = null, onWait = null) {
+export async function callAgent(work, label, args, onOutput = null, onWait = null) {
   const file = join(work, 'agent-calls.log');
   const t0 = new Date();
   appendFileSync(file, `${t0.toISOString()} start ${label}\n`);
@@ -452,6 +452,127 @@ function branchRemedy(cwd, target, err) {
   const lock = /'refs\/heads\/([^']+)' exists/.exec(err);
   if (lock) return `Rename the branch in the way: git branch -m "${lock[1]}" "${lock[1]}-old", then try again.`;
   return `Run git ${target.exists ? 'checkout' : 'checkout -b'} "${b}" in ${cwd} to see what git needs, resolve it, then try again.`;
+}
+
+// What a run that commits fixes needs of the repository before it starts: a git repository, nothing
+// uncommitted under the source folders, and the configured branch checked out (created when it is
+// not there). null when it is ready; else { code, message, remedy } for the precondition event.
+export function prepareRepo({ cwd, cfg, sourceDirs, log }) {
+  if (git(cwd, ['rev-parse', '--is-inside-work-tree']).out !== 'true') {
+    return { code: 'not-a-repo', message: `${cwd} is not a git repository; the loop commits each fix, so it needs one`,
+      remedy: `Choose the folder that holds the app's git repository, or make this one a repository: git init && git add -A && git commit -m "Initial commit"` };
+  }
+  const dirty = gitChanged(cwd, sourceDirs);
+  if (dirty.length) {
+    return { code: 'dirty-tree', message: `uncommitted changes under ${sourceDirs.join(', ')}: ${dirty.join(', ')}`,
+      remedy: `Commit or stash them (git stash --include-untracked), then try again, so the loop's commits contain only its own fixes: ${dirty.join(', ')}` };
+  }
+  if (cfg.branch) {
+    const current = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
+    const target = resolveBranch(cwd, cfg.branch);
+    if (current !== target.branch) {
+      const sw = git(cwd, target.remote ? ['checkout', '-b', target.branch, '--track', `origin/${target.branch}`] : target.exists ? ['checkout', target.branch] : ['checkout', '-b', target.branch]);
+      if (sw.code !== 0) return { code: 'branch', message: `cannot switch to branch ${target.branch}: ${sw.err.split(/\r?\n/)[0]}`, remedy: branchRemedy(cwd, target, sw.err) };
+    }
+    if (target.reason) log.info(`on branch ${target.branch}: ${target.reason}`);
+    else if (current !== target.branch) log.info(`on branch ${target.branch}`);
+  }
+  if (!cfg.check) log.warn('no "check" command in the config: fixes are committed without a build or test gate');
+  return null;
+}
+
+// The tests once for a round's fixes. When they fail: the first fix that breaks them is found (the
+// round's commits, bisected; each run within checkTimeout), reverted, and the tests run again; after
+// 3 reverts the whole round is rolled back. Tests that also fail without the round's fixes are not
+// theirs to answer for: the fixes are kept. fixes: [{ sha, n, test?, message? }] in commit order (a
+// fix applied again after a revert gets its new sha). runTests(label) runs the tests once and
+// resolves the gate's result ({ code, out, timedOut, ... }); onFail(fix, gate, why) is told of each
+// fix taken out, onReapplied(fix) of each applied again, onChange() after each revert.
+export async function testRoundFixes({ cwd, sourceDirs, roundBase, fixes, runTests, stopped = () => false, log, ev = () => {}, round, checkTimeout, onFail = () => {}, onReapplied = () => {}, onChange = () => {} }) {
+  const duration = (ms) => (ms < 60000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60000)} min`);
+  const failed = new Set();
+  const live = () => fixes.filter((f) => !failed.has(f));
+  const fail = (f, gate, why) => {
+    failed.add(f);
+    onFail(f, gate, why);
+  };
+  // The tests run against the source folders as they were at a commit (git restore), never by
+  // moving the branch: a stop, or a kill, mid-way leaves every commit in place.
+  const at = (sha) => git(cwd, ['restore', `--source=${sha}`, '--worktree', '--', ...sourceDirs]);
+  const atTip = () => {
+    git(cwd, ['restore', '--source=HEAD', '--worktree', '--', ...sourceDirs]);
+    git(cwd, ['clean', '-fdq', '--', ...sourceDirs]);
+  };
+  // Stopped while the tests ran: their result says nothing about the fixes, which stay committed.
+  let halted = false;
+  const halt = () => {
+    atTip();
+    halted = true;
+    log.warn("stopped while the tests ran; the round's fixes stay committed, not yet tested");
+  };
+  log.info(`running the tests once for the round's ${fixes.length} fix(es)`);
+  let tests = await runTests('');
+  let reverts = 0;
+  if (stopped()) halt();
+  else if (tests.code !== 0) {
+    at(roundBase);
+    const before = await runTests('without this round\'s fixes');
+    atTip();
+    if (stopped()) halt();
+    else if (before.code !== 0) {
+      log.warn(tests.timedOut && before.timedOut
+        ? `the tests did not finish within ${duration(checkTimeout)}, with or without this round's fixes; the fixes are kept, not tested`
+        : 'the tests also fail without this round\'s fixes; the fixes are kept, not tested (each passed the build)');
+      tests = { code: 0 };
+    }
+  }
+  while (!halted && tests.code !== 0 && reverts < 3 && live().length) {
+    const list = live();
+    ev('bisect', { round, state: 'start', count: list.length });
+    // The first commit whose state fails the tests: a binary search over the round's commits.
+    let lo = 0;
+    let hi = list.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      at(list[mid].sha);
+      const t = await runTests(`with fixes up to ${list[mid].n}`);
+      if (stopped()) break;
+      if (t.code !== 0) hi = mid;
+      else lo = mid + 1;
+    }
+    atTip();
+    if (stopped()) {
+      halt();
+      break;
+    }
+    const culprit = list[lo];
+    ev('bisect', { round, state: 'found', n: culprit.n ?? 0, test: culprit.test, message: culprit.message, commit: git(cwd, ['rev-parse', '--short', culprit.sha]).out });
+    log.warn(`  fix ${culprit.n} (${culprit.test || ''} "${String(culprit.message || '').slice(0, 60)}") breaks the tests; reverting it`);
+    // Back to the commit before it, and the later fixes applied again on top (no test runs in between).
+    const base = lo > 0 ? list[lo - 1].sha : roundBase;
+    git(cwd, ['reset', '-q', '--hard', base]);
+    fail(culprit, tests, `fix ${culprit.n} broke the tests`);
+    for (const f of list.slice(lo + 1)) {
+      const cp = git(cwd, ['cherry-pick', f.sha]);
+      if (cp.code !== 0) {
+        git(cwd, ['cherry-pick', '--abort']);
+        fail(f, tests, `fix ${f.n} could not be applied again after fix ${culprit.n} was reverted`);
+        continue;
+      }
+      f.sha = git(cwd, ['rev-parse', 'HEAD']).out;
+      onReapplied(f);
+    }
+    reverts++;
+    onChange();
+    tests = live().length ? await runTests('after the revert') : { code: 0 };
+    if (stopped()) halt();
+  }
+  if (!halted && tests.code !== 0) {
+    log.warn(`the tests still fail after ${reverts} revert(s); rolling back this round's fixes`);
+    git(cwd, ['reset', '-q', '--hard', roundBase]);
+    for (const f of live()) fail(f, tests, 'the round\'s tests failed');
+  }
+  return { halted, failed: [...failed] };
 }
 
 // --from-report: the report a crawl just produced, used for the run's first round instead of a
@@ -545,26 +666,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   };
 
   if (!dryRun) {
-    if (git(cwd, ['rev-parse', '--is-inside-work-tree']).out !== 'true') {
-      return precondition('not-a-repo', `${cwd} is not a git repository; the loop commits each fix, so it needs one`,
-        `Choose the folder that holds the app's git repository, or make this one a repository: git init && git add -A && git commit -m "Initial commit"`);
-    }
-    const dirty = gitChanged(cwd, sourceDirs);
-    if (dirty.length) {
-      return precondition('dirty-tree', `uncommitted changes under ${sourceDirs.join(', ')}: ${dirty.join(', ')}`,
-        `Commit or stash them (git stash --include-untracked), then try again, so the loop's commits contain only its own fixes: ${dirty.join(', ')}`);
-    }
-    if (cfg.branch) {
-      const current = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
-      const target = resolveBranch(cwd, cfg.branch);
-      if (current !== target.branch) {
-        const sw = git(cwd, target.remote ? ['checkout', '-b', target.branch, '--track', `origin/${target.branch}`] : target.exists ? ['checkout', target.branch] : ['checkout', '-b', target.branch]);
-        if (sw.code !== 0) return precondition('branch', `cannot switch to branch ${target.branch}: ${sw.err.split(/\r?\n/)[0]}`, branchRemedy(cwd, target, sw.err));
-      }
-      if (target.reason) log.info(`on branch ${target.branch}: ${target.reason}`);
-      else if (current !== target.branch) log.info(`on branch ${target.branch}`);
-    }
-    if (!cfg.check) log.warn('no "check" command in the config: fixes are committed without a build or test gate');
+    const pre = prepareRepo({ cwd, cfg, sourceDirs, log });
+    if (pre) return precondition(pre.code, pre.message, pre.remedy);
   }
 
   // --sign-in-first: round 1 signs in, in a visible window, and crawls there (saving a fresh
@@ -1267,97 +1370,31 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         }
         attemptEvent(a.n ?? 0, e, a, 'failed-gate');
       };
-      const live = () => roundFixed.filter((e) => e.attempts[e.attempts.length - 1].commit);
-      const testsAt = async (label) => {
-        log.info(`  tests${label ? ` (${label})` : ''}: ${parts.test}`);
-        ev('step', { round, step: 'gate', check: parts.test });
-        return runGate(round, null, null, parts.test, 'test');
-      };
-      // The tests run against the source folders as they were at a commit (git restore), never by
-      // moving the branch: a stop, or a kill, mid-way leaves every commit in place.
-      const at = (sha) => git(cwd, ['restore', `--source=${sha}`, '--worktree', '--', ...sourceDirs]);
-      const atTip = () => {
-        git(cwd, ['restore', '--source=HEAD', '--worktree', '--', ...sourceDirs]);
-        git(cwd, ['clean', '-fdq', '--', ...sourceDirs]);
-      };
-      // Stopped while the tests ran: their result says nothing about the fixes, which stay committed.
-      let halted = false;
-      const halt = () => {
-        atTip();
-        halted = true;
-        log.warn("stopped while the tests ran; the round's fixes stay committed, not yet tested");
-      };
-      log.info(`running the tests once for the round's ${committed} fix(es)`);
-      let tests = await testsAt('');
-      let reverts = 0;
-      if (stopped()) halt();
-      else if (tests.code !== 0) {
-        // Tests that fail without any of this round's fixes are not theirs to answer for.
-        at(roundBase);
-        const before = await testsAt('without this round\'s fixes');
-        atTip();
-        if (stopped()) halt();
-        else if (before.code !== 0) {
-          log.warn(tests.timedOut && before.timedOut
-            ? `the tests did not finish within ${duration(cfg.checkTimeout)}, with or without this round's fixes; the fixes are kept, not tested`
-            : 'the tests also fail without this round\'s fixes; the fixes are kept, not tested (each passed the build)');
-          tests = { code: 0 };
-        }
-      }
-      while (!halted && tests.code !== 0 && reverts < 3 && live().length) {
-        const list = live();
-        ev('bisect', { round, state: 'start', count: list.length });
-        // The first commit whose state fails the tests: a binary search over the round's commits.
-        let lo = 0;
-        let hi = list.length - 1;
-        while (lo < hi) {
-          const mid = (lo + hi) >> 1;
-          at(list[mid].attempts[list[mid].attempts.length - 1].commitFull);
-          const t = await testsAt(`with fixes up to ${list[mid].attempts[list[mid].attempts.length - 1].n}`);
-          if (stopped()) break;
-          if (t.code !== 0) hi = mid;
-          else lo = mid + 1;
-        }
-        atTip();
-        if (stopped()) {
-          halt();
-          break;
-        }
-        const culprit = list[lo];
-        const ca = culprit.attempts[culprit.attempts.length - 1];
-        ev('bisect', { round, state: 'found', n: ca.n ?? 0, test: culprit.test, message: culprit.message, commit: ca.commit });
-        log.warn(`  fix ${ca.n} (${culprit.test} "${culprit.message.slice(0, 60)}") breaks the tests; reverting it`);
-        // Back to the commit before it, and the later fixes applied again on top (no test runs in between).
-        const base = lo > 0 ? list[lo - 1].attempts[list[lo - 1].attempts.length - 1].commitFull : roundBase;
-        git(cwd, ['reset', '-q', '--hard', base]);
-        failAttempt(culprit, tests, `fix ${ca.n} broke the tests`);
-        committed--;
-        for (const e of list.slice(lo + 1)) {
-          const a = e.attempts[e.attempts.length - 1];
-          const cp = git(cwd, ['cherry-pick', a.commitFull]);
-          if (cp.code !== 0) {
-            git(cwd, ['cherry-pick', '--abort']);
-            failAttempt(e, tests, `fix ${a.n} could not be applied again after fix ${ca.n} was reverted`);
-            committed--;
-            continue;
-          }
-          a.commitFull = git(cwd, ['rev-parse', 'HEAD']).out;
-          a.commit = git(cwd, ['rev-parse', '--short', 'HEAD']).out;
-          attemptEvent(a.n ?? 0, e, a, 'committed');
-        }
-        reverts++;
-        save();
-        ledgerEvent();
-        tests = live().length ? await testsAt('after the revert') : { code: 0 };
-        if (stopped()) halt();
-      }
-      if (!halted && tests.code !== 0) {
-        log.warn(`the tests still fail after ${reverts} revert(s); rolling back this round's fixes`);
-        git(cwd, ['reset', '-q', '--hard', roundBase]);
-        for (const e of live()) failAttempt(e, tests, 'the round\'s tests failed');
-        committed = 0;
-      }
-      roundFixed.splice(0, roundFixed.length, ...live());
+      const last = (e) => e.attempts[e.attempts.length - 1];
+      const fixes = roundFixed.map((e) => ({ entry: e, sha: last(e).commitFull, n: last(e).n, test: e.test, message: e.message }));
+      await testRoundFixes({
+        cwd, sourceDirs, roundBase, fixes, log, ev, round, stopped, checkTimeout: cfg.checkTimeout,
+        runTests: (label) => {
+          log.info(`  tests${label ? ` (${label})` : ''}: ${parts.test}`);
+          ev('step', { round, step: 'gate', check: parts.test });
+          return runGate(round, null, null, parts.test, 'test');
+        },
+        onFail: (f, gate, why) => {
+          failAttempt(f.entry, gate, why);
+          committed--;
+        },
+        onReapplied: (f) => {
+          const a = last(f.entry);
+          a.commitFull = f.sha;
+          a.commit = git(cwd, ['rev-parse', '--short', f.sha]).out;
+          attemptEvent(a.n ?? 0, f.entry, a, 'committed');
+        },
+        onChange: () => {
+          save();
+          ledgerEvent();
+        },
+      });
+      roundFixed.splice(0, roundFixed.length, ...roundFixed.filter((e) => last(e).commit));
       save();
       ledgerEvent();
     }

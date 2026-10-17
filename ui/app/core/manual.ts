@@ -1,0 +1,144 @@
+// The manual flow on the dashboard (docs/plans/manual-findings.md): the state of a run of kind
+// "manual", built from its "manual" and "manual-decision" events.
+
+export interface ManualComponent {
+  name: string;
+  file: string | null;
+  selector?: string | null;
+  unlisted?: boolean;
+}
+
+export interface PlanItem {
+  finding: string;
+  title: string;
+  page: number;
+  quote: string;
+  url: string;
+  fix: string;
+  component: ManualComponent | null;
+  files: string[];
+  decisions: { decision: string; reason: string }[];
+  confirm: { understood: boolean; text: string } | null;
+  screenshot: string | null;
+}
+
+export interface AlreadyFixedRow {
+  finding: string;
+  title: string;
+  quote: string;
+  page: number;
+  url: string;
+  checkedAt: string;
+  reason: string;
+  screenshot: string | null;
+}
+
+export interface ManualDecision {
+  at: string;
+  stage: string;
+  finding: string | null;
+  by: string;
+  decision: string;
+  reason: string;
+  evidence?: string;
+}
+
+export interface ManualState {
+  id: string | null;
+  // The latest stage event's stage, and the event itself.
+  stage: string | null;
+  last: Record<string, any> | null;
+  findings: number | null;
+  alreadyFixed: AlreadyFixedRow[];
+  allGone: boolean;
+  plan: { version: number; reason: string; notHeld: number; items: PlanItem[] } | null;
+  // Waiting for the developer: the plan is shown with its edit controls.
+  reviewing: boolean;
+  approveRefused: string[];
+  verdicts: { finding: string; verdict: string; reason: string; label: string }[];
+  decisions: ManualDecision[];
+  noFindings: string | null;
+  readFailed: string | null;
+  done: { message: string; fixed: number; alreadyFixed: number; all: boolean } | null;
+  commits: number;
+  fix: { n: number; m: number; finding: string; title: string; attempt: number } | null;
+  capture: { n: number; m: number; label: string } | null;
+  deployCheck: Record<string, any> | null;
+  // The wait for the deployment of the latest push: how many fixes, on which branch.
+  deployWait: Record<string, any> | null;
+}
+
+export const emptyManual = (): ManualState => ({
+  id: null, stage: null, last: null, findings: null, alreadyFixed: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
+  noFindings: null, readFailed: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
+});
+
+// The state after one more event.
+export function applyManual(s: ManualState, ev: Record<string, any>): ManualState {
+  if (ev['type'] === 'manual-decision') return { ...s, decisions: [...s.decisions, ev as unknown as ManualDecision] };
+  const st = String(ev['stage'] || '');
+  const n: ManualState = { ...s, stage: st === 'agent' || st === 'decision' ? s.stage : st, last: st === 'agent' ? s.last : ev };
+  switch (st) {
+    case 'start':
+      n.id = ev['id'] || null;
+      break;
+    case 'findings':
+      n.findings = Number(ev['count']) || 0;
+      break;
+    case 'no-findings':
+      n.noFindings = String(ev['message'] || '');
+      break;
+    case 'read-failed':
+      n.readFailed = String(ev['reason'] || '');
+      break;
+    case 'capture':
+      n.capture = { n: ev['n'], m: ev['m'], label: ev['label'] };
+      break;
+    case 'already-fixed':
+      n.alreadyFixed = ev['rows'] || [];
+      n.allGone = !!ev['all'];
+      break;
+    case 'plan':
+      n.plan = { version: ev['version'], reason: ev['reason'], notHeld: Number(ev['notHeld']) || 0, items: ev['items'] || [] };
+      n.approveRefused = [];
+      break;
+    case 'review':
+      n.reviewing = true;
+      break;
+    case 'confirming':
+      n.reviewing = false;
+      break;
+    case 'approve-refused':
+      n.approveRefused = ev['findings'] || [];
+      break;
+    case 'approved':
+      n.reviewing = false;
+      break;
+    case 'fix':
+      n.reviewing = false;
+      n.fix = { n: ev['n'], m: ev['m'], finding: ev['finding'], title: ev['title'], attempt: ev['attempt'] };
+      break;
+    case 'commit':
+      n.commits = s.commits + 1;
+      break;
+    case 'await-deploy':
+      n.deployWait = ev;
+      n.deployCheck = null;
+      break;
+    case 'deploy-check':
+      n.deployCheck = ev;
+      break;
+    case 'verdicts':
+      n.verdicts = [...s.verdicts.filter((v) => !(ev['items'] || []).some((x: any) => x.finding === v.finding)), ...(ev['items'] || [])];
+      break;
+    case 'done':
+      n.done = { message: String(ev['message'] || ''), fixed: Number(ev['fixed']) || 0, alreadyFixed: Number(ev['alreadyFixed']) || 0, all: !!ev['all'] };
+      n.reviewing = false;
+      break;
+  }
+  return n;
+}
+
+// The path of one of the run's files, as the server serves it (a link or an <img> sends the cookie).
+export const manualFileUrl = (id: string | null, rel: string) => (id ? `/api/manual/${encodeURIComponent(id)}/file/${rel.split('/').map(encodeURIComponent).join('/')}` : '');
+export const pdfPageUrl = (id: string | null, page: number) => `${manualFileUrl(id, 'source.pdf')}#page=${page}`;

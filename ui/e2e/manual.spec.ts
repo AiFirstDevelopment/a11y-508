@@ -1,0 +1,510 @@
+// Manual findings (docs/plans/manual-findings.md): fix what a tester found by hand, from their PDF,
+// under the developer's approval. The app is test/fixtures/manual/app (a stand-in Angular app) in a
+// throwaway git repository with a bare "origin", served from its working tree by
+// test/manual-site.mjs, so a pushed commit is "deployed" at once; stale mode serves the old pages.
+// The assistant is test/fake-agent.mjs: it reads the PDF's FINDING lines and judges from the
+// evidence the tool captured.
+
+import { test, expect, type Page } from '@playwright/test';
+import { spawn, spawnSync } from 'node:child_process';
+import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { api, dashboard, gitRepo, go, now, open, removeTemp, tempDir, BIN, ROOT, type Dash } from './harness';
+
+const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
+const FIXTURES = join(ROOT, 'test', 'fixtures', 'manual');
+const PDF = join(FIXTURES, 'manual-findings.pdf');
+const NO_FINDINGS_PDF = join(FIXTURES, 'no-findings.pdf');
+const REVIEW = 'Approve the plan to start fixing, or edit an item and send it to the assistant.';
+const NOT_A_PDF = 'That file is not a PDF. Choose the PDF report the tester sent.';
+
+interface App {
+  cwd: string;
+  originDir: string;
+  site: { base: string; setStale(on: boolean): void; setHeld(on: boolean): void; close(): Promise<void> };
+  g: (...args: string[]) => string;
+  cleanup(): Promise<void>;
+}
+
+async function manualApp(): Promise<App> {
+  const cwd = tempDir('a11y-508-manual-');
+  const originDir = tempDir('a11y-508-manual-origin-');
+  expect(spawnSync('git', ['init', '-q', '--bare'], { cwd: originDir }).status).toBe(0);
+  cpSync(join(FIXTURES, 'app'), cwd, { recursive: true });
+  const g = gitRepo(cwd);
+  const m: any = await import('../../test/manual-site.mjs');
+  const site = await m.startManualSite({ dir: cwd });
+  writeFileSync(join(cwd, 'a11y-508.config.json'), JSON.stringify({
+    url: site.base, agent: FAKE, source: ['src'], check: `${JSON.stringify(process.execPath)} -e 0`, branch: 'a11y-508', push: true,
+    deployed: 'bundle-change', deployTimeout: 0, deployPoll: 500, deploySettle: 0, agentTimeout: 120000,
+  }, null, 2));
+  g('add', '-A');
+  g('commit', '-q', '-m', 'the app');
+  g('remote', 'add', 'origin', originDir);
+  return {
+    cwd, originDir, site, g,
+    cleanup: async () => {
+      await site.close();
+      removeTemp(cwd);
+      removeTemp(originDir);
+    },
+  };
+}
+
+// The run's folder: <work>/manual/<id>/ (one per run; the newest).
+function runDir(dash: Dash): string {
+  const root = join(dash.dirs().work, 'manual');
+  const ids = readdirSync(root).filter((d) => /^\d{8}-\d{6}(-\d+)?$/.test(d)).sort();
+  return join(root, ids[ids.length - 1]);
+}
+const readJson = (f: string) => JSON.parse(readFileSync(f, 'utf8'));
+const decisions = (dir: string) => readFileSync(join(dir, 'decisions.ndjson'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+// The fix commits on the work branch for a finding's title.
+const fixCommits = (app: App, title: string): string[] => {
+  const r = spawnSync('git', ['log', '--format=%H %s', 'a11y-508', '--'], { cwd: app.cwd, encoding: 'utf8' });
+  return (r.stdout || '').split('\n').filter((l) => l.includes('a11y-508: manual <PDF p.') && l.includes(title)).map((l) => l.split(' ')[0]);
+};
+const filesOf = (app: App, sha: string) => app.g('show', '--name-only', '--format=', sha).split('\n').filter(Boolean);
+
+// Fix from a test report (PDF): the system's file chooser, as a person uses it.
+async function choosePdf(page: Page, file: string): Promise<void> {
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByTestId('manual-pdf').click();
+  await (await chooser).setFiles(file);
+}
+const item = (page: Page, id: string) => page.locator(`[data-testid="plan-item"][data-finding="${id}"]`);
+
+test('manual AC1 / guard a: the PDF is chosen with a file chooser, stored, served back, and starts a journaled run that survives a reload; a non-PDF is refused in one sentence', async ({ page }) => {
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd });
+  try {
+    await open(page, dash);
+    await expect(page.getByTestId('manual-pdf')).toHaveText('Fix from a test report (PDF)');
+    await expect(page.locator('input[data-testid="manual-pdf-input"]')).toHaveAttribute('accept', 'application/pdf');
+    // Guard a: a text file named .pdf is refused, with the sentence, and no run starts.
+    const notes = tempDir('a11y-508-manual-notpdf-');
+    const fake = join(notes, 'notes.pdf');
+    writeFileSync(fake, 'These are my notes, not a PDF.\n');
+    await choosePdf(page, fake);
+    await expect(page.getByTestId('start-error')).toHaveText(NOT_A_PDF);
+    expect((await api(dash, '/api/runs/current')).json).toBeNull();
+    expect(existsSync(join(dash.dirs().work, 'manual')) && readdirSync(join(dash.dirs().work, 'manual')).length).toBeFalsy();
+    await expect(go(page)).toHaveText('Start');
+    // The API refuses it too, and the manual routes need the session secret.
+    const raw = await fetch(`${dash.origin}/api/manual/pdf`, { method: 'POST', headers: { 'X-A11y-508-Secret': dash.secret, 'content-type': 'application/pdf' }, body: 'hello' });
+    expect([raw.status, (await raw.json()).error]).toEqual([400, NOT_A_PDF]);
+    expect((await fetch(`${dash.origin}/api/manual/components`)).status).toBe(401);
+
+    // AC 1: the PDF is stored as <work>/manual/<id>/source.pdf and starts a run of kind manual.
+    await choosePdf(page, PDF);
+    await expect(go(page)).toHaveText('Stop', { timeout: 60_000 });
+    await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.kind, { timeout: 30_000 }).toBe('manual');
+    const run = (await api(dash, '/api/runs/current')).json;
+    expect(run.meta.manualId).toMatch(/^\d{8}-\d{6}(-\d+)?$/);
+    const dir = join(dash.dirs().work, 'manual', run.meta.manualId);
+    expect(readFileSync(join(dir, 'source.pdf')).equals(readFileSync(PDF))).toBe(true);
+    // Served back for every later link to source.pdf#page=N.
+    const served = await fetch(`${dash.origin}/api/manual/${run.meta.manualId}/file/source.pdf`, { headers: { 'X-A11y-508-Secret': dash.secret } });
+    expect([served.status, served.headers.get('content-type')]).toEqual([200, 'application/pdf']);
+    expect(Buffer.from(await served.arrayBuffer()).equals(readFileSync(PDF))).toBe(true);
+    // Journaled like the others: its record and events are on disk.
+    expect(existsSync(join(dash.dirs().work, 'runs', `${run.id}.run.json`))).toBe(true);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 120_000 });
+    // A reload reattaches it: the same run, the same state.
+    await page.reload();
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 30_000 });
+    await expect(go(page)).toHaveText('Stop');
+    expect((await api(dash, '/api/runs/current')).json.id).toBe(run.id);
+    await go(page).click();
+    await expect(now(page)).toHaveText('Stopped', { timeout: 30_000 });
+    removeTemp(notes);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('manual AC2: a PDF that names no finding ends the run with the sentence and Choose another PDF', async ({ page }) => {
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd });
+  try {
+    await open(page, dash);
+    await choosePdf(page, NO_FINDINGS_PDF);
+    await expect(now(page)).toHaveText('The PDF names no accessibility findings the assistant could read.', { timeout: 120_000 });
+    await expect(go(page)).toHaveText('Start', { timeout: 30_000 });
+    await expect(page.getByTestId('manual-pdf')).toHaveText('Choose another PDF');
+    expect(readJson(join(runDir(dash), 'findings.json')).findings).toEqual([]);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('manual AC2/3/4/5/7/8/9 / guards b c d: findings tied to PDF pages, checked in the deployed site, the already fixed reported, the rest planned, fixed, pushed, verified, and every decision logged', async ({ page }) => {
+  test.setTimeout(400_000);
+  const app = await manualApp();
+  const base = app.g('rev-parse', 'HEAD');
+  const dash = await dashboard({ cwd: app.cwd });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    const dir = runDir(dash);
+    const id = dir.split(/[\\/]/).pop()!;
+
+    // Guard b: every plan item links to its page of the PDF.
+    await expect(item(page, 'F1').getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=1`);
+    await expect(item(page, 'F3').getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=2`);
+    await expect(item(page, 'F3').getByTestId('pdf-page')).toHaveText('PDF page 2');
+    // Guard c: the finding the deployed site no longer has is in Already fixed, from evidence the tool captured.
+    const fixedSection = page.getByTestId('already-fixed');
+    await expect(fixedSection.locator('summary')).toHaveText('Already fixed in the deployed site (1)');
+    const row = fixedSection.getByTestId('already-fixed-item');
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('F2 Company logo has no text alternative');
+    await expect(row.getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=2`);
+    expect(readdirSync(join(dir, 'evidence', 'F2', 'before')).sort()).toEqual(['ax.json', 'elements.html', 'elements.json', 'screenshot.png', 'summary.json', 'tab-order.json']);
+    // Guard d: it never enters the plan.
+    await expect(item(page, 'F2')).toHaveCount(0);
+
+    // AC 2: one finding per issue, each with its PDF page and the tester's words.
+    const findings = readJson(join(dir, 'findings.json')).findings;
+    expect(findings.map((f: any) => [f.id, f.page])).toEqual([['F1', 1], ['F2', 2], ['F3', 2]]);
+    expect(findings[0].quote).toBe('The magnifier button in the search bar is announced only as button.');
+    // The agent's interpretation of the vague ones is logged.
+    expect(decisions(dir).some((d) => d.stage === 'read' && d.finding === 'F2' && /took the home page/.test(d.decision))).toBe(true);
+
+    // AC 3 / guard c: the tool captured evidence for every finding before judging.
+    for (const f of ['F1', 'F2', 'F3']) {
+      const ev = join(dir, 'evidence', f, 'before');
+      for (const file of ['screenshot.png', 'ax.json', 'elements.html', 'tab-order.json']) expect(existsSync(join(ev, file)), `${f}/${file}`).toBe(true);
+    }
+    const tabs = readJson(join(dir, 'evidence', 'F3', 'before', 'tab-order.json'));
+    expect(tabs.length).toBeLessThanOrEqual(60);
+    expect(tabs.some((s: any) => s.selector === '#menu-btn' && s.role === 'button')).toBe(true);
+    expect(readFileSync(join(dir, 'evidence', 'F1', 'before', 'elements.html'), 'utf8')).toContain('id="search-btn"');
+    expect(readJson(join(dir, 'check.json')).results.map((r: any) => [r.finding, r.verdict])).toEqual([['F1', 'present'], ['F2', 'gone'], ['F3', 'present']]);
+
+    // AC 4: the already-fixed row: title, the tester's words, its PDF page, the URL and time checked, why, the screenshot.
+    await fixedSection.locator('summary').click();
+    await expect(row.getByTestId('quote')).toHaveText('The footer logo image has no alt text.');
+    await expect(row.getByTestId('pdf-page')).toHaveText('PDF page 2');
+    await expect(row.getByTestId('checked')).toContainText(app.site.base);
+    await expect(row.getByTestId('reason')).toContainText('the element has a name now');
+    await expect.poll(() => row.getByTestId('screenshot').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBeGreaterThan(0);
+    const report = readFileSync(join(dir, 'already-fixed.md'), 'utf8');
+    expect(report).toContain('[PDF page 2](source.pdf#page=2)');
+    expect(report).toContain('The footer logo image has no alt text.');
+
+    // AC 5: the plan has the present findings, each with its PDF page, screenshot, fix, component, files and decisions.
+    await expect(page.getByTestId('plan-item')).toHaveCount(2);
+    await expect.poll(() => item(page, 'F1').getByTestId('screenshot').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBeGreaterThan(0);
+    await expect(item(page, 'F1').getByTestId('plan-fix')).toHaveValue(/accessible name in SearchBarComponent/);
+    await expect(item(page, 'F1').getByTestId('component-chosen')).toHaveText(/SearchBarComponent <app-search-bar> · src\/app\/search\/search-bar\.component\.ts/);
+    await expect(item(page, 'F1').getByTestId('plan-files')).toHaveText('Files: src/app/search/search-bar.component.ts');
+    await expect(item(page, 'F1').getByTestId('plan-decisions')).toContainText('the element is rendered by SearchBarComponent');
+    await expect(item(page, 'F1').getByTestId('plan-remove')).toHaveText('Remove from plan');
+    // The picker lists the repository's Angular components, and filters as one types.
+    const comps = (await api(dash, '/api/manual/components')).json;
+    expect(comps.kind).toBe('angular');
+    expect(comps.components.map((c: any) => `${c.name} ${c.selector}`).sort()).toEqual(['FooterComponent app-footer', 'HeaderComponent app-header', 'HomeComponent app-home', 'SearchBarComponent app-search-bar']);
+    await item(page, 'F3').getByTestId('component-search').fill('foot');
+    await expect(item(page, 'F3').getByTestId('component-option')).toHaveText([/FooterComponent/]);
+    await page.keyboard.press('Escape');
+    // While it waits for approval the log is a collapsed section.
+    await expect(page.getByTestId('decision-log')).not.toHaveAttribute('open', '');
+    await expect(page.getByTestId('decision-log').locator('summary')).toHaveText(/^Decisions so far \(\d+\)$/);
+
+    // AC 7: approve; each item fixed and committed on its own, pushed.
+    await expect(page.getByTestId('approve-plan')).toBeEnabled();
+    await page.getByTestId('approve-plan').click();
+    // AC 8: verified in the deployed version; the run ends only then.
+    await expect(now(page)).toHaveText('Done: 2 findings from the PDF are fixed and confirmed in the deployed site; 1 was already fixed.', { timeout: 240_000 });
+    await expect(go(page)).toHaveText('Start', { timeout: 30_000 });
+    const f1 = fixCommits(app, 'Search button has no accessible name');
+    const f3 = fixCommits(app, 'Menu button has no accessible name');
+    expect([f1.length, f3.length]).toEqual([1, 1]);
+    expect(app.g('log', '-1', '--format=%s', f1[0])).toBe('a11y-508: manual <PDF p.1> Search button has no accessible name');
+    expect(filesOf(app, f1[0])).toEqual(['src/app/search/search-bar.component.ts']);
+    expect(filesOf(app, f3[0])).toEqual(['src/app/header/header.component.ts']);
+    // Guard d: the already-fixed finding got no fix and no commit.
+    expect(fixCommits(app, 'Company logo')).toEqual([]);
+    expect(decisions(dir).filter((d) => d.finding === 'F2' && d.stage === 'fix')).toEqual([]);
+    expect(app.g('log', '--format=%s', `${base}..a11y-508`).split('\n').filter((s) => /^a11y-508: manual /.test(s))).toHaveLength(2);
+    // Pushed, with the build marker the wait looked for.
+    expect(spawnSync('git', ['rev-parse', 'a11y-508'], { cwd: app.originDir, encoding: 'utf8' }).stdout.trim()).toBe(app.g('rev-parse', 'a11y-508'));
+    expect(app.g('log', '-1', '--format=%s', 'a11y-508')).toMatch(/^a11y-508: build marker m1-/);
+    for (const f of ['F1', 'F3']) expect(existsSync(join(dir, 'evidence', f, 'after-1', 'screenshot.png')), f).toBe(true);
+
+    // AC 9: every decision, and decisions.md grouped by finding, linked to its PDF page.
+    const all = decisions(dir);
+    for (const stage of ['read', 'check', 'plan', 'fix', 'verify']) expect(all.some((d) => d.stage === stage), stage).toBe(true);
+    expect(all.some((d) => d.by === 'developer' && /^approved plan version 1/.test(d.decision))).toBe(true);
+    expect(all.filter((d) => d.stage === 'verify').map((d) => [d.finding, d.decision])).toEqual([['F1', 'fixed in the deployed site'], ['F3', 'fixed in the deployed site']]);
+    const md = readFileSync(join(dir, 'decisions.md'), 'utf8');
+    expect(md).toContain('## F1: Search button has no accessible name — [PDF page 1](source.pdf#page=1)');
+    expect(md).toContain('## F2: Company logo has no text alternative — [PDF page 2](source.pdf#page=2)');
+    expect(md).toContain(`- ${f1[0].slice(0, 7)}`);
+    expect(md).toContain('![F1 before](evidence/F1/before/screenshot.png)');
+    expect(md).toContain('![F1 after, try 1](evidence/F1/after-1/screenshot.png)');
+    // Show decisions opens it on the home screen.
+    await page.getByTestId('show-decisions').click();
+    const pane = page.getByTestId('decisions-panel');
+    await expect(pane.getByTestId('decisions-group')).toHaveCount(3);
+    const g1 = pane.getByTestId('decisions-group').filter({ hasText: 'F1: Search button' });
+    await expect(g1.getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=1`);
+    await expect(g1.getByTestId('decisions-commit')).toContainText(f1[0].slice(0, 7));
+    await expect(g1.getByTestId('decisions-shot')).toHaveCount(2);
+    await expect(g1.getByTestId('decision').first()).toContainText('read · agent: read "Search button has no accessible name" from PDF page 1');
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('manual AC1/6 / guards e f g h k: the developer edits the plan with the picker, the assistant confirms each edit, Approve waits for understanding and is the only way forward, and the override is honoured', async ({ page }) => {
+  test.setTimeout(400_000);
+  const app = await manualApp();
+  const base = app.g('rev-parse', 'HEAD');
+  const onceDir = tempDir('a11y-508-manual-once-');
+  const marker = join(onceDir, 'refused');
+  const env = { FAKE_MANUAL_PLAN_WRONG: '1', FAKE_MANUAL_MISUNDERSTAND_ONCE: marker };
+  let dash = await dashboard({ cwd: app.cwd, env });
+  const commitsSinceBase = () => app.g('rev-list', '--count', `${base}..HEAD`);
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect.poll(() => existsSync(join(dash.dirs().work, 'manual')) && readdirSync(join(dash.dirs().work, 'manual')).length > 0 && existsSync(join(runDir(dash), 'plan-v1.json')), { timeout: 180_000 }).toBe(true);
+    const dir = runDir(dash);
+
+    // Guard g: no commit without approval; the run sits in review (5 s, and across a dashboard restart).
+    await page.waitForTimeout(5000);
+    await expect(now(page)).toHaveText(REVIEW);
+    expect(commitsSinceBase()).toBe('0');
+    await expect(item(page, 'F1').getByTestId('component-chosen')).toHaveText(/^HeaderComponent/);
+    const before = (await api(dash, '/api/runs/current')).json;
+    const home = dash.home;
+    // The dashboard ends (as Ctrl+C ends it) and comes back: the PDF run is taken up again from its
+    // files and waits for approval again, still with nothing committed.
+    await dash.stop();
+    dash = await dashboard({ cwd: app.cwd, env: { ...env, A11Y_508_HOME: home } });
+    await open(page, dash);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 60_000 });
+    const after = (await api(dash, '/api/runs/current')).json;
+    expect([after.kind, after.status, after.meta.manualId]).toEqual(['manual', 'running', before.meta.manualId]);
+    expect(runDir(dash)).toBe(dir);
+    expect(commitsSinceBase()).toBe('0');
+    await expect(item(page, 'F1')).toBeVisible();
+
+    // Guard h: only a listed component can be chosen; typed text never is.
+    const picker = item(page, 'F1').getByTestId('component-search');
+    await picker.fill('NotAComponent');
+    await expect(item(page, 'F1').getByTestId('component-none')).toHaveText('No component matches “NotAComponent”');
+    await picker.press('Enter');
+    // Nothing should change, so the screen is given a moment to show a change before it is checked.
+    await page.waitForTimeout(1000);
+    // Enter chose nothing: what was typed is still there, unmatched, and the component is unchanged.
+    await expect(picker).toHaveValue('NotAComponent');
+    await expect(item(page, 'F1').getByTestId('component-none')).toBeVisible();
+    await expect(item(page, 'F1').getByTestId('component-chosen')).toHaveText(/^HeaderComponent/);
+    await expect(page.getByTestId('send-changes')).toHaveCount(0);
+    // The override: SearchBarComponent, from the list.
+    await picker.fill('search');
+    await item(page, 'F1').getByTestId('component-option').filter({ hasText: 'SearchBarComponent' }).click();
+    await expect(item(page, 'F1').getByTestId('component-chosen')).toHaveText(/^SearchBarComponent <app-search-bar>/);
+    // An unsent edit: Send changes, and Approve plan is not enabled.
+    await expect(page.getByTestId('send-changes')).toBeVisible();
+    await expect(page.getByTestId('approve-plan')).toBeDisabled();
+    // And F3 leaves the plan.
+    await item(page, 'F3').getByTestId('plan-remove').click();
+    await expect(item(page, 'F3').getByTestId('plan-removed')).toBeVisible();
+    await page.getByTestId('send-changes').click();
+
+    // Guard f: the assistant did not understand: Approve plan stays disabled, and the server refuses it.
+    await expect(item(page, 'F1').getByTestId('plan-confirm')).toHaveText('The assistant did not understand: SearchBarComponent does not render the element the tester describes.', { timeout: 120_000 });
+    await expect(item(page, 'F3')).toHaveCount(0);
+    await expect(now(page)).toHaveText(REVIEW);
+    await expect(page.getByTestId('approve-plan')).toBeDisabled();
+    expect((await api(dash, '/api/manual/approve', { method: 'POST', body: {} })).status).toBe(409);
+    // Edited again and sent: understood, with what it will now do.
+    await item(page, 'F1').getByTestId('plan-fix').fill('Add aria-label="Search" to the magnifier button.');
+    await page.getByTestId('send-changes').click();
+    await expect(item(page, 'F1').getByTestId('plan-confirm')).toHaveText('The assistant understood: I will add aria-label="Search" to the magnifier button in SearchBarComponent, src/app/search/search-bar.component.ts.', { timeout: 120_000 });
+    await expect(item(page, 'F1').getByTestId('plan-files')).toHaveText('Files: src/app/search/search-bar.component.ts');
+    await expect(page.getByTestId('approve-plan')).toBeEnabled();
+    // Every version of the plan is kept.
+    for (const v of [1, 2, 3]) expect(existsSync(join(dir, `plan-v${v}.json`)), `plan-v${v}`).toBe(true);
+    expect(readJson(join(dir, 'plan-v1.json')).items.map((it: any) => it.finding)).toEqual(['F1', 'F3']);
+    expect(commitsSinceBase()).toBe('0');
+
+    await page.getByTestId('approve-plan').click();
+    // Guard e: the commit touches the chosen component's file, not the assistant's first choice.
+    await expect.poll(() => fixCommits(app, 'Search button has no accessible name').length, { timeout: 120_000 }).toBeGreaterThan(0);
+    const f1 = fixCommits(app, 'Search button has no accessible name');
+    expect(filesOf(app, f1[f1.length - 1])).toEqual(['src/app/search/search-bar.component.ts']);
+    await expect(now(page)).toHaveText('Done: 1 finding from the PDF is fixed and confirmed in the deployed site; 1 was already fixed.', { timeout: 240_000 });
+    expect(fixCommits(app, 'Search button has no accessible name')).toHaveLength(1);
+    expect(fixCommits(app, 'Menu button')).toEqual([]);
+    // Guard k: the developer's edits are in the log, before → after; the removal and the approval too.
+    const md = readFileSync(join(dir, 'decisions.md'), 'utf8');
+    expect(md).toMatch(/plan · developer: changed the plan item: .* In HeaderComponent \(src\/app\/header\/header\.component\.ts\)\. → .* In SearchBarComponent \(src\/app\/search\/search-bar\.component\.ts\)\./);
+    expect(md).toMatch(/plan · developer: removed from the plan/);
+    expect(md).toMatch(/plan · developer: approved plan version 3/);
+    expect(md).toMatch(/confirm · agent: did not understand: SearchBarComponent does not render/);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+    removeTemp(onceDir);
+  }
+});
+
+test('manual AC8 / guards i j: a fix that does not hold in the deployed site gets exactly one automatic retry, then a revised plan that waits for approval', async ({ page }) => {
+  test.setTimeout(500_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd });
+  try {
+    // The deployment keeps serving the old pages (only its build marker changes).
+    app.site.setStale(true);
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    const dir = runDir(dash);
+    await page.getByTestId('approve-plan').click();
+    // Guard i: the first verification judges the deployed page, not the commit: not fixed.
+    const verifies = () => decisions(dir).filter((d) => d.stage === 'verify');
+    await expect.poll(() => verifies().length, { timeout: 200_000 }).toBeGreaterThanOrEqual(2);
+    expect(verifies().slice(0, 2).map((d) => [d.finding, d.decision, d.evidence])).toEqual([['F1', 'not fixed in the deployed site', 'evidence/F1/after-1'], ['F3', 'not fixed in the deployed site', 'evidence/F3/after-1']]);
+    await expect(now(page)).toHaveText('2 fixes did not hold in the deployed site after two tries. Review the revised plan.', { timeout: 300_000 });
+    await expect(page.getByTestId('review-step')).toHaveText('2 fixes did not hold in the deployed site after two tries. Review the revised plan.');
+    // Guard j: exactly one automatic retry: two fix commits for each before the revised plan, and no third without a new approval.
+    expect([fixCommits(app, 'Search button').length, fixCommits(app, 'Menu button').length]).toEqual([2, 2]);
+    expect(verifies().map((d) => [d.finding, d.decision, d.evidence])).toEqual([
+      ['F1', 'not fixed in the deployed site', 'evidence/F1/after-1'], ['F3', 'not fixed in the deployed site', 'evidence/F3/after-1'],
+      ['F1', 'not fixed in the deployed site', 'evidence/F1/after-2'], ['F3', 'not fixed in the deployed site', 'evidence/F3/after-2'],
+    ]);
+    await page.waitForTimeout(5000);
+    expect([fixCommits(app, 'Search button').length, fixCommits(app, 'Menu button').length]).toEqual([2, 2]);
+    expect(existsSync(join(dir, 'evidence', 'F1', 'after-3'))).toBe(false);
+    await expect(page.getByTestId('plan')).toContainText('The revised plan');
+    await expect(item(page, 'F1').getByTestId('plan-fix')).toHaveValue(/^Try again/);
+    expect(decisions(dir).some((d) => d.stage === 'replan' && d.finding === 'F1')).toBe(true);
+
+    // The deployment serves the real pages again; the revised plan approved, the same cycle ends it.
+    app.site.setStale(false);
+    await page.getByTestId('approve-plan').click();
+    await expect(now(page)).toHaveText('Done: 2 findings from the PDF are fixed and confirmed in the deployed site; 1 was already fixed.', { timeout: 300_000 });
+    expect([fixCommits(app, 'Search button').length, fixCommits(app, 'Menu button').length]).toEqual([3, 3]);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('manual AC4: when every finding is already fixed in the deployed site, the run ends with the report open', async ({ page }) => {
+  const app = await manualApp();
+  // The deployed site already has the search and menu buttons named.
+  for (const [f, id, label] of [['src/app/search/search-bar.component.ts', 'search-btn', 'Search'], ['src/app/header/header.component.ts', 'menu-btn', 'Menu']]) {
+    const file = join(app.cwd, f);
+    writeFileSync(file, readFileSync(file, 'utf8').replace(`<button id="${id}"`, `<button id="${id}" aria-label="${label}"`));
+  }
+  app.g('commit', '-q', '-am', 'named');
+  const dash = await dashboard({ cwd: app.cwd });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText('All 3 findings in the PDF are already fixed in the deployed site.', { timeout: 180_000 });
+    await expect(page.getByTestId('already-fixed')).toHaveAttribute('open', '');
+    await expect(page.getByTestId('already-fixed-item')).toHaveCount(3);
+    await expect(page.getByTestId('already-fixed-item').getByTestId('pdf-page')).toHaveText(['PDF page 1', 'PDF page 2', 'PDF page 2']);
+    await expect(page.getByTestId('plan')).toHaveCount(0);
+    expect(app.g('rev-list', '--count', 'HEAD', '^main')).toBe('0');
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('manual AC8 / guard j: a dashboard restart while the fixes wait for their deployment waits again; nothing is fixed twice', async ({ page }) => {
+  test.setTimeout(400_000);
+  const app = await manualApp();
+  let dash = await dashboard({ cwd: app.cwd });
+  try {
+    app.site.setHeld(true);
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 180_000 });
+    await page.getByTestId('approve-plan').click();
+    await expect(now(page)).toHaveText(/^Pushed 2 fixes to a11y-508; waiting for your deployment/, { timeout: 180_000 });
+    const home = dash.home;
+    await dash.stop();
+    dash = await dashboard({ cwd: app.cwd, env: { A11Y_508_HOME: home } });
+    await open(page, dash);
+    await expect(now(page)).toHaveText(/waiting for your deployment/, { timeout: 60_000 });
+    app.site.setHeld(false);
+    await expect(now(page)).toHaveText('Done: 2 findings from the PDF are fixed and confirmed in the deployed site; 1 was already fixed.', { timeout: 240_000 });
+    expect([fixCommits(app, 'Search button').length, fixCommits(app, 'Menu button').length]).toEqual([1, 1]);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('manual AC11: a11y-508 manual <pdf> runs the same flow from the command line; the review is driven on stdin (plan-edit.json, review, approve)', async () => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const home = tempDir('a11y-508-manual-cli-home-');
+  try {
+    const child = spawn(process.execPath, [BIN, 'manual', PDF, '--events'], { cwd: app.cwd, env: { ...process.env, A11Y_508_HOME: home, TOKEN: '' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    let reviews = 0;
+    let dir = '';
+    child.stdout.on('data', (d) => {
+      out += d;
+      for (const l of String(d).split('\n')) {
+        let ev: any;
+        try {
+          ev = JSON.parse(l);
+        } catch {
+          continue;
+        }
+        if (ev.type === 'manual' && ev.stage === 'start') dir = join(home, 'repos', readdirSync(join(home, 'repos'))[0], 'work', 'manual', ev.id);
+        if (ev.type === 'manual' && ev.stage === 'review') {
+          reviews++;
+          // First review: the developer removes F3 (plan-edit.json, then "review"); then approves.
+          if (reviews === 1) {
+            writeFileSync(join(dir, 'plan-edit.json'), JSON.stringify({ items: [{ finding: 'F3', remove: true }] }));
+            child.stdin.write('review\n');
+          } else child.stdin.write('approve\n');
+        }
+      }
+    });
+    const code = await new Promise((r) => child.on('exit', r));
+    expect(code, out.slice(-3000)).toBe(0);
+    const { parseEvents } = await import('../../test/event-schema.mjs');
+    const { events, problems } = parseEvents(out);
+    expect(problems).toEqual([]);
+    expect(events.find((e: any) => e.type === 'start').kind).toBe('manual');
+    expect(events.filter((e: any) => e.type === 'manual' && e.stage === 'plan').map((e: any) => e.items.map((it: any) => it.finding))).toEqual([['F1', 'F3'], ['F1']]);
+    expect(events.find((e: any) => e.type === 'manual' && e.stage === 'done').message).toBe('Done: 1 finding from the PDF is fixed and confirmed in the deployed site; 1 was already fixed.');
+    expect(events[events.length - 1]).toMatchObject({ type: 'done', code: 0 });
+    expect([fixCommits(app, 'Search button').length, fixCommits(app, 'Menu button').length]).toEqual([1, 0]);
+    // Without --events: the plan's path is printed, and approve on stdin goes on.
+    app.g('checkout', '-q', 'main');
+    const plain = spawn(process.execPath, [BIN, 'manual', PDF], { cwd: app.cwd, env: { ...process.env, A11Y_508_HOME: home, TOKEN: '' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let text = '';
+    let approved = false;
+    plain.stdout.on('data', (d) => {
+      text += d;
+      if (!approved && /the plan is at \S+plan\.json\. .* type approve\./.test(text)) {
+        approved = true;
+        plain.stdin.write('approve\n');
+      }
+    });
+    expect(await new Promise((r) => plain.on('exit', r)), text.slice(-3000)).toBe(0);
+    // The search button was fixed by the first run (on the work branch the second run goes on with).
+    expect(text).toContain('Done: 1 finding from the PDF is fixed and confirmed in the deployed site; 2 were already fixed.');
+  } finally {
+    await app.cleanup();
+    removeTemp(home);
+  }
+});
