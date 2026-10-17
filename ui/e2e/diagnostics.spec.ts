@@ -16,7 +16,7 @@ const launches = (home: string): unknown[] => {
 };
 
 // AC 4's sections, in its order.
-const HEADINGS = ['Build and setup', 'Counts', 'What happened', 'Rounds', 'Routes crawled', 'Findings in the latest report', 'Could not be fixed', 'Deploy record', 'Changes by round', 'Assistants', 'Diagnostics diary', /^Output of the (current|last) run$/];
+const HEADINGS = ['Build and setup', 'Counts', 'What happened', 'Rounds', 'Routes crawled', 'Findings in the latest report', 'Could not be fixed', 'Deploy record', 'Changes by round', 'Assistants', 'Assistant calls', 'Diagnostics diary', /^Output of the (current|last) run$/];
 
 test('diagnostics AC4, guard e: every section in order, the whole page copied and downloaded as text; Change folder or URL and Advanced at the bottom', async ({ page, context }) => {
   test.setTimeout(400_000);
@@ -52,6 +52,20 @@ test('diagnostics AC4, guard e: every section in order, the whole page copied an
     const firstFinding = page.getByTestId('d-finding').first();
     await expect(firstFinding).toBeVisible();
     await expect(page.getByTestId('d-output-text')).not.toHaveText('(no output)');
+    // Assistant calls: the loop's fix calls, each answered; one opened shows what it said, its prompt and its answer file.
+    const fixCalls = page.getByTestId('d-call-summary').filter({ hasText: /^.* · round \d+ fix \d+ of \d+ · / });
+    await expect(fixCalls.first()).toBeVisible();
+    for (const t of await fixCalls.allInnerTexts()) expect(t).toMatch(/ · answered$/);
+    const listed = (await api(dash, '/api/loop/agent-calls')).json as { name: string; kind: string }[];
+    const firstFixName = listed.find((c) => c.kind === 'fix')!.name;
+    const firstFix = page.locator(`[data-testid="d-call"][data-call="${firstFixName}"]`);
+    await firstFix.getByTestId('d-call-summary').click();
+    await expect(firstFix.getByTestId('d-call-said')).toBeVisible();
+    await firstFix.getByTestId('d-call-prompt').locator('summary').click();
+    await expect(firstFix.getByTestId('d-call-prompt')).toContainText('# Fix one accessibility');
+    await firstFix.getByTestId('d-call-result').locator('summary').click();
+    await expect(firstFix.getByTestId('d-call-result')).toContainText('"fixed"');
+    const fixDetail = (await api(dash, `/api/loop/agent-calls/${firstFixName}`)).json;
     // Copy diagnostics: the whole page as text, the rounds table's first row and the first finding in it.
     await page.getByTestId('copy-diagnostics').click();
     await expect(page.getByTestId('diagnostics-copied')).toHaveText('Copied the whole page.');
@@ -59,12 +73,17 @@ test('diagnostics AC4, guard e: every section in order, the whole page copied an
     for (const h of HEADINGS) expect(copied).toMatch(typeof h === 'string' ? new RegExp(`^${h}$`, 'm') : new RegExp(h.source, 'm'));
     expect(copied).toContain(await firstRound.innerText());
     expect(copied).toContain(await firstFinding.innerText());
+    // Every call's header line and what it said, opened or not.
+    expect(copied).toContain('Assistant calls, what each said');
+    for (const c of listed) expect(copied).toContain(JSON.stringify((await api(dash, `/api/loop/agent-calls/${c.name}`)).json.header));
+    expect(copied).toContain(`${JSON.stringify(fixDetail.header)}\nWhat it said:\n${(fixDetail.stdout.replace(/\n+$/, '') || '(it printed nothing)').split('\n')[0]}`);
     // Download diagnostics: the same text, as a .txt file.
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('download-diagnostics').click()]);
     expect(download.suggestedFilename()).toMatch(/^a11y-508-diagnostics-.+\.txt$/);
     const saved = readFileSync((await download.path())!, 'utf8');
     expect(saved).toContain(await firstRound.innerText());
     expect(saved).toContain(await firstFinding.innerText());
+    expect(saved).toContain(JSON.stringify(fixDetail.header));
     // At the bottom, and nowhere else: Change folder or URL (the setup dialog), and Advanced.
     const links = page.locator('main a');
     await expect(links.last()).toBeVisible();
