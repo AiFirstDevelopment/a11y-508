@@ -948,7 +948,8 @@ test('read-from-parse AC4 / pictures-and-routes AC7: an element still not found 
     expect(headings(locate.replace(/^## (F\w+): /gm, '## $1 — page '))).toEqual(['F1', 'F2']);
     expect(locate).toContain(`Looked for on: ${app.site.base}gone\nThat page did not load: HTTP 404. It is not a page of the application the tool can open; pick the route from the known routes below.`);
     expect(locate).toContain(`These are the only routes to choose from.`);
-    expect(locate).toContain(`- ${app.site.base}search\n`);
+    // The run looked the site over first (docs/plans/manual-crawl-first.md AC 2): the search page comes with its title and heading.
+    expect(locate).toContain(`- ${app.site.base}search — "Search": Search\n`);
     expect(readdirSync(dir).filter((f) => /^agent-locate-/.test(f))).toEqual(['agent-locate-1.log']);
     // F2 is not open by the tester's account, so it is planned; the assistant never judged it: the tool did.
     // F1's element was not found: the tool does not ask the assistant about it, and nothing is judged.
