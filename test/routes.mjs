@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { appBase, closing, groupRoutes, hashRoute, lazyTarget, routeTrees, routeUrls, scanRoutes } from '../src/routes.mjs';
 import { knownRoutes, needsCrawl, onRouteList, routeSources, routesLine } from '../src/manual.mjs';
 import { routeLines } from '../src/agent.mjs';
+import { runCrawl } from '../src/loop.mjs';
 import { reportDir, workDir } from '../src/home.mjs';
 
 const only = process.argv.includes('-g') ? process.argv[process.argv.indexOf('-g') + 1] : null;
@@ -222,6 +223,15 @@ test('crawl-first fix: a crawl report of another site in the same repository (th
   assert.equal(needsCrawl(FIXTURE, run, 60, other), false);
   rmSync(round, { recursive: true, force: true });
   rmSync(run, { recursive: true, force: true });
+});
+
+test('crawl-first fix: a look over the site that leaves no report says why on one line: the cause after the exit code, as the decision and the dashboard show it', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'a11y-508-crawl-'));
+  await assert.rejects(runCrawl({ cwd: FIXTURE, url: 'not a url', out: join(out, 'crawl') }), (e) => {
+    assert.equal(e.message, 'the crawl produced no report (exit 2): error: "http://not a url" is not a valid URL');
+    return true;
+  });
+  rmSync(out, { recursive: true, force: true });
 });
 
 let failed = 0;

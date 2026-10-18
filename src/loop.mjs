@@ -279,8 +279,9 @@ const RELAYED = new Set(['page', 'coverage', 'summary', 'login-waiting', 'sessio
 // crawl's options (the config's, the command line's, the session's), --out, --json, --quiet and
 // --events when the caller has events. onEvent(ev) is told each event the crawl prints (page,
 // coverage, summary, ...) as it arrives; its warnings go to the log. Throws when the crawl left no
-// report.json. Shared by the loop's rounds and the PDF run's look over the site
-// (docs/plans/manual-crawl-first.md AC 1).
+// report.json, with the cause (the last error and warning lines of its output) on the one line after
+// the exit code, as a decision or a dashboard event shows it. Shared by the loop's rounds and the PDF
+// run's look over the site (docs/plans/manual-crawl-first.md AC 1).
 export async function runCrawl({ cwd, url, args = [], out, events = false, log = null, onEvent = null }) {
   mkdirSync(out, { recursive: true });
   const argv = [BIN, url, ...args, '--out', out, '--json', '--quiet'];
@@ -309,7 +310,10 @@ export async function runCrawl({ cwd, url, args = [], out, events = false, log =
   if (partial.trim()) onEventLine(partial);
   writeFileSync(join(out, 'crawl.log'), stderr);
   const reportFile = join(out, 'report.json');
-  if (!existsSync(reportFile)) throw new Error(`the crawl produced no report (exit ${code}):\n${stderr.split('\n').filter((l) => /error|warn|redirected/.test(l)).slice(-6).join('\n')}`);
+  if (!existsSync(reportFile)) {
+    const why = stderr.split('\n').map((l) => l.trim()).filter((l) => /error|warn|redirected/.test(l)).slice(-6).join(' · ');
+    throw new Error(`the crawl produced no report (exit ${code})${why ? `: ${why}` : ''}`);
+  }
   if (log) for (const l of stderr.split('\n')) if (/^(warn|error) /.test(l) && !/TOKEN is not set/.test(l)) log.warn(`crawl: ${l.replace(/^(warn|error) /, '')}`);
   const report = JSON.parse(readFileSync(reportFile, 'utf8'));
   return { report, code, out };

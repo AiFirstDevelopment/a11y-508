@@ -826,7 +826,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     try {
       r = await once();
     } catch (e) {
-      return failed(e.message.split('\n')[0]);
+      return failed(e.message);
     }
     if (stopped()) return;
     if (bouncedToSignIn(r.report) && (events || process.stdin.isTTY) && (await signIn('the deployed site asks for a sign-in'))) {
@@ -834,7 +834,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       try {
         r = await once();
       } catch (e) {
-        return failed(e.message.split('\n')[0]);
+        return failed(e.message);
       }
     }
     if (stopped()) return;
