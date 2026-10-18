@@ -200,6 +200,9 @@ export const seenLine = (f) => (f && f.seen ? (f.seenPicture === false ? `The as
 export const uncheckedLine = (f, where, error) => `The tester verified this fixed${dayOf(f.statusDate) ? ` on ${dayOf(f.statusDate)}` : ''}; the tool could not open ${where}${error ? ` (${error})` : ''}, so it could not confirm it.`;
 // The element was not on the page the tool looked at: absence is no evidence that a problem is fixed.
 export const unlocatedLine = (f, where) => `The tester verified this fixed${dayOf(f.statusDate) ? ` on ${dayOf(f.statusDate)}` : ''}; the tool could not find the element on ${where} (the assistant's selectors matched nothing), so it could not confirm it.`;
+// The selectors matched something, but the assistant says it is not the element the tester describes.
+export const notFoundLine = (f, where) => `The tester verified this fixed${dayOf(f.statusDate) ? ` on ${dayOf(f.statusDate)}` : ''}; the assistant did not find the element the tester describes on ${where} (what the tool found there was something else), so it could not confirm it.`;
+export const notFoundItemLine = (where) => `The assistant did not find the element the tester describes on ${where}: what the tool found there was something else. Check the component before approving.`;
 // "Routes the tool knew" keys: the same page ignoring a trailing slash and the query (AC 5); a
 // hash-routed application's '#/route' is part of the page.
 const pathKey = (url) => {
@@ -588,7 +591,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     }
   };
   // The line a plan item or an already-fixed row carries when the tool could not find its element (AC 4).
-  const lookedLine = (f) => (f.located === false ? notLocatedLine(whereOf(f)) : f.unreachable ? unreachableLine(whereOf(f)) : null);
+  const lookedLine = (f) => (f.located === false ? notLocatedLine(whereOf(f)) : f.unreachable ? unreachableLine(whereOf(f)) : f.foundByAssistant === false ? notFoundItemLine(whereOf(f)) : null);
   // A finding's page, as a full URL in the deployed site.
   const urlOf = (f) => {
     const raw = f.url || f.route || '';
@@ -971,6 +974,12 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       }
       const v = asked.got.get(f.id) || null;
       const said = v ? String(v.verdict).toLowerCase() : null;
+      // The assistant says what the selectors matched is not the tester's element: no evidence either way.
+      if (v && v.found === false) {
+        const reason = `the assistant did not find the element the tester describes on ${whereOf(f)}${v.reason ? ` (${str(v.reason, 300)})` : ''}`;
+        decide('check', f.id, 'tool', 'could not be checked in the deployed site', reason, `evidence/${f.id}/before`);
+        return { finding: f.id, verdict: 'unlocated', said, found: false, reason, url: (e && (e.finalUrl || e.url)) || f.url, checkedAt: (e && e.at) || new Date().toISOString(), screenshot: shot };
+      }
       const verdict = said === 'gone' ? 'gone' : 'present';
       let reason = v && v.reason ? str(v.reason, 400) : '';
       if (said === 'unreachable') reason = `the assistant could not judge the page (${reason || 'it gave no reason'}); treated as present`;
@@ -982,6 +991,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     writeJson(join(dir, 'check.json'), check);
   }
   const gone = check.results.filter((r) => r.verdict === 'gone');
+  for (const r of check.results) if (r.found === false && byId.get(r.finding)) byId.get(r.finding).foundByAssistant = false;
   // Could not be checked (docs/plans/pictures-and-routes.md AC 7): a tester-verified-fixed finding whose
   // page did not load is neither planned nor already fixed; any other unreachable one is planned.
   const unchecked = check.results.filter((r) => (r.verdict === 'unreachable' || r.verdict === 'unlocated') && (byId.get(r.finding) || {}).status === 'fixed');
@@ -1010,7 +1020,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   });
   const uncheckedRows = unchecked.map((r) => {
     const f = byId.get(r.finding);
-    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], line: r.verdict === 'unlocated' ? unlocatedLine(f, whereOf(f)) : uncheckedLine(f, whereOf(f), r.error || null) };
+    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], line: r.found === false ? notFoundLine(f, whereOf(f)) : r.verdict === 'unlocated' ? unlocatedLine(f, whereOf(f)) : uncheckedLine(f, whereOf(f), r.error || null) };
   });
   writeFileSync(join(dir, 'already-fixed.md'), [
     `# Already fixed in the deployed site (${goneRows.length})`, '', `From the tester's PDF: [source.pdf](source.pdf)`, '',

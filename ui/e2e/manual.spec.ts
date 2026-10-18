@@ -1307,6 +1307,32 @@ test('pictures-and-routes AC7 / guard h: a finding the tester verified fixed who
   }
 });
 
+test('check verdicts: an element the assistant did not find on the page is no evidence: a tester-verified finding it called gone because the element is missing could not be checked, never already fixed', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_CHECK_NOT_FOUND: 'F4' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, DECK);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    const dir = runDir(dash);
+    const section = page.getByTestId('could-not-check');
+    await expect(section.locator('summary')).toHaveText('Could not be checked (1)');
+    const row = section.locator('[data-testid="unchecked-item"][data-finding="F4"]');
+    await expect(row.getByTestId('unchecked-line')).toContainText('The tester verified this fixed on 28 Sep 2026; the assistant did not find the element the tester describes on ');
+    await expect(row.getByTestId('unchecked-line')).toContainText('(what the tool found there was something else), so it could not confirm it.');
+    await expect(item(page, 'F4')).toHaveCount(0);
+    await expect(fixedRow(page, 'F4')).toHaveCount(0);
+    await expect(page.getByTestId('already-fixed').locator('summary')).toHaveText('Already fixed in the deployed site (6)');
+    expect(readJson(join(dir, 'check.json')).results.find((r: any) => r.finding === 'F4')).toMatchObject({ verdict: 'unlocated', said: 'gone', found: false });
+    expect(decisions(dir).filter((d) => d.finding === 'F4' && d.stage === 'check' && d.decision === 'already fixed in the deployed site')).toEqual([]);
+    expect(readFileSync(join(dir, 'already-fixed.md'), 'utf8')).toContain('# Could not be checked (1)');
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
 test('pictures-and-routes AC6, amended: a server that answers deep links with HTTP 404 while serving the app: the real page it renders is evidence, so every finding is checked', async ({ page }) => {
   test.setTimeout(500_000);
   const app = await manualApp();

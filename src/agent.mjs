@@ -678,9 +678,11 @@ ${againLine(again)}A tester reported the problems below. The tool has just opene
 
 ${DECIDE}
 
-- "present": the evidence shows the problem as the tester describes it.
-- "gone": the evidence shows it is fixed.
+- "present": the element the tester describes is on this page, and the evidence shows the problem as the tester describes it.
+- "gone": the element the tester describes is on this page, and the evidence shows it is fixed.
 - "unreachable": the page did not load, so nothing can be judged.
+
+found: whether the element the tester describes is on this page at all (true or false). What the tool's selectors matched may be a different element; say so with found: false. An element that is not on the page is no evidence of anything: never answer "gone" because the element is missing.
 
 When the evidence does not settle it, answer "present".
 
@@ -690,7 +692,7 @@ ${findings.map((f) => `## ${findingText(f)}\n\n${evidenceText(f.evidence)}`).joi
 
 Write a JSON file at ${resultFile} with exactly this shape and nothing else: one object per problem.
 
-${block([{ id: findings[0] ? findings[0].id : 'F1', verdict: 'present | gone | unreachable', reason: 'one sentence, from the evidence' }])}
+${block([{ id: findings[0] ? findings[0].id : 'F1', found: true, verdict: 'present | gone | unreachable', reason: 'one sentence, from the evidence' }])}
 
 Machine-readable copy:
 
