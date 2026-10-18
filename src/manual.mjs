@@ -28,7 +28,7 @@ import { callAgent, findIndexHtml, frameworkLine, git, gitChanged, normalizeConf
 import { migrateRepo, migrationLines, reportDir, shortenHome, tasksDir, workDir } from './home.mjs';
 import { evidenceBrowser } from './evidence.mjs';
 import { isAngular, listComponents, findComponent } from './components.mjs';
-import { routeUrls, scanRoutes } from './routes.mjs';
+import { hashRoute, routeUrls, scanRoutes } from './routes.mjs';
 import { bundleSignature, sameBuild } from './deploy-check.mjs';
 import { sleep } from './page.mjs';
 import { commitWebUrl, remoteWeb } from './git-web.mjs';
@@ -198,11 +198,12 @@ export const unreachableLine = (where) => `The tool could not open ${where} in t
 export const seenLine = (f) => (f && f.seen ? (f.seenPicture === false ? `The assistant did not open the picture of page ${f.page}; what it says below is a guess from the text: ${f.seen}` : `What the assistant saw on page ${f.page}: ${f.seen}`) : 'The assistant did not describe this page.');
 // A tester-verified-fixed finding whose page did not load (docs/plans/pictures-and-routes.md AC 7).
 export const uncheckedLine = (f, where, error) => `The tester verified this fixed${dayOf(f.statusDate) ? ` on ${dayOf(f.statusDate)}` : ''}; the tool could not open ${where}${error ? ` (${error})` : ''}, so it could not confirm it.`;
-// "Routes the tool knew" keys: the same page ignoring a trailing slash and the query (AC 5).
+// "Routes the tool knew" keys: the same page ignoring a trailing slash and the query (AC 5); a
+// hash-routed application's '#/route' is part of the page.
 const pathKey = (url) => {
   try {
     const u = new URL(url);
-    return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
+    return `${u.origin}${u.pathname.replace(/\/+$/, '')}${hashRoute(u)}`;
   } catch {
     return null;
   }
@@ -253,7 +254,7 @@ export const MAX_ROUTES = 200;
 const routeKey = (url) => {
   try {
     const u = new URL(url);
-    return `${u.origin}${u.pathname.replace(/\/+$/, '')}${u.search}`;
+    return `${u.origin}${u.pathname.replace(/\/+$/, '')}${u.search}${hashRoute(u)}`;
   } catch {
     return null;
   }

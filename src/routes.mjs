@@ -112,6 +112,12 @@ const literal = (t) => {
   return m ? m[2] : null;
 };
 
+// The start of the `[` of the array a `const NAME = [` in the file declares; -1 when there is none.
+function declStart(text, name) {
+  const decl = new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, '\\$')}\\b[^=;]*=\\s*\\[`).exec(text);
+  return decl ? decl.index + decl[0].length - 1 : -1;
+}
+
 // A file's own route arrays: the starts of their `[`.
 function routeArrayStarts(text) {
   const starts = new Set();
@@ -121,10 +127,7 @@ function routeArrayStarts(text) {
     if (text[at] === '[') starts.add(at);
     else {
       const id = /^[A-Za-z_$][\w$]*/.exec(text.slice(at, at + 80));
-      if (id) {
-        const decl = new RegExp(`\\b(?:const|let|var)\\s+${id[0].replace(/\$/g, '\\$')}\\b[^=;]*=\\s*\\[`).exec(text);
-        if (decl) starts.add(decl.index + decl[0].length - 1);
-      }
+      if (id && declStart(text, id[0]) >= 0) starts.add(declStart(text, id[0]));
     }
   }
   return [...starts].sort((a, b) => a - b);
@@ -132,8 +135,9 @@ function routeArrayStarts(text) {
 
 // The route objects of the array opened at `open`: [{ path, children, lazy }], where children are the
 // same shape and lazy is the module specifier a loadChildren imports (or null). A `...NAME` spread
-// of another array in the same file is followed.
-function parseArray(text, open, seen = new Set()) {
+// of another array in the same file is followed, and so is `children: NAME`; refs collects the starts
+// of the arrays followed so (they are part of this tree, not trees of their own).
+function parseArray(text, open, seen = new Set(), refs = new Set()) {
   const close = closing(text, open);
   if (close < 0) return [];
   const out = [];
@@ -142,23 +146,24 @@ function parseArray(text, open, seen = new Set()) {
     if (!el) continue;
     if (el.startsWith('{')) {
       const at = text.indexOf('{', s);
-      const r = parseRoute(text, at, seen);
+      const r = parseRoute(text, at, seen, refs);
       if (r) out.push(r);
       continue;
     }
     const spread = /^\.\.\.\s*([A-Za-z_$][\w$]*)\s*$/.exec(el);
     if (spread && !seen.has(spread[1])) {
-      const decl = new RegExp(`\\b(?:const|let|var)\\s+${spread[1].replace(/\$/g, '\\$')}\\b[^=;]*=\\s*\\[`).exec(text);
-      if (decl) {
+      const at = declStart(text, spread[1]);
+      if (at >= 0) {
         seen.add(spread[1]);
-        out.push(...parseArray(text, decl.index + decl[0].length - 1, seen));
+        refs.add(at);
+        out.push(...parseArray(text, at, seen, refs));
       }
     }
   }
   return out.slice(0, MAX_ROUTES);
 }
 
-function parseRoute(text, open, seen) {
+function parseRoute(text, open, seen, refs) {
   const close = closing(text, open);
   if (close < 0) return null;
   const route = { path: null, children: [], lazy: null };
@@ -170,8 +175,17 @@ function parseRoute(text, open, seen) {
     const value = prop.slice(m[0].length);
     if (key === 'path') route.path = literal(value);
     else if (key === 'children') {
-      const at = text.indexOf('[', s + m[0].length);
-      if (at >= 0 && at < e) route.children = parseArray(text, at, seen);
+      const name = /^\s*([A-Za-z_$][\w$]*)\s*$/.exec(value);
+      if (name) {
+        const at = declStart(text, name[1]);
+        if (at >= 0 && !seen.has(name[1])) {
+          refs.add(at);
+          route.children = parseArray(text, at, new Set([...seen, name[1]]), refs);
+        }
+      } else {
+        const at = text.indexOf('[', s + m[0].length);
+        if (at >= 0 && at < e) route.children = parseArray(text, at, seen, refs);
+      }
     } else if (key === 'loadChildren') {
       const imp = /\bimport\s*\(\s*(['"])([^'"]+)\1\s*\)/.exec(value);
       if (imp) route.lazy = imp[2];
@@ -183,7 +197,10 @@ function parseRoute(text, open, seen) {
 // The route trees a TypeScript source declares: one list per route array found in it.
 export function routeTrees(text) {
   if (!HINT.test(text)) return [];
-  return routeArrayStarts(text).map((at) => parseArray(text, at)).filter((list) => list.length);
+  // An array another tree spreads or names as its children is part of that tree, not a root.
+  const refs = new Set();
+  const trees = routeArrayStarts(text).map((at) => [at, parseArray(text, at, new Set(), refs)]);
+  return trees.filter(([at, list]) => list.length && !refs.has(at)).map(([, list]) => list);
 }
 
 // The module file a loadChildren's import names, relative to the importing file; null when none exists.
@@ -221,17 +238,33 @@ export function scanRoutes(cwd, sourceDirs = ['src']) {
     const trees = routeTrees(text);
     if (trees.length) files.set(resolve(full), { trees });
   });
+  // The files with the routes a loadChildren target brings: itself, or, for an NgModule with none of
+  // its own (the Angular CLI's --routing layout), the files it imports that have them.
+  const routesOf = (t) => {
+    if (files.has(t)) return [t];
+    let text = '';
+    try {
+      if (statSync(t).size <= MAX_FILE) text = readFileSync(t, 'utf8');
+    } catch {}
+    const out = [];
+    for (const m of text.matchAll(/\bimport\s+[^'";]*?\bfrom\s*(['"])(\.\.?\/[^'"]+)\1/g)) {
+      const f = lazyTarget(t, m[2]);
+      if (f && files.has(f) && !out.includes(f)) out.push(f);
+    }
+    return out;
+  };
   // The files other files load lazily are children of the routes that load them, not roots.
   const lazy = new Set();
-  const targets = new Map(); // `${file}\n${spec}` -> target file
+  const targets = new Map(); // `${file}\n${spec}` -> the files with its routes
   for (const [file, { trees }] of files) {
     const visit = (routes) => {
       for (const r of routes) {
         if (r.lazy) {
           const t = lazyTarget(file, r.lazy);
           if (t) {
-            lazy.add(t);
-            targets.set(`${file}\n${r.lazy}`, t);
+            const list = routesOf(t);
+            for (const x of list) lazy.add(x);
+            targets.set(`${file}\n${r.lazy}`, list);
           }
         }
         visit(r.children);
@@ -255,8 +288,8 @@ export function scanRoutes(cwd, sourceDirs = ['src']) {
       add(full);
       if (r.children.length) expand(file, r.children, full, visited);
       if (r.lazy) {
-        const t = targets.get(`${file}\n${r.lazy}`);
-        if (t && !visited.has(t) && files.has(t)) {
+        for (const t of targets.get(`${file}\n${r.lazy}`) || []) {
+          if (visited.has(t) || !files.has(t)) continue;
           const next = new Set([...visited, t]);
           for (const tree of files.get(t).trees) expand(t, tree, full, next);
         }
@@ -284,10 +317,20 @@ export function appBase(startUrl, paths = []) {
   return `${u.origin}${path}/`;
 }
 
-// The router's paths as full URLs under the start URL.
+// A hash-routed application's route in a URL ('#/a/b' of http://h/#/a/b?x, without the query or a
+// trailing slash), or '' when its URL has no '#/'.
+export function hashRoute(url) {
+  const h = url && typeof url === 'object' ? url.hash : String(url || '').replace(/^[^#]*/, '');
+  return h.startsWith('#/') ? `#/${segment(h.slice(2).split('?')[0])}` : '';
+}
+
+// The router's paths as full URLs under the start URL. An application that routes by the hash
+// (useHash: a start URL like http://h/#/home) has them after the '#/' of the start URL's page.
 export function routeUrls(startUrl, paths) {
   let base;
   try {
+    const u = new URL(startUrl);
+    if (hashRoute(u)) return paths.map((p) => `${u.origin}${u.pathname}#/${segment(p)}`);
     base = appBase(startUrl, paths);
   } catch {
     return [];

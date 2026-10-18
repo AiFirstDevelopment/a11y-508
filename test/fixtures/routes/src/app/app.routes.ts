@@ -9,7 +9,7 @@ import { UserComponent } from './users/user.component';
 import { NotFoundComponent } from './not-found.component';
 
 // The fixture router (docs/plans/pictures-and-routes.md AC 4): a flat route, nested children with a
-// '' default, a loadChildren to a routes file and to an NgModule, a ':id' parameter, a '**' wildcard.
+// '' default, a loadChildren to a routes file, to an NgModule and to one whose routes are in its routing module, a ':id' parameter, a '**' wildcard.
 const HELP_ROUTES: Routes = [{ path: 'help', component: HomeComponent, data: { title: 'Help [and support], {braces}' } }];
 
 export const routes: Routes = [
@@ -28,6 +28,7 @@ export const routes: Routes = [
   },
   { path: 'reports', loadChildren: () => import('./reports/reports.routes').then((m) => m.REPORTS_ROUTES) },
   { path: 'admin', loadChildren: () => import('./admin/admin.module').then((m) => m.AdminModule) },
+  { path: 'settings', loadChildren: () => import('./settings/settings.module').then((m) => m.SettingsModule) },
   { path: 'users/:id', component: UserComponent },
   ...HELP_ROUTES,
   { path: '**', component: NotFoundComponent },
