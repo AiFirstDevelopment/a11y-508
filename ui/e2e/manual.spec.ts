@@ -1970,4 +1970,24 @@ test.describe('screenshots', () => {
       await app.cleanup();
     }
   });
+
+  test('removed-element fix: a came-back finding the plan finds removed is not counted as came back in already-fixed.md', async ({ page }) => {
+    test.setTimeout(400_000);
+    const app = await manualApp();
+    const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_PLAN_REMOVED: 'F1' } });
+    try {
+      await open(page, dash);
+      await choosePdf(page, DECK);
+      await expect(now(page)).toHaveText(REVIEW, { timeout: 300_000 });
+      const dir = runDir(dash);
+      expect(readJson(join(dir, 'plan.json')).items.map((it: any) => it.finding)).toEqual(['F10', 'F11']);
+      const md = readFileSync(join(dir, 'already-fixed.md'), 'utf8');
+      expect(md).toContain('# Already fixed: removed (1)');
+      expect(md).toContain('7 of them the tester had verified fixed; 0 the tester had verified fixed came back');
+      expect(md).not.toContain('1 the tester had verified fixed came back');
+    } finally {
+      await dash.stop();
+      await app.cleanup();
+    }
+  });
 });
