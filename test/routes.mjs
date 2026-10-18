@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { appBase, closing, groupRoutes, hashRoute, lazyTarget, routeTrees, routeUrls, scanRoutes } from '../src/routes.mjs';
 import { knownRoutes, needsCrawl, onRouteList, routeSources, routesLine } from '../src/manual.mjs';
 import { routeLines } from '../src/agent.mjs';
-import { workDir } from '../src/home.mjs';
+import { reportDir, workDir } from '../src/home.mjs';
 
 const only = process.argv.includes('-g') ? process.argv[process.argv.indexOf('-g') + 1] : null;
 const tests = [];
@@ -189,6 +189,38 @@ test('crawl-first AC1 / guard d: the run crawls once: not when its own crawl rep
   assert.equal(needsCrawl(FIXTURE, run, 60), true);
   rmSync(round, { recursive: true, force: true });
   assert.equal(existsSync(round), false);
+  rmSync(run, { recursive: true, force: true });
+});
+
+test('crawl-first fix: a crawl report of another site in the same repository (the dashboard\'s Crawl of another URL) is not this site\'s pages: the run looks the site over and offers none of that origin\'s routes', () => {
+  const run = mkdtempSync(join(tmpdir(), 'a11y-508-run-'));
+  const start = 'http://127.0.0.1:4100/';
+  const other = 'http://localhost:4200/';
+  const report = join(reportDir(FIXTURE), 'report.json');
+  mkdirSync(reportDir(FIXTURE), { recursive: true });
+  // The latest report says which site it is of (baseUrl): another origin, so not this site's.
+  writeFileSync(report, JSON.stringify({ baseUrl: other, pages: [{ url: `${other}search`, title: 'Search', headings: ['Search'] }, { url: `${other}`, title: 'Other app', headings: [] }] }));
+  assert.equal(needsCrawl(FIXTURE, run, 60, start), true);
+  assert.deepEqual(routeSources(FIXTURE, { startUrl: start, runDir: run }).filter((r) => r.from === 'crawl'), []);
+  assert.equal(routeSources(FIXTURE, { startUrl: start, runDir: run }).filter((r) => r.from === 'router').length, EXPECTED.length);
+  // The same report is this site's pages for a run of that URL, and for a caller that names no start URL.
+  assert.equal(needsCrawl(FIXTURE, run, 60, other), false);
+  assert.deepEqual(routeSources(FIXTURE, { startUrl: other, runDir: run }).filter((r) => r.from === 'crawl').map((r) => r.url), [`${other}search`, other]);
+  assert.deepEqual(routeSources(FIXTURE, { runDir: run }).map((r) => r.url), [`${other}search`, other]);
+  // A report with no baseUrl (an older build's) is told by its pages' origin; one of this site counts.
+  writeFileSync(report, JSON.stringify({ pages: [{ url: `${other}search`, title: 'Search' }] }));
+  assert.equal(needsCrawl(FIXTURE, run, 60, start), true);
+  writeFileSync(report, JSON.stringify({ pages: [{ url: `${start}search`, title: 'Search' }] }));
+  assert.equal(needsCrawl(FIXTURE, run, 60, start), false);
+  assert.deepEqual(routeSources(FIXTURE, { startUrl: start, runDir: run })[0], { url: `${start}search`, from: 'crawl', title: 'Search', headings: [] });
+  // The loop's rounds are told apart the same way.
+  rmSync(report);
+  const round = join(workDir(FIXTURE), 'round-1');
+  mkdirSync(round, { recursive: true });
+  writeFileSync(join(round, 'report.json'), JSON.stringify({ baseUrl: other, pages: [{ url: `${other}search`, title: 'Search' }] }));
+  assert.equal(needsCrawl(FIXTURE, run, 60, start), true);
+  assert.equal(needsCrawl(FIXTURE, run, 60, other), false);
+  rmSync(round, { recursive: true, force: true });
   rmSync(run, { recursive: true, force: true });
 });
 

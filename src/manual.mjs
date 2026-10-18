@@ -269,8 +269,17 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 // for an Angular application, the routes its router configuration names under the source folders,
 // resolved under the start URL; then the start URL. The same page twice (a trailing slash or the
 // query apart) is one; at most 200. Only a page that loaded is a route: not one that answered an
-// error or was sent off to a sign-in.
+// error or was sent off to a sign-in. A crawl report of another site (the dashboard's Crawl of another
+// URL in the same repository: its baseUrl, or its pages, on another origin than the start URL) is not
+// this site's pages and is left out when the start URL is given.
 export const MAX_ROUTES = 200;
+const originOf = (url) => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+};
 export function routeSources(cwd, { startUrl = null, sourceDirs = ['src'], runDir = null } = {}) {
   const out = [];
   const seen = new Set();
@@ -280,9 +289,13 @@ export function routeSources(cwd, { startUrl = null, sourceDirs = ['src'], runDi
     seen.add(k);
     out.push({ url, from, title: str(title, 200) || null, headings: (Array.isArray(headings) ? headings : []).map((h) => str(h, 120)).filter(Boolean).slice(0, 8) });
   };
+  const site = startUrl ? originOf(startUrl) : null;
   const crawl = (file) => {
     const r = readJson(file);
-    for (const p of (r && r.pages) || []) if (p && (p.finalUrl || p.url) && !p.error && !p.skipped) add(p.finalUrl || p.url, 'crawl', p.title, p.headings || (p.info && p.info.headings) || []);
+    const pages = ((r && r.pages) || []).filter((p) => p && (p.finalUrl || p.url));
+    const reported = r ? originOf(r.baseUrl) || (pages.length ? originOf(pages[0].url || pages[0].finalUrl) : null) : null;
+    if (site && reported && reported !== site) return;
+    for (const p of pages) if (!p.error && !p.skipped) add(p.finalUrl || p.url, 'crawl', p.title, p.headings || (p.info && p.info.headings) || []);
   };
   if (runDir) crawl(join(runDir, CRAWL_DIR, 'report.json'));
   try {
@@ -309,12 +322,13 @@ export function routesLine(routes) {
 export const CRAWL_DIR = 'crawl';
 // Whether a PDF run looks over the site before the assistant is asked (docs/plans/manual-crawl-first.md
 // AC 1): not when it already did (<run>/crawl/report.json is there, from this run or an earlier
-// process of it), not when the tool has a crawl report for the repository already (the loop's rounds,
-// the latest report), and not when the config says 0 pages.
-export function needsCrawl(cwd, runDir, pages) {
+// process of it), not when the tool has a crawl report of this site for the repository already (the
+// loop's rounds, the latest report; one of another URL does not count), and not when the config says
+// 0 pages.
+export function needsCrawl(cwd, runDir, pages, startUrl = null) {
   if (!(pages > 0)) return false;
   if (existsSync(join(runDir, CRAWL_DIR, 'report.json'))) return false;
-  return !routeSources(cwd).some((r) => r.from === 'crawl');
+  return !routeSources(cwd, { startUrl, sourceDirs: [] }).some((r) => r.from === 'crawl');
 }
 
 // Where a run had got to, from its own files: read, check, review, fix, deploy or verify (the
@@ -834,7 +848,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   // kept in routes.json and said once.
   let routeList = readJson(join(dir, 'routes.json'), null)?.routes || null;
   if (!routeList) {
-    if (!findings && needsCrawl(cwd, dir, cfg.manualCrawlPages)) await crawlSite();
+    if (!findings && needsCrawl(cwd, dir, cfg.manualCrawlPages, cfg.url)) await crawlSite();
     if (stopped()) return 1;
     routeList = routeSources(cwd, { startUrl: cfg.url, sourceDirs, runDir: dir });
     writeJson(join(dir, 'routes.json'), { at: new Date().toISOString(), line: routesLine(routeList), routes: routeList });
