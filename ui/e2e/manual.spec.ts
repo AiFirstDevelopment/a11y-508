@@ -1766,6 +1766,10 @@ test.describe('screenshots', () => {
       await expect(go(page)).toHaveText('Stop', { timeout: 60_000 });
       // The rows are gone once the run has them.
       await expect(rows(page)).toHaveCount(0);
+      // A screenshot pasted while the run is going is not lost silently: the sentence says when one can be added.
+      await paste(page, (await pngs()).pngOf(40, 40, [0, 0, 200]));
+      await expect(page.getByTestId('shots-error')).toHaveText("Screenshots can be added when no run is going and the site's address is set.");
+      await expect(rows(page)).toHaveCount(0);
       // AC 2: a run of kind manual from screenshots: its record and state.json say so; no PDF.
       await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.kind, { timeout: 30_000 }).toBe('manual');
       const run = (await api(dash, '/api/runs/current')).json;

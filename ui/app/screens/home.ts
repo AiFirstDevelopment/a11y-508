@@ -72,7 +72,7 @@ function continuingPdf(stage: unknown, shots = false): string {
     </div>
     <app-screenshots-in #shotsIn [enabled]="!running() && !!driver.url()" />
     @if (store.kind() === 'manual' || lastManual()) {
-      <p class="manual-links">@if (decisionsFor(); as id) {<a href="#decisions" data-testid="show-decisions" (click)="openDecisions($event, id)">{{ store.kind() === 'manual' ? 'Show decisions' : 'Show decisions from the last PDF run' }}</a>}@if (parsedFor(); as id) {@if (decisionsFor()) {<span aria-hidden="true"> · </span>}<a href="#parsed-report" data-testid="show-parsed" (click)="openParsed($event, id)">{{ store.manual().source === 'screenshots' ? 'Show the screenshots' : 'Show the parsed report' }}</a>}</p>
+      <p class="manual-links">@if (decisionsFor(); as id) {<a href="#decisions" data-testid="show-decisions" (click)="openDecisions($event, id)">{{ store.kind() === 'manual' ? 'Show decisions' : 'Show decisions from the last run' }}</a>}@if (parsedFor(); as id) {@if (decisionsFor()) {<span aria-hidden="true"> · </span>}<a href="#parsed-report" data-testid="show-parsed" (click)="openParsed($event, id)">{{ store.manual().source === 'screenshots' ? 'Show the screenshots' : 'Show the parsed report' }}</a>}</p>
     }
     <app-manual-panel />
     <app-decisions-pane #decisions />

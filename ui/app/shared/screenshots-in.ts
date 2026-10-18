@@ -37,6 +37,7 @@ async function imageType(blob: Blob): Promise<string | null> {
   return null;
 }
 
+export const NOT_NOW = 'Screenshots can be added when no run is going and the site\'s address is set.';
 const editable = (t: EventTarget | null) => {
   const el = t as HTMLElement | null;
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
@@ -46,11 +47,11 @@ const editable = (t: EventTarget | null) => {
   selector: 'app-screenshots-in',
   template: `
     <input #picker type="file" multiple accept="image/png,image/jpeg,image/webp" hidden data-testid="shots-input" (change)="onPick($event)" />
+    @if (error()) { <p class="notice error" role="alert" data-testid="shots-error">{{ error() }}</p> }
     @if (enabled()) {
       <div class="drop" data-testid="shots-drop" [class.over]="over()" (dragover)="onDragOver($event)" (dragleave)="over.set(false)" (drop)="onDrop($event)">
         Drop screenshots here, or paste one: Ctrl+V / Cmd+V
       </div>
-      @if (error()) { <p class="notice error" role="alert" data-testid="shots-error">{{ error() }}</p> }
       @if (shots().length) {
         <ol class="shots" data-testid="shots-list">
           @for (s of shots(); track s.key; let i = $index) {
@@ -118,10 +119,14 @@ export class ScreenshotsIn implements OnDestroy {
   // pasted into a text box, which is that box's.
   @HostListener('document:paste', ['$event'])
   onPaste(ev: ClipboardEvent): void {
-    if (!this.enabled()) return;
     const data = ev.clipboardData;
     const files = [...Array.from(data?.items || []).filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter((f): f is File => !!f)];
     if (!files.length && data?.files?.length) files.push(...Array.from(data.files));
+    // A screenshot pasted while none can be added (a run is going, or the site's address is not set) says so.
+    if (!this.enabled()) {
+      if (files.length) this.error.set(NOT_NOW);
+      return;
+    }
     if (!files.length) {
       if (!editable(ev.target)) this.error.set(NOT_A_SHOT);
       return;
