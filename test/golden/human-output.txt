@@ -2,7 +2,7 @@ auth: sending Authorization header on BASE
 auth: seeding TOKEN into localStorage and sessionStorage as token, access_token, accessToken, id_token, idToken, jwt, auth_token, authToken, fixture_custom_key
 browser: BROWSER
 crawling BASE/ (max 8 pages, depth 10, 1 tabs)
-[  1/  1] ✗ /  23 violations · 8 review (T)
+[  1/  1] ✗ /  24 violations · 8 review (T)
 [  2/  8] ✗ /forms.html  14 violations · 9 review (T)
 [  3/  8] ✗ /tables.html  5 violations · 3 review (T)
 [  4/  8] ✗ /media.html  6 violations · 10 review (T)
@@ -13,13 +13,13 @@ crawling BASE/ (max 8 pages, depth 10, 1 tabs)
 
 Section 508 audit  BASE/
 pages: 8 crawled, 7 audited, 1 failed, 0 skipped
-violations: 11 critical, 25 serious, 14 moderate, 0 minor   review items: 36
+violations: 11 critical, 26 serious, 14 moderate, 0 minor   review items: 36
 
 test   name                                          viol  review
 2.A    1.4.2-audio-control                              1       0
 2.B    2.2.2-blinking-moving-scrolling                  1       1
 2.C    2.2.2-auto-updating                              1       0
-4.A    2.1.1-keyboard-access                            4       0
+4.A    2.1.1-keyboard-access                            5       0
 4.C    2.1.2-no-keyboard-trap                           1       0
 4.D    2.4.7-focus-visible                              2       0
 5.A    3.3.2-label-provided                             5       4
@@ -61,8 +61,8 @@ report: OUT/report.html
         OUT/summary.md
 
 coverage warning 1 clickable control(s) on 1 page(s) were not clicked because they look like actions ("Delete account"). Any pages behind them were not audited.
-coverage warning Stopped at --max-pages 8: 76 more link(s) were found but not audited.
+coverage warning Stopped at --max-pages 8: 77 more link(s) were found but not audited.
 coverage note 1 page(s) were reachable only by clicking a control with no link (href); they were found by clicking and audited. Screen reader users cannot discover these destinations as links (check WCAG 2.1.1, 4.1.2).
 
-FAIL (11 critical, 25 serious violations)
+FAIL (11 critical, 26 serious violations)
 exit 1

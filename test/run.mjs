@@ -237,13 +237,14 @@ check('--troubleshoot plain text output has the sections', () => {
   for (const re of [/^auth /m, /^navigation$/m, /page script navigated to/, /^verdict /m, /^next /m]) assert.ok(re.test(tsText.stdout), `missing ${re} in:\n${tsText.stdout}`);
 });
 check('pages behind link-less controls are found by clicking and audited', () => {
-  for (const p of ['/reports.html', '/dashboard.html']) {
+  // /settings.html is behind a component library's own element (<app-nav-item>), not a button, li, span or div.
+  for (const p of ['/reports.html', '/dashboard.html', '/settings.html']) {
     assert.ok(pages[p], `${p} was crawled`);
     assert.equal(pages[p].error, null, `${p}: ${pages[p].error}`);
     assert.equal(pages[p].foundBy, 'click', `${p} foundBy`);
   }
   const d = pages['/'].discovery;
-  assert.ok(d && d.routes.some((r) => r.name === 'Reports') && d.routes.some((r) => r.name === 'Dashboard'), JSON.stringify(d));
+  assert.ok(d && d.routes.some((r) => r.name === 'Reports') && d.routes.some((r) => r.name === 'Dashboard') && d.routes.some((r) => r.name === 'Settings'), JSON.stringify(d));
   assert.ok(report.summary.coverage.notes.some((n) => /reachable only by clicking/.test(n)), JSON.stringify(report.summary.coverage));
 });
 check('controls named like actions are never clicked, and that is reported', () => {

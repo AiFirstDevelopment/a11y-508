@@ -466,8 +466,11 @@
     };
     for (const el of A.all(NAV_HINT)) consider(el, 'navigation attribute or role');
     for (const el of A.all(SCRIPT_LINK)) consider(el, 'link that runs a script instead of navigating');
+    // Any element in a navigation area that shows a pointer cursor and is the outermost one to do so:
+    // a component library's own elements (<mat-list-item>, <mat-tree-node>) as much as a span or a div.
     for (const area of A.all(NAV_AREA)) {
-      for (const el of area.querySelectorAll('button, [role="button"], li, span, div')) {
+      for (const el of area.querySelectorAll('*')) {
+        if (out.length >= max * 4) break;
         if (el.localName !== 'button' && el.getAttribute('role') !== 'button') {
           const s = A.cs(el);
           if (!s || s.cursor !== 'pointer') continue;

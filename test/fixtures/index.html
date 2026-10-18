@@ -32,6 +32,8 @@
   </nav>
   <div class="app-menu" aria-label="Application">
     <span class="menu-item" id="go-reports" style="cursor:pointer">Reports</span>
+    <!-- A component library's own element (a mat-list-item, say): no href, a click handler, a pointer cursor on the element itself. -->
+    <app-nav-item class="menu-item" id="go-settings" style="cursor:pointer; display:inline-block"><span style="cursor:pointer">Settings</span></app-nav-item>
     <button type="button" class="menu-item" id="go-dashboard">Dashboard</button>
     <button type="button" class="menu-item" id="danger">Delete account</button>
   </div>
@@ -93,6 +95,7 @@
   // Link-less navigation: a full-page navigation from a span, and a router-style
   // pushState from a button. The Delete button must never be clicked by the crawler.
   document.getElementById('go-reports').addEventListener('click', function () { location.href = '/reports.html'; });
+  document.getElementById('go-settings').addEventListener('click', function () { location.href = '/settings.html'; });
   document.getElementById('go-dashboard').addEventListener('click', function () { history.pushState({}, '', '/dashboard.html'); document.querySelector('h1').textContent = 'Dashboard'; });
   document.getElementById('danger').addEventListener('click', function () { fetch('/danger', { method: 'POST' }); });
   document.getElementById('pointer-span').addEventListener('click', function () { this.textContent = 'clicked'; });
