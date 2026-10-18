@@ -146,6 +146,10 @@ test('crawl-first AC2/3 / guards c f: the prompt lists each route with its title
   assert.deepEqual(groupRoutes([{ url: `${h}a`, title: 'X' }, { url: `${h}b`, title: 'X' }]).map((g) => g.more), [[], []]);
   // Hash-routed detail pages group by the route after #/.
   assert.deepEqual(groupRoutes([{ url: `${h}#/items/1`, title: 'Item' }, { url: `${h}#/items/2`, title: 'Item' }]).map((g) => [g.url, g.more]), [[`${h}#/items/1`, [`${h}#/items/2`]]]);
+  // Hash-routed top-level pages are kept apart as path-routed ones are: '#/' is the root, not a folder of detail pages (under the site's root or under a path).
+  assert.deepEqual(groupRoutes([{ url: `${h}#/home`, title: 'App' }, { url: `${h}#/search`, title: 'App' }]).map((g) => [g.url, g.more]), [[`${h}#/home`, []], [`${h}#/search`, []]]);
+  assert.deepEqual(groupRoutes([{ url: `${h}app/#/home`, title: 'App' }, { url: `${h}app/#/search`, title: 'App' }]).map((g) => g.more), [[], []]);
+  assert.equal(routeLines([{ url: `${h}#/home`, title: 'App' }, { url: `${h}#/search`, title: 'App' }], h), `- ${h}#/home — "App"\n- ${h}#/search — "App"`);
   // Guard c: the lines.
   assert.equal(routeLines(list, h), [
     `- ${h} — "Example app": Welcome`,
