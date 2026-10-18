@@ -27,7 +27,7 @@ Usage: a11y-508 <url> [options]
        npm run e2e:a11y-508 <url> [-- options]
        a11y-508 loop [url] [--config <file>] [--max-rounds <n>] [--agent <spec>] [--dry-run] [--sign-in-first] [--from-report [file]] [--verify | --verify-anyway | --wait] [crawl options]
        a11y-508 status
-       a11y-508 manual <pdf> [--config <file>] [--agent <spec>] [--events] [crawl options]
+       a11y-508 manual <pdf|folder> [--config <file>] [--agent <spec>] [--events] [crawl options]
        a11y-508 pdf <file> [--out <dir>] [--chrome <path>]
 
 Crawls every same-origin page reachable from <url> in headless Chrome, runs the
@@ -138,6 +138,8 @@ Fix loop
                 pushed, the deployment is awaited and each fix verified in it (one more try, then a
                 revised plan to approve). Every decision is logged in decisions.md. Files are in
                 the tool's folder for the repository, work/manual/<id>/. Uses the loop's config.
+                Given a folder instead, its PNG, JPEG and WebP screenshots (in name order) are the
+                findings, one each, with the notes of an optional notes.txt (<file name>: <note>).
   pdf <file>    Parse a PDF the way the manual flow does, with no repository and no config: its
                 text in reading order, the facts recognised on each page (criterion, status,
                 section), a picture of every page and each embedded picture, into report.md and
@@ -406,7 +408,7 @@ async function manualMain({ manual, remaining }) {
   const log = makeLogger({ quiet: false, json: false, events });
   log.event('start', { kind: 'manual', version: pkg.version, url: manual.url || null });
   if (!manual.pdf) {
-    log.error('a PDF is required: a11y-508 manual <pdf>');
+    log.error('a PDF or a folder of screenshots is required: a11y-508 manual <pdf|folder>');
     return 2;
   }
   let config;

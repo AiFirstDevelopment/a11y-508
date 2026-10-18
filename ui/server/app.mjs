@@ -16,6 +16,7 @@ import { readable } from '../../src/agent-stream.mjs';
 import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, TOOL_DIR, crawlArgs, loopArgs, manualArgs, commandLine } from './args.mjs';
 import { CRAWL_DIR, MAX_PDF_BYTES, NOT_A_PDF, PARSED_DIR, decisionGroups, isPdf, manualDir, manualRoot, newManualId, validId } from '../../src/manual.mjs';
+import { MAX_SHOTS, MAX_SHOT_BYTES, NOT_A_SHOT, SHOT_TOO_BIG, SOURCE as SHOTS, parseStored, shotsProblem, storeShots, storedShots } from '../../src/screenshots.mjs';
 
 // The files of a PDF run's parse the dashboard may open.
 export const PARSED_FILE = /^(report\.md|manifest\.json|pages\/[A-Za-z0-9_-]+\.png)$/;
@@ -577,7 +578,11 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     if (kind === 'manual') {
       // A tester's PDF (docs/plans/manual-findings.md): the loop's config and assistant, the dashboard's session.
       await detect();
-      if (!body.pdf || !validId(body.manualId) || resolve(body.pdf) !== join(manualDir(cwd, body.manualId), 'source.pdf') || !existsSync(body.pdf)) throw new BadRequest('the PDF to fix from is missing; choose it again');
+      // Screenshots (docs/plans/screenshots-in.md AC 2): the run's own folder, with its shots and notes.
+      const shots = body.source === SHOTS;
+      if (shots) {
+        if (!body.pdf || !validId(body.manualId) || resolve(body.pdf) !== manualDir(cwd, body.manualId) || !storedShots(body.pdf)) throw new BadRequest('the screenshots to fix from are missing; add them again');
+      } else if (!body.pdf || !validId(body.manualId) || resolve(body.pdf) !== join(manualDir(cwd, body.manualId), 'source.pdf') || !existsSync(body.pdf)) throw new BadRequest('the PDF to fix from is missing; choose it again');
       const cfg = loadConfig(configPath(), cwd);
       const chosen = body.agent || readSettings(sp().settings).agent || cfg.agent || null;
       const resolved = agentCommand(chosen);
@@ -585,7 +590,7 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       if (resolved && PRESETS[chosen] && resolved !== PRESETS[chosen]) agentArg = resolved;
       else if (resolved && chosen !== cfg.agent) agentArg = chosen;
       built = manualArgs({ pdf: body.pdf, options: body.options, auth, agent: agentArg, config: configPath(), stateFile: existsSync(sp().state) ? sp().state : null, connect: state.browserPort || null });
-      meta = { agent: resolved, manualId: body.manualId };
+      meta = { agent: resolved, manualId: body.manualId, source: shots ? SHOTS : 'pdf' };
     } else if (kind === 'loop' || kind === 'dry-run') {
       if (kind === 'loop') await detect();
       // The dashboard's own config from before the wait had no limit: its 30 minutes becomes none, so a
@@ -897,18 +902,41 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
 
   // ---- The manual flow (docs/plans/manual-findings.md)
   // The upload: the raw PDF, at most 50 MB, refused with one sentence unless it starts with %PDF-.
-  const readRaw = (req, max) => new Promise((ok, fail) => {
+  const readRaw = (req, max, tooBig = 'That PDF is larger than 50 MB.') => new Promise((ok, fail) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
       // Too large: refused in a sentence; the rest of the upload is read and dropped, so the answer arrives.
-      if (size > max) fail(new BadRequest('That PDF is larger than 50 MB.', 413));
+      if (size > max) fail(new BadRequest(tooBig, 413));
       else chunks.push(c);
     });
     req.on('end', () => ok(Buffer.concat(chunks)));
     req.on('error', fail);
   });
+  // multipart/form-data, split by hand: [{ name, filename, data }].
+  const multipart = (buf, boundary) => {
+    const out = [];
+    const sep = Buffer.from(`--${boundary}`);
+    let at = buf.indexOf(sep);
+    while (at >= 0) {
+      const start = at + sep.length;
+      if (buf.subarray(start, start + 2).toString('latin1') === '--') break;
+      const next = buf.indexOf(sep, start);
+      if (next < 0) break;
+      const part = buf.subarray(start + 2, next - 2);
+      const headEnd = part.indexOf('\r\n\r\n');
+      if (headEnd >= 0) {
+        const head = part.subarray(0, headEnd).toString('utf8');
+        const disp = /content-disposition:[^\r\n]*/i.exec(head)?.[0] || '';
+        const name = /\bname="([^"]*)"/i.exec(disp)?.[1] || '';
+        const filename = /\bfilename="([^"]*)"/i.exec(disp)?.[1] || null;
+        out.push({ name, filename, data: part.subarray(headEnd + 4) });
+      }
+      at = next;
+    }
+    return out;
+  };
   // The manual run the dashboard follows, and its folder.
   const currentManual = () => {
     const r = runs.current;
@@ -929,6 +957,50 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
   async function manualApi(req, res, url) {
     const path = url.pathname;
     const m = req.method;
+    // Screenshots (docs/plans/screenshots-in.md AC 2): multipart, the images in order as "shot" and the
+    // notes as a JSON field "notes". Checked (count, size, magic bytes), kept as shots/NN.<ext> and
+    // notes.json, parsed into parsed/ here, and the run started from that folder: no PDF, no parse stage.
+    if (m === 'POST' && path === '/api/manual/screenshots') {
+      if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is already active`, 409);
+      const boundary = (/boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(String(req.headers['content-type'] || '')) || []).slice(1).find(Boolean);
+      if (!boundary) throw new BadRequest(NOT_A_SHOT);
+      const buf = await readRaw(req, MAX_SHOTS * MAX_SHOT_BYTES + 1024 * 1024, SHOT_TOO_BIG);
+      const parts = multipart(buf, boundary);
+      let notes = [];
+      try {
+        const field = parts.find((p) => p.name === 'notes');
+        notes = field ? JSON.parse(field.data.toString('utf8')) : [];
+      } catch {}
+      if (!Array.isArray(notes)) notes = [];
+      const list = parts.filter((p) => p.name === 'shot').map((p, i) => ({ bytes: p.data, name: p.filename || `screenshot-${i + 1}`, note: typeof notes[i] === 'string' ? notes[i] : '' }));
+      const problem = shotsProblem(list);
+      if (problem) throw new BadRequest(problem);
+      const id = newManualId(state.cwd);
+      const dir = manualDir(state.cwd, id);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      // Not started: the folder made for it just now goes again (only what this request wrote).
+      const undo = () => {
+        for (const sub of ['shots', PARSED_DIR]) rmSync(join(dir, sub), { recursive: true, force: true });
+        rmSync(join(dir, 'notes.json'), { force: true });
+        try {
+          if (!readdirSync(dir).length) rmSync(dir, { recursive: false, force: true });
+        } catch {}
+      };
+      try {
+        storeShots(dir, list);
+        await parseStored(dir, join(dir, PARSED_DIR));
+      } catch (e) {
+        undo();
+        throw new BadRequest(`The screenshots could not be read: ${e.message}.`);
+      }
+      try {
+        const run = await startRun({ kind: 'manual', pdf: dir, manualId: id, source: SHOTS, agent: url.searchParams.get('agent') || undefined });
+        return send(res, 202, { ...runSummary(run), manualId: id });
+      } catch (e) {
+        undo();
+        throw e;
+      }
+    }
     if (m === 'POST' && path === '/api/manual/pdf') {
       if (runs.active) throw new BadRequest(`a ${runs.current.kind} run is already active`, 409);
       const buf = await readRaw(req, MAX_PDF_BYTES);

@@ -563,21 +563,31 @@ ${routeLines(routes, startUrl, expand)}`;
 // criterion, so each page is a candidate and may be one that names no problem.
 // reportFile: the tool's parse of the PDF; parsedDir: its folder (the pictures); pdfFile: the PDF itself, named last.
 // unopened: the candidates asked again because the first answer was given without opening the picture.
-export function manualDescribePrompt({ candidates, reportFile, parsedDir, pdfFile, pageCount = null, noText = false, fallback = false, startUrl, routes = [], resultFile, previous = null, again = null, unopened = null }) {
+// source 'screenshots' (docs/plans/screenshots-in.md AC 4): the pages are a person's screenshots, each
+// with their note, and there is no PDF.
+export function manualDescribePrompt({ candidates, reportFile, parsedDir, pdfFile, pageCount = null, noText = false, fallback = false, startUrl, routes = [], resultFile, previous = null, again = null, unopened = null, source = 'pdf' }) {
+  const shots = source === 'screenshots';
   const abs = (rel) => (rel ? join(parsedDir, rel) : null);
   const status = (c) => (c.status ? `${c.status}${c.statusWords ? ` ("${c.statusWords}")` : ''}` : 'no status');
-  const head = (c) => `## ${c.id} — page ${c.page} — ${c.criterion ? `${c.criterion}${c.criterionName ? ` ${c.criterionName}` : ''}` : 'no criterion'} — ${status(c)}`;
+  const head = (c) => (shots
+    ? `## ${c.id} — screenshot ${c.page} — ${c.criterion ? `${c.criterion}${c.criterionName ? ` ${c.criterionName}` : ''}` : '(no criterion)'} — ${c.status ? `status ${status(c)}` : 'status unknown'}`
+    : `## ${c.id} — page ${c.page} — ${c.criterion ? `${c.criterion}${c.criterionName ? ` ${c.criterionName}` : ''}` : 'no criterion'} — ${status(c)}`);
   const blockOf = (c) => [
     head(c),
-    c.picture ? `Picture of the page: ${abs(c.picture)}   (look at it; the callouts and arrows are only there)` : 'Picture of the page: none',
+    c.picture ? `Picture of the ${shots ? 'screenshot' : 'page'}: ${abs(c.picture)}   (look at it; ${shots ? 'what the person saw is only there' : 'the callouts and arrows are only there'})` : 'Picture of the page: none',
     ...(c.images && c.images.length ? [`Pictures on the page: ${c.images.map(abs).join('; ')}`] : []),
-    c.lines && c.lines.length ? `Text:\n${c.lines.map((l) => `> ${l}`).join('\n')}` : 'Text: none (a picture only)',
+    shots
+      ? (c.lines && c.lines.length ? `Note from the person who took it:\n${c.lines.map((l) => `> ${l}`).join('\n')}` : 'Note: none (a picture only)')
+      : (c.lines && c.lines.length ? `Text:\n${c.lines.map((l) => `> ${l}`).join('\n')}` : 'Text: none (a picture only)'),
   ].join('\n');
+  const about = shots
+    ? `A person tested the application at ${startUrl} by hand. A person took these screenshots of the application and wrote a note on each; the note is the tester's words, the picture is what they saw. There are ${pageCount || candidates.length} of them; the tool has put them, with their notes, into one plain file, ${reportFile}, and listed one finding per screenshot below. Each finding's screenshot number and note are the tool's; do not repeat or change them. Your job is what only you can do: look at each screenshot and say what it shows, which element of the application the note means (or, with no note, which element has an accessibility problem), where it is, and how to find it. Do not edit any file other than the result file.`
+    : `A person tested the application at ${startUrl} by hand and wrote a report, a PDF${pageCount ? ` of ${pageCount} page${pageCount === 1 ? '' : 's'}` : ''}. The tool has read that PDF into one plain file, ${reportFile}, and listed its findings below: ${fallback ? 'the PDF names no Trusted Tester criterion, so there is one per page' : 'one per page that names a Trusted Tester criterion'}. Each finding's page, status, date, criterion and quote are the tool's, read from the PDF exactly; do not repeat or change them. Your job is what only you can do: look at the picture of each page and say what it shows, which element of the application the tester means, where it is, and how to find it. Do not edit any file other than the result file.${noText ? '\n\nThe PDF has no text: every page is a picture only. Work from the pictures.' : ''}`;
   return `# Say what each page of a tester's report shows
 
-${previous ? `Your previous answer was: ${previous}. That is not the task. Do not describe, return or echo the PDF or the pictures; read the report and write the JSON file at ${resultFile}.\n\n` : ''}${unopenedLines(unopened)}${againLine(again)}${OPEN_FIRST}
+${previous ? `Your previous answer was: ${previous}. That is not the task. Do not describe, return or echo ${shots ? 'the screenshots' : 'the PDF or the pictures'}; read the report and write the JSON file at ${resultFile}.\n\n` : ''}${unopenedLines(unopened)}${againLine(again)}${OPEN_FIRST}
 
-A person tested the application at ${startUrl} by hand and wrote a report, a PDF${pageCount ? ` of ${pageCount} page${pageCount === 1 ? '' : 's'}` : ''}. The tool has read that PDF into one plain file, ${reportFile}, and listed its findings below: ${fallback ? 'the PDF names no Trusted Tester criterion, so there is one per page' : 'one per page that names a Trusted Tester criterion'}. Each finding's page, status, date, criterion and quote are the tool's, read from the PDF exactly; do not repeat or change them. Your job is what only you can do: look at the picture of each page and say what it shows, which element of the application the tester means, where it is, and how to find it. Do not edit any file other than the result file.${noText ? '\n\nThe PDF has no text: every page is a picture only. Work from the pictures.' : ''}
+${about}
 
 ${DECIDE}
 
@@ -591,14 +601,14 @@ Answer for every finding below, by its id; the tool asks again for any you leave
 - selectors: up to 5 CSS selectors that would match that element on that page.
 - expected: what the tester expects instead, in one sentence.
 - sameAs: the id of an earlier finding when this page shows the same element with the same problem (two slides of one unlabelled field); otherwise null. Only findings with the same criterion are merged.
-- extra: rarely, a second, different problem on the same page, with its own seen, title, element, route, selectors and expected; otherwise null.${fallback ? '\n- none: true when the page names no accessibility problem at all (a cover page, a summary); then only seen is needed.' : ''}
+- extra: rarely, a second, different problem on the same page, with its own seen, title, element, route, selectors and expected; otherwise null.${fallback && !shots ? '\n- none: true when the page names no accessibility problem at all (a cover page, a summary); then only seen is needed.' : ''}
 - decisions: where the page is vague (no route, two possible elements), what you chose and why: [{ "decision": "...", "reason": "..." }].
 
 ${candidates.map(blockOf).join('\n\n')}
 
 ${routesBlock(routes, startUrl)}
 
-The whole parse is ${reportFile}; the paths of the pictures are under ${parsedDir}. The original PDF is ${pdfFile}: open it only if the report is not enough.
+The whole parse is ${reportFile}; the paths of the pictures are under ${parsedDir}.${pdfFile ? ` The original PDF is ${pdfFile}: open it only if the report is not enough.` : ''}
 
 ## When you are done
 
@@ -608,7 +618,7 @@ ${block({ answers: [{ id: candidates[0] ? candidates[0].id : 'F1', seen: 'The se
 
 Machine-readable copy:
 
-${block({ kind: 'manual-describe', report: reportFile, parsed: parsedDir, pdf: pdfFile, startUrl, routes: urlsOf(routes), fallback, unopened: (unopened || []).map((u) => u.id), candidates: candidates.map((c) => ({ id: c.id, page: c.page, criterion: c.criterion, status: c.status, quote: c.quote, picture: abs(c.picture), lines: c.lines || [] })), resultFile })}
+${block({ kind: 'manual-describe', report: reportFile, parsed: parsedDir, pdf: pdfFile, source, startUrl, routes: urlsOf(routes), fallback, unopened: (unopened || []).map((u) => u.id), candidates: candidates.map((c) => ({ id: c.id, page: c.page, criterion: c.criterion, status: c.status, quote: c.quote, picture: abs(c.picture), lines: c.lines || [] })), resultFile })}
 `;
 }
 

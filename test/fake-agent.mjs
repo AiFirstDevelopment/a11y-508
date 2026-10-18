@@ -192,7 +192,8 @@ function manual(task) {
         // A PDF with no text (a scan): every page the same search button, from the pictures.
         a = { id: c.id, seen, title: 'Search button has no accessible name', route: '/search', selectors: ['#search-btn'], element: 'the magnifier button in the pictures', expected: 'the button has a text alternative', sameAs: c.id === task.candidates[0].id ? null : task.candidates[0].id, decisions: [{ decision: 'read the problem from the pictures of the pages', reason: 'the PDF has no text' }] };
       } else if (!tags.length) {
-        a = c.criterion ? { id: c.id, seen, title: `Page ${c.page}`, element: `the element on page ${c.page}`, route: '/', selectors: [], expected: '' } : { id: c.id, none: true, seen };
+        // A screenshot with no note (docs/plans/screenshots-in.md) is a finding: what the picture shows.
+        a = c.criterion || task.source === 'screenshots' ? { id: c.id, seen, title: `Page ${c.page}`, element: `the element on page ${c.page}`, route: '/', selectors: [], expected: '' } : { id: c.id, none: true, seen };
       } else {
         const m = tags[0];
         a = { id: c.id, seen, ...fields(m), sameAs: m[1] !== c.id ? m[1] : null, decisions: m[3] === '/' ? [{ decision: `took the home page for ${c.id}`, reason: 'the tester names no page; the header and footer are on every page' }] : [] };

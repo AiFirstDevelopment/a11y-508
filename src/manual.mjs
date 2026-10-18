@@ -18,7 +18,7 @@
 // developer's edits, written by the dashboard), state.json, decisions.ndjson, decisions.md, and
 // evidence/<finding>/{before,after-1,after-2,...}/.
 
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -34,6 +34,7 @@ import { sleep } from './page.mjs';
 import { commitWebUrl, remoteWeb } from './git-web.mjs';
 import { parsePdf } from './pdf-parse.mjs';
 import { opens, readable } from './agent-stream.mjs';
+import { NO_SHOTS, SOURCE as SHOTS, parseStored, readShotFolder, shotsProblem, storeShots, storedShots } from './screenshots.mjs';
 
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 export const MANUAL_DIR = 'manual';
@@ -64,6 +65,13 @@ export function alreadyWords(g, v) {
 }
 const squash = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const pagesWords = (ns) => (ns.length === 1 ? `page ${ns[0]}` : `pages ${ns.slice(0, -1).join(', ')} and ${ns[ns.length - 1]}`);
+// A run's pages in its own words (docs/plans/screenshots-in.md AC 5): "PDF page 3", or "Screenshot 3"
+// for a run from screenshots; and where the link to one goes, from the run's folder.
+export const pageLabel = (source, n) => (source === SHOTS ? `Screenshot ${n}` : `PDF page ${n}`);
+export const pageLink = (source, n) => (source === SHOTS ? `parsed/pages/page-${String(n).padStart(2, '0')}.png` : `source.pdf#page=${n}`);
+const sourcePages = (source, ns) => (source === SHOTS ? (ns.length === 1 ? `screenshot ${ns[0]}` : `screenshots ${ns.slice(0, -1).join(', ')} and ${ns[ns.length - 1]}`) : `PDF ${pagesWords(ns)}`);
+// "the PDF" or "the screenshots".
+export const sourceWords = (source) => (source === SHOTS ? 'the screenshots' : 'the PDF');
 
 // ---- The findings come from the parse (docs/plans/read-from-parse.md): the tool lists them, one per
 // page; the assistant only says what each page shows.
@@ -77,6 +85,8 @@ export function buildCandidates(manifest) {
   const pages = (manifest && manifest.pages) || [];
   const named = pages.filter((p) => !p.divider && (p.criteria || []).length);
   const list = named.length ? named : pages.filter((p) => !p.divider && ((p.lines || []).length || p.picture));
+  // A screenshot is always a finding (docs/plans/screenshots-in.md): one with no note is what the assistant sees in it.
+  const shot = manifest && manifest.source === SHOTS;
   return list.map((p, i) => {
     const c = named.length ? p.criteria[0] : null;
     const lines = p.lines || [];
@@ -86,14 +96,14 @@ export function buildCandidates(manifest) {
       status: p.status ? p.status.value : null, statusDate: (p.status && p.status.date) || null, statusWords: (p.status && p.status.words) || null,
       criterion: c ? c.id : null, criterionName: c ? c.name || null : null, wcag: c ? c.wcag || null : null,
       quote: line || lines[0] || '', picture: p.picture || null, images: (p.images || []).map((im) => im.file).filter(Boolean),
-      lines,
+      lines, ...(shot ? { shot: true } : {}),
     };
   });
 }
 
 // An answer that counts (AC 2): it says what the page shows and which element; a page that names no
 // criterion may instead be said to name no problem.
-export const describedEnough = (a, c) => !!a && ((a.none === true && !!c && !c.criterion) || (!!str(a.seen) && !!str(a.element)));
+export const describedEnough = (a, c) => !!a && ((a.none === true && !!c && !c.criterion && !c.shot) || (!!str(a.seen) && !!str(a.element)));
 const selectorsOf = (v) => (Array.isArray(v) ? v : typeof v === 'string' && v ? [v] : []).map((x) => str(x, 300)).filter(Boolean).slice(0, 5);
 const NOT_DESCRIBED = 'not described by the assistant';
 
@@ -103,13 +113,14 @@ const NOT_DESCRIBED = 'not described by the assistant';
 // adds <id>b with the page's facts. decide(stage, finding, by, decision, reason).
 // seenOf(id): whether the assistant opened that candidate's picture (true/false), or null when it
 // cannot be told (docs/plans/pictures-and-routes.md AC 2); a finding keeps seenPicture only when known.
-export function foldAnswers(candidates, answers, decide, seenOf = () => null) {
+export function foldAnswers(candidates, answers, decide, seenOf = () => null, source = 'pdf') {
+  const label = (n) => pageLabel(source, n);
   const out = [];
   const into = new Map();
   const own = (c, a) => {
     const described = !!a && !!str(a.seen) && !!str(a.element);
     const element = described ? str(a.element, 300) : NOT_DESCRIBED;
-    const title = (a && str(a.title, 120)) || (described ? element.replace(/^./, (x) => x.toUpperCase()) : '') || (c.criterion ? `${c.criterion} ${c.criterionName || ''}`.trim() : `PDF page ${c.page}`);
+    const title = (a && str(a.title, 120)) || (described ? element.replace(/^./, (x) => x.toUpperCase()) : '') || (c.criterion ? `${c.criterion} ${c.criterionName || ''}`.trim() : label(c.page));
     const { lines, statusWords, ...facts } = c;
     const pic = described ? seenOf(c.id) : null;
     return {
@@ -126,12 +137,12 @@ export function foldAnswers(candidates, answers, decide, seenOf = () => null) {
   for (const c of candidates) {
     const a = answers.get(c.id) || null;
     if (!a) {
-      decide('read', c.id, 'tool', 'kept without a description', `the assistant did not describe PDF page ${c.page} after two asks`);
+      decide('read', c.id, 'tool', 'kept without a description', `the assistant did not describe ${label(c.page)} after two asks`);
       out.push(own(c, null));
       continue;
     }
-    if (a.none === true && !c.criterion) {
-      decide('read', c.id, 'agent', `left out PDF page ${c.page}: it names no accessibility problem`, str(a.seen, 400));
+    if (a.none === true && !c.criterion && !c.shot) {
+      decide('read', c.id, 'agent', `left out ${label(c.page)}: it names no accessibility problem`, str(a.seen, 400));
       continue;
     }
     const f = own(c, a);
@@ -152,7 +163,7 @@ export function foldAnswers(candidates, answers, decide, seenOf = () => null) {
         // What it saw on each merged page stays on the finding, so a merge of two different pictures shows.
         (root.seenMore ||= []).push({ page: c.page, seen: f.seen, ...('seenPicture' in f ? { seenPicture: f.seenPicture } : {}) });
         into.set(c.id, root);
-        decide('read', root.id, 'agent', `merged ${c.id} (PDF page ${c.page}) into ${root.id}`, `page ${c.page} shows the same element with the same problem as page ${root.page}`);
+        decide('read', root.id, 'agent', `merged ${c.id} (${label(c.page)}) into ${root.id}`, `page ${c.page} shows the same element with the same problem as page ${root.page}`);
         merged = true;
       }
     }
@@ -168,7 +179,7 @@ export function foldAnswers(candidates, answers, decide, seenOf = () => null) {
         if ('seenPicture' in f) e.seenPicture = f.seenPicture;
         else delete e.seenPicture;
         out.push(e);
-        decide('read', e.id, 'agent', `a second problem on PDF page ${c.page}: ${e.element}`, str(x.seen, 400));
+        decide('read', e.id, 'agent', `a second problem on ${label(c.page)}: ${e.element}`, str(x.seen, 400));
       }
     }
   }
@@ -176,18 +187,19 @@ export function foldAnswers(candidates, answers, decide, seenOf = () => null) {
 }
 
 // "10 findings read from the PDF: 8 the tester verified fixed, 2 open." (AC 3), counted after merging.
-export function countsSentence(findings) {
+export function countsSentence(findings, source = 'pdf') {
   const n = (v) => findings.filter((f) => (f.status || null) === v).length;
   const [fixed, open, none] = [n('fixed'), n('open'), n(null)];
   const parts = [fixed ? `${fixed} the tester verified fixed` : '', open ? `${open} open` : '', none && (fixed || open) ? `${none} with no status` : ''].filter(Boolean);
-  return `${plural(findings.length, 'finding')} read from the PDF${parts.length ? `: ${parts.join(', ')}` : ''}.`;
+  return `${plural(findings.length, 'finding')} read from ${sourceWords(source)}${parts.length ? `: ${parts.join(', ')}` : ''}.`;
 }
 // The pages whose picture the assistant did not open (docs/plans/pictures-and-routes.md AC 3).
 export const unseenPages = (findings) => [...new Set(findings.flatMap((f) => [...(f.seenPicture === false ? [f.page] : []), ...((f.seenMore || []).filter((x) => x.seenPicture === false).map((x) => x.page))]))].sort((a, b) => a - b);
 // The step's sentence after the read: the counts, then how many pictures the assistant did not open.
-export function readSentence(findings) {
+export function readSentence(findings, source = 'pdf') {
   const n = unseenPages(findings).length;
-  return `${countsSentence(findings)}${n ? ` The assistant did not open the ${n === 1 ? 'picture of 1 page' : `pictures of ${n} pages`}.` : ''}`;
+  const unit = source === SHOTS ? 'screenshot' : 'page';
+  return `${countsSentence(findings, source)}${n ? ` The assistant did not open the ${n === 1 ? `picture of 1 ${unit}` : `pictures of ${n} ${unit}s`}.` : ''}`;
 }
 // "The tool could not find this element on /search: ..." (AC 4), for a plan item or an already-fixed row.
 export const notLocatedLine = (where) => `The tool could not find this element on ${where}: the assistant's selectors matched nothing. Check the component before approving.`;
@@ -331,6 +343,21 @@ export function readDecisions(dir) {
 
 // The decision log grouped by finding, with each finding's PDF page, commits and screenshots: what
 // decisions.md says and the dashboard's Show decisions shows. web: the repository's web address.
+// Where a run's findings came from: 'screenshots' or 'pdf', from its state.json, its parse, or its files.
+export function runSource(dir, state = null, manifest = null) {
+  const st = state || readJson(join(dir, 'state.json'), {}) || {};
+  if (st.source) return st.source;
+  const m = manifest || readJson(join(dir, PARSED_DIR, 'manifest.json'), null);
+  if (m && m.source) return m.source;
+  return storedShots(dir) ? SHOTS : 'pdf';
+}
+// The first line of decisions.md and already-fixed.md: where the findings came from.
+function fromLine(dir, source) {
+  const parsed = existsSync(join(dir, PARSED_DIR, 'report.md'));
+  if (source === SHOTS) return `From the screenshots: [${PARSED_DIR}/report.md](${PARSED_DIR}/report.md)`;
+  return `From the tester's PDF: [source.pdf](source.pdf)${parsed ? ` (parsed: [${PARSED_DIR}/report.md](${PARSED_DIR}/report.md))` : ''}`;
+}
+
 export function decisionGroups(dir, web = null) {
   const findings = readJson(join(dir, 'findings.json'), { findings: [] }).findings || [];
   const state = readJson(join(dir, 'state.json'), {}) || {};
@@ -342,6 +369,7 @@ export function decisionGroups(dir, web = null) {
       .filter((d) => existsSync(join(base, d, 'screenshot.png'))).map((d) => ({ label: d === 'before' ? 'Before' : `After, try ${d.slice(6)}`, path: `evidence/${id}/${d}/screenshot.png` }));
   };
   const manifest = readJson(join(dir, PARSED_DIR, 'manifest.json'), null);
+  const source = runSource(dir, state, manifest);
   const pictureOf = (n) => ((manifest && manifest.pages) || []).find((p) => p.n === n)?.picture || null;
   const groups = findings.map((f) => ({
     picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], located: f.located ?? null,
@@ -352,17 +380,17 @@ export function decisionGroups(dir, web = null) {
   }));
   const general = all.filter((d) => !d.finding || !findings.some((f) => f.id === d.finding));
   // crawl: the run's own look over the site, as the dashboard links it ("the site as the tool saw it").
-  return { groups, general, pdf: 'source.pdf', parsed: existsSync(join(dir, PARSED_DIR, 'report.md')) ? `${PARSED_DIR}/report.md` : null, crawl: existsSync(join(dir, CRAWL_DIR, 'report.html')) ? `${CRAWL_DIR}/report.html` : null };
+  return { groups, general, source, pdf: source === SHOTS ? null : 'source.pdf', parsed: existsSync(join(dir, PARSED_DIR, 'report.md')) ? `${PARSED_DIR}/report.md` : null, crawl: existsSync(join(dir, CRAWL_DIR, 'report.html')) ? `${CRAWL_DIR}/report.html` : null };
 }
 
 export function decisionsMarkdown(dir, web = null) {
-  const { groups, general, crawl } = decisionGroups(dir, web);
+  const { groups, general, crawl, source } = decisionGroups(dir, web);
   const line = (d) => `- ${d.at} · ${d.stage} · ${d.by}: ${d.decision}${d.reason ? ` — ${d.reason}` : ''}${d.evidence ? ` (evidence: ${d.evidence})` : ''}`;
-  const out = ['# Decisions', '', `From the tester's PDF: [source.pdf](source.pdf)${existsSync(join(dir, PARSED_DIR, 'report.md')) ? ` (parsed: [${PARSED_DIR}/report.md](${PARSED_DIR}/report.md))` : ''}`, ''];
+  const out = ['# Decisions', '', fromLine(dir, source), ''];
   if (crawl) out.push(`The site as the tool saw it: [${crawl}](${crawl})`, '');
   if (general.length) out.push('## The run', '', ...general.map(line), '');
   for (const g of groups) {
-    out.push(`## ${g.finding}: ${g.title} — [PDF page ${g.page}](source.pdf#page=${g.page})`, '', ...seenLines(g).flatMap((l) => [l, '']));
+    out.push(`## ${g.finding}: ${g.title} — [${pageLabel(source, g.page)}](${pageLink(source, g.page)})`, '', ...seenLines(g).flatMap((l) => [l, '']));
     if (g.quote) out.push(`> ${g.quote}`, '');
     out.push(...(g.decisions.length ? g.decisions.map(line) : ['- No decision recorded.']), '');
     if (g.commits.length) out.push('Commits:', '', ...g.commits.map((c) => `- ${c.url ? `[${c.short}](${c.url})` : c.short}: ${(c.files || []).join(', ') || 'no files'}`), '');
@@ -440,31 +468,61 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   mkdirSync(taskFolder, { recursive: true });
 
   // The PDF: one already in a manual folder (the dashboard's upload, or a run taken up again) is that
-  // run's; any other is copied into a new one.
+  // run's; any other is copied into a new one. A folder is screenshots (docs/plans/screenshots-in.md):
+  // a run's own folder (the dashboard's upload) is that run's; any other folder's pictures, with its
+  // notes.txt, are kept in a new one.
   const given = resolve(cwd, String(pdf || ''));
-  let buf = null;
+  let isDir = false;
   try {
-    buf = readFileSync(given);
-  } catch (e) {
-    log.error(`cannot read ${pdf}: ${e.message}`);
-    return 2;
-  }
-  if (!isPdf(buf)) {
-    log.error(NOT_A_PDF);
-    return 2;
-  }
-  if (buf.length > MAX_PDF_BYTES) {
-    log.error('That PDF is larger than 50 MB.');
-    return 2;
-  }
+    isDir = statSync(given).isDirectory();
+  } catch {}
   let id;
+  let source = 'pdf';
   const parent = dirname(given);
-  if (dirname(parent) === resolve(manualRoot(cwd)) && validId(parent.split(sep).pop()) && given.endsWith(`${sep}source.pdf`)) id = parent.split(sep).pop();
-  else {
-    id = newManualId(cwd);
-    mkdirSync(manualDir(cwd, id), { recursive: true });
-    copyFileSync(given, join(manualDir(cwd, id), 'source.pdf'));
+  if (isDir) {
+    source = SHOTS;
+    if (dirname(given) === resolve(manualRoot(cwd)) && validId(given.split(sep).pop()) && storedShots(given)) id = given.split(sep).pop();
+    else {
+      let list;
+      try {
+        list = readShotFolder(given);
+      } catch (e) {
+        log.error(`cannot read ${pdf}: ${e.message}`);
+        return 2;
+      }
+      const problem = shotsProblem(list);
+      if (problem) {
+        log.error(problem === NO_SHOTS ? `${pdf} has no screenshots: add PNG, JPEG or WebP pictures to it, at most 40 of them, 10 MB each.` : problem);
+        return 2;
+      }
+      id = newManualId(cwd);
+      mkdirSync(manualDir(cwd, id), { recursive: true });
+      storeShots(manualDir(cwd, id), list);
+    }
+  } else {
+    let buf = null;
+    try {
+      buf = readFileSync(given);
+    } catch (e) {
+      log.error(`cannot read ${pdf}: ${e.message}`);
+      return 2;
+    }
+    if (!isPdf(buf)) {
+      log.error(NOT_A_PDF);
+      return 2;
+    }
+    if (buf.length > MAX_PDF_BYTES) {
+      log.error('That PDF is larger than 50 MB.');
+      return 2;
+    }
+    if (dirname(parent) === resolve(manualRoot(cwd)) && validId(parent.split(sep).pop()) && given.endsWith(`${sep}source.pdf`)) id = parent.split(sep).pop();
+    else {
+      id = newManualId(cwd);
+      mkdirSync(manualDir(cwd, id), { recursive: true });
+      copyFileSync(given, join(manualDir(cwd, id), 'source.pdf'));
+    }
   }
+  const shotsRun = source === SHOTS;
   const dir = manualDir(cwd, id);
   const sourceDirs = cfg.source;
   const pre = prepareRepo({ cwd, cfg, sourceDirs, log });
@@ -480,6 +538,14 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   const stateFile = join(dir, 'state.json');
   const state = readJson(stateFile, null) || { id, items: {}, version: 0, after: 0 };
   const save = () => writeJson(stateFile, state);
+  // Where the findings come from, kept with the run (docs/plans/screenshots-in.md AC 2).
+  if (state.source !== source) {
+    state.source = source;
+    save();
+  }
+  const label = (n) => pageLabel(source, n);
+  const linkOf = (n) => pageLink(source, n);
+  const theSource = sourceWords(source);
   const itemState = (fid) => (state.items[fid] ||= { status: null, commits: [], attempts: [] });
   const web = remoteWeb(cwd);
   const decide = (stg, finding, by, decision, reason = '', evidence = null) => {
@@ -658,14 +724,29 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     return { ...s, elements: readJson(join(edir, 'elements.json'), []), ax: readJson(join(edir, 'ax.json'), []), tabOrder: readJson(join(edir, 'tab-order.json'), []), screenshot, dir: `evidence/${fid}/${label}` };
   };
 
-  stage('start', { id, pdf: `${MANUAL_DIR}/${id}/source.pdf`, url: cfg.url, agent: cfg.agent });
-  log.info(`a11y-508 manual: ${shortenHome(join(dir, 'source.pdf'))}  ${cfg.url}  agent: ${cfg.agent}`);
+  stage('start', { id, source, ...(shotsRun ? { shots: (storedShots(dir) || []).length } : { pdf: `${MANUAL_DIR}/${id}/source.pdf` }), url: cfg.url, agent: cfg.agent });
+  log.info(`a11y-508 manual: ${shortenHome(shotsRun ? join(dir, 'shots') : join(dir, 'source.pdf'))}  ${cfg.url}  agent: ${cfg.agent}`);
   if (state.done) return finish(0, state.doneLine || 'Done.');
 
   // ---- 1. Parse the PDF (docs/plans/pdf-parse.md), then read the parse with the assistant.
   let findings = readJson(join(dir, 'findings.json'), null)?.findings || null;
   const parsedDir = join(dir, PARSED_DIR);
   let manifest = readJson(join(parsedDir, 'manifest.json'), null);
+  // Screenshots have no parse stage (docs/plans/screenshots-in.md AC 2): the dashboard's upload wrote
+  // the parse already; a folder from the command line is parsed here, the same way.
+  if (shotsRun && !findings && !manifest) {
+    log.info('reading the screenshots');
+    try {
+      manifest = await parseStored(dir, parsedDir, chromeOf(browserArgs()));
+    } catch (e) {
+      const words = `The screenshots could not be read: ${e.message}`;
+      decide('parse', null, 'tool', 'could not read the screenshots', e.message);
+      stage('parse-failed', { reason: words, unreadable: false });
+      log.error(words);
+      return finish(2);
+    }
+    if (stopped()) return 1;
+  }
   if (!findings && !manifest) {
     stage('parse', {});
     log.info('reading the PDF');
@@ -693,7 +774,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   const copyDir = join(taskFolder, `manual-${id}`);
   const copyParse = () => {
     mkdirSync(join(copyDir, PARSED_DIR, 'pages'), { recursive: true });
-    copyFileSync(join(dir, 'source.pdf'), join(copyDir, 'source.pdf'));
+    if (existsSync(join(dir, 'source.pdf'))) copyFileSync(join(dir, 'source.pdf'), join(copyDir, 'source.pdf'));
     for (const f of ['report.md', 'manifest.json']) if (existsSync(join(parsedDir, f))) copyFileSync(join(parsedDir, f), join(copyDir, PARSED_DIR, f));
     try {
       for (const f of readdirSync(join(parsedDir, 'pages'))) if (/\.png$/.test(f)) copyFileSync(join(parsedDir, 'pages', f), join(copyDir, PARSED_DIR, 'pages', f));
@@ -776,7 +857,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     let listed = false;
     const one = async (ids, again, previous, unopened) => {
       const r = await ask('describe', (resultFile) => manualDescribePrompt({
-        candidates: ids.map((x) => byC.get(x)), reportFile: join(copyDir, PARSED_DIR, 'report.md'), parsedDir: join(copyDir, PARSED_DIR), pdfFile: join(copyDir, 'source.pdf'),
+        candidates: ids.map((x) => byC.get(x)), reportFile: join(copyDir, PARSED_DIR, 'report.md'), parsedDir: join(copyDir, PARSED_DIR), pdfFile: shotsRun ? null : join(copyDir, 'source.pdf'), source,
         pageCount: manifest.pageCount, noText, fallback: !candidates.some((c) => c.criterion), startUrl: cfg.url, routes: routeList, resultFile, previous, again,
         unopened: unopened ? unopened.map((x) => ({ id: x, page: byC.get(x).page, picture: pictureFile(byC.get(x)) })) : null,
       }));
@@ -827,8 +908,9 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     const candidates = buildCandidates(manifest);
     const fallback = !candidates.some((c) => c.criterion);
     writeJson(join(dir, 'candidates.json'), { at: new Date().toISOString(), pages: manifest.pageCount, fallback, candidates });
-    stage('read', { noText, pages: manifest.pageCount, candidates: candidates.length });
-    log.info(noText ? `The PDF has no text; ${agentName} is working from the pictures of its ${plural(manifest.pageCount, 'page')}.` : `Reading the PDF: ${plural(candidates.length, 'finding')} on ${plural(manifest.pageCount, 'page')}; asking ${agentName} what each page shows.`);
+    stage('read', { noText, pages: manifest.pageCount, candidates: candidates.length, source });
+    if (shotsRun) log.info(`Reading ${plural(manifest.pageCount, 'screenshot')}; asking ${agentName} what each shows.`);
+    else log.info(noText ? `The PDF has no text; ${agentName} is working from the pictures of its ${plural(manifest.pageCount, 'page')}.` : `Reading the PDF: ${plural(candidates.length, 'finding')} on ${plural(manifest.pageCount, 'page')}; asking ${agentName} what each page shows.`);
     let answers = new Map();
     // Whether the assistant opened each candidate's picture, by id (docs/plans/pictures-and-routes.md AC 2).
     const seenPic = new Map();
@@ -843,8 +925,8 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         const r = asked.last || {};
         const reason = (r.result && typeof r.result.error === 'string' && r.result.error) || (r.why ? r.why.replace(AgentName, 'it') : '') || 'its answer had no list of findings';
         const who = agentLabel(cfg.agent).replace(/^./, (c) => c.toUpperCase());
-        const words = `${who} could not read the PDF (${reason}). Choose a PDF, or pick another assistant under Advanced.`;
-        decide('read', null, 'agent', 'could not read the PDF', reason);
+        const words = `${who} could not read ${theSource} (${reason}). ${shotsRun ? 'Add the screenshots again' : 'Choose a PDF'}, or pick another assistant under Advanced.`;
+        decide('read', null, 'agent', `could not read ${theSource}`, reason);
         stage('read-failed', { reason: words, assistant: who });
         log.error(words);
         return finish(1);
@@ -852,9 +934,9 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     }
     for (const c of candidates) {
       if (seenPic.get(c.id) !== false) continue;
-      decide('read', c.id, 'tool', `the assistant answered without opening the picture of page ${c.page}`, `${c.picture}: what it says the page shows is a guess from the text`);
+      decide('read', c.id, 'tool', `the assistant answered without opening the picture of ${shotsRun ? label(c.page).toLowerCase() : `page ${c.page}`}`, `${c.picture}: what it says the page shows is a guess from the text`);
     }
-    findings = foldAnswers(candidates, answers, decide, (x) => (seenPic.has(x) ? seenPic.get(x) : null));
+    findings = foldAnswers(candidates, answers, decide, (x) => (seenPic.has(x) ? seenPic.get(x) : null), source);
     for (const f of findings) {
       // AC 5: a route that is not one of the known routes is the start page.
       if (f.route && !onRouteList(f.route, routes, cfg.url)) {
@@ -862,12 +944,12 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         f.route = '';
       }
       f.url = urlOf(f);
-      decide('read', f.id, f.seen ? 'agent' : 'tool', `read "${f.title}" from PDF ${pagesWords(f.pages)}`, f.seen ? `what it saw: ${f.seen}` : 'it did not describe the page');
+      decide('read', f.id, f.seen ? 'agent' : 'tool', `read "${f.title}" from ${sourcePages(source, f.pages)}`, f.seen ? `what it saw: ${f.seen}` : 'it did not describe the page');
     }
-    if (findings.length) decide('read', null, 'tool', readSentence(findings), `the tool listed ${plural(candidates.length, 'finding')} from ${plural(manifest.pageCount, 'page')}${fallback ? ' (one per page: the PDF names no criterion)' : ' (one per page that names a criterion)'}`);
+    if (findings.length) decide('read', null, 'tool', readSentence(findings, source), shotsRun ? `the tool listed ${plural(candidates.length, 'finding')} from ${plural(manifest.pageCount, 'screenshot')} (one per screenshot)` : `the tool listed ${plural(candidates.length, 'finding')} from ${plural(manifest.pageCount, 'page')}${fallback ? ' (one per page: the PDF names no criterion)' : ' (one per page that names a criterion)'}`);
     writeJson(join(dir, 'findings.json'), { at: new Date().toISOString(), findings });
   }
-  stage('findings', { count: findings.length, findings, message: findings.length ? readSentence(findings) : null });
+  stage('findings', { count: findings.length, findings, message: findings.length ? readSentence(findings, source) : null });
   if (!findings.length) {
     stage('no-findings', { message: NO_FINDINGS });
     state.done = true;
@@ -875,7 +957,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     save();
     return finish(0, NO_FINDINGS);
   }
-  log.info(readSentence(findings));
+  log.info(readSentence(findings, source));
   const byId = new Map(findings.map((f) => [f.id, f]));
 
   // ---- 2. Check the deployed site: present or gone, from evidence the tool captures.
@@ -1023,17 +1105,17 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], line: r.found === false ? notFoundLine(f, whereOf(f)) : r.verdict === 'unlocated' ? unlocatedLine(f, whereOf(f)) : uncheckedLine(f, whereOf(f), r.error || null) };
   });
   writeFileSync(join(dir, 'already-fixed.md'), [
-    `# Already fixed in the deployed site (${goneRows.length})`, '', `From the tester's PDF: [source.pdf](source.pdf)`, '',
+    `# Already fixed in the deployed site (${goneRows.length})`, '', fromLine(dir, source), '',
     ...(verifiedGone.length || cameBack.length ? [`${verifiedGone.length} of them the tester had verified fixed; ${cameBack.length} the tester had verified fixed came back (${cameBack.length === 1 ? 'it is' : 'they are'} in the plan).`, ''] : []),
-    ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [PDF page ${r.page}](source.pdf#page=${r.page})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', ...(r.tester ? [`- ${r.tester}`] : []), ...(r.notLocated ? [`- ${r.notLocated}`] : []), `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
-    ...(uncheckedRows.length ? [`# Could not be checked (${uncheckedRows.length})`, '', ...uncheckedRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [PDF page ${r.page}](source.pdf#page=${r.page})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', `- ${r.line}`, `- Tried: ${r.url} at ${r.checkedAt}`, r.screenshot ? `\n![What the tool saw at ${r.url}](${r.screenshot})` : '', ''])] : []),
+    ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [${label(r.page)}](${linkOf(r.page)})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', ...(r.tester ? [`- ${r.tester}`] : []), ...(r.notLocated ? [`- ${r.notLocated}`] : []), `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
+    ...(uncheckedRows.length ? [`# Could not be checked (${uncheckedRows.length})`, '', ...uncheckedRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [${label(r.page)}](${linkOf(r.page)})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', `- ${r.line}`, `- Tried: ${r.url} at ${r.checkedAt}`, r.screenshot ? `\n![What the tool saw at ${r.url}](${r.screenshot})` : '', ''])] : []),
   ].join('\n'));
   const all = gone.length === findings.length;
   stage('already-fixed', { rows: goneRows, total: findings.length, all, unchecked: uncheckedRows });
   if (!present.length) {
     const v = verifiedGone.length;
     const line = all
-      ? (findings.length === 1 ? 'The one finding in the PDF is already fixed in the deployed site' : `All ${findings.length} findings in the PDF are already fixed in the deployed site`) + (v ? ` (${v === findings.length ? (v === 1 ? 'the tester had verified it' : 'the tester had verified all of them') : `${v} of them the tester had verified`})` : '') + '.'
+      ? (findings.length === 1 ? `The one finding in ${theSource} is already fixed in the deployed site` : `All ${findings.length} findings in ${theSource} are already fixed in the deployed site`) + (v ? ` (${v === findings.length ? (v === 1 ? 'the tester had verified it' : 'the tester had verified all of them') : `${v} of them the tester had verified`})` : '') + '.'
       : `Nothing to fix: ${gone.length ? `${alreadyWords(gone.length, v)}; ` : ''}${unchecked.length} could not be checked.`;
     state.done = true;
     state.doneLine = line;
@@ -1205,7 +1287,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         }
       }
       git(cwd, ['add', '--', ...sourceDirs]);
-      const msg = `a11y-508: manual <PDF p.${it.page}> ${it.title}\n\nFrom the tester's PDF, page ${it.page}: ${it.quote}\nFix (approved): ${it.fix}\nComponent: ${it.component ? `${it.component.name} (${it.component.file})` : 'none named'}\n${note}`;
+      const msg = `a11y-508: manual <${shotsRun ? `Screenshot ${it.page}` : `PDF p.${it.page}`}> ${it.title}\n\nFrom ${shotsRun ? `the screenshots, screenshot ${it.page}` : `the tester's PDF, page ${it.page}`}: ${it.quote}\nFix (approved): ${it.fix}\nComponent: ${it.component ? `${it.component.name} (${it.component.file})` : 'none named'}\n${note}`;
       const c = git(cwd, ['commit', '-q', '-m', msg]);
       if (c.code !== 0) {
         decide('fix', it.finding, 'tool', 'the commit failed', c.err);
@@ -1416,7 +1498,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     reader.close();
   }
   const fixed = Object.values(state.items).filter((s) => s.status === 'fixed').length;
-  const line = `Done: ${plural(fixed, 'finding')} from the PDF ${fixed === 1 ? 'is' : 'are'} fixed and confirmed in the deployed site${gone.length ? `; ${alreadyWords(gone.length, verifiedGone.length)}` : ''}${cameBack.length ? `; ${cameBack.length} had come back` : ''}${unchecked.length ? `; ${unchecked.length} could not be checked` : ''}.`;
+  const line = `Done: ${plural(fixed, 'finding')} from ${theSource} ${fixed === 1 ? 'is' : 'are'} fixed and confirmed in the deployed site${gone.length ? `; ${alreadyWords(gone.length, verifiedGone.length)}` : ''}${cameBack.length ? `; ${cameBack.length} had come back` : ''}${unchecked.length ? `; ${unchecked.length} could not be checked` : ''}.`;
   state.done = true;
   state.doneLine = line;
   state.stage = 'done';
