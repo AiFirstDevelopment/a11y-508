@@ -21,7 +21,7 @@ const NOT_A_PDF = 'That file is not a PDF. Choose the PDF report the tester sent
 interface App {
   cwd: string;
   originDir: string;
-  site: { base: string; setStale(on: boolean): void; setHeld(on: boolean): void; close(): Promise<void> };
+  site: { base: string; setStale(on: boolean): void; setHeld(on: boolean): void; setDeep(on: boolean): void; close(): Promise<void> };
   g: (...args: string[]) => string;
   cleanup(): Promise<void>;
 }
@@ -803,10 +803,14 @@ test('read-from-parse AC1/2/3/6/9 / guards g i: the deck: the tool lists 11 find
     await expect(p12.getByTestId('parsed-text')).toContainText('Still an issue – 9/28/26');
     await loaded(p12.getByTestId('parsed-picture'));
     await loaded(p12.getByTestId('parsed-image'));
-    // A section divider shows its words, not a picture of them.
-    const divider = pane.getByTestId('parsed-page').filter({ has: page.getByTestId('parsed-fact').filter({ hasText: '(a section divider)' }) }).first();
-    await expect(divider).toBeVisible();
-    await expect(divider.getByTestId('parsed-picture')).toHaveCount(0);
+    // A section divider is one short band with its words: no heading, facts, text or picture of them.
+    const divider = pane.locator('[data-testid="parsed-page"][data-page="1"]');
+    await expect(divider.getByTestId('parsed-divider')).toHaveText('Resolved Issues');
+    for (const id of ['parsed-picture', 'parsed-fact', 'parsed-text']) await expect(divider.getByTestId(id)).toHaveCount(0);
+    await expect(divider.locator('h3')).toHaveCount(0);
+    const band = await divider.getByTestId('parsed-divider').boundingBox();
+    expect(band && band.height).toBeLessThan(120);
+    await expect(divider.getByTestId('parsed-divider').locator('a')).toHaveAttribute('href', `/api/manual/${id}/file/source.pdf#page=1`);
     await pane.getByTestId('parsed-close').click();
 
     // AC 9: walked to Done.

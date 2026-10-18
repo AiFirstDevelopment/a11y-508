@@ -9,6 +9,7 @@ interface ParsedPage {
   text: string[];
   none: string | null;
   picture: string | null;
+  divider?: string;
   images: { file: string; label: string }[];
 }
 
@@ -31,7 +32,11 @@ export function parseReport(md: string): { head: string[]; pages: ParsedPage[] }
       } else if (l.startsWith('Text: ')) p.none = l.slice('Text: '.length);
       else if (l.trim() && l !== 'Text, in reading order:') p.facts.push(l);
     }
-    if (p.facts.some((f) => f.endsWith('(a section divider)'))) p.picture = null;
+    // A section divider: its words as a short band, in place of a full-page picture of them.
+    if (p.facts.some((f) => f.endsWith('(a section divider)'))) {
+      p.divider = p.text.join(' ') || (/^Section: (.*) \(a section divider\)$/.exec(p.facts.find((f) => f.endsWith('(a section divider)')) || '') || [])[1] || 'Section';
+      p.picture = null;
+    }
     return p;
   });
   return { head, pages };
@@ -51,6 +56,9 @@ export function parseReport(md: string): { head: string[]; pages: ParsedPage[] }
         @for (l of head(); track $index) { <p class="head" data-testid="parsed-head">{{ l }}</p> }
         @for (p of pages(); track p.heading) {
           <section data-testid="parsed-page" [attr.data-page]="p.n">
+            @if (p.divider) {
+              <p class="divider" data-testid="parsed-divider"><a [href]="pdfPage(p.n)" target="_blank" rel="noopener">{{ p.divider }}</a></p>
+            } @else {
             <h3>{{ p.heading }} · <a [href]="pdfPage(p.n)" target="_blank" rel="noopener">PDF page {{ p.n }}</a></h3>
             @for (f of p.facts; track $index) { <p class="fact" data-testid="parsed-fact">{{ f }}</p> }
             @if (p.text.length) {
@@ -65,6 +73,7 @@ export function parseReport(md: string): { head: string[]; pages: ParsedPage[] }
                   <figure><a [href]="file(im.file)" target="_blank" rel="noopener"><img [src]="file(im.file)" [alt]="'A picture embedded on page ' + p.n" data-testid="parsed-image" /></a><figcaption>{{ im.label }}</figcaption></figure>
                 }
               </div>
+            }
             }
           </section>
         }
@@ -82,6 +91,8 @@ export function parseReport(md: string): { head: string[]; pages: ParsedPage[] }
     blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--muted); }
     blockquote span { display: block; overflow-wrap: anywhere; }
     img.page { width: 100%; border: 1px solid var(--muted); display: block; margin: 6px 0; }
+    .divider { margin: 8px 0 20px; padding: 12px 16px; border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); font-size: 1.4em; font-weight: 600; text-align: center; }
+    .divider a { color: inherit; text-decoration: none; }
     .thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
     .thumbs figure { margin: 0; }
     .thumbs img { max-width: 200px; border: 1px solid var(--muted); display: block; }
