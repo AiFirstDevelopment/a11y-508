@@ -947,8 +947,10 @@ test('read-from-parse AC4 / pictures-and-routes AC7: an element still not found 
     expect(locate).toContain(`- ${app.site.base}search\n`);
     expect(readdirSync(dir).filter((f) => /^agent-locate-/.test(f))).toEqual(['agent-locate-1.log']);
     // F2 is not open by the tester's account, so it is planned; the assistant never judged it: the tool did.
-    expect(readJson(join(dir, 'check.json')).results.map((r: any) => [r.finding, r.verdict])).toEqual([['F1', 'present'], ['F2', 'unreachable'], ['F3', 'present']]);
+    // F1's element was not found: the tool does not ask the assistant about it, and nothing is judged.
+    expect(readJson(join(dir, 'check.json')).results.map((r: any) => [r.finding, r.verdict])).toEqual([['F1', 'unlocated'], ['F2', 'unreachable'], ['F3', 'present']]);
     expect(decisions(dir).filter((d) => d.finding === 'F2' && d.stage === 'check' && d.by === 'tool').map((d) => d.decision)).toEqual(['could not open /gone', 'could not be checked in the deployed site']);
+    expect(headings(tasksFile(dash, `prompt-manual-${id}-check-1.md`).replace(/^## (F\w+): /gm, '## $1 — page '))).toEqual(['F3']);
     expect(decisions(dir).filter((d) => d.finding === 'F1' && d.stage === 'check' && d.by === 'tool' && /^could not find/.test(d.decision)).map((d) => [d.decision, d.reason])).toEqual([['could not find the element on /search', "the assistant's selectors matched nothing twice"]]);
     await expect(item(page, 'F1').getByTestId('not-located')).toHaveText("The tool could not find this element on /search: the assistant's selectors matched nothing. Check the component before approving.");
     // F2's page did not load: its item says the tool could not look.
@@ -1321,10 +1323,10 @@ test('pictures-and-routes AC6, amended: a server that answers deep links with HT
   }
 });
 
-test('pictures-and-routes review fixes: pictures opened through a read_many_files glob count as opened; a locate route not on the list is the start page; a tester-verified finding the assistant could not judge is planned but not as come back', async ({ page }) => {
+test('pictures-and-routes review fixes: pictures opened through a read_many_files glob count as opened; a locate route not on the list is the start page; a tester-verified finding whose element was not found could not be checked: neither already fixed nor come back', async ({ page }) => {
   test.setTimeout(300_000);
   const app = await manualApp();
-  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_PICTURE_GLOB: '1', FAKE_MANUAL_SELECTORS_WRONG: 'F1', FAKE_MANUAL_LOCATE_BAD_ROUTE: 'F1' } });
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_PICTURE_GLOB: '1', FAKE_MANUAL_SELECTORS_WRONG: 'F1', FAKE_MANUAL_LOCATE_BAD_ROUTE: 'F1', FAKE_MANUAL_CHECK_GONE: 'F1' } });
   try {
     await open(page, dash);
     await choosePdf(page, DECK);
@@ -1340,11 +1342,15 @@ test('pictures-and-routes review fixes: pictures opened through a read_many_file
     // The locate's made-up route became the start page, said so, and F1 was looked for there.
     expect(decisions(dir).filter((d) => d.finding === 'F1' && /^took the start page/.test(d.decision)).map((d) => [d.stage, d.by, d.decision, d.reason])).toEqual([['check', 'tool', 'took the start page instead of /layout/form-panel', 'it is not a route of the application']]);
     expect(findings.find((f: any) => f.id === 'F1')).toMatchObject({ url: base, located: false });
-    // The assistant could not judge F1 (no element matched): treated as present and planned, but it never said the problem is back.
-    expect(readJson(join(dir, 'check.json')).results.find((r: any) => r.finding === 'F1')).toMatchObject({ verdict: 'present', said: 'unreachable' });
-    await expect(item(page, 'F1')).toHaveCount(1);
-    await expect(item(page, 'F1').getByTestId('came-back')).toHaveCount(0);
+    // F1's element was not on the page: absence is no evidence, so the tester-verified F1 could not be checked —
+    // not already fixed (the real failure: "the fields do not exist on the page" read as fixed), not planned, not come back.
+    expect(readJson(join(dir, 'check.json')).results.find((r: any) => r.finding === 'F1')).toMatchObject({ verdict: 'unlocated', said: null });
+    await expect(item(page, 'F1')).toHaveCount(0);
+    await expect(fixedRow(page, 'F1')).toHaveCount(0);
+    const row = page.getByTestId('could-not-check').locator('[data-testid="unchecked-item"][data-finding="F1"]');
+    await expect(row.getByTestId('unchecked-line')).toHaveText(`The tester verified this fixed on 28 Sep 2026; the tool could not find the element on / (the assistant's selectors matched nothing), so it could not confirm it.`);
     expect(decisions(dir).filter((d) => d.finding === 'F1' && /^Came back: /.test(d.decision))).toEqual([]);
+    expect(decisions(dir).filter((d) => d.finding === 'F1' && d.stage === 'check' && d.decision === 'already fixed in the deployed site')).toEqual([]);
   } finally {
     await dash.stop();
     await app.cleanup();

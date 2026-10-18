@@ -232,6 +232,8 @@ function manual(task) {
     return out(list.map((f) => {
       const p = problem(f.evidence);
       const id = f.id || f.finding;
+      // FAKE_MANUAL_CHECK_GONE=F1: with no element matched, F1 is called fixed because "the fields do not exist" (the real failure of 2026-10-18).
+      if (task.kind === 'manual-check' && p === null && ids(process.env.FAKE_MANUAL_CHECK_GONE).includes(id)) return { id, verdict: 'gone', reason: 'the page loaded, but the specified fields do not exist on the page' };
       if (task.kind === 'manual-check') return { id, verdict: p === null ? 'unreachable' : p ? 'present' : 'gone', reason: p === null ? 'no element matched' : p ? 'the element still has no name' : 'the element has a name now' };
       return { finding: id, verdict: p === false ? 'fixed' : 'not-fixed', reason: p === false ? 'the element has a name in the deployed page' : 'the deployed page still shows the element without a name' };
     }));

@@ -198,6 +198,8 @@ export const unreachableLine = (where) => `The tool could not open ${where} in t
 export const seenLine = (f) => (f && f.seen ? (f.seenPicture === false ? `The assistant did not open the picture of page ${f.page}; what it says below is a guess from the text: ${f.seen}` : `What the assistant saw on page ${f.page}: ${f.seen}`) : 'The assistant did not describe this page.');
 // A tester-verified-fixed finding whose page did not load (docs/plans/pictures-and-routes.md AC 7).
 export const uncheckedLine = (f, where, error) => `The tester verified this fixed${dayOf(f.statusDate) ? ` on ${dayOf(f.statusDate)}` : ''}; the tool could not open ${where}${error ? ` (${error})` : ''}, so it could not confirm it.`;
+// The element was not on the page the tool looked at: absence is no evidence that a problem is fixed.
+export const unlocatedLine = (f, where) => `The tester verified this fixed${dayOf(f.statusDate) ? ` on ${dayOf(f.statusDate)}` : ''}; the tool could not find the element on ${where} (the assistant's selectors matched nothing), so it could not confirm it.`;
 // "Routes the tool knew" keys: the same page ignoring a trailing slash and the query (AC 5); a
 // hash-routed application's '#/route' is part of the page.
 const pathKey = (url) => {
@@ -873,11 +875,12 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       }
     }
     writeJson(join(dir, 'findings.json'), { at: new Date().toISOString(), findings });
-    // The assistant judges only the findings whose page loaded (docs/plans/pictures-and-routes.md AC 7):
-    // a page that is not there is no evidence, and the tool says so itself.
+    // The assistant judges only the findings whose page loaded (docs/plans/pictures-and-routes.md AC 7)
+    // and whose element was found on it: a page that is not there is no evidence, and neither is an
+    // element that is not on the page (on the wrong page, "the fields do not exist" reads as fixed).
     const judged = findings.filter((f) => {
       const e = evidence.get(f.id);
-      return !!(e && e.loaded);
+      return !!(e && e.loaded) && f.located !== false;
     });
     stage('judge', { count: judged.length });
     const VERDICTS = ['present', 'gone', 'unreachable'];
@@ -896,6 +899,11 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         decide('check', f.id, 'tool', 'could not be checked in the deployed site', `the tool could not open ${whereOf(f)} (${error})`, `evidence/${f.id}/before`);
         return { finding: f.id, verdict: 'unreachable', said: null, reason: `the tool could not open ${whereOf(f)} (${error})`, error, url: (e && (e.finalUrl || e.url)) || f.url, checkedAt: (e && e.at) || new Date().toISOString(), screenshot: shot };
       }
+      if (f.located === false) {
+        const reason = `the element was not found on ${whereOf(f)}: the assistant's selectors matched nothing, so nothing could be judged`;
+        decide('check', f.id, 'tool', 'could not be checked in the deployed site', reason, `evidence/${f.id}/before`);
+        return { finding: f.id, verdict: 'unlocated', said: null, reason, url: (e && (e.finalUrl || e.url)) || f.url, checkedAt: (e && e.at) || new Date().toISOString(), screenshot: shot };
+      }
       const v = asked.got.get(f.id) || null;
       const said = v ? String(v.verdict).toLowerCase() : null;
       const verdict = said === 'gone' ? 'gone' : 'present';
@@ -911,7 +919,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   const gone = check.results.filter((r) => r.verdict === 'gone');
   // Could not be checked (docs/plans/pictures-and-routes.md AC 7): a tester-verified-fixed finding whose
   // page did not load is neither planned nor already fixed; any other unreachable one is planned.
-  const unchecked = check.results.filter((r) => r.verdict === 'unreachable' && (byId.get(r.finding) || {}).status === 'fixed');
+  const unchecked = check.results.filter((r) => (r.verdict === 'unreachable' || r.verdict === 'unlocated') && (byId.get(r.finding) || {}).status === 'fixed');
   const present = check.results.filter((r) => r.verdict !== 'gone' && !unchecked.includes(r)).map((r) => byId.get(r.finding)).filter(Boolean);
   for (const r of gone) itemState(r.finding).status = 'already-fixed';
   for (const r of unchecked) itemState(r.finding).status = 'unchecked';
@@ -937,7 +945,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   });
   const uncheckedRows = unchecked.map((r) => {
     const f = byId.get(r.finding);
-    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], line: uncheckedLine(f, whereOf(f), r.error || null) };
+    return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], line: r.verdict === 'unlocated' ? unlocatedLine(f, whereOf(f)) : uncheckedLine(f, whereOf(f), r.error || null) };
   });
   writeFileSync(join(dir, 'already-fixed.md'), [
     `# Already fixed in the deployed site (${goneRows.length})`, '', `From the tester's PDF: [source.pdf](source.pdf)`, '',
