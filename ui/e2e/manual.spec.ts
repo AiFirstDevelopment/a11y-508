@@ -804,7 +804,7 @@ test('read-from-parse AC1/2/3/6/9 / guards g i: the deck: the tool lists 11 find
     await loaded(p12.getByTestId('parsed-picture'));
     await loaded(p12.getByTestId('parsed-image'));
     // A section divider shows its words, not a picture of them.
-    const divider = pane.getByTestId('parsed-page').filter({ has: pane.getByTestId('parsed-fact').filter({ hasText: '(a section divider)' }) }).first();
+    const divider = pane.getByTestId('parsed-page').filter({ has: page.getByTestId('parsed-fact').filter({ hasText: '(a section divider)' }) }).first();
     await expect(divider).toBeVisible();
     await expect(divider.getByTestId('parsed-picture')).toHaveCount(0);
     await pane.getByTestId('parsed-close').click();
