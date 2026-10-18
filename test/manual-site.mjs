@@ -39,6 +39,9 @@ export async function startManualSite({ dir, port = 0 } = {}) {
   // crawlFails: every request is answered HTTP 500 (a site that is down), for the test of a look over
   // the site that fails while the run goes on (docs/plans/manual-crawl-first.md guard e).
   let crawlFails = false;
+  // slowMs: every response waits this long, so a look over the site lasts long enough to be stopped
+  // while it is under way.
+  let slowMs = 0;
   // The app's pages, each with its title. /search links to three item detail pages, /items/1..3, all
   // titled "Item" as detail pages of one kind are (docs/plans/manual-crawl-first.md AC 5): a crawl
   // finds them; the router names them only as items/:id.
@@ -47,7 +50,7 @@ export async function startManualSite({ dir, port = 0 } = {}) {
     '/search': { title: 'Search', html: '<h1>Search</h1>\n<app-search-bar></app-search-bar>\n<ul><li><a href="/items/1">Item 1</a></li><li><a href="/items/2">Item 2</a></li><li><a href="/items/3">Item 3</a></li></ul>' },
   };
   for (const id of [1, 2, 3]) PAGES[`/items/${id}`] = { title: 'Item', html: `<app-item></app-item>\n<p>Item number ${id}.</p>` };
-  const server = createServer((req, res) => {
+  const serve = (req, res) => {
     const path = new URL(req.url, 'http://x').pathname;
     if (crawlFails) {
       res.writeHead(500, { 'content-type': 'text/plain' });
@@ -77,7 +80,8 @@ export async function startManualSite({ dir, port = 0 } = {}) {
     // deployments do for a deep link; the app then shows the real page.
     res.writeHead(deep && page && path.replace(/\/+$/, '') ? 404 : 200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
     res.end(html);
-  });
+  };
+  const server = createServer((req, res) => (slowMs ? setTimeout(() => serve(req, res), slowMs) : serve(req, res)));
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}/`;
   return {
@@ -96,6 +100,10 @@ export async function startManualSite({ dir, port = 0 } = {}) {
     // The site answers every request HTTP 500 until this is turned off again.
     setCrawlFails(on) {
       crawlFails = on;
+    },
+    // Every response waits ms (0: at once).
+    setSlow(ms) {
+      slowMs = ms;
     },
     close: () => new Promise((r) => server.close(() => r())),
   };

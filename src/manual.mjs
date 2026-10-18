@@ -822,10 +822,13 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       const p = (report.pages || []).find((x) => x.error || x.skipped);
       return `no page could be read${p ? `: ${p.error || p.skipped}` : ''}`;
     };
+    // A Stop while the site is looked over ends the crawler without a report: the run stops, and
+    // nothing is logged against the site.
     let r;
     try {
       r = await once();
     } catch (e) {
+      if (stopped()) return;
       return failed(e.message);
     }
     if (stopped()) return;
@@ -834,6 +837,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       try {
         r = await once();
       } catch (e) {
+        if (stopped()) return;
         return failed(e.message);
       }
     }

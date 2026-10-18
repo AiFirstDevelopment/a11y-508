@@ -21,7 +21,7 @@ const NOT_A_PDF = 'That file is not a PDF. Choose the PDF report the tester sent
 interface App {
   cwd: string;
   originDir: string;
-  site: { base: string; setStale(on: boolean): void; setHeld(on: boolean): void; setDeep(on: boolean): void; setCrawlFails(on: boolean): void; close(): Promise<void> };
+  site: { base: string; setStale(on: boolean): void; setHeld(on: boolean): void; setDeep(on: boolean): void; setCrawlFails(on: boolean): void; setSlow(ms: number): void; close(): Promise<void> };
   g: (...args: string[]) => string;
   cleanup(): Promise<void>;
 }
@@ -1584,6 +1584,34 @@ test('crawl-first AC1 / guard e: a look over the site that fails is logged as a 
     await expect(page.getByTestId('plan-item')).toHaveCount(2);
     // No second look: the report that says nothing was read is kept, so a run taken up again does not try again.
     expect(existsSync(join(dir, 'crawl', 'report.json'))).toBe(true);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('crawl-first fix: Stop while the site is looked over ends the run quietly: the look is not logged as a failure of the site, nothing says it could not be looked over, and no routes are written', async ({ page }) => {
+  test.setTimeout(240_000);
+  const app = await manualApp();
+  // Every page of the site takes 2.5 s to answer, so the look over it is under way long enough to stop it.
+  app.site.setSlow(2500);
+  const dash = await dashboard({ cwd: app.cwd });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText(CRAWLING, { timeout: 120_000 });
+    await go(page).click();
+    await expect(now(page)).toHaveText('Stopped.', { timeout: 60_000 });
+    const dir = runDir(dash);
+    const events = await runEvents(dash);
+    expect(crawlStarts(events)).toBe(1);
+    expect(events.filter((e) => e.type === 'manual' && e.stage === 'crawl' && e.state === 'failed')).toEqual([]);
+    const said = existsSync(join(dir, 'decisions.ndjson')) ? decisions(dir) : [];
+    expect(said.filter((d) => d.decision === 'the site could not be looked over')).toEqual([]);
+    if (existsSync(join(dir, 'decisions.md'))) expect(readFileSync(join(dir, 'decisions.md'), 'utf8')).not.toContain('could not be looked over');
+    // The stopped look left no report and the routes were never settled, so a run taken up again looks the site over.
+    expect(existsSync(join(dir, 'crawl', 'report.json'))).toBe(false);
+    expect(existsSync(join(dir, 'routes.json'))).toBe(false);
   } finally {
     await dash.stop();
     await app.cleanup();
