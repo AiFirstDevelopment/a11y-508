@@ -1127,7 +1127,7 @@ test('read retry / guard m: an answer that only echoes ("Here is the original im
 // The machine-readable block of a prompt (its last JSON block).
 const machine = (prompt: string) => JSON.parse([...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)].pop()![1]);
 const OPEN_FIRST = 'For each finding: first open its picture with your file-reading tool, then answer. An answer for a page whose picture you did not open is wrong and will be sent back.';
-const ROUTE_RULE = 'route: one of the known routes below, exactly as written; if none fits, give the closest and say so in decisions';
+const ROUTE_RULE = 'route: the URL of one of the known routes below, exactly as written and without the title and headings after " — "; if none fits, give the closest and say so in decisions';
 const ROUTE_PICK = 'pick the route whose title and headings match what the picture shows';
 const unopenedSays = (id: string, page: number) => new RegExp(`^You answered for ${id} without opening the picture of page ${page} \\(\\S+parsed/pages/page-${String(page).padStart(2, '0')}\\.png\\)\\. Open it with your file-reading tool and look at it before answering; the callout's words and the arrows are only there\\.$`, 'm');
 
@@ -1584,6 +1584,28 @@ test('crawl-first AC1 / guard e: a look over the site that fails is logged as a 
     await expect(page.getByTestId('plan-item')).toHaveCount(2);
     // No second look: the report that says nothing was read is kept, so a run taken up again does not try again.
     expect(existsSync(join(dir, 'crawl', 'report.json'))).toBe(true);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('crawl-first fix: a route the assistant copies as the prompt\'s whole line, title and headings included, is that URL: the item finding is found on its id page, never taken to the start page', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_ROUTE_LINE: 'F1' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, ITEMS);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    const dir = runDir(dash);
+    const base = app.site.base;
+    // The prompt says the route is the URL alone; the answer copied the line anyway, and the tool read the URL at its head.
+    expect(readPrompts(dash, dir.split(/[\\/]/).pop()!)[0]).toContain(`- ${ROUTE_RULE}.\n`);
+    expect(readJson(join(dir, 'findings.json')).findings.find((f: any) => f.id === 'F1')).toMatchObject({ route: expect.stringMatching(new RegExp(`^${rx(base)}items/[123]$`)), url: expect.stringMatching(new RegExp(`^${rx(base)}items/[123]$`)), located: true });
+    expect(decisions(dir).filter((d) => /^took the start page/.test(d.decision))).toEqual([]);
+    expect(readdirSync(dir).filter((f) => /^agent-locate-/.test(f))).toEqual([]);
+    await expect(item(page, 'F1').getByTestId('not-located')).toHaveCount(0);
   } finally {
     await dash.stop();
     await app.cleanup();

@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { agentEnvFor, MANUAL_GEMINI_MODEL, streamModel, agentLog } from '../src/agent.mjs';
-import { buildCandidates, countsSentence, describedEnough, foldAnswers, onRouteList, readSentence, seenLine, seenLines, uncheckedLine, unseenPages } from '../src/manual.mjs';
+import { buildCandidates, countsSentence, describedEnough, foldAnswers, onRouteList, readSentence, routeOnly, seenLine, seenLines, uncheckedLine, unseenPages } from '../src/manual.mjs';
 import { notFoundView, pageDespite404 } from '../src/evidence.mjs';
 
 const only = process.argv.includes('-g') ? process.argv[process.argv.indexOf('-g') + 1] : null;
@@ -179,6 +179,19 @@ test('pictures-and-routes AC5: a route is on the list when it is the same path, 
   const routes = ['http://h.test/app/', 'http://h.test/app/search', 'http://h.test/app/layout/default'];
   for (const r of ['/app/search', '/app/search/', 'http://h.test/app/search?q=1', 'layout/default', '', '/app']) assert.equal(onRouteList(r, routes, 'http://h.test/app/'), true, r);
   for (const r of ['/app/layout/form-panel', '/layout/default', 'http://other.test/app/search', 'http://[bad']) assert.equal(onRouteList(r, routes, 'http://h.test/app/'), false, r);
+});
+
+test('crawl-first fix: a route answered as the prompt\'s whole line (its URL, title, headings and "(and N more like it)") is that URL, in the describe\'s answers as in the locate\'s', () => {
+  const line = 'http://h.test/app/items/1 — "Item": Item (and 2 more like it)';
+  assert.equal(routeOnly(line), 'http://h.test/app/items/1');
+  assert.equal(routeOnly(`- ${line}`), 'http://h.test/app/items/1');
+  assert.equal(routeOnly(' /search '), '/search');
+  assert.equal(routeOnly(''), '');
+  assert.equal(routeOnly(null), '');
+  const cands = [{ id: 'F1', pages: [2], page: 2, status: 'open', criterion: '5.C', quote: 'q', picture: 'pages/page-02.png', images: [], lines: [] }];
+  const f = foldAnswers(cands, new Map([['F1', answer('F1', { route: line })]]), () => {});
+  assert.equal(f[0].route, 'http://h.test/app/items/1');
+  assert.equal(onRouteList(f[0].route, ['http://h.test/app/items/1', 'http://h.test/app/items/2'], 'http://h.test/app/'), true);
 });
 
 test('pictures-and-routes AC6: the app\'s own Not Found view is told from its title, first heading or main text, when the main region is short', () => {

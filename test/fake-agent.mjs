@@ -127,7 +127,9 @@ if (task && /^manual-/.test(task.kind)) {
 // known routes. FAKE_MANUAL_ROUTE_DOWN=F2 puts F2 on /gone (HTTP 404) and FAKE_MANUAL_ROUTE_NOT_FOUND=F3
 // on /reports (the app's Not Found view), in the describe and the locate alike.
 // Review fixes: FAKE_MANUAL_PICTURE_GLOB=1 (the describe opens the pictures with read_many_files on a
-// glob), FAKE_MANUAL_LOCATE_BAD_ROUTE=F1 (the locate's route is not a known route).
+// glob), FAKE_MANUAL_LOCATE_BAD_ROUTE=F1 (the locate's route is not a known route),
+// FAKE_MANUAL_ROUTE_LINE=F1 (the describe gives F1's route as the prompt's whole line for it, URL,
+// title, headings and "(and N more like it)", as an assistant copying a route "exactly as written" does).
 // The describe answers each candidate from its page's FINDING line (id | title | route | selectors |
 // element | words): a tag other than the candidate's own id says the page shows that earlier finding
 // (sameAs); a second FINDING line on a page is a second problem (extra); a page with none names no
@@ -203,6 +205,8 @@ function manual(task) {
       // a look over the site knows: the first /items/<id> route the prompt lists (its FINDING line's
       // route, /items/, when the list has none, which is not a route of the application).
       if (/\bItem\b/.test(c.quote || '')) a.route = (task.routes || []).find((u) => /\/items\/[^/]+\/?$/.test(String(u))) || a.route;
+      // FAKE_MANUAL_ROUTE_LINE: the route as the prompt lists it, title and headings included.
+      if (ids(process.env.FAKE_MANUAL_ROUTE_LINE).includes(c.id)) a.route = (prompt.split('\n').find((l) => l.startsWith(`- ${a.route}`)) || `- ${a.route}`).slice(2);
       if (sameAs[c.id]) a.sameAs = sameAs[c.id];
       if (wrong.includes(c.id)) a.selectors = ['#not-on-this-page'];
       // FAKE_MANUAL_DESCRIBE_NO_ELEMENT: every answer says what it saw but names no element.

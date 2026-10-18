@@ -125,7 +125,7 @@ export function foldAnswers(candidates, answers, decide, seenOf = () => null, so
     const pic = described ? seenOf(c.id) : null;
     return {
       ...facts, pages: [...c.pages], images: [...(c.images || [])], title, seen: described ? str(a.seen, 1200) : null, ...(typeof pic === 'boolean' ? { seenPicture: pic } : {}), element,
-      route: described ? str(a.route || a.url, 500) : '', url: null, selectors: described ? selectorsOf(a.selectors) : [], expected: described ? str(a.expected, 400) : '',
+      route: described ? routeOnly(str(a.route || a.url, 500)) : '', url: null, selectors: described ? selectorsOf(a.selectors) : [], expected: described ? str(a.expected, 400) : '',
       located: null,
     };
   };
@@ -225,6 +225,9 @@ const pathKey = (url) => {
     return null;
   }
 };
+// The route the assistant gave, as the URL or path alone: an answer that copies a prompt line as
+// written (`- https://h/items/1 — "Item": Item (and 2 more like it)`) is that URL.
+export const routeOnly = (s) => String(s || '').trim().replace(/^-\s+/, '').split(/\s/)[0];
 // Whether a route the assistant gave (a path or a full URL) is one of the known routes.
 export function onRouteList(route, routes, startUrl) {
   if (!route) return true;
@@ -1011,7 +1014,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       for (const f of unlocated) {
         const a = answers.find((x) => x && (x.id === f.id || x.finding === f.id));
         const sels = a ? selectorsOf(a.selectors) : [];
-        const route = a ? str(a.route || a.url, 500) : '';
+        const route = a ? routeOnly(str(a.route || a.url, 500)) : '';
         if (!a || (!sels.length && !route)) continue;
         if (route && !onRouteList(route, routes, cfg.url)) {
           decide('check', f.id, 'tool', `took the start page instead of ${route}`, 'it is not a route of the application');

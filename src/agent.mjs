@@ -524,7 +524,7 @@ export const unopenedLine = ({ id, page, picture }) => `You answered for ${id} w
 const unopenedLines = (list) => (list && list.length ? `${list.map(unopenedLine).join('\n')}\n\n` : '');
 // The rule every describe prompt opens with (AC 2), and the route rule (AC 5).
 export const OPEN_FIRST = 'For each finding: first open its picture with your file-reading tool, then answer. An answer for a page whose picture you did not open is wrong and will be sent back.';
-export const ROUTE_RULE = 'one of the known routes below, exactly as written; if none fits, give the closest and say so in decisions';
+export const ROUTE_RULE = 'the URL of one of the known routes below, exactly as written and without the title and headings after " — "; if none fits, give the closest and say so in decisions';
 // How to choose among them, now that a crawled route says what is on the page (docs/plans/manual-crawl-first.md AC 2).
 export const ROUTE_PICK = 'pick the route whose title and headings match what the picture shows';
 // The known routes, one line each: the URL and, for a page a crawl reached, its title and headings
