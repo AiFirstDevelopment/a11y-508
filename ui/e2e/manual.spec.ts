@@ -1723,26 +1723,26 @@ test.describe('screenshots', () => {
       const id = run.meta.manualId;
       const dir = join(dash.dirs().work, 'manual', id);
       expect(existsSync(join(dir, 'source.pdf'))).toBe(false);
-      expect(readFileSync(join(dir, 'shots', '01.png')).equals(b)).toBe(true);
-      expect(readFileSync(join(dir, 'shots', '02.png')).equals(a)).toBe(true);
-      expect(readJson(join(dir, 'notes.json')).shots.map((s: any) => [s.file, s.name, s.note])).toEqual([['shots/01.png', 'b.png', NOTE_B], ['shots/02.png', 'a.png', NOTE_A]]);
       await expect.poll(() => existsSync(join(dir, 'state.json')) && readJson(join(dir, 'state.json')).source, { timeout: 30_000 }).toBe('screenshots');
+      // Guard d: no parse stage, and the read started within 5 s of the upload.
+      const stages = async () => (await runEvents(dash, 1000)).filter((e) => e.type === 'manual');
+      await expect.poll(async () => (await stages()).some((e) => ['read', 'parse', 'parse-failed'].includes(e.stage)), { timeout: 30_000 }).toBe(true);
+      const manualEvents = await stages();
+      expect(manualEvents.filter((e) => e.stage === 'parse' || e.stage === 'parse-failed').map((e) => e.reason || e.stage)).toEqual([]);
+      const read = manualEvents.find((e) => e.stage === 'read');
+      expect(Date.parse(read.at) - uploaded).toBeLessThan(5000);
       // AC 3 / guards b and g: the parse, one page per screenshot in the order added, the note as its text.
       const md = readFileSync(join(dir, 'parsed', 'report.md'), 'utf8');
       expect(md).toContain('2 screenshots, with a note on 2 of them.');
       expect(md.split('\n## ')[1]).toBe(`Screenshot 1 of 2\nPicture of the page: pages/page-01.png\nNote from the person who took it:\n> ${NOTE_B}\n`);
       expect(md.split('\n## ')[2]).toContain(`Note from the person who took it:\n> ${NOTE_A}`);
+      expect(readFileSync(join(dir, 'shots', '01.png')).equals(b)).toBe(true);
+      expect(readFileSync(join(dir, 'shots', '02.png')).equals(a)).toBe(true);
+      expect(readJson(join(dir, 'notes.json')).shots.map((s: any) => [s.file, s.name, s.note])).toEqual([['shots/01.png', 'b.png', NOTE_B], ['shots/02.png', 'a.png', NOTE_A]]);
       // AC 5: the read's sentence, and never the PDF's.
       await expect.poll(() => seen(page), { timeout: 60_000 }).toContain('Reading 2 screenshots; asking the assistant what each shows.');
       expect((await seen(page)).filter((t) => /PDF/.test(t))).toEqual([]);
       await expect(now(page)).toHaveText(REVIEW, { timeout: 120_000 });
-      // Guard d: no parse stage, and the read started within 5 s of the upload.
-      const events = await runEvents(dash);
-      const manualEvents = events.filter((e) => e.type === 'manual');
-      expect(manualEvents.filter((e) => e.stage === 'parse' || e.stage === 'parse-failed')).toEqual([]);
-      const read = manualEvents.find((e) => e.stage === 'read');
-      expect(read, JSON.stringify(manualEvents.map((e) => e.stage))).toBeTruthy();
-      expect(Date.parse(read.at) - uploaded).toBeLessThan(5000);
       // Guard b: the candidates carry the notes as the quotes, and the describe prompt has them.
       const cands = readJson(join(dir, 'candidates.json')).candidates;
       expect(cands.map((c: any) => [c.id, c.page, c.quote, c.status, c.criterion])).toEqual([['F1', 1, NOTE_B, null, null], ['F2', 2, NOTE_A, null, null]]);
