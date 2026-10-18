@@ -241,6 +241,25 @@ export function onRouteList(route, routes, startUrl) {
 }
 export const seenLines = (f) => [seenLine(f), ...((f && f.seenMore) || []).map((x) => seenLine(x))];
 
+// A removed element (docs/plans/removed-element.md): the tester's element is no longer there, said by
+// the locate step (the page and its controls) or the plan step (the source). A locate answer that
+// offers another element in its place is not taken: its reason gives it away.
+export const STAND_IN = /\b(equivalent|replaced (by|with)|serves the same|same purpose|instead of|in place of|substitute)\b/i;
+export const removedWords = (n) => `${n} ${n === 1 ? 'element has' : 'elements have'} been removed since the tester looked`;
+// The "Already fixed: removed (N)" section of already-fixed.md and decisions.md. rows: [{ finding,
+// title, page, quote, seen..., removed: { by, reason, files }, url }]. depth: 1 for "#", 2 for "##".
+export function removedSection(rows, source = 'pdf', depth = 1) {
+  if (!rows.length) return [];
+  const h = '#'.repeat(depth);
+  return [`${h} Already fixed: removed (${rows.length})`, '', ...rows.flatMap((r) => {
+    const by = r.removed || {};
+    const files = Array.isArray(by.files) ? by.files.filter(Boolean) : [];
+    return [`${h}# ${r.finding}: ${r.title} — [${pageLabel(source, r.page)}](${pageLink(source, r.page)})`, '', ...seenLines(r).flatMap((l) => [l, '']), ...(r.quote ? [`> ${r.quote}`, ''] : []),
+      `- The element has been removed: ${by.reason || '(no reason given)'}`,
+      files.length ? `- Shown by: ${files.join(', ')}` : `- Shown by: the deployed page, ${r.url || '(no address)'}`, ''];
+  })];
+}
+
 export const isPdf = (buf) => !!buf && buf.length >= 5 && buf.subarray(0, 5).toString('latin1') === '%PDF-';
 export const manualRoot = (cwd) => join(workDir(cwd), MANUAL_DIR);
 export const manualDir = (cwd, id) => join(manualRoot(cwd), id);
@@ -389,7 +408,7 @@ export function decisionGroups(dir, web = null) {
   const source = runSource(dir, state, manifest);
   const pictureOf = (n) => ((manifest && manifest.pages) || []).find((p) => p.n === n)?.picture || null;
   const groups = findings.map((f) => ({
-    picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], located: f.located ?? null,
+    picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], located: f.located ?? null, removed: f.removed || null,
     finding: f.id, title: f.title, page: f.page, pages: f.pages || [f.page], tester: f.status || null, quote: f.quote, url: f.url || null, status: (state.items && state.items[f.id] && state.items[f.id].status) || null,
     decisions: all.filter((d) => d.finding === f.id),
     commits: ((state.items && state.items[f.id] && state.items[f.id].commits) || []).map((c) => ({ ...c, url: commitWebUrl(web, c.sha) })),
@@ -406,6 +425,7 @@ export function decisionsMarkdown(dir, web = null) {
   const out = ['# Decisions', '', fromLine(dir, source), ''];
   if (crawl) out.push(`The site as the tool saw it: [${crawl}](${crawl})`, '');
   if (general.length) out.push('## The run', '', ...general.map(line), '');
+  out.push(...removedSection(groups.filter((g) => g.removed), source, 2));
   for (const g of groups) {
     out.push(`## ${g.finding}: ${g.title} — [${pageLabel(source, g.page)}](${pageLink(source, g.page)})`, '', ...seenLines(g).flatMap((l) => [l, '']));
     if (g.quote) out.push(`> ${g.quote}`, '');
@@ -1011,8 +1031,22 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       const answers = answersOf(result) || [];
       const again = [];
       const gave = new Set();
+      const rejected = new Set();
       for (const f of unlocated) {
         const a = answers.find((x) => x && (x.id === f.id || x.finding === f.id));
+        // The element is gone from the page and the source: already fixed, not looked for again.
+        if (a && a.removed === true) {
+          const reason = str(a.reason, 400) || 'it gave no reason';
+          f.removed = { by: 'locate', reason, files: [] };
+          decide('check', f.id, 'agent', 'the element has been removed', reason, `evidence/${f.id}/before`);
+          continue;
+        }
+        // Another element offered in its place is not the tester's element: it stays not found.
+        if (a && STAND_IN.test(String(a.reason || ''))) {
+          rejected.add(f.id);
+          decide('check', f.id, 'tool', 'did not take a different element in its place', str(a.reason, 300));
+          continue;
+        }
         const sels = a ? selectorsOf(a.selectors) : [];
         const route = a ? routeOnly(str(a.route || a.url, 500)) : '';
         if (!a || (!sels.length && !route)) continue;
@@ -1034,6 +1068,11 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       const second = again.length ? await capture(again, 'before') : new Map();
       if (stopped()) return 1;
       for (const f of unlocated) {
+        if (f.removed) {
+          f.located = null;
+          f.unreachable = false;
+          continue;
+        }
         if (second.has(f.id)) evidence.set(f.id, second.get(f.id));
         const e = evidence.get(f.id);
         f.located = !!(e && e.loaded && e.matched > 0);
@@ -1042,7 +1081,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
         if (f.unreachable) f.located = null;
         if (f.unreachable) decide('check', f.id, 'tool', `could not open ${whereOf(f)}`, (e && e.error) || 'the page did not load', `evidence/${f.id}/before`);
         else if (f.located) decide('check', f.id, 'tool', `found the element on ${whereOf(f)}`, `the assistant's second selectors matched ${plural(e.matched, 'element')}`, `evidence/${f.id}/before`);
-        else decide('check', f.id, 'tool', `could not find the element on ${whereOf(f)}`, gave.has(f.id) ? "the assistant's selectors matched nothing twice" : "the assistant's selectors matched nothing and it gave no others", `evidence/${f.id}/before`);
+        else decide('check', f.id, 'tool', `could not find the element on ${whereOf(f)}`, gave.has(f.id) ? "the assistant's selectors matched nothing twice" : rejected.has(f.id) ? 'the assistant offered a different element in its place' : "the assistant's selectors matched nothing and it gave no others", `evidence/${f.id}/before`);
       }
     }
     writeJson(join(dir, 'findings.json'), { at: new Date().toISOString(), findings });
@@ -1051,7 +1090,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     // element that is not on the page (on the wrong page, "the fields do not exist" reads as fixed).
     const judged = findings.filter((f) => {
       const e = evidence.get(f.id);
-      return !!(e && e.loaded) && f.located !== false;
+      return !f.removed && !!(e && e.loaded) && f.located !== false;
     });
     stage('judge', { count: judged.length });
     const VERDICTS = ['present', 'gone', 'unreachable'];
@@ -1065,6 +1104,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     const results = findings.map((f) => {
       const e = evidence.get(f.id);
       const shot = e && e.files && e.files.includes('screenshot.png') ? `evidence/${f.id}/before/screenshot.png` : null;
+      if (f.removed) return { finding: f.id, verdict: 'removed', said: null, reason: f.removed.reason, url: (e && (e.finalUrl || e.url)) || f.url, checkedAt: (e && e.at) || new Date().toISOString(), screenshot: shot };
       if (!e || !e.loaded) {
         const error = (e && e.error) || 'the page did not load';
         decide('check', f.id, 'tool', 'could not be checked in the deployed site', `the tool could not open ${whereOf(f)} (${error})`, `evidence/${f.id}/before`);
@@ -1098,8 +1138,9 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   // Could not be checked (docs/plans/pictures-and-routes.md AC 7): a tester-verified-fixed finding whose
   // page did not load is neither planned nor already fixed; any other unreachable one is planned.
   const unchecked = check.results.filter((r) => (r.verdict === 'unreachable' || r.verdict === 'unlocated') && (byId.get(r.finding) || {}).status === 'fixed');
-  const present = check.results.filter((r) => r.verdict !== 'gone' && !unchecked.includes(r)).map((r) => byId.get(r.finding)).filter(Boolean);
+  const present = check.results.filter((r) => r.verdict !== 'gone' && r.verdict !== 'removed' && !unchecked.includes(r)).map((r) => byId.get(r.finding)).filter(Boolean).filter((f) => !f.removed);
   for (const r of gone) itemState(r.finding).status = 'already-fixed';
+  for (const f of findings) if (f.removed) itemState(f.id).status = 'removed';
   for (const r of unchecked) itemState(r.finding).status = 'unchecked';
   // The tester's verdict beside the deployed site's (docs/plans/pdf-parse.md AC 7): verified fixed and
   // gone is confirmed; verified fixed and present came back, and is planned as a return. Came back
@@ -1125,25 +1166,38 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     const f = byId.get(r.finding);
     return { ...r, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], line: r.found === false ? notFoundLine(f, whereOf(f)) : r.verdict === 'unlocated' ? unlocatedLine(f, whereOf(f)) : uncheckedLine(f, whereOf(f), r.error || null) };
   });
-  writeFileSync(join(dir, 'already-fixed.md'), [
-    `# Already fixed in the deployed site (${goneRows.length})`, '', fromLine(dir, source), '',
-    ...(verifiedGone.length || cameBack.length ? [`${verifiedGone.length} of them the tester had verified fixed; ${cameBack.length} the tester had verified fixed came back (${cameBack.length === 1 ? 'it is' : 'they are'} in the plan).`, ''] : []),
-    ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [${label(r.page)}](${linkOf(r.page)})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', ...(r.tester ? [`- ${r.tester}`] : []), ...(r.notLocated ? [`- ${r.notLocated}`] : []), `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
-    ...(uncheckedRows.length ? [`# Could not be checked (${uncheckedRows.length})`, '', ...uncheckedRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [${label(r.page)}](${linkOf(r.page)})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', `- ${r.line}`, `- Tried: ${r.url} at ${r.checkedAt}`, r.screenshot ? `\n![What the tool saw at ${r.url}](${r.screenshot})` : '', ''])] : []),
-  ].join('\n'));
+  // Removed (docs/plans/removed-element.md AC 3): by the locate step here, or by the plan step later,
+  // when the report is written again.
+  const removedRows = () => findings.filter((f) => f.removed).map((f) => {
+    const r = check.results.find((x) => x.finding === f.id) || {};
+    return { finding: f.id, title: f.title, quote: f.quote, page: f.page, pages: f.pages || [f.page], picture: pictureOf(f.page), seen: f.seen || null, seenPicture: f.seenPicture ?? null, seenMore: f.seenMore || [], removed: f.removed, line: `The element has been removed: ${f.removed.reason}`, files: f.removed.files || [], url: r.url || f.url || null, checkedAt: r.checkedAt || null, screenshot: r.screenshot || null };
+  });
   const all = gone.length === findings.length;
-  stage('already-fixed', { rows: goneRows, total: findings.length, all, unchecked: uncheckedRows });
-  if (!present.length) {
+  const writeAlreadyFixed = () => {
+    writeFileSync(join(dir, 'already-fixed.md'), [
+      `# Already fixed in the deployed site (${goneRows.length})`, '', fromLine(dir, source), '',
+      ...(verifiedGone.length || cameBack.length ? [`${verifiedGone.length} of them the tester had verified fixed; ${cameBack.length} the tester had verified fixed came back (${cameBack.length === 1 ? 'it is' : 'they are'} in the plan).`, ''] : []),
+      ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [${label(r.page)}](${linkOf(r.page)})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', ...(r.tester ? [`- ${r.tester}`] : []), ...(r.notLocated ? [`- ${r.notLocated}`] : []), `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
+      ...(uncheckedRows.length ? [`# Could not be checked (${uncheckedRows.length})`, '', ...uncheckedRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [${label(r.page)}](${linkOf(r.page)})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', `- ${r.line}`, `- Tried: ${r.url} at ${r.checkedAt}`, r.screenshot ? `\n![What the tool saw at ${r.url}](${r.screenshot})` : '', ''])] : []),
+      ...removedSection(removedRows(), source, 1),
+    ].join('\n'));
+    stage('already-fixed', { rows: goneRows, total: findings.length, all, unchecked: uncheckedRows, removed: removedRows() });
+  };
+  writeAlreadyFixed();
+  // Nothing left to plan: the run ends here, with nothing to approve.
+  const nothingToFix = () => {
     const v = verifiedGone.length;
+    const removed = findings.filter((f) => f.removed).length;
     const line = all
       ? (findings.length === 1 ? `The one finding in ${theSource} is already fixed in the deployed site` : `All ${findings.length} findings in ${theSource} are already fixed in the deployed site`) + (v ? ` (${v === findings.length ? (v === 1 ? 'the tester had verified it' : 'the tester had verified all of them') : `${v} of them the tester had verified`})` : '') + '.'
-      : `Nothing to fix: ${gone.length ? `${alreadyWords(gone.length, v)}; ` : ''}${unchecked.length} could not be checked.`;
+      : `Nothing to fix: ${[gone.length ? alreadyWords(gone.length, v) : '', removed ? removedWords(removed) : '', unchecked.length ? `${unchecked.length} could not be checked` : ''].filter(Boolean).join('; ')}.`;
     state.done = true;
     state.doneLine = line;
     save();
-    stage('done', { all: true, fixed: 0, alreadyFixed: gone.length, testerVerified: v, cameBack: 0, unchecked: unchecked.length, message: line });
+    stage('done', { all: true, fixed: 0, alreadyFixed: gone.length, testerVerified: v, cameBack: 0, unchecked: unchecked.length, removed, message: line });
     return finish(0, line);
-  }
+  };
+  if (!present.length) return nothingToFix();
   if (gone.length) log.info(`${plural(gone.length, 'finding is', 'findings are')} already fixed in the deployed site (already-fixed.md)`);
 
   const components = () => listComponents(cwd, sourceDirs).components;
@@ -1183,9 +1237,27 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     const { result } = await ask('plan', (resultFile) => manualPlanPrompt({ findings: present.map((f) => ({ ...f, evidence: evidenceOf(f.id) })), components: list, sourceDirs, framework, resultFile }));
     if (stopped()) return 1;
     const answers = Array.isArray(result) ? result : Array.isArray(result && result.items) ? result.items : [];
-    plan = { version: 1, at: new Date().toISOString(), reason: 'initial', items: present.map((f) => toItem(f, answers.find((a) => a && a.finding === f.id) || null, list, 'plan')) };
+    // AC 2: an item the code shows is gone leaves the plan and is already fixed.
+    const kept = [];
+    for (const f of present) {
+      const a = answers.find((x) => x && x.finding === f.id) || null;
+      if (a && a.noChange === true && a.removed === true) {
+        const reason = str(a.reason || a.fix, 400) || 'it gave no reason';
+        const files = (Array.isArray(a.files) ? a.files : []).map((x) => str(x, 500)).filter(Boolean);
+        f.removed = { by: 'plan', reason, files };
+        itemState(f.id).status = 'removed';
+        decide('plan', f.id, 'agent', 'the element has been removed', `${reason}${files.length ? ` (read: ${files.join(', ')})` : ''}`);
+      } else kept.push({ f, a });
+    }
+    if (kept.length < present.length) {
+      writeJson(join(dir, 'findings.json'), { at: new Date().toISOString(), findings });
+      save();
+      writeAlreadyFixed();
+    }
+    plan = { version: 1, at: new Date().toISOString(), reason: 'initial', items: kept.map(({ f, a }) => toItem(f, a, list, 'plan')) };
     savePlan(plan);
   }
+  if (!plan.items.length) return nothingToFix();
 
   // ---- 5. Review until approved: edits go to the assistant, which confirms each.
   const reader = wordReader(stopped);
@@ -1519,11 +1591,13 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     reader.close();
   }
   const fixed = Object.values(state.items).filter((s) => s.status === 'fixed').length;
-  const line = `Done: ${plural(fixed, 'finding')} from ${theSource} ${fixed === 1 ? 'is' : 'are'} fixed and confirmed in the deployed site${gone.length ? `; ${alreadyWords(gone.length, verifiedGone.length)}` : ''}${cameBack.length ? `; ${cameBack.length} had come back` : ''}${unchecked.length ? `; ${unchecked.length} could not be checked` : ''}.`;
+  const removedCount = findings.filter((f) => f.removed).length;
+  const backCount = cameBack.filter((f) => !f.removed).length;
+  const line = `Done: ${plural(fixed, 'finding')} from ${theSource} ${fixed === 1 ? 'is' : 'are'} fixed and confirmed in the deployed site${gone.length ? `; ${alreadyWords(gone.length, verifiedGone.length)}` : ''}${removedCount ? `; ${removedWords(removedCount)}` : ''}${backCount ? `; ${backCount} had come back` : ''}${unchecked.length ? `; ${unchecked.length} could not be checked` : ''}.`;
   state.done = true;
   state.doneLine = line;
   state.stage = 'done';
   save();
-  stage('done', { all: false, fixed, alreadyFixed: gone.length, testerVerified: verifiedGone.length, cameBack: cameBack.length, unchecked: unchecked.length, message: line });
+  stage('done', { all: false, fixed, alreadyFixed: gone.length, testerVerified: verifiedGone.length, cameBack: backCount, unchecked: unchecked.length, removed: removedCount, message: line });
   return finish(0, line);
 }

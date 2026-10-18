@@ -5,7 +5,10 @@
 
 import assert from 'node:assert/strict';
 import { agentEnvFor, MANUAL_GEMINI_MODEL, streamModel, agentLog } from '../src/agent.mjs';
-import { buildCandidates, countsSentence, describedEnough, foldAnswers, onRouteList, readSentence, routeOnly, seenLine, seenLines, uncheckedLine, unseenPages } from '../src/manual.mjs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { STAND_IN, buildCandidates, countsSentence, decisionsMarkdown, removedSection, removedWords, describedEnough, foldAnswers, onRouteList, readSentence, routeOnly, seenLine, seenLines, uncheckedLine, unseenPages } from '../src/manual.mjs';
 import { notFoundView, pageDespite404 } from '../src/evidence.mjs';
 
 const only = process.argv.includes('-g') ? process.argv[process.argv.indexOf('-g') + 1] : null;
@@ -215,6 +218,42 @@ test('pictures-and-routes AC6, amended: a deep link the server answers with HTTP
   assert.equal(pageDespite404({ title: 'Search', heading: 'Search', main: 'Search', mainWords: 1 }), true);
   assert.equal(pageDespite404({ title: 'Cargo Traceability', heading: '', main: '', mainWords: 0 }), false);
   assert.equal(pageDespite404({}), false);
+});
+
+test('removed-element guard d: already-fixed.md and decisions.md carry the "Already fixed: removed" section with the reason and what shows it', () => {
+  const rows = [
+    { finding: 'F1', title: 'Refresh button', page: 1, quote: 'No keyboard access to Refresh button', seen: 'The Hot List.', removed: { by: 'plan', reason: 'hotlist.component.html has no refresh button', files: ['src/app/hotlist/hotlist.component.html'] }, url: 'http://x/hotlist' },
+    { finding: 'F2', title: 'Old link', page: 2, quote: '', seen: null, removed: { by: 'locate', reason: 'the page has no such link', files: [] }, url: 'http://x/home' },
+  ];
+  // already-fixed.md's section (level 1), as the run writes it.
+  const md = removedSection(rows, 'screenshots', 1).join('\n');
+  assert.match(md, /^# Already fixed: removed \(2\)$/m);
+  assert.match(md, /^## F1: Refresh button — \[Screenshot 1\]\(parsed\/pages\/page-01\.png\)$/m);
+  assert.match(md, /^- The element has been removed: hotlist\.component\.html has no refresh button$/m);
+  assert.match(md, /^- Shown by: src\/app\/hotlist\/hotlist\.component\.html$/m);
+  assert.match(md, /^- Shown by: the deployed page, http:\/\/x\/home$/m);
+  assert.deepEqual(removedSection([], 'pdf', 1), []);
+  // decisions.md, from a run's own files.
+  const dir = mkdtempSync(join(tmpdir(), 'a11y-508-removed-unit-'));
+  try {
+    writeFileSync(join(dir, 'findings.json'), JSON.stringify({ findings: [{ id: 'F1', title: 'Refresh button', page: 1, quote: 'No keyboard access to Refresh button', removed: rows[0].removed, url: 'http://x/hotlist' }, { id: 'F2', title: 'Other', page: 2, quote: 'q' }] }));
+    writeFileSync(join(dir, 'state.json'), JSON.stringify({ source: 'pdf', items: { F1: { status: 'removed' } } }));
+    writeFileSync(join(dir, 'decisions.ndjson'), JSON.stringify({ at: 't', stage: 'plan', finding: 'F1', by: 'agent', decision: 'the element has been removed', reason: 'hotlist.component.html has no refresh button' }) + '\n');
+    const dm = decisionsMarkdown(dir);
+    assert.match(dm, /^## Already fixed: removed \(1\)$/m);
+    assert.match(dm, /^### F1: Refresh button — \[PDF page 1\]\(source\.pdf#page=1\)$/m);
+    assert.match(dm, /^- The element has been removed: hotlist\.component\.html has no refresh button$/m);
+    assert.doesNotMatch(dm, /### F2/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(removedWords(1), '1 element has been removed since the tester looked');
+  assert.equal(removedWords(2), '2 elements have been removed since the tester looked');
+});
+
+test('removed-element AC1: a locate reason that offers another element in its place is a stand-in; a plain one is not', () => {
+  for (const r of ['the Search button serves the same purpose', 'The Search button is the equivalent of refresh', 'it was replaced by the time-range buttons', 'use the menu instead of it', 'a substitute control']) assert.equal(STAND_IN.test(r), true, r);
+  for (const r of ['the element is in the deployed page under these selectors', 'the button is in the search bar']) assert.equal(STAND_IN.test(r), false, r);
 });
 
 let failed = 0;

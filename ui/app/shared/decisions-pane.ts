@@ -26,6 +26,7 @@ import { DecisionGroup as Group, ManualDecision, crawlFileUrl, manualFileUrl, pa
             <p class="seen" [attr.data-testid]="g.seenPicture === false ? 'seen-unseen' : 'seen'">{{ seen(g) }}</p>
             @for (x of g.seenMore || []; track x.page) { <p class="seen" data-testid="seen-more">{{ seen(x) }}</p> }
             @if (g.quote) { <blockquote>{{ g.quote }}</blockquote> }
+            @if (g.removed; as r) { <p data-testid="decisions-removed">Already fixed: the element has been removed: {{ r.reason }}@if (r.files.length) { (shown by {{ r.files.join(', ') }})}</p> }
             <ul>@for (d of g.decisions; track $index) { <li data-testid="decision">{{ line(d) }}</li> }</ul>
             @for (c of g.commits; track c.sha) {
               <p data-testid="decisions-commit"><span class="label">Commit: </span>@if (c.url) {<a [href]="c.url" target="_blank" rel="noopener">{{ c.short }}</a>} @else {<code>{{ c.short }}</code>} · {{ c.files.join(', ') }}</p>

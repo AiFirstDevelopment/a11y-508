@@ -663,6 +663,8 @@ ${((ev && ev.tabOrder) || []).slice(0, 60).map((s, i) => `${i + 1}. ${s.role} "$
 
 You described the pages of a tester's report, and for each finding below gave the route and CSS selectors for the element the tester means. The tool opened that route in the deployed site at ${startUrl}, and either the page did not load or your selectors matched nothing on it. Look at the picture of the PDF page, the deployed page's screenshot and its landmarks and controls, and say where the element really is: the route it is on and selectors that match it there. If it is on another page of the application, say notOnThisRoute: true and give that page's route. The route must be ${ROUTE_RULE}. Do not edit any file other than the result file.
 
+If the element is not on the page or in the source, say removed: true with what you checked. Never give a different element in its place, even one with a similar purpose: an answer that offers another element as its equivalent or replacement is not taken.
+
 ${DECIDE}
 
 ${items.map(itemText).join('\n\n')}
@@ -673,7 +675,7 @@ ${routesBlock(routes, startUrl, lookedAt)}
 
 Write a JSON file at ${resultFile} with exactly this shape and nothing else: one answer per finding.
 
-${block({ answers: [{ id: items[0] ? items[0].finding.id : 'F1', route: '/search', selectors: ['#search-btn'], notOnThisRoute: false, reason: 'one sentence: what in the screenshot or the controls shows it' }] })}
+${block({ answers: [{ id: items[0] ? items[0].finding.id : 'F1', route: '/search', selectors: ['#search-btn'], notOnThisRoute: false, removed: false, reason: 'one sentence: what in the screenshot or the controls shows it (with removed: true, what you checked)' }] })}
 
 Machine-readable copy:
 
@@ -724,6 +726,7 @@ For each problem:
 - component: the component (or file) that renders the element: one entry from the list below, by name and file.
 - files: the files you expect to change, starting with the component's.
 - decisions: each choice you made (the component, the files, the approach), with its reason.
+- noChange and removed: true or false. When the code shows the element no longer exists, say noChange: true and removed: true, and name the file you read: reason, one sentence on what the code shows, and files, the files you read. Never plan a fix to a different element in its place.
 
 ${findings.map((f) => `## ${findingText(f)}\n\n${evidenceText(f.evidence)}`).join('\n\n')}
 
@@ -735,7 +738,7 @@ ${componentList(components)}
 
 Write a JSON file at ${resultFile} with exactly this shape and nothing else:
 
-${block({ items: [{ finding: findings[0] ? findings[0].id : 'F1', fix: 'Add aria-label="Search" to the icon-only search button.', component: { name: components[0] ? components[0].name : 'SearchBarComponent', file: components[0] ? components[0].file : 'src/app/search/search-bar.component.ts' }, files: [components[0] ? components[0].file : 'src/app/search/search-bar.component.ts'], decisions: [{ decision: 'the button is in SearchBarComponent', reason: 'its template renders #search-btn' }] }] })}
+${block({ items: [{ finding: findings[0] ? findings[0].id : 'F1', fix: 'Add aria-label="Search" to the icon-only search button.', component: { name: components[0] ? components[0].name : 'SearchBarComponent', file: components[0] ? components[0].file : 'src/app/search/search-bar.component.ts' }, files: [components[0] ? components[0].file : 'src/app/search/search-bar.component.ts'], decisions: [{ decision: 'the button is in SearchBarComponent', reason: 'its template renders #search-btn' }], noChange: false, removed: false, reason: null }] })}
 
 Machine-readable copy:
 

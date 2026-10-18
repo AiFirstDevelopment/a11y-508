@@ -73,6 +73,25 @@ export interface UncheckedRow {
   seenMore?: { page: number; seen: string | null; seenPicture?: boolean | null }[];
 }
 
+// A finding whose element has been removed (docs/plans/removed-element.md AC 3): said by the locate
+// step (the deployed page) or the plan step (the source, with the files it read).
+export interface RemovedRow {
+  finding: string;
+  title: string;
+  quote: string;
+  page: number;
+  picture?: string | null;
+  // "The element has been removed: <reason>"
+  line: string;
+  removed: { by: 'locate' | 'plan'; reason: string; files: string[] };
+  files: string[];
+  url: string | null;
+  screenshot: string | null;
+  seen?: string | null;
+  seenPicture?: boolean | null;
+  seenMore?: { page: number; seen: string | null; seenPicture?: boolean | null }[];
+}
+
 export interface ManualDecision {
   at: string;
   stage: string;
@@ -98,6 +117,7 @@ export interface DecisionGroup {
   seen?: string | null;
   seenPicture?: boolean | null;
   seenMore?: { page: number; seen: string | null; seenPicture?: boolean | null }[];
+  removed?: { by: string; reason: string; files: string[] } | null;
 }
 
 // "What the assistant saw on page 12: ..." (docs/plans/read-from-parse.md AC 6), or, when it answered
@@ -115,6 +135,8 @@ export interface ManualState {
   alreadyFixed: AlreadyFixedRow[];
   // Could not be checked: verified fixed by the tester, but the page did not load.
   unchecked: UncheckedRow[];
+  // Already fixed: removed (docs/plans/removed-element.md AC 3).
+  removed: RemovedRow[];
   allGone: boolean;
   plan: { version: number; reason: string; notHeld: number; items: PlanItem[] } | null;
   // Waiting for the developer: the plan is shown with its edit controls.
@@ -149,7 +171,7 @@ export interface ManualState {
 }
 
 export const emptyManual = (): ManualState => ({
-  id: null, source: 'pdf', stage: null, last: null, findings: null, alreadyFixed: [], unchecked: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
+  id: null, source: 'pdf', stage: null, last: null, findings: null, alreadyFixed: [], unchecked: [], removed: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
   noFindings: null, readFailed: null, readFailedBy: null, parse: null, parsed: null, parseFailed: null, noText: false, readAgain: null, candidates: null, crawl: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
 });
 
@@ -199,6 +221,7 @@ export function applyManual(s: ManualState, ev: Record<string, any>): ManualStat
     case 'already-fixed':
       n.alreadyFixed = ev['rows'] || [];
       n.unchecked = ev['unchecked'] || [];
+      n.removed = ev['removed'] || [];
       n.allGone = !!ev['all'];
       break;
     case 'plan':

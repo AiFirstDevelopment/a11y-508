@@ -1841,4 +1841,104 @@ test.describe('screenshots', () => {
       await app.cleanup();
     }
   });
+
+  // docs/plans/removed-element.md: one screenshot (the search button, F1), run to where it ends or waits.
+  async function oneShot(page: Page, dash: Dash, files: string): Promise<string> {
+    const { pngOf } = await pngs();
+    writeFileSync(join(files, 'b.png'), pngOf(200, 120, [200, 40, 40]));
+    await open(page, dash);
+    await pick(page, [join(files, 'b.png')]);
+    await rows(page).first().getByTestId('shot-note').fill(NOTE_B);
+    await page.getByTestId('shots-fix').click();
+    await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.meta?.manualId, { timeout: 60_000 }).toBeTruthy();
+    return join(dash.dirs().work, 'manual', (await api(dash, '/api/runs/current')).json.meta.manualId);
+  }
+  const manualCommits = (app: App) => (spawnSync('git', ['log', '--all', '--format=%s'], { cwd: app.cwd, encoding: 'utf8' }).stdout || '').split('\n').filter((l) => l.startsWith('a11y-508: manual <'));
+
+  test('removed-element AC1 / guard a: a locate answer that offers a different element in its place is not taken: the finding stays not found, its item says so, and the decision is logged', async ({ page }) => {
+    test.setTimeout(300_000);
+    const app = await manualApp({ crawlPages: 0 });
+    const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_SELECTORS_WRONG: 'F1', FAKE_MANUAL_LOCATE_STANDIN: 'F1' } });
+    const files = tempDir('a11y-508-removed-a-');
+    try {
+      const dir = await oneShot(page, dash, files);
+      await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+      // The prompt says removed is an answer and a stand-in is not.
+      const prompt = readFileSync(join(dash.dirs().work, 'tasks', `prompt-manual-${dir.split('/').pop()}-locate-1.md`), 'utf8');
+      expect(prompt).toContain('If the element is not on the page or in the source, say removed: true with what you checked. Never give a different element in its place, even one with a similar purpose');
+      expect(decisions(dir).filter((d) => d.finding === 'F1' && d.decision === 'did not take a different element in its place').map((d) => [d.stage, d.by, d.reason])).toEqual([['check', 'tool', 'the Search button serves the same purpose']]);
+      await expect(item(page, 'F1').getByTestId('not-located')).toContainText('The tool could not find this element on /search');
+      const f1 = readJson(join(dir, 'findings.json')).findings.find((f: any) => f.id === 'F1');
+      expect([f1.located, f1.selectors]).toEqual([false, ['#not-on-this-page']]);
+      await expect(page.getByTestId('already-removed')).toHaveCount(0);
+    } finally {
+      removeTemp(files);
+      await dash.stop();
+      await app.cleanup();
+    }
+  });
+
+  test('removed-element AC1/3 / guard b: the locate says the element has been removed: it is not planned, it is listed under Already fixed: removed with the reason, and the run ends with nothing to approve', async ({ page }) => {
+    test.setTimeout(300_000);
+    const app = await manualApp({ crawlPages: 0 });
+    const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_SELECTORS_WRONG: 'F1', FAKE_MANUAL_LOCATE_REMOVED: 'F1' } });
+    const files = tempDir('a11y-508-removed-b-');
+    try {
+      const dir = await oneShot(page, dash, files);
+      const DONE = 'Nothing to fix: 1 element has been removed since the tester looked.';
+      await expect(now(page)).toHaveText(DONE, { timeout: 240_000 });
+      const section = page.getByTestId('already-removed');
+      await expect(section.locator('summary')).toHaveText('Already fixed: removed (1)');
+      await expect(section).toHaveAttribute('open', '');
+      const row = section.locator('[data-testid="removed-item"][data-finding="F1"]');
+      await expect(row.getByTestId('removed-line')).toHaveText('The element has been removed: the page and its controls have no such button: it has been taken out of the search bar');
+      await expect(row.getByTestId('pdf-page')).toHaveText('Screenshot 1');
+      await expect(row.getByTestId('quote')).toHaveText(NOTE_B);
+      await expect(row.getByTestId('removed-shown-by')).toContainText('Shown by the deployed page: ');
+      await expect(page.getByTestId('plan-item')).toHaveCount(0);
+      await expect(page.getByTestId('approve-plan')).toHaveCount(0);
+      expect(existsSync(join(dir, 'plan.json'))).toBe(false);
+      expect(decisions(dir).filter((d) => d.finding === 'F1' && d.decision === 'the element has been removed').map((d) => [d.stage, d.by])).toEqual([['check', 'agent']]);
+      // Not looked for again, and not judged.
+      expect(readJson(join(dir, 'check.json')).results.find((r: any) => r.finding === 'F1')).toMatchObject({ verdict: 'removed' });
+      expect(readFileSync(join(dir, 'already-fixed.md'), 'utf8')).toContain('# Already fixed: removed (1)');
+      expect(readFileSync(join(dir, 'decisions.md'), 'utf8')).toContain('- The element has been removed: the page and its controls have no such button');
+      expect(manualCommits(app)).toEqual([]);
+    } finally {
+      removeTemp(files);
+      await dash.stop();
+      await app.cleanup();
+    }
+  });
+
+  test('removed-element AC2/3 / guard c: the plan says the code no longer has the element: it leaves the plan, nothing is approved, and the run ends with the Done sentence and no fix commit', async ({ page }) => {
+    test.setTimeout(300_000);
+    const app = await manualApp({ crawlPages: 0 });
+    const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_PLAN_REMOVED: 'F1' } });
+    const files = tempDir('a11y-508-removed-c-');
+    try {
+      const dir = await oneShot(page, dash, files);
+      const DONE = 'Nothing to fix: 1 element has been removed since the tester looked.';
+      await expect(now(page)).toHaveText(DONE, { timeout: 240_000 });
+      await expect(page.getByTestId('approve-plan')).toHaveCount(0);
+      await expect(page.getByTestId('plan-item')).toHaveCount(0);
+      const prompt = readFileSync(join(dash.dirs().work, 'tasks', `prompt-manual-${dir.split('/').pop()}-plan-1.md`), 'utf8');
+      expect(prompt).toContain('When the code shows the element no longer exists, say noChange: true and removed: true, and name the file you read');
+      const row = page.getByTestId('already-removed').locator('[data-testid="removed-item"][data-finding="F1"]');
+      await expect(row.getByTestId('removed-line')).toHaveText('The element has been removed: the search bar template no longer has the magnifier button');
+      await expect(row.getByTestId('removed-shown-by')).toHaveText('Shown by: src/app/search/search-bar.component.ts');
+      expect(readJson(join(dir, 'plan.json')).items).toEqual([]);
+      expect(decisions(dir).filter((d) => d.finding === 'F1' && d.decision === 'the element has been removed').map((d) => [d.stage, d.by, d.reason])).toEqual([['plan', 'agent', 'the search bar template no longer has the magnifier button (read: src/app/search/search-bar.component.ts)']]);
+      expect(readFileSync(join(dir, 'already-fixed.md'), 'utf8')).toContain('- Shown by: src/app/search/search-bar.component.ts');
+      expect(readFileSync(join(dir, 'decisions.md'), 'utf8')).toContain('## Already fixed: removed (1)');
+      expect(manualCommits(app)).toEqual([]);
+      // The decisions pane says it too.
+      await page.getByTestId('show-decisions').click();
+      await expect(page.getByTestId('decisions-removed')).toHaveText('Already fixed: the element has been removed: the search bar template no longer has the magnifier button (shown by src/app/search/search-bar.component.ts)');
+    } finally {
+      removeTemp(files);
+      await dash.stop();
+      await app.cleanup();
+    }
+  });
 });

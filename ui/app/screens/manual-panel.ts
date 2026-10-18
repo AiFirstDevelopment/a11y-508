@@ -91,6 +91,31 @@ interface Draft {
           </ol>
         </details>
       }
+      @if (m.removed.length) {
+        <details class="section" data-testid="already-removed" [open]="removedOnly()">
+          <summary>Already fixed: removed ({{ m.removed.length }})</summary>
+          <ol>
+            @for (r of m.removed; track r.finding) {
+              <li data-testid="removed-item" [attr.data-finding]="r.finding">
+                <p class="what"><strong>{{ r.finding }}</strong> {{ r.title }} · <a [href]="page(r.page)" target="_blank" rel="noopener" data-testid="pdf-page">{{ label(r.page) }}</a></p>
+                @if (r.quote) { <blockquote data-testid="quote">{{ r.quote }}</blockquote> }
+                <p data-testid="removed-line">{{ r.line }}</p>
+                @if (r.files.length) {
+                  <p data-testid="removed-shown-by"><span class="label">Shown by: </span>{{ r.files.join(', ') }}</p>
+                } @else if (r.url) {
+                  <p data-testid="removed-shown-by"><span class="label">Shown by the deployed page: </span><a [href]="r.url" target="_blank" rel="noopener">{{ r.url }}</a></p>
+                }
+                <div class="pair">
+                  @if (r.picture) { <a [href]="parsed(r.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(r.picture)" [alt]="label(r.page) + ', as the tester saw it'" data-testid="page-picture" /></a> }
+                  @if (r.screenshot && !r.files.length) { <img class="shot" [src]="file(r.screenshot)" [alt]="r.finding + ' in the deployed site'" data-testid="screenshot" /> }
+                </div>
+                <p class="seen" [attr.data-testid]="r.seenPicture === false ? 'seen-unseen' : 'seen'">{{ seen(r) }}</p>
+                @for (x of r.seenMore || []; track x.page) { <p class="seen" data-testid="seen-more">{{ seen(x) }}</p> }
+              </li>
+            }
+          </ol>
+        </details>
+      }
       @if (m.plan) {
         <details class="section" data-testid="plan" [open]="!m.done">
           <summary><h2 id="plan-title">{{ m.plan.reason === 'revised' ? 'The revised plan' : 'The plan' }} <span class="muted">(version {{ m.plan.version }})</span></h2></summary>
@@ -253,6 +278,11 @@ export class ManualPanel {
     const after = (v && v.evidence && g.screenshots.find((s) => s.path === `${v.evidence}/screenshot.png`)) || [...g.screenshots].reverse().find((s) => !s.path.includes('/before/'));
     return { ...g, reason: v ? v.reason : '', shots: [before, after].filter((s): s is { label: string; path: string } => !!s) };
   }));
+  // Already fixed: removed is open when nothing else is on the screen.
+  readonly removedOnly = computed(() => {
+    const m = this.m();
+    return !!m && !!m.removed.length && !m.alreadyFixed.length && !m.unchecked.length && !(m.plan && m.plan.items.length) && !this.fixedRows().length;
+  });
   // Left out of the plan: removed by the developer, and not fixed or already fixed after all.
   readonly leftOut = computed(() => this.groups().filter((g) => g.status !== 'fixed' && g.status !== 'already-fixed').map((g) => {
     const d: ManualDecision | undefined = [...g.decisions].reverse().find((x) => x.stage === 'plan' && x.by === 'developer' && x.decision === 'removed from the plan');

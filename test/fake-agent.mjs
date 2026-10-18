@@ -231,6 +231,10 @@ function manual(task) {
       if (ids(process.env.FAKE_MANUAL_ROUTE_NOT_FOUND).includes(it.id)) return { id: it.id, route: '/reports', selectors: ['#not-on-this-page'], reason: 'the page is /reports' };
       // FAKE_MANUAL_LOCATE_BAD_ROUTE=F1: the locate gives the right selectors on a route that is not one of the known routes.
       if (ids(process.env.FAKE_MANUAL_LOCATE_BAD_ROUTE).includes(it.id)) return { id: it.id, route: '/layout/form-panel', selectors: m ? m[4].split(';').map((x) => x.trim()) : [], reason: 'a made-up route' };
+      // docs/plans/removed-element.md: FAKE_MANUAL_LOCATE_STANDIN=F1 offers another element in its place
+      // (the real answer of 2026-10-18); FAKE_MANUAL_LOCATE_REMOVED=F1 says the element is gone.
+      if (ids(process.env.FAKE_MANUAL_LOCATE_STANDIN).includes(it.id)) return { id: it.id, route: '/search', selectors: ['#menu-btn'], notOnThisRoute: false, reason: 'the Search button serves the same purpose' };
+      if (ids(process.env.FAKE_MANUAL_LOCATE_REMOVED).includes(it.id)) return { id: it.id, route: m ? m[3] : '/', selectors: [], removed: true, reason: 'the page and its controls have no such button: it has been taken out of the search bar' };
       if (ids(process.env.FAKE_MANUAL_LOCATE_WRONG).includes(it.id)) return { id: it.id, route: m ? m[3] : '/', selectors: ['#still-not-on-this-page'], reason: 'a guess' };
       return m ? { id: it.id, route: m[3], selectors: m[4].split(';').map((x) => x.trim()), notOnThisRoute: false, reason: 'the element is in the deployed page under these selectors' } : { id: it.id, route: '/', selectors: [], reason: 'cannot tell' };
     }) });
@@ -262,6 +266,8 @@ function manual(task) {
     return out({ items: list.map((f) => {
       let c = f.component || owner(f);
       if (task.kind === 'manual-plan' && process.env.FAKE_MANUAL_PLAN_WRONG && f.id === 'F1') c = fileOf('HeaderComponent') || c;
+      // FAKE_MANUAL_PLAN_REMOVED=F1: the code shows the element is gone (docs/plans/removed-element.md).
+      if (task.kind === 'manual-plan' && ids(process.env.FAKE_MANUAL_PLAN_REMOVED).includes(f.id)) return { finding: f.id, fix: 'No code change is necessary.', noChange: true, removed: true, reason: 'the search bar template no longer has the magnifier button', files: [c.file], decisions: [] };
       return { finding: f.id, fix: `${task.kind === 'manual-replan' ? 'Try again: give' : 'Give'} the element the tester names an accessible name in ${c.name}.`, component: { name: c.name, file: c.file }, files: [c.file], decisions: [{ decision: `the element is rendered by ${c.name}`, reason: `${c.file} holds its markup` }] };
     }) });
   }
