@@ -24,12 +24,14 @@ export function parseReport(md: string): { head: string[]; pages: ParsedPage[] }
     const p: ParsedPage = { heading, n: Number((/^Page (\d+)/.exec(heading) || [])[1]) || 0, facts: [], text: [], none: null, picture: null, images: [] };
     for (const l of lines.slice(1)) {
       if (l.startsWith('> ')) p.text.push(l.slice(2));
+      // A section divider is its words alone: its picture is two words on an empty page.
       else if (l.startsWith('Picture of the page: ')) p.picture = l.slice('Picture of the page: '.length).trim();
       else if (l.startsWith('Pictures on the page: ')) {
         for (const m of l.slice('Pictures on the page: '.length).matchAll(/(pages\/[\w-]+\.png) \(([^)]*)\)/g)) p.images.push({ file: m[1], label: m[2] });
       } else if (l.startsWith('Text: ')) p.none = l.slice('Text: '.length);
       else if (l.trim() && l !== 'Text, in reading order:') p.facts.push(l);
     }
+    if (p.facts.some((f) => f.endsWith('(a section divider)'))) p.picture = null;
     return p;
   });
   return { head, pages };
