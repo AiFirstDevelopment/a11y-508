@@ -1176,7 +1176,8 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   const writeAlreadyFixed = () => {
     writeFileSync(join(dir, 'already-fixed.md'), [
       `# Already fixed in the deployed site (${goneRows.length})`, '', fromLine(dir, source), '',
-      ...(verifiedGone.length || cameBack.length ? [`${verifiedGone.length} of them the tester had verified fixed; ${cameBack.length} the tester had verified fixed came back (${cameBack.length === 1 ? 'it is' : 'they are'} in the plan).`, ''] : []),
+      // A came-back finding the plan step found removed is under Removed, not in the plan.
+      ...((back) => (verifiedGone.length || back ? [`${verifiedGone.length} of them the tester had verified fixed; ${back} the tester had verified fixed came back (${back === 1 ? 'it is' : 'they are'} in the plan).`, ''] : []))(cameBack.length),
       ...goneRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [${label(r.page)}](${linkOf(r.page)})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', ...(r.tester ? [`- ${r.tester}`] : []), ...(r.notLocated ? [`- ${r.notLocated}`] : []), `- Checked: ${r.url} at ${r.checkedAt}`, `- Why it counts as fixed: ${r.reason || '(no reason given)'}`, r.screenshot ? `\n![${r.finding} in the deployed site](${r.screenshot})` : '', '']),
       ...(uncheckedRows.length ? [`# Could not be checked (${uncheckedRows.length})`, '', ...uncheckedRows.flatMap((r) => [`## ${r.finding}: ${r.title} — [${label(r.page)}](${linkOf(r.page)})`, '', ...seenLines(r).flatMap((l) => [l, '']), r.quote ? `> ${r.quote}` : '', '', `- ${r.line}`, `- Tried: ${r.url} at ${r.checkedAt}`, r.screenshot ? `\n![What the tool saw at ${r.url}](${r.screenshot})` : '', ''])] : []),
       ...removedSection(removedRows(), source, 1),
@@ -1257,7 +1258,8 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     plan = { version: 1, at: new Date().toISOString(), reason: 'initial', items: kept.map(({ f, a }) => toItem(f, a, list, 'plan')) };
     savePlan(plan);
   }
-  if (!plan.items.length) return nothingToFix();
+  // Only a plan the plan step emptied with removals ends here; one the developer emptied in review waits for approval.
+  if (!plan.items.length && plan.reason === 'initial') return nothingToFix();
 
   // ---- 5. Review until approved: edits go to the assistant, which confirms each.
   const reader = wordReader(stopped);

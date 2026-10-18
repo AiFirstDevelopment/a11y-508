@@ -1941,4 +1941,33 @@ test.describe('screenshots', () => {
       await app.cleanup();
     }
   });
+
+  test('removed-element fix: a plan the developer emptied in review is not "Nothing to fix": after a dashboard restart the run waits for approval again', async ({ page }) => {
+    test.setTimeout(400_000);
+    const app = await manualApp({ crawlPages: 0 });
+    let dash = await dashboard({ cwd: app.cwd });
+    const files = tempDir('a11y-508-removed-edit-');
+    try {
+      const dir = await oneShot(page, dash, files);
+      await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+      expect((await api(dash, '/api/manual/review', { method: 'POST', body: { items: [{ finding: 'F1', remove: true }] } })).status).toBe(200);
+      await expect.poll(() => (existsSync(join(dir, 'plan.json')) ? readJson(join(dir, 'plan.json')) : {}).version, { timeout: 60_000 }).toBe(2);
+      expect(readJson(join(dir, 'plan.json')).items).toEqual([]);
+      await expect.poll(() => readJson(join(dir, 'state.json')).reviewing, { timeout: 60_000 }).toBe(2);
+      const home = dash.home;
+      await dash.stop();
+      dash = await dashboard({ cwd: app.cwd, env: { A11Y_508_HOME: home } });
+      await open(page, dash);
+      await expect.poll(() => readJson(join(dir, 'state.json')).reviewing, { timeout: 60_000 }).toBe(2);
+      await page.waitForTimeout(2000);
+      const st = readJson(join(dir, 'state.json'));
+      expect([st.done || false, st.doneLine || null]).toEqual([false, null]);
+      await expect(now(page)).not.toHaveText(/^Nothing to fix/);
+      expect(manualCommits(app)).toEqual([]);
+    } finally {
+      removeTemp(files);
+      await dash.stop();
+      await app.cleanup();
+    }
+  });
 });
