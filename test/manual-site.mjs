@@ -36,9 +36,23 @@ export async function startManualSite({ dir, port = 0 } = {}) {
   // held: the deployment has not arrived (the build marker the fixes committed is not served).
   let held = false;
   let deep = false;
-  const PAGES = { '/': '<app-home></app-home>', '/search': '<h1>Search</h1>\n<app-search-bar></app-search-bar>' };
+  // crawlFails: every request is answered HTTP 500 (a site that is down), for the test of a look over
+  // the site that fails while the run goes on (docs/plans/manual-crawl-first.md guard e).
+  let crawlFails = false;
+  // The app's pages, each with its title. /search links to three item detail pages, /items/1..3, all
+  // titled "Item" as detail pages of one kind are (docs/plans/manual-crawl-first.md AC 5): a crawl
+  // finds them; the router names them only as items/:id.
+  const PAGES = {
+    '/': { title: 'Example app', html: '<app-home></app-home>' },
+    '/search': { title: 'Search', html: '<h1>Search</h1>\n<app-search-bar></app-search-bar>\n<ul><li><a href="/items/1">Item 1</a></li><li><a href="/items/2">Item 2</a></li><li><a href="/items/3">Item 3</a></li></ul>' },
+  };
+  for (const id of [1, 2, 3]) PAGES[`/items/${id}`] = { title: 'Item', html: `<app-item></app-item>\n<p>Item number ${id}.</p>` };
   const server = createServer((req, res) => {
     const path = new URL(req.url, 'http://x').pathname;
+    if (crawlFails) {
+      res.writeHead(500, { 'content-type': 'text/plain' });
+      return res.end('the site is down');
+    }
     if (path === '/bundle.js') {
       res.writeHead(200, { 'content-type': 'text/javascript' });
       return res.end('// the app');
@@ -55,8 +69,8 @@ export async function startManualSite({ dir, port = 0 } = {}) {
       return res.end('<!doctype html><html lang="en"><title>Not found</title><h1>404</h1></html>');
     }
     const comps = stale ? snapshot : components(dir);
-    let html = readFileSync(join(dir, 'src', 'index.html'), 'utf8').replace('<!-- PAGE -->', page || NOT_FOUND);
-    if (!page) html = html.replace(/<title>[^<]*<\/title>/, '<title>Not Found</title>');
+    let html = readFileSync(join(dir, 'src', 'index.html'), 'utf8').replace('<!-- PAGE -->', page ? page.html : NOT_FOUND);
+    html = html.replace(/<title>[^<]*<\/title>/, `<title>${page ? page.title : 'Not Found'}</title>`);
     if (held) html = html.replace(/<meta name="a11y-508-build"[^>]*>\s*/i, '');
     for (let i = 0; i < 3; i++) html = html.replace(/<(app-[\w-]+)><\/\1>/g, (m, sel) => comps[sel] ?? m);
     // deep: the server answers every page but the first with HTTP 404 and still serves the app, as some
@@ -78,6 +92,10 @@ export async function startManualSite({ dir, port = 0 } = {}) {
     },
     setDeep(on) {
       deep = on;
+    },
+    // The site answers every request HTTP 500 until this is turned off again.
+    setCrawlFails(on) {
+      crawlFails = on;
     },
     close: () => new Promise((r) => server.close(() => r())),
   };

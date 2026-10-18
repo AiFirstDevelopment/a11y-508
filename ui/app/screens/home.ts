@@ -549,6 +549,12 @@ export class HomeScreen implements OnDestroy {
         const p = m.parse || (m.parsed ? { pages: m.parsed.pages, withPictures: m.parsed.withPictures } : null);
         return p ? `Reading the PDF: ${plural(p.pages, 'page')} (${p.withPictures} with pictures).` : 'Reading the PDF';
       }
+      // The site, looked over before the assistant is asked (docs/plans/manual-crawl-first.md AC 4): the
+      // pages found so far, from the crawl's page events.
+      case 'crawl': {
+        const found = m.crawl?.found || 0;
+        return `Looking over the deployed site so the tool knows its pages${found ? ` (${found} found so far)` : ''}.`;
+      }
       case 'read':
         if (m.noText) return `The PDF has no text; the assistant is working from the pictures of its ${plural(m.parsed?.pages || n('pages'), 'page')}.`;
         return m.candidates ? `Reading the PDF: ${plural(m.candidates.findings, 'finding')} on ${plural(m.candidates.pages, 'page')}; asking the assistant what each page shows.` : `Reading the PDF with ${who}`;

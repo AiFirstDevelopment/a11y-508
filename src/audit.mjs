@@ -33,7 +33,7 @@ export async function auditPage(page, url, ctx) {
 async function auditPageIn(page, url, ctx) {
   const { opts } = ctx;
   const t0 = Date.now();
-  const result = { url, finalUrl: url, status: null, title: '', error: null, skipped: null, timedOut: false, findings: [], info: null, passes: {}, errors: [] };
+  const result = { url, finalUrl: url, status: null, title: '', headings: [], error: null, skipped: null, timedOut: false, findings: [], info: null, passes: {}, errors: [] };
   const fingerprints = new Set();
   // 13.C lists text colored between an image's bounds in one review item per page. A later run of
   // the checks (behind a load-time modal, after a disclosure) merges its new elements into that item
@@ -187,6 +187,9 @@ async function auditPageIn(page, url, ctx) {
     if (!(await page.evaluate('window.__a11y508.modalOnLoad()').catch(() => null))) await setRanges();
     result.info = await page.evaluate('window.__a11y508.pageInfo()');
     result.title = result.info.title;
+    // What is on the page, beside its title: the PDF run's route list shows them so a screenshot can be
+    // matched to a page (docs/plans/manual-crawl-first.md AC 2).
+    result.headings = Array.isArray(result.info.headings) ? result.info.headings : [];
     // A modal dialog open on load (a cookie or consent banner) hides the page from every check.
     const modal = await page.evaluate('window.__a11y508.modalOnLoad()');
     if (page.progress) page.progress('checks', { elements: await page.evaluate('document.getElementsByTagName("*").length').catch(() => 0) });

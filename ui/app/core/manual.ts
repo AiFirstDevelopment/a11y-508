@@ -134,6 +134,9 @@ export interface ManualState {
   readAgain: string | null;
   // The tool's list from the parse (docs/plans/read-from-parse.md AC 1): how many findings on how many pages.
   candidates: { findings: number; pages: number } | null;
+  // The run's own look over the site before the assistant is asked (docs/plans/manual-crawl-first.md
+  // AC 4): how many pages it has found so far, and where it got to (start, page, done, failed).
+  crawl: { state: string; found: number } | null;
   done: { message: string; fixed: number; alreadyFixed: number; all: boolean } | null;
   commits: number;
   fix: { n: number; m: number; finding: string; title: string; attempt: number } | null;
@@ -145,7 +148,7 @@ export interface ManualState {
 
 export const emptyManual = (): ManualState => ({
   id: null, stage: null, last: null, findings: null, alreadyFixed: [], unchecked: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
-  noFindings: null, readFailed: null, readFailedBy: null, parse: null, parsed: null, parseFailed: null, noText: false, readAgain: null, candidates: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
+  noFindings: null, readFailed: null, readFailedBy: null, parse: null, parsed: null, parseFailed: null, noText: false, readAgain: null, candidates: null, crawl: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
 });
 
 // The state after one more event.
@@ -172,6 +175,9 @@ export function applyManual(s: ManualState, ev: Record<string, any>): ManualStat
       break;
     case 'parse-failed':
       n.parseFailed = String(ev['reason'] || '');
+      break;
+    case 'crawl':
+      n.crawl = { state: String(ev['state'] || ''), found: Number(ev['found']) || 0 };
       break;
     case 'read':
       if (ev['noText'] !== undefined) n.noText = !!ev['noText'];
@@ -238,3 +244,6 @@ export const manualFileUrl = (id: string | null, rel: string) => (id ? `/api/man
 export const pdfPageUrl = (id: string | null, page: number) => `${manualFileUrl(id, 'source.pdf')}#page=${page}`;
 // One file of the run's parse: report.md, manifest.json or pages/<name>.png.
 export const parsedFileUrl = (id: string | null, rel: string) => (id ? `/api/manual/${encodeURIComponent(id)}/parsed/${rel.split('/').map(encodeURIComponent).join('/')}` : '');
+// One file of the run's own look over the site (docs/plans/manual-crawl-first.md AC 4): report.html or
+// report.json, given as decisionGroups names it ("crawl/report.html").
+export const crawlFileUrl = (id: string | null, rel: string) => (id ? `/api/manual/${encodeURIComponent(id)}/crawl/${encodeURIComponent(rel.replace(/^crawl\//, ''))}` : '');

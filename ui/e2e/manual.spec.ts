@@ -7,9 +7,9 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { api, dashboard, gitRepo, go, now, open, removeTemp, runEvents, tempDir, BIN, ROOT, type Dash } from './harness';
+import { api, dashboard, gitRepo, go, now, open, record, removeTemp, runEvents, seen, tempDir, BIN, ROOT, type Dash } from './harness';
 
 const FAKE = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fake-agent.mjs'))} {promptFile} {resultFile}`;
 const FIXTURES = join(ROOT, 'test', 'fixtures', 'manual');
@@ -21,12 +21,15 @@ const NOT_A_PDF = 'That file is not a PDF. Choose the PDF report the tester sent
 interface App {
   cwd: string;
   originDir: string;
-  site: { base: string; setStale(on: boolean): void; setHeld(on: boolean): void; setDeep(on: boolean): void; close(): Promise<void> };
+  site: { base: string; setStale(on: boolean): void; setHeld(on: boolean): void; setDeep(on: boolean): void; setCrawlFails(on: boolean): void; close(): Promise<void> };
   g: (...args: string[]) => string;
   cleanup(): Promise<void>;
 }
 
-async function manualApp(): Promise<App> {
+// crawlPages: how many pages the PDF run looks over before the assistant is asked (docs/plans/
+// manual-crawl-first.md AC 1); the tool's default (60) unless given, 0 for a run that must not. The
+// crawl's options keep that look quick on the fixture (no zoom pass, no clicking, no forms).
+async function manualApp(opts: { crawlPages?: number } = {}): Promise<App> {
   const cwd = tempDir('a11y-508-manual-');
   const originDir = tempDir('a11y-508-manual-origin-');
   expect(spawnSync('git', ['init', '-q', '--bare'], { cwd: originDir }).status).toBe(0);
@@ -35,8 +38,9 @@ async function manualApp(): Promise<App> {
   const m: any = await import('../../test/manual-site.mjs');
   const site = await m.startManualSite({ dir: cwd });
   writeFileSync(join(cwd, 'a11y-508.config.json'), JSON.stringify({
-    url: site.base, agent: FAKE, source: ['src'], check: `${JSON.stringify(process.execPath)} -e 0`, branch: 'a11y-508', push: true,
+    url: site.base, args: ['--no-zoom', '--no-follow-clicks', '--no-forms'], agent: FAKE, source: ['src'], check: `${JSON.stringify(process.execPath)} -e 0`, branch: 'a11y-508', push: true,
     deployed: 'bundle-change', deployTimeout: 0, deployPoll: 500, deploySettle: 0, agentTimeout: 120000,
+    ...(opts.crawlPages !== undefined ? { manualCrawlPages: opts.crawlPages } : {}),
   }, null, 2));
   g('add', '-A');
   g('commit', '-q', '-m', 'the app');
@@ -210,7 +214,7 @@ test('manual AC2/3/4/5/7/8/9 / guards b c d: findings tied to PDF pages, checked
     // The picker lists the repository's Angular components, and filters as one types.
     const comps = (await api(dash, '/api/manual/components')).json;
     expect(comps.kind).toBe('angular');
-    expect(comps.components.map((c: any) => `${c.name} ${c.selector}`).sort()).toEqual(['FooterComponent app-footer', 'HeaderComponent app-header', 'HomeComponent app-home', 'SearchBarComponent app-search-bar']);
+    expect(comps.components.map((c: any) => `${c.name} ${c.selector}`).sort()).toEqual(['FooterComponent app-footer', 'HeaderComponent app-header', 'HomeComponent app-home', 'ItemComponent app-item', 'SearchBarComponent app-search-bar']);
     await item(page, 'F3').getByTestId('component-search').fill('foot');
     await expect(item(page, 'F3').getByTestId('component-option')).toHaveText([/FooterComponent/]);
     await page.keyboard.press('Escape');
@@ -1123,11 +1127,13 @@ test('read retry / guard m: an answer that only echoes ("Here is the original im
 const machine = (prompt: string) => JSON.parse([...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)].pop()![1]);
 const OPEN_FIRST = 'For each finding: first open its picture with your file-reading tool, then answer. An answer for a page whose picture you did not open is wrong and will be sent back.';
 const ROUTE_RULE = 'route: one of the known routes below, exactly as written; if none fits, give the closest and say so in decisions';
+const ROUTE_PICK = 'pick the route whose title and headings match what the picture shows';
 const unopenedSays = (id: string, page: number) => new RegExp(`^You answered for ${id} without opening the picture of page ${page} \\(\\S+parsed/pages/page-${String(page).padStart(2, '0')}\\.png\\)\\. Open it with your file-reading tool and look at it before answering; the callout's words and the arrows are only there\\.$`, 'm');
 
 test('pictures-and-routes AC1/2/4 / guards a b c e j: the describe goes in batches of four; the stream says which pictures were opened; F3 and F5, answered unseen, are asked again with their pictures named; the router\'s routes are the choices and the decisions say how many', async ({ page }) => {
   test.setTimeout(300_000);
-  const app = await manualApp();
+  // manualCrawlPages 0: the run does not look over the site, so the router alone names the routes.
+  const app = await manualApp({ crawlPages: 0 });
   const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_SKIP_PICTURE: 'F3,F5' } });
   try {
     await open(page, dash);
@@ -1153,11 +1159,12 @@ test('pictures-and-routes AC1/2/4 / guards a b c e j: the describe goes in batch
     expect(decisions(dir).find((d) => d.finding === null && /read from the PDF/.test(d.decision)).decision).toBe(COUNTS);
     await expect(page.getByTestId('seen-unseen')).toHaveCount(0);
 
-    // AC 4 / guard e: no crawl has run; the routes come from the fixture app's router (no :id, no **), then the start URL.
+    // AC 4 / guard e: no crawl has run (manualCrawlPages 0, and no round of a loop); the routes come from the fixture app's router (no :id, no **), then the start URL.
     const base = app.site.base;
+    expect(existsSync(join(dir, 'crawl'))).toBe(false);
     const routes = readJson(join(dir, 'routes.json'));
-    expect(routes.routes).toEqual([`${base}`, `${base}search`, `${base}reports`, `${base}gone`].map((url) => ({ url, from: 'router' })));
-    expect(prompts[0]).toContain(`## Known routes of the application\n\nThese are the only routes to choose from. ${ROUTE_RULE}.\n\n- ${base}\n- ${base}search\n- ${base}reports\n- ${base}gone\n`);
+    expect(routes.routes).toEqual([`${base}`, `${base}search`, `${base}reports`, `${base}gone`].map((url) => ({ url, from: 'router', title: null, headings: [] })));
+    expect(prompts[0]).toContain(`## Known routes of the application\n\nThese are the only routes to choose from. ${ROUTE_RULE}. A route that comes with its title and headings is a page the tool has seen: ${ROUTE_PICK}.\n\n- ${base}\n- ${base}search\n- ${base}reports\n- ${base}gone\n`);
     expect(prompts[0]).toContain(`- ${ROUTE_RULE}.\n`);
     expect(machine(prompts[0]).routes).toEqual([`${base}`, `${base}search`, `${base}reports`, `${base}gone`]);
     // Guard j: the decisions pane says how many routes the tool knew, and from where.
@@ -1351,6 +1358,205 @@ test('pictures-and-routes review fixes: pictures opened through a read_many_file
     await expect(row.getByTestId('unchecked-line')).toHaveText(`The tester verified this fixed on 28 Sep 2026; the tool could not find the element on / (the assistant's selectors matched nothing), so it could not confirm it.`);
     expect(decisions(dir).filter((d) => d.finding === 'F1' && /^Came back: /.test(d.decision))).toEqual([]);
     expect(decisions(dir).filter((d) => d.finding === 'F1' && d.stage === 'check' && d.decision === 'already fixed in the deployed site')).toEqual([]);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+// ---- docs/plans/manual-crawl-first.md: the PDF run looks over the deployed site first, with the
+// tool's own crawler, so the pages it offers are real pages with real ids, each with its title and
+// headings. The fixture site links three item detail pages, /items/1..3 (all titled "Item"), from
+// /search; the router names them only as items/:id. items.pdf: a finding on an item page, and the
+// search button.
+
+const ITEMS = join(FIXTURES, 'items.pdf');
+const CRAWLING = /^Looking over the deployed site so the tool knows its pages( \(\d+ found so far\))?\.$/;
+const rx = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// How many times a run's journal says a look over the site started.
+const crawlStarts = (events: any[]) => events.filter((e) => e.type === 'manual' && e.stage === 'crawl' && e.state === 'start').length;
+// Waits (polling every 100 ms) until fn() gives something, or fails after ms.
+async function until<T>(fn: () => T | null | undefined | false | Promise<T | null | undefined | false>, ms: number, what: string): Promise<T> {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+const secretly = (dash: Dash, path: string) => fetch(`${dash.origin}${path}`, { headers: { 'X-A11y-508-Secret': dash.secret } });
+
+test('crawl-first AC1/2/3/4/5 / guards a b c g: the run looks over the site before the assistant is asked and says so; the crawled pages, ids included, are the routes with their titles and headings, detail pages as one line; the item finding is found on its id page; the decisions pane says where the routes came from and links to the site as the tool saw it', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd });
+  try {
+    await open(page, dash);
+    await record(page);
+    await choosePdf(page, ITEMS);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    const dir = runDir(dash);
+    const id = dir.split(/[\\/]/).pop()!;
+    const base = app.site.base;
+    // Guard a / AC 1: the crawl ran into the run's own folder, after the parse and before the read, and the sentence said so meanwhile.
+    expect(existsSync(join(dir, 'crawl', 'report.json'))).toBe(true);
+    expect(existsSync(join(dir, 'crawl', 'report.html'))).toBe(true);
+    expect((await seen(page)).some((t) => CRAWLING.test(t))).toBe(true);
+    const events = await runEvents(dash);
+    expect(crawlStarts(events)).toBe(1);
+    const stages = events.filter((e) => e.type === 'manual').map((e) => e.stage);
+    expect(stages.indexOf('crawl')).toBeGreaterThan(stages.indexOf('parsed'));
+    expect(stages.indexOf('crawl')).toBeLessThan(stages.indexOf('read'));
+    expect(events.find((e) => e.type === 'manual' && e.stage === 'crawl' && e.state === 'done')).toMatchObject({ audited: 5, found: 5 });
+    expect(events.find((e) => e.type === 'manual' && e.stage === 'crawl' && e.state === 'start')).toMatchObject({ max: 60 });
+    // AC 2 / guard b: the crawled pages are the routes, first, each with its title and headings, ids kept; then the router's two the crawl did not reach; the line counts both.
+    const routes = readJson(join(dir, 'routes.json'));
+    const crawled = routes.routes.filter((r: any) => r.from === 'crawl');
+    expect(crawled.map((r: any) => [r.url, r.title, r.headings]).sort()).toEqual([
+      [base, 'Example app', ['Welcome']],
+      [`${base}items/1`, 'Item', ['Item']],
+      [`${base}items/2`, 'Item', ['Item']],
+      [`${base}items/3`, 'Item', ['Item']],
+      [`${base}search`, 'Search', ['Search']],
+    ]);
+    expect(routes.routes.slice(crawled.length)).toEqual([{ url: `${base}reports`, from: 'router', title: null, headings: [] }, { url: `${base}gone`, from: 'router', title: null, headings: [] }]);
+    expect(routes.line).toBe("Routes the tool knew: 7 (5 from looking over the site; 2 from the application's router)");
+    // AC 2/3 / guard c: the describe prompt lists each route with its title and headings, says how to pick, and shows the three item pages as one line; the machine-readable list keeps them all.
+    const prompt = readPrompts(dash, id)[0];
+    expect(prompt).toContain(`## Known routes of the application\n\nThese are the only routes to choose from. ${ROUTE_RULE}. A route that comes with its title and headings is a page the tool has seen: ${ROUTE_PICK}.\n\n`);
+    expect(prompt).toContain(`\n- ${base}search — "Search": Search\n`);
+    expect(prompt).toContain(`\n- ${base} — "Example app": Welcome\n`);
+    expect(prompt).toMatch(new RegExp(`^- ${rx(base)}items/[123] — "Item": Item \\(and 2 more like it\\)$`, 'm'));
+    expect(prompt.match(new RegExp(`^- ${rx(base)}items/`, 'gm'))).toHaveLength(1);
+    expect(prompt).toContain(`\n- ${base}reports\n- ${base}gone\n`);
+    expect(machine(prompt).routes.filter((u: string) => u.startsWith(`${base}items/`)).sort()).toEqual([1, 2, 3].map((n) => `${base}items/${n}`));
+    // AC 3/5 / guards a b: the item finding is on a crawled id page, chosen from the list and found there at the first look; the search button on /search.
+    const findings = readJson(join(dir, 'findings.json')).findings;
+    expect(findings.find((f: any) => f.id === 'F1')).toMatchObject({ url: expect.stringMatching(new RegExp(`^${rx(base)}items/[123]$`)), located: true, element: 'the photo on the item page' });
+    expect(findings.find((f: any) => f.id === 'F2')).toMatchObject({ url: `${base}search`, located: true });
+    expect(decisions(dir).filter((d) => /^took the start page/.test(d.decision))).toEqual([]);
+    expect(readdirSync(dir).filter((f) => /^agent-locate-/.test(f))).toEqual([]);
+    await expect(item(page, 'F1').getByTestId('not-located')).toHaveCount(0);
+    await expect(page.getByTestId('plan-item')).toHaveCount(2);
+    // AC 4: the decisions pane says how many routes the tool knew and from where, and links to the site as the tool saw it.
+    await page.getByTestId('show-decisions').click();
+    const pane = page.getByTestId('decisions-panel');
+    await expect(pane.getByTestId('decision').filter({ hasText: 'Routes the tool knew' })).toHaveText([/read · tool: Routes the tool knew: 7 \(5 from looking over the site; 2 from the application's router\) — /]);
+    await expect(pane.getByTestId('decisions-crawl')).toHaveText('the site as the tool saw it');
+    await expect(pane.getByTestId('decisions-crawl')).toHaveAttribute('href', `/api/manual/${id}/crawl/report.html`);
+    await page.getByTestId('decisions-close').click();
+    // Guard g, at the server: the crawl's report is served; nothing above or beside it is.
+    const html = await secretly(dash, `/api/manual/${id}/crawl/report.html`);
+    expect([html.status, html.headers.get('content-type')]).toEqual([200, 'text/html; charset=utf-8']);
+    expect((await secretly(dash, `/api/manual/${id}/crawl/report.json`)).status).toBe(200);
+    expect((await secretly(dash, `/api/manual/${id}/crawl/..%2fsource.pdf`)).status).toBe(404);
+    expect((await secretly(dash, `/api/manual/${id}/crawl/crawl.log`)).status).toBe(404);
+    expect((await fetch(`${dash.origin}/api/manual/${id}/crawl/report.html`)).status).toBe(401);
+    // AC 4: decisions.md (written when the run ends) carries the routes line and the link.
+    await go(page).click();
+    await expect(now(page)).toHaveText('Stopped.', { timeout: 30_000 });
+    const md = readFileSync(join(dir, 'decisions.md'), 'utf8');
+    expect(md).toContain("· read · tool: Routes the tool knew: 7 (5 from looking over the site; 2 from the application's router) — ");
+    expect(md).toContain('The site as the tool saw it: [crawl/report.html](crawl/report.html)');
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('crawl-first AC1 / guard d: a dashboard restart during the read goes on without looking over the site again: one crawl report, one look in the run\'s journal, one routes decision', async ({ page }) => {
+  test.setTimeout(400_000);
+  const app = await manualApp();
+  // Every assistant call takes 8 s, so the read is under way long enough to close the dashboard during it.
+  const env = { FAKE_AGENT_DELAY_MS: '8000' };
+  let dash = await dashboard({ cwd: app.cwd, env });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText('Reading the PDF: 3 findings on 3 pages; asking the assistant what each page shows.', { timeout: 120_000 });
+    const dir = runDir(dash);
+    const report = join(dir, 'crawl', 'report.json');
+    const finishedAt = readJson(report).finishedAt;
+    expect(typeof finishedAt).toBe('string');
+    expect(crawlStarts(await runEvents(dash))).toBe(1);
+    const home = dash.home;
+    await dash.stop();
+    dash = await dashboard({ cwd: app.cwd, env: { ...env, A11Y_508_HOME: home } });
+    await open(page, dash);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    // The same look over the site, not a second one: the report is the one from before, the rerun's journal has no crawl, the decision is said once.
+    expect(readJson(report).finishedAt).toBe(finishedAt);
+    expect(readdirSync(dir).filter((f) => /^crawl/.test(f))).toEqual(['crawl']);
+    expect(crawlStarts(await runEvents(dash))).toBe(0);
+    expect(decisions(dir).filter((d) => /^Routes the tool knew/.test(d.decision))).toHaveLength(1);
+    expect(readJson(join(dir, 'routes.json')).line).toBe("Routes the tool knew: 7 (5 from looking over the site; 2 from the application's router)");
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('crawl-first AC1 / guard d: a repository the fix loop has crawled is not looked over again: the loop\'s pages are the routes and the run has no crawl folder', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd });
+  try {
+    const base = app.site.base;
+    // A round of the loop, in the tool's work folder for the repository: one page, with its title and headings.
+    const round = join(dash.dirs().work, 'round-1');
+    mkdirSync(round, { recursive: true });
+    writeFileSync(join(round, 'report.json'), JSON.stringify({ finishedAt: '2026-10-18T09:00:00.000Z', summary: { pages: 1, audited: 1 }, pages: [{ url: `${base}search`, finalUrl: `${base}search`, title: 'Search', headings: ['Search'] }] }));
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    const dir = runDir(dash);
+    expect(existsSync(join(dir, 'crawl'))).toBe(false);
+    expect(crawlStarts(await runEvents(dash))).toBe(0);
+    const routes = readJson(join(dir, 'routes.json'));
+    expect(routes.routes).toEqual([
+      { url: `${base}search`, from: 'crawl', title: 'Search', headings: ['Search'] },
+      { url: base, from: 'router', title: null, headings: [] },
+      { url: `${base}reports`, from: 'router', title: null, headings: [] },
+      { url: `${base}gone`, from: 'router', title: null, headings: [] },
+    ]);
+    expect(routes.line).toBe("Routes the tool knew: 4 (1 from looking over the site; 3 from the application's router)");
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
+test('crawl-first AC1 / guard e: a look over the site that fails is logged as a decision and the run goes on to the plan with the routes it has', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  // The site is down (HTTP 500 to everything) while the tool looks it over; it is back up for the check.
+  app.site.setCrawlFails(true);
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_AGENT_DELAY_MS: '4000' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, PDF);
+    // Until the failure is logged as a decision; or the run ended instead, which is the failure this guards against.
+    const dir = await until(async () => {
+      try {
+        const d = runDir(dash);
+        if (decisions(d).some((x) => x.decision === 'the site could not be looked over')) return d;
+      } catch {}
+      return /^Stopped/.test(((await now(page).textContent().catch(() => '')) || '').trim()) ? 'ended' : null;
+    }, 150_000, 'the look over the site to fail');
+    app.site.setCrawlFails(false);
+    expect(dir, 'the run ended instead of going on without the crawl').not.toBe('ended');
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    expect(decisions(dir).filter((d) => d.decision === 'the site could not be looked over').map((d) => [d.stage, d.by, d.finding, d.reason])).toEqual([['read', 'tool', null, 'no page could be read: HTTP 500']]);
+    const routes = readJson(join(dir, 'routes.json'));
+    expect(routes.routes.map((r: any) => r.from)).toEqual(['router', 'router', 'router', 'router']);
+    expect(routes.line).toBe("Routes the tool knew: 4 (from the application's router)");
+    expect((await runEvents(dash)).find((e) => e.type === 'manual' && e.stage === 'crawl' && e.state === 'failed')).toMatchObject({ reason: 'no page could be read: HTTP 500' });
+    // The run went on: the findings were checked in the deployed site and planned.
+    expect(readJson(join(dir, 'check.json')).results.map((r: any) => [r.finding, r.verdict])).toEqual([['F1', 'present'], ['F2', 'gone'], ['F3', 'present']]);
+    await expect(page.getByTestId('plan-item')).toHaveCount(2);
+    // No second look: the report that says nothing was read is kept, so a run taken up again does not try again.
+    expect(existsSync(join(dir, 'crawl', 'report.json'))).toBe(true);
   } finally {
     await dash.stop();
     await app.cleanup();

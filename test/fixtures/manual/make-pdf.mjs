@@ -122,6 +122,10 @@ export function deck(slides) {
 const F1 = 'FINDING F1 | Search button has no accessible name | /search | #search-btn | the magnifier button in the search bar | The magnifier button in the search bar is announced only as button.';
 const F2 = 'FINDING F2 | Company logo has no text alternative | / | footer img | the logo in the footer | The footer logo image has no alt text.';
 const F3 = 'FINDING F3 | Menu button has no accessible name | / | #menu-btn | the menu button in the header | The hamburger menu button in the header has no name.';
+// A finding on an item detail page (docs/plans/manual-crawl-first.md AC 5): the router names the page
+// only as items/:id, so its route is known only once the site has been looked over; the fake picks
+// the first /items/<id> route the prompt lists (/items/ itself is not a route).
+const I1 = 'FINDING F1 | Item photo has no text alternative | /items/ | #item-photo | the photo on the item page | The Item page shows a photo with no alt text.';
 const T5C = ['5.C The combination of the accessible name and visible label is programmatically', 'determinable - 1.3.1-programmatic-label'];
 const T13C = ['13.C Text and images of text, where color alone would fail, have sufficient contrast'];
 const T14B = ['14.B Data cells are programmatically associated with their header cells in each acces-', 'sible data table - 1.3.1-cell-header-association'];
@@ -227,6 +231,8 @@ if (isMain) {
   const words = (f) => f.split(' | ').pop();
   writeFileSync(join(here, 'manual-findings.pdf'), pdf([[words(F1), F1], [words(F2), F2], [words(F3), F3]]));
   writeFileSync(join(here, 'no-findings.pdf'), pdf([['Manual accessibility test report - Example app', 'No accessibility problems were found.']]));
+  // The item detail page's photo, then the search button (docs/plans/manual-crawl-first.md AC 5).
+  writeFileSync(join(here, 'items.pdf'), pdf([[words(I1), I1], [words(F1), F1.replace('FINDING F1', 'FINDING F2')]]));
   writeFileSync(join(here, 'deck.pdf'), deck(DECK));
   writeFileSync(join(here, 'pictures-only.pdf'), deck(PICTURES_ONLY));
   writeFileSync(join(here, 'encrypted.pdf'), encrypted());

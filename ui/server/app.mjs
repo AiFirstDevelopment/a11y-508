@@ -15,10 +15,12 @@ import { migrateRepo, migrationLines, tasksDir, repoHome } from '../../src/home.
 import { readable } from '../../src/agent-stream.mjs';
 import { loadLedger, statusCounts, byStatus } from '../../src/ledger.mjs';
 import { BIN, BadRequest, DEFAULT_STATE_FILE, TOOL_DIR, crawlArgs, loopArgs, manualArgs, commandLine } from './args.mjs';
-import { MAX_PDF_BYTES, NOT_A_PDF, PARSED_DIR, decisionGroups, isPdf, manualDir, manualRoot, newManualId, validId } from '../../src/manual.mjs';
+import { CRAWL_DIR, MAX_PDF_BYTES, NOT_A_PDF, PARSED_DIR, decisionGroups, isPdf, manualDir, manualRoot, newManualId, validId } from '../../src/manual.mjs';
 
 // The files of a PDF run's parse the dashboard may open.
 export const PARSED_FILE = /^(report\.md|manifest\.json|pages\/[A-Za-z0-9_-]+\.png)$/;
+// A PDF run's own look over the site (docs/plans/manual-crawl-first.md AC 4): its report, nothing else.
+export const CRAWL_FILE = /^report\.(html|json)$/;
 import { listComponents } from '../../src/components.mjs';
 import { detectPresets, detectShell, shellInvocation } from './detect.mjs';
 import { Runs } from './runs.mjs';
@@ -1010,14 +1012,17 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
     const manualFile = /^\/api\/manual\/([^/]+)\/file\/(source\.pdf|decisions\.md|already-fixed\.md|evidence\/[\w-]+\/(?:before|after-\d+)\/screenshot\.png)$/.exec(path);
     // The parse of a PDF run (docs/plans/pdf-parse.md AC 9): report.md, manifest.json and the page pictures, nothing else.
     const parsedFile = m === 'GET' ? /^\/api\/manual\/([^/]+)\/parsed\/(.+)$/.exec(path) : null;
-    if (!authorized(req, m === 'GET' && (!!reportFile || !!manualFile || !!parsedFile))) return send(res, 401, { error: 'missing or wrong session secret' });
-    if (parsedFile) {
+    // The run's own look over the site (docs/plans/manual-crawl-first.md AC 4): report.html and report.json, nothing else.
+    const crawlFile = m === 'GET' ? /^\/api\/manual\/([^/]+)\/crawl\/(.+)$/.exec(path) : null;
+    if (!authorized(req, m === 'GET' && (!!reportFile || !!manualFile || !!parsedFile || !!crawlFile))) return send(res, 401, { error: 'missing or wrong session secret' });
+    if (parsedFile || crawlFile) {
+      const [hit, allowed, sub] = parsedFile ? [parsedFile, PARSED_FILE, PARSED_DIR] : [crawlFile, CRAWL_FILE, CRAWL_DIR];
       let rel = '';
       try {
-        rel = decodeURIComponent(parsedFile[2]);
+        rel = decodeURIComponent(hit[2]);
       } catch {}
-      if (!validId(parsedFile[1]) || !PARSED_FILE.test(rel)) return send(res, 404, { error: 'not found' });
-      const file = join(manualDir(state.cwd, parsedFile[1]), PARSED_DIR, ...rel.split('/'));
+      if (!validId(hit[1]) || !allowed.test(rel)) return send(res, 404, { error: 'not found' });
+      const file = join(manualDir(state.cwd, hit[1]), sub, ...rel.split('/'));
       if (!existsSync(file)) return send(res, 404, { error: 'not found' });
       return sendFile(res, file, { 'cache-control': 'no-store' });
     }

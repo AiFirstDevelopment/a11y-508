@@ -198,6 +198,10 @@ function manual(task) {
         a = { id: c.id, seen, ...fields(m), sameAs: m[1] !== c.id ? m[1] : null, decisions: m[3] === '/' ? [{ decision: `took the home page for ${c.id}`, reason: 'the tester names no page; the header and footer are on every page' }] : [] };
         if (tags[1]) a.extra = { seen: `${seen}, and a second problem`, ...fields(tags[1]) };
       }
+      // docs/plans/manual-crawl-first.md AC 5: a page about an "Item" is an item detail page, whose id only
+      // a look over the site knows: the first /items/<id> route the prompt lists (its FINDING line's
+      // route, /items/, when the list has none, which is not a route of the application).
+      if (/\bItem\b/.test(c.quote || '')) a.route = (task.routes || []).find((u) => /\/items\/[^/]+\/?$/.test(String(u))) || a.route;
       if (sameAs[c.id]) a.sameAs = sameAs[c.id];
       if (wrong.includes(c.id)) a.selectors = ['#not-on-this-page'];
       // FAKE_MANUAL_DESCRIBE_NO_ELEMENT: every answer says what it saw but names no element.

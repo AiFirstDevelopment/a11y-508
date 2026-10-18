@@ -173,6 +173,9 @@ export function normalizeConfig(c, overrides = {}, { interactive = !!process.std
     checkTimeout: typeof c.checkTimeout === 'number' && c.checkTimeout > 0 ? c.checkTimeout : 20 * 60 * 1000,
     // The session file a crawl behind a sign-in portal uses (see sessionArgs).
     state: typeof c.state === 'string' && c.state ? c.state : 'a11y-508-state.json',
+    // How many pages a PDF run looks over before the assistant is asked (docs/plans/manual-crawl-first.md
+    // AC 1); 0 skips that look. The loop does not read it.
+    manualCrawlPages: typeof c.manualCrawlPages === 'number' && c.manualCrawlPages >= 0 ? Math.floor(c.manualCrawlPages) : 60,
   };
   const errors = [];
   if (!cfg.url) errors.push('no start URL: pass it on the command line or set "url" in the config');
@@ -272,14 +275,17 @@ export function bouncedToSignIn(report) {
 // Event types from a round's crawl that the loop passes on, tagged with the round.
 const RELAYED = new Set(['page', 'coverage', 'summary', 'login-waiting', 'session-saved', 'progress']);
 
-// also: pages audited besides the start page, as they are (the fixes' pages, so they are re-checked).
-async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = [], also = [] }) {
-  const out = join(workDir(cwd), `round-${round}`);
+// Runs the tool's own crawler once into `out` and reads its report: the CLI with the start URL, the
+// crawl's options (the config's, the command line's, the session's), --out, --json, --quiet and
+// --events when the caller has events. onEvent(ev) is told each event the crawl prints (page,
+// coverage, summary, ...) as it arrives; its warnings go to the log. Throws when the crawl left no
+// report.json. Shared by the loop's rounds and the PDF run's look over the site
+// (docs/plans/manual-crawl-first.md AC 1).
+export async function runCrawl({ cwd, url, args = [], out, events = false, log = null, onEvent = null }) {
   mkdirSync(out, { recursive: true });
-  const args = [BIN, cfg.url, ...cfg.args, ...passthrough, ...session, ...also.flatMap((u) => ['--also', u]), '--out', out, '--json', '--quiet'];
-  if (events) args.push('--events');
-  const child = spawn(process.execPath, args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
-  let stdout = '';
+  const argv = [BIN, url, ...args, '--out', out, '--json', '--quiet'];
+  if (events) argv.push('--events');
+  const child = spawn(process.execPath, argv, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   let partial = '';
   const onEventLine = (line) => {
@@ -289,13 +295,11 @@ async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = 
     } catch {
       return;
     }
-    if (RELAYED.has(ev.type)) {
-      const { type, at, ...data } = ev;
-      log.event(type, { ...data, round });
-    } else if (ev.type === 'warn' || ev.type === 'error') stderr = (stderr + `${ev.type} ${ev.message}\n`).slice(-6000);
+    if (ev.type === 'warn' || ev.type === 'error') stderr = (stderr + `${ev.type} ${ev.message}\n`).slice(-6000);
+    else if (onEvent) onEvent(ev);
   };
   child.stdout.on('data', (d) => {
-    if (!events) return void (stdout += d);
+    if (!events) return;
     const lines = (partial + d).split('\n');
     partial = lines.pop();
     for (const l of lines) if (l.trim()) onEventLine(l);
@@ -306,9 +310,21 @@ async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = 
   writeFileSync(join(out, 'crawl.log'), stderr);
   const reportFile = join(out, 'report.json');
   if (!existsSync(reportFile)) throw new Error(`the crawl produced no report (exit ${code}):\n${stderr.split('\n').filter((l) => /error|warn|redirected/.test(l)).slice(-6).join('\n')}`);
-  for (const l of stderr.split('\n')) if (/^(warn|error) /.test(l) && !/TOKEN is not set/.test(l)) log.warn(`crawl: ${l.replace(/^(warn|error) /, '')}`);
+  if (log) for (const l of stderr.split('\n')) if (/^(warn|error) /.test(l) && !/TOKEN is not set/.test(l)) log.warn(`crawl: ${l.replace(/^(warn|error) /, '')}`);
   const report = JSON.parse(readFileSync(reportFile, 'utf8'));
   return { report, code, out };
+}
+
+// also: pages audited besides the start page, as they are (the fixes' pages, so they are re-checked).
+async function crawlOnce({ cfg, cwd, round, log, passthrough, events, session = [], also = [] }) {
+  return runCrawl({
+    cwd, url: cfg.url, args: [...cfg.args, ...passthrough, ...session, ...also.flatMap((u) => ['--also', u])], out: join(workDir(cwd), `round-${round}`), events, log,
+    onEvent: (ev) => {
+      if (!RELAYED.has(ev.type)) return;
+      const { type, at, ...data } = ev;
+      log.event(type, { ...data, round });
+    },
+  });
 }
 
 // A visible sign-in on the start page (--login-only): the session is saved to stateFile and nothing

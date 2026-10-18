@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PRESET_INFO, QUOTA_DELAYS, agentLabel, agentLog, manualCheckPrompt, manualConfirmPrompt, manualDescribePrompt, manualFixPrompt, manualLocatePrompt, manualPlanPrompt, manualReplanPrompt, manualVerifyPrompt, noAnswerWhy, resolveAgentCommand, writePrompt,
 } from './agent.mjs';
-import { callAgent, findIndexHtml, frameworkLine, git, gitChanged, normalizeConfig, prepareRepo, sessionArgs, sh, signInOnly, splitCheck, stampBuildMarker, testRoundFixes, waitForEnter } from './loop.mjs';
+import { bouncedToSignIn, callAgent, findIndexHtml, frameworkLine, git, gitChanged, normalizeConfig, prepareRepo, runCrawl, sessionArgs, sh, signInOnly, splitCheck, stampBuildMarker, testRoundFixes, waitForEnter } from './loop.mjs';
 import { migrateRepo, migrationLines, reportDir, shortenHome, tasksDir, workDir } from './home.mjs';
 import { evidenceBrowser } from './evidence.mjs';
 import { isAngular, listComponents, findComponent } from './components.mjs';
@@ -247,35 +247,32 @@ const writeJson = (f, v) => writeFileSync(f, JSON.stringify(v, null, 2) + '\n');
 const str = (v, max = 2000) => (typeof v === 'string' ? v.trim().slice(0, max) : v == null ? '' : String(v).trim().slice(0, max));
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-// The routes the tool knows for the app, as full URLs with where each came from (docs/plans/
-// pictures-and-routes.md AC 4), in order: every page its crawls reached (the loop's rounds and the
-// latest report); for an Angular application, the routes its router configuration names under the
-// source folders, resolved under the start URL; then the start URL. The same route twice (a trailing
-// slash apart) is one; at most 200.
+// The routes the tool knows for the app, as full URLs with where each came from and what is on it
+// (docs/plans/pictures-and-routes.md AC 4, docs/plans/manual-crawl-first.md AC 2), in order: the pages
+// this run's own look over the site reached (<run>/crawl/report.json), then every page the loop's
+// rounds and the latest report reached, each with its title and headings as the crawl recorded them;
+// for an Angular application, the routes its router configuration names under the source folders,
+// resolved under the start URL; then the start URL. The same page twice (a trailing slash or the
+// query apart) is one; at most 200. Only a page that loaded is a route: not one that answered an
+// error or was sent off to a sign-in.
 export const MAX_ROUTES = 200;
-const routeKey = (url) => {
-  try {
-    const u = new URL(url);
-    return `${u.origin}${u.pathname.replace(/\/+$/, '')}${u.search}${hashRoute(u)}`;
-  } catch {
-    return null;
-  }
-};
-export function routeSources(cwd, { startUrl = null, sourceDirs = ['src'] } = {}) {
+export function routeSources(cwd, { startUrl = null, sourceDirs = ['src'], runDir = null } = {}) {
   const out = [];
   const seen = new Set();
-  const add = (url, from) => {
-    const k = routeKey(url);
+  const add = (url, from, title = null, headings = []) => {
+    const k = pathKey(url);
     if (!k || seen.has(k) || out.length >= MAX_ROUTES) return;
     seen.add(k);
-    out.push({ url, from });
+    out.push({ url, from, title: str(title, 200) || null, headings: (Array.isArray(headings) ? headings : []).map((h) => str(h, 120)).filter(Boolean).slice(0, 8) });
   };
   const crawl = (file) => {
     const r = readJson(file);
-    for (const p of (r && r.pages) || []) if (p && (p.finalUrl || p.url)) add(p.finalUrl || p.url, 'crawl');
+    for (const p of (r && r.pages) || []) if (p && (p.finalUrl || p.url) && !p.error && !p.skipped) add(p.finalUrl || p.url, 'crawl', p.title, p.headings || (p.info && p.info.headings) || []);
   };
+  if (runDir) crawl(join(runDir, CRAWL_DIR, 'report.json'));
   try {
-    for (const d of readdirSync(workDir(cwd))) if (/^round-\d+$/.test(d)) crawl(join(workDir(cwd), d, 'report.json'));
+    const rounds = readdirSync(workDir(cwd)).filter((d) => /^round-\d+$/.test(d)).sort((a, b) => Number(a.slice(6)) - Number(b.slice(6)));
+    for (const d of rounds) crawl(join(workDir(cwd), d, 'report.json'));
   } catch {}
   crawl(join(reportDir(cwd), 'report.json'));
   if (startUrl && isAngular(cwd)) for (const url of routeUrls(startUrl, scanRoutes(cwd, sourceDirs))) add(url, 'router');
@@ -285,11 +282,24 @@ export function routeSources(cwd, { startUrl = null, sourceDirs = ['src'] } = {}
 export function knownRoutes(cwd, opts = {}) {
   return routeSources(cwd, opts).map((r) => r.url);
 }
-// "Routes the tool knew: 5 (from the application's router)", for the decisions pane and decisions.md.
+// "Routes the tool knew: 38 (32 from looking over the site; 6 from the application's router)", for the
+// decisions pane and decisions.md.
 export function routesLine(routes) {
-  const from = new Set(routes.map((r) => r.from));
-  const words = from.has('crawl') && from.has('router') ? "from the crawl and the application's router" : from.has('crawl') ? 'from the crawl' : from.has('router') ? "from the application's router" : 'the start page only';
+  const n = (from) => routes.filter((r) => r.from === from).length;
+  const [looked, router] = [n('crawl'), n('router')];
+  const words = looked && router ? `${looked} from looking over the site; ${router} from the application's router` : looked ? 'from looking over the site' : router ? "from the application's router" : 'the start page only';
   return `Routes the tool knew: ${routes.length} (${words})`;
+}
+// Where a PDF run's own look over the site goes: <run>/crawl/ (report.json, report.html, crawl.log).
+export const CRAWL_DIR = 'crawl';
+// Whether a PDF run looks over the site before the assistant is asked (docs/plans/manual-crawl-first.md
+// AC 1): not when it already did (<run>/crawl/report.json is there, from this run or an earlier
+// process of it), not when the tool has a crawl report for the repository already (the loop's rounds,
+// the latest report), and not when the config says 0 pages.
+export function needsCrawl(cwd, runDir, pages) {
+  if (!(pages > 0)) return false;
+  if (existsSync(join(runDir, CRAWL_DIR, 'report.json'))) return false;
+  return !routeSources(cwd).some((r) => r.from === 'crawl');
 }
 
 // Where a run had got to, from its own files: read, check, review, fix, deploy or verify (the
@@ -338,13 +348,15 @@ export function decisionGroups(dir, web = null) {
     screenshots: shots(f.id),
   }));
   const general = all.filter((d) => !d.finding || !findings.some((f) => f.id === d.finding));
-  return { groups, general, pdf: 'source.pdf', parsed: existsSync(join(dir, PARSED_DIR, 'report.md')) ? `${PARSED_DIR}/report.md` : null };
+  // crawl: the run's own look over the site, as the dashboard links it ("the site as the tool saw it").
+  return { groups, general, pdf: 'source.pdf', parsed: existsSync(join(dir, PARSED_DIR, 'report.md')) ? `${PARSED_DIR}/report.md` : null, crawl: existsSync(join(dir, CRAWL_DIR, 'report.html')) ? `${CRAWL_DIR}/report.html` : null };
 }
 
 export function decisionsMarkdown(dir, web = null) {
-  const { groups, general } = decisionGroups(dir, web);
+  const { groups, general, crawl } = decisionGroups(dir, web);
   const line = (d) => `- ${d.at} · ${d.stage} · ${d.by}: ${d.decision}${d.reason ? ` — ${d.reason}` : ''}${d.evidence ? ` (evidence: ${d.evidence})` : ''}`;
   const out = ['# Decisions', '', `From the tester's PDF: [source.pdf](source.pdf)${existsSync(join(dir, PARSED_DIR, 'report.md')) ? ` (parsed: [${PARSED_DIR}/report.md](${PARSED_DIR}/report.md))` : ''}`, ''];
+  if (crawl) out.push(`The site as the tool saw it: [${crawl}](${crawl})`, '');
   if (general.length) out.push('## The run', '', ...general.map(line), '');
   for (const g of groups) {
     out.push(`## ${g.finding}: ${g.title} — [PDF page ${g.page}](source.pdf#page=${g.page})`, '', ...seenLines(g).flatMap((l) => [l, '']));
@@ -684,11 +696,63 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       for (const f of readdirSync(join(parsedDir, 'pages'))) if (/\.png$/.test(f)) copyFileSync(join(parsedDir, 'pages', f), join(copyDir, PARSED_DIR, 'pages', f));
     } catch {}
   };
+  // ---- The site, looked over first (docs/plans/manual-crawl-first.md AC 1): before the assistant is
+  // asked, the tool's own crawler reads the deployed site as the loop's rounds do (the same options,
+  // the saved session), so the known routes are the real pages the application links to, ids
+  // included, each with its title and headings. Once per run (<run>/crawl/report.json is reused by a
+  // run taken up again), and not when the loop has crawled the site already. A crawl that could not
+  // get into the app opens the sign-in once, as the check stage does, and runs again; one that fails
+  // is logged as a decision and the run goes on with the routes it has.
+  const crawlSite = async () => {
+    const out = join(dir, CRAWL_DIR);
+    let found = 0;
+    stage('crawl', { state: 'start', max: cfg.manualCrawlPages, found });
+    log.info(`looking over the deployed site so the tool knows its pages (at most ${cfg.manualCrawlPages})`);
+    const once = () => runCrawl({
+      cwd, url: cfg.url, args: [...browserArgs(), '--max-pages', String(cfg.manualCrawlPages)], out, events, log,
+      onEvent: (e) => {
+        if (e.type === 'page') stage('crawl', { state: 'page', found: ++found });
+      },
+    });
+    const failed = (reason) => {
+      decide('read', null, 'tool', 'the site could not be looked over', reason);
+      stage('crawl', { state: 'failed', found, reason });
+      log.warn(`the site could not be looked over (${reason}); going on with the routes the tool has`);
+    };
+    // A crawl that left a report with no page audited: why, in the first page's words.
+    const noPage = (report) => {
+      const p = (report.pages || []).find((x) => x.error || x.skipped);
+      return `no page could be read${p ? `: ${p.error || p.skipped}` : ''}`;
+    };
+    let r;
+    try {
+      r = await once();
+    } catch (e) {
+      return failed(e.message.split('\n')[0]);
+    }
+    if (stopped()) return;
+    if (bouncedToSignIn(r.report) && (events || process.stdin.isTTY) && (await signIn('the deployed site asks for a sign-in'))) {
+      found = 0;
+      try {
+        r = await once();
+      } catch (e) {
+        return failed(e.message.split('\n')[0]);
+      }
+    }
+    if (stopped()) return;
+    const s = r.report.summary || {};
+    if (!s.audited) return failed(noPage(r.report));
+    stage('crawl', { state: 'done', found, pages: s.pages || found, audited: s.audited });
+    log.info(`looked over the deployed site: ${plural(s.audited, 'page')}`);
+  };
   // The routes the tool knows before the assistant is asked (docs/plans/pictures-and-routes.md AC 4):
-  // from the crawl, the application's router and the start URL, kept in routes.json and said once.
+  // from this run's look over the site, the loop's crawls, the application's router and the start URL,
+  // kept in routes.json and said once.
   let routeList = readJson(join(dir, 'routes.json'), null)?.routes || null;
   if (!routeList) {
-    routeList = routeSources(cwd, { startUrl: cfg.url, sourceDirs });
+    if (!findings && needsCrawl(cwd, dir, cfg.manualCrawlPages)) await crawlSite();
+    if (stopped()) return 1;
+    routeList = routeSources(cwd, { startUrl: cfg.url, sourceDirs, runDir: dir });
     writeJson(join(dir, 'routes.json'), { at: new Date().toISOString(), line: routesLine(routeList), routes: routeList });
     decide('read', null, 'tool', routesLine(routeList), 'the assistant picks each finding\'s route from these');
   }
@@ -710,7 +774,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     const one = async (ids, again, previous, unopened) => {
       const r = await ask('describe', (resultFile) => manualDescribePrompt({
         candidates: ids.map((x) => byC.get(x)), reportFile: join(copyDir, PARSED_DIR, 'report.md'), parsedDir: join(copyDir, PARSED_DIR), pdfFile: join(copyDir, 'source.pdf'),
-        pageCount: manifest.pageCount, noText, fallback: !candidates.some((c) => c.criterion), startUrl: cfg.url, routes, resultFile, previous, again,
+        pageCount: manifest.pageCount, noText, fallback: !candidates.some((c) => c.criterion), startUrl: cfg.url, routes: routeList, resultFile, previous, again,
         unopened: unopened ? unopened.map((x) => ({ id: x, page: byC.get(x).page, picture: pictureFile(byC.get(x)) })) : null,
       }));
       if (stopped()) return false;
@@ -834,7 +898,8 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
       copyParse();
       const { result } = await ask('locate', (resultFile) => manualLocatePrompt({
         items: unlocated.map((f) => ({ finding: { ...f, lines: ((manifest && manifest.pages.find((p) => p.n === f.page)) || {}).lines || [] }, picture: pictureOf(f.page) ? join(copyDir, PARSED_DIR, pictureOf(f.page)) : null, evidence: evidence.get(f.id) })),
-        startUrl: cfg.url, routes, resultFile,
+        // The pages looked at: a group of detail pages one of them belongs to is listed in full here.
+        startUrl: cfg.url, routes: routeList, lookedAt: unlocated.map((f) => f.url).filter(Boolean), resultFile,
       }));
       if (stopped()) return 1;
       const answers = answersOf(result) || [];

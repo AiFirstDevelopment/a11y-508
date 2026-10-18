@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { streamDecoder } from './agent-stream.mjs';
+import { groupRoutes } from './routes.mjs';
 
 // The prompt and result files are in the tool's tasks folder under the state base, outside the
 // repository the assistant works in: each preset is given that one folder ({tasksDir}) besides the
@@ -524,6 +525,36 @@ const unopenedLines = (list) => (list && list.length ? `${list.map(unopenedLine)
 // The rule every describe prompt opens with (AC 2), and the route rule (AC 5).
 export const OPEN_FIRST = 'For each finding: first open its picture with your file-reading tool, then answer. An answer for a page whose picture you did not open is wrong and will be sent back.';
 export const ROUTE_RULE = 'one of the known routes below, exactly as written; if none fits, give the closest and say so in decisions';
+// How to choose among them, now that a crawled route says what is on the page (docs/plans/manual-crawl-first.md AC 2).
+export const ROUTE_PICK = 'pick the route whose title and headings match what the picture shows';
+// The known routes, one line each: the URL and, for a page a crawl reached, its title and headings
+// (`- https://h/items/BR-12 — "Request": Request BR-12, Status`, the part after the URL cut at 120
+// characters), so the assistant can match a screenshot to a page by what is on it. Detail pages that
+// differ only in their last segment and share a title are one line, "(and 4 more like it)", unless
+// `expand` names one of them: the locate step lists that group in full when the page looked at was
+// one of them and the element was not there. routes: URLs, or { url, title, headings }.
+export const urlsOf = (routes) => (routes || []).map((r) => (typeof r === 'string' ? r : r.url));
+export function routeLines(routes, startUrl, expand = []) {
+  const list = (routes || []).slice(0, 200).map((r) => (typeof r === 'string' ? { url: r } : r));
+  if (!list.length) return `- ${startUrl}`;
+  const line = (r) => {
+    const heads = (r.headings || []).join(', ');
+    const what = r.title ? ` — "${r.title}"${heads ? `: ${heads}` : ''}` : heads ? ` — ${heads}` : '';
+    return `- ${r.url}${what.length > 120 ? `${what.slice(0, 119)}…` : what}`;
+  };
+  const out = [];
+  for (const g of groupRoutes(list)) {
+    if (g.more.length && expand.some((u) => u === g.url || g.more.includes(u))) out.push(line(g), ...g.more.map((u) => line({ ...g, url: u })));
+    else out.push(`${line(g)}${g.more.length ? ` (and ${g.more.length} more like it)` : ''}`);
+  }
+  return out.join('\n');
+}
+// The block of known routes every describe and locate prompt carries.
+const routesBlock = (routes, startUrl, expand = []) => `## Known routes of the application
+
+These are the only routes to choose from. route: ${ROUTE_RULE}. A route that comes with its title and headings is a page the tool has seen: ${ROUTE_PICK}.
+
+${routeLines(routes, startUrl, expand)}`;
 
 // The tool's findings, read from the parse (docs/plans/read-from-parse.md AC 2): the tool built the
 // list, one per page; the assistant says what each page's picture shows, which element the tester
@@ -565,11 +596,7 @@ Answer for every finding below, by its id; the tool asks again for any you leave
 
 ${candidates.map(blockOf).join('\n\n')}
 
-## Known routes of the application
-
-These are the only routes to choose from. route: ${ROUTE_RULE}.
-
-${routes.length ? routes.slice(0, 200).map((r) => `- ${r}`).join('\n') : `- ${startUrl}`}
+${routesBlock(routes, startUrl)}
 
 The whole parse is ${reportFile}; the paths of the pictures are under ${parsedDir}. The original PDF is ${pdfFile}: open it only if the report is not enough.
 
@@ -581,7 +608,7 @@ ${block({ answers: [{ id: candidates[0] ? candidates[0].id : 'F1', seen: 'The se
 
 Machine-readable copy:
 
-${block({ kind: 'manual-describe', report: reportFile, parsed: parsedDir, pdf: pdfFile, startUrl, routes, fallback, unopened: (unopened || []).map((u) => u.id), candidates: candidates.map((c) => ({ id: c.id, page: c.page, criterion: c.criterion, status: c.status, quote: c.quote, picture: abs(c.picture), lines: c.lines || [] })), resultFile })}
+${block({ kind: 'manual-describe', report: reportFile, parsed: parsedDir, pdf: pdfFile, startUrl, routes: urlsOf(routes), fallback, unopened: (unopened || []).map((u) => u.id), candidates: candidates.map((c) => ({ id: c.id, page: c.page, criterion: c.criterion, status: c.status, quote: c.quote, picture: abs(c.picture), lines: c.lines || [] })), resultFile })}
 `;
 }
 
@@ -590,8 +617,9 @@ const INVENTORY = new Set(['banner', 'navigation', 'main', 'contentinfo', 'compl
 
 // The findings whose selectors matched nothing on a page that loaded (docs/plans/read-from-parse.md
 // AC 4), and those whose page did not load (docs/plans/pictures-and-routes.md AC 7), asked once:
-// where is the element, really? items: [{ finding, picture, evidence }].
-export function manualLocatePrompt({ items, startUrl, routes = [], resultFile }) {
+// where is the element, really? items: [{ finding, picture, evidence }]. lookedAt: the pages the tool
+// looked at, so a group of detail pages one of them belongs to is listed in full.
+export function manualLocatePrompt({ items, startUrl, routes = [], lookedAt = [], resultFile }) {
   const itemText = ({ finding: f, picture, evidence: ev }) => {
     const inv = (ev && ev.ax ? ev.ax : []).filter((n) => n && INVENTORY.has(n.role)).slice(0, 120).map((n) => `- ${n.role}${n.name ? ` "${String(n.name).slice(0, 80)}"` : ''}`).join('\n');
     const where = (ev && (ev.finalUrl || ev.url)) || f.url || f.route || startUrl;
@@ -629,11 +657,7 @@ ${DECIDE}
 
 ${items.map(itemText).join('\n\n')}
 
-## Known routes of the application
-
-These are the only routes to choose from. route: ${ROUTE_RULE}.
-
-${routes.length ? routes.slice(0, 200).map((r) => `- ${r}`).join('\n') : `- ${startUrl}`}
+${routesBlock(routes, startUrl, lookedAt)}
 
 ## When you are done
 
@@ -643,7 +667,7 @@ ${block({ answers: [{ id: items[0] ? items[0].finding.id : 'F1', route: '/search
 
 Machine-readable copy:
 
-${block({ kind: 'manual-locate', startUrl, routes, items: items.map(({ finding: f, evidence: ev }) => ({ id: f.id, page: f.page, route: f.route || null, selectors: f.selectors || [], loaded: !!(ev && ev.loaded), lines: f.lines || [] })), resultFile })}
+${block({ kind: 'manual-locate', startUrl, routes: urlsOf(routes), items: items.map(({ finding: f, evidence: ev }) => ({ id: f.id, page: f.page, route: f.route || null, selectors: f.selectors || [], loaded: !!(ev && ev.loaded), lines: f.lines || [] })), resultFile })}
 `;
 }
 

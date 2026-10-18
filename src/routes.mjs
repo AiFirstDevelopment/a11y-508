@@ -324,6 +324,35 @@ export function hashRoute(url) {
   return h.startsWith('#/') ? `#/${segment(h.slice(2).split('?')[0])}` : '';
 }
 
+// The known routes as the prompts list them (docs/plans/manual-crawl-first.md AC 3): routes that
+// differ only in their last path segment and share a title (five request detail pages) are one entry,
+// the first of them with the others under `more`, so the list stays short. A route with no title, a
+// top-level page (its parent is the root), or one alone under its parent stays an entry of its own.
+// routes: [{ url, title, ... }] in order; the entries keep the order of their first member. Pure.
+export function groupRoutes(routes) {
+  const out = [];
+  const groups = new Map(); // `${origin}${parent path}\n${title}` -> the entry
+  for (const r of routes) {
+    const title = String(r.title || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    let key = null;
+    try {
+      const u = new URL(r.url);
+      const path = `${u.pathname.replace(/\/+$/, '')}${hashRoute(u)}`;
+      const cut = path.lastIndexOf('/');
+      if (title && cut > 0) key = `${u.origin}${path.slice(0, cut)}\n${title}`;
+    } catch {}
+    const entry = key ? groups.get(key) : null;
+    if (entry) {
+      entry.more.push(r.url);
+      continue;
+    }
+    const e = { ...r, more: [] };
+    out.push(e);
+    if (key) groups.set(key, e);
+  }
+  return out;
+}
+
 // The router's paths as full URLs under the start URL. An application that routes by the hash
 // (useHash: a start URL like http://h/#/home) has them after the '#/' of the start URL's page.
 export function routeUrls(startUrl, paths) {

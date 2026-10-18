@@ -63,6 +63,9 @@
       navCount,
       textLength: A.text(document.body).length,
       h1: A.text(A.one('h1') || { textContent: '' }),
+      // The h1 and h2 texts in page order (at most 8, each cut at 80 characters), hidden ones left out
+      // unless they are hidden only visually: what a page is about, for a route list.
+      headings: Array.from(A.all('h1, h2')).filter((h) => A.isVisible(h) || A.isVisuallyHidden(h)).map((h) => A.text(h).slice(0, 80)).filter(Boolean).slice(0, 8),
     };
   };
 

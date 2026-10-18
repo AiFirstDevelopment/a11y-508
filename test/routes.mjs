@@ -5,12 +5,14 @@
 // and how knownRoutes puts them under the start URL. Run: node test/routes.mjs  (or -g "<name>").
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appBase, closing, hashRoute, lazyTarget, routeTrees, routeUrls, scanRoutes } from '../src/routes.mjs';
-import { knownRoutes, onRouteList, routeSources, routesLine } from '../src/manual.mjs';
+import { appBase, closing, groupRoutes, hashRoute, lazyTarget, routeTrees, routeUrls, scanRoutes } from '../src/routes.mjs';
+import { knownRoutes, needsCrawl, onRouteList, routeSources, routesLine } from '../src/manual.mjs';
+import { routeLines } from '../src/agent.mjs';
+import { workDir } from '../src/home.mjs';
 
 const only = process.argv.includes('-g') ? process.argv[process.argv.indexOf('-g') + 1] : null;
 const tests = [];
@@ -78,11 +80,112 @@ test('AC4 / guard e: with no crawl, knownRoutes is the router\'s routes under th
   assert.equal(routesLine(routes), "Routes the tool knew: 12 (from the application's router)");
   // A non-Angular folder: the start URL only.
   const plain = routeSources(join(FIXTURE, 'src'), { startUrl: start, sourceDirs: ['app'] });
-  assert.deepEqual(plain, [{ url: start, from: 'start' }]);
+  assert.deepEqual(plain, [{ url: start, from: 'start', title: null, headings: [] }]);
   assert.equal(routesLine(plain), 'Routes the tool knew: 1 (the start page only)');
-  assert.equal(routesLine([{ url: start, from: 'crawl' }, { url: `${start}x`, from: 'router' }]), "Routes the tool knew: 2 (from the crawl and the application's router)");
+  assert.equal(routesLine([{ url: start, from: 'crawl' }, { url: `${start}x`, from: 'router' }]), "Routes the tool knew: 2 (1 from looking over the site; 1 from the application's router)");
+  assert.equal(routesLine([{ url: start, from: 'crawl' }, { url: `${start}x`, from: 'crawl' }]), 'Routes the tool knew: 2 (from looking over the site)');
   // Without a start URL (the old call), the crawl's routes only: none here.
   assert.deepEqual(knownRoutes(FIXTURE), []);
+});
+
+// ---- docs/plans/manual-crawl-first.md: the PDF run's own look over the site comes first.
+
+// A crawl report as the crawler writes it: pages with their title and headings, one that answered an
+// error, one sent off to a sign-in, a query variant and a trailing slash of pages already there.
+const CRAWLED = (start) => ({ finishedAt: '2026-10-18T10:00:00.000Z', summary: { pages: 8, audited: 6 }, pages: [
+  { url: start, finalUrl: start, title: 'Example app', headings: ['Welcome'] },
+  { url: `${start}search`, finalUrl: `${start}search`, title: 'Search', headings: ['Search', 'Results'] },
+  { url: `${start}search?q=a`, finalUrl: `${start}search?q=a`, title: 'Search', headings: ['Search'] },
+  { url: `${start}layout/mra-request/BR-1234g`, finalUrl: `${start}layout/mra-request/BR-1234g`, title: 'MRA Request', headings: ['Request BR-1234g', 'Status'] },
+  { url: `${start}layout/mra-request/BR-1235h/`, finalUrl: `${start}layout/mra-request/BR-1235h/`, title: 'MRA Request', headings: ['Request BR-1235h', 'Status'] },
+  { url: `${start}layout/mra-request/BR-1234g/`, finalUrl: `${start}layout/mra-request/BR-1234g/`, title: 'MRA Request', headings: ['Request BR-1234g'] },
+  { url: `${start}broken`, finalUrl: `${start}broken`, title: '', error: 'HTTP 500' },
+  { url: `${start}secret`, finalUrl: 'https://login.example/x', title: 'Sign in', skipped: 'redirected off-origin to https://login.example/x' },
+] });
+
+test('crawl-first AC2 / guard b: the run\'s crawl report comes first, with each page\'s title and headings, pages deduplicated without the query or a trailing slash, error and sign-in pages left out, then the router\'s routes; the line counts both', () => {
+  const start = 'http://127.0.0.1:4100/';
+  const run = mkdtempSync(join(tmpdir(), 'a11y-508-run-'));
+  mkdirSync(join(run, 'crawl'), { recursive: true });
+  writeFileSync(join(run, 'crawl', 'report.json'), JSON.stringify(CRAWLED(start)));
+  const routes = routeSources(FIXTURE, { startUrl: start, sourceDirs: ['src'], runDir: run });
+  assert.deepEqual(routes.slice(0, 4), [
+    { url: start, from: 'crawl', title: 'Example app', headings: ['Welcome'] },
+    { url: `${start}search`, from: 'crawl', title: 'Search', headings: ['Search', 'Results'] },
+    { url: `${start}layout/mra-request/BR-1234g`, from: 'crawl', title: 'MRA Request', headings: ['Request BR-1234g', 'Status'] },
+    { url: `${start}layout/mra-request/BR-1235h/`, from: 'crawl', title: 'MRA Request', headings: ['Request BR-1235h', 'Status'] },
+  ]);
+  assert.deepEqual(routes.filter((r) => r.from === 'crawl').length, 4);
+  // The router's routes follow, the two already crawled left out; nothing from the start URL (crawled).
+  assert.deepEqual(routes.filter((r) => r.from === 'router').map((r) => r.url), EXPECTED.filter((p) => p !== '/' && p !== '/search').map((p) => `${start}${p.slice(1)}`));
+  assert.deepEqual(routes.filter((r) => r.from === 'start'), []);
+  assert.equal(routesLine(routes), "Routes the tool knew: 14 (4 from looking over the site; 10 from the application's router)");
+  // Headings a report keeps under info (an older build's) are read too; a page record with none has [].
+  const old = { pages: [{ url: `${start}a`, title: 'A', info: { headings: ['One'] } }, { url: `${start}b`, title: 'B' }] };
+  writeFileSync(join(run, 'crawl', 'report.json'), JSON.stringify(old));
+  assert.deepEqual(routeSources(FIXTURE, { runDir: run }), [{ url: `${start}a`, from: 'crawl', title: 'A', headings: ['One'] }, { url: `${start}b`, from: 'crawl', title: 'B', headings: [] }]);
+  rmSync(run, { recursive: true, force: true });
+});
+
+test('crawl-first AC2/3 / guards c f: the prompt lists each route with its title and headings; detail pages that differ only in their last segment and share a title are one line, kept apart from other folders and from untitled routes; a looked-at group is listed in full', () => {
+  const h = 'http://h/';
+  const list = [
+    { url: `${h}`, from: 'crawl', title: 'Example app', headings: ['Welcome'] },
+    { url: `${h}search`, from: 'crawl', title: 'Search', headings: ['Search'] },
+    { url: `${h}items/1`, from: 'crawl', title: 'Item', headings: ['Item'] },
+    { url: `${h}items/2`, from: 'crawl', title: 'Item', headings: ['Item'] },
+    { url: `${h}orders/1`, from: 'crawl', title: 'Item', headings: ['Order'] },
+    { url: `${h}items/new`, from: 'crawl', title: 'New item', headings: [] },
+    { url: `${h}reports`, from: 'router', title: null, headings: [] },
+    { url: `${h}gone`, from: 'router', title: null, headings: [] },
+  ];
+  // Guard f: one entry for the two items, /orders/1 apart (another folder), /items/new apart (another title), untitled routes never grouped.
+  const groups = groupRoutes(list);
+  assert.deepEqual(groups.map((g) => [g.url, g.more]), [[h, []], [`${h}search`, []], [`${h}items/1`, [`${h}items/2`]], [`${h}orders/1`, []], [`${h}items/new`, []], [`${h}reports`, []], [`${h}gone`, []]]);
+  // Top-level pages sharing a title are not grouped either (the root is not a folder of detail pages).
+  assert.deepEqual(groupRoutes([{ url: `${h}a`, title: 'X' }, { url: `${h}b`, title: 'X' }]).map((g) => g.more), [[], []]);
+  // Hash-routed detail pages group by the route after #/.
+  assert.deepEqual(groupRoutes([{ url: `${h}#/items/1`, title: 'Item' }, { url: `${h}#/items/2`, title: 'Item' }]).map((g) => [g.url, g.more]), [[`${h}#/items/1`, [`${h}#/items/2`]]]);
+  // Guard c: the lines.
+  assert.equal(routeLines(list, h), [
+    `- ${h} — "Example app": Welcome`,
+    `- ${h}search — "Search": Search`,
+    `- ${h}items/1 — "Item": Item (and 1 more like it)`,
+    `- ${h}orders/1 — "Item": Order`,
+    `- ${h}items/new — "New item"`,
+    `- ${h}reports`,
+    `- ${h}gone`,
+  ].join('\n'));
+  // The locate step, when the page looked at was one of a group: the group in full.
+  assert.equal(routeLines(list.slice(2, 4), h, [`${h}items/1`]), `- ${h}items/1 — "Item": Item\n- ${h}items/2 — "Item": Item`);
+  // Plain URLs (an older routes.json) still list; none at all lists the start URL; the words after the URL stop at 120 characters.
+  assert.equal(routeLines([`${h}x`, `${h}y`], h), `- ${h}x\n- ${h}y`);
+  assert.equal(routeLines([], h), `- ${h}`);
+  const long = routeLines([{ url: `${h}p`, title: 'T', headings: Array.from({ length: 8 }, (_, i) => `Heading number ${i + 1} of the page`) }], h);
+  assert.equal(long.length, `- ${h}p`.length + 120);
+  assert.ok(long.endsWith('…'));
+});
+
+test('crawl-first AC1 / guard d: the run crawls once: not when its own crawl report is there, not when the loop has crawled the repository already (round-1/report.json), and not when the config says 0 pages', () => {
+  const run = mkdtempSync(join(tmpdir(), 'a11y-508-run-'));
+  assert.equal(needsCrawl(FIXTURE, run, 60), true);
+  assert.equal(needsCrawl(FIXTURE, run, 0), false);
+  mkdirSync(join(run, 'crawl'), { recursive: true });
+  writeFileSync(join(run, 'crawl', 'report.json'), JSON.stringify({ pages: [] }));
+  assert.equal(needsCrawl(FIXTURE, run, 60), false);
+  rmSync(join(run, 'crawl'), { recursive: true, force: true });
+  // A loop's round in the repository's work folder: its pages are the routes; no crawl of the run's own.
+  const round = join(workDir(FIXTURE), 'round-1');
+  mkdirSync(round, { recursive: true });
+  writeFileSync(join(round, 'report.json'), JSON.stringify({ pages: [{ url: 'http://127.0.0.1:4100/search', title: 'Search', headings: ['Search'] }] }));
+  assert.equal(needsCrawl(FIXTURE, run, 60), false);
+  assert.deepEqual(routeSources(FIXTURE, { runDir: run }), [{ url: 'http://127.0.0.1:4100/search', from: 'crawl', title: 'Search', headings: ['Search'] }]);
+  // A round whose pages all failed is no crawl to go by.
+  writeFileSync(join(round, 'report.json'), JSON.stringify({ pages: [{ url: 'http://127.0.0.1:4100/', error: 'HTTP 500' }] }));
+  assert.equal(needsCrawl(FIXTURE, run, 60), true);
+  rmSync(round, { recursive: true, force: true });
+  assert.equal(existsSync(round), false);
+  rmSync(run, { recursive: true, force: true });
 });
 
 let failed = 0;
