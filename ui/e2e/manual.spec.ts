@@ -1589,3 +1589,202 @@ test('crawl-first AC1 / guard e: a look over the site that fails is logged as a 
     await app.cleanup();
   }
 });
+
+// ---- Screenshots in (docs/plans/screenshots-in.md): screenshots pasted, picked or dropped, each with a
+// note, make the same run a PDF does, with "Screenshot N" where a PDF run says "PDF page N".
+test.describe('screenshots', () => {
+  const NOT_A_SHOT = 'That is not a screenshot: only PNG, JPEG or WebP pictures can be added, at most 40 of them, 10 MB each.';
+  const NOTE_B = 'FINDING F1 | Search button has no accessible name | /search | #search-btn | the magnifier button in the search bar | The magnifier button is announced only as button.';
+  const NOTE_A = 'FINDING F2 | Menu button has no accessible name | / | #menu-btn | the menu button in the header | The hamburger menu button in the header has no name.';
+  const pngs = async () => (await import('../../test/fixtures/manual/png.mjs')) as any;
+  // A synthetic paste on the dashboard: a DataTransfer carrying the file, as Ctrl+V / Cmd+V gives one.
+  const paste = (page: Page, bytes: Buffer, name = 'image.png', type = 'image/png') => page.evaluate(({ b64, name, type }) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([bytes], name, { type }));
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, { b64: bytes.toString('base64'), name, type });
+  const pasteText = (page: Page, text: string) => page.evaluate((t) => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', t);
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, text);
+  const drop = (page: Page, bytes: Buffer, name: string) => page.getByTestId('shots-drop').evaluate((el, { b64, name }) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([bytes], name, { type: 'image/png' }));
+    el.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, { b64: bytes.toString('base64'), name });
+  async function pick(page: Page, files: string[]): Promise<void> {
+    const chooser = page.waitForEvent('filechooser');
+    await page.getByTestId('add-shots').click();
+    await (await chooser).setFiles(files);
+  }
+  const rows = (page: Page) => page.getByTestId('shot-row');
+
+  test('screenshots AC1 / guard a / guard c: pasted, picked and dropped screenshots are rows with a thumbnail, a note box and Remove; a non-picture is refused in one sentence; a reload keeps nothing', async ({ page }) => {
+    const app = await manualApp({ crawlPages: 0 });
+    const dash = await dashboard({ cwd: app.cwd });
+    const files = tempDir('a11y-508-shots-ui-');
+    try {
+      const { pngOf } = await pngs();
+      await open(page, dash);
+      // Beside Choose a PDF: Add screenshots, and the drop area that says a paste works.
+      await expect(page.getByTestId('add-shots')).toHaveText('Add screenshots');
+      await expect(page.locator('.actions [data-testid="manual-pdf"] + [data-testid="add-shots"]')).toHaveCount(1);
+      await expect(page.locator('input[data-testid="shots-input"]')).toHaveAttribute('accept', 'image/png,image/jpeg,image/webp');
+      await expect(page.locator('input[data-testid="shots-input"]')).toHaveAttribute('multiple', '');
+      await expect(page.getByTestId('shots-drop')).toContainText('or paste one: Ctrl+V / Cmd+V');
+      await expect(rows(page)).toHaveCount(0);
+      // Guard a: a paste carrying a PNG adds a row with its thumbnail and a note box.
+      await paste(page, pngOf(120, 80, [200, 40, 40]));
+      await expect(rows(page)).toHaveCount(1);
+      const thumb = rows(page).first().getByTestId('shot-thumb');
+      await expect(thumb).toHaveAttribute('data-shot', '1');
+      await expect.poll(() => thumb.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(120);
+      await expect(rows(page).first().getByLabel('Screenshot 1: What is wrong here')).toHaveAttribute('maxlength', '300');
+      await expect(rows(page).first().getByTestId('shot-remove')).toHaveText('Remove');
+      await expect(page.getByTestId('shots-fix')).toHaveText('Fix this 1 screenshot');
+      // A paste that is not a picture is refused in one sentence; text typed into a note box is the box's.
+      await pasteText(page, 'some words');
+      await expect(page.getByTestId('shots-error')).toHaveText(NOT_A_SHOT);
+      await rows(page).first().getByTestId('shot-note').fill('The chart has no text alternative.');
+      // Picked: the files, in the order given.
+      writeFileSync(join(files, 'second.png'), pngOf(60, 40));
+      await pick(page, [join(files, 'second.png')]);
+      await expect(rows(page)).toHaveCount(2);
+      await expect(page.getByTestId('shots-error')).toHaveCount(0);
+      // Guard c: a file named .png whose bytes are text is refused, with the sentence, and adds no row.
+      writeFileSync(join(files, 'notes.png'), 'These are my notes, not a picture.\n');
+      await pick(page, [join(files, 'notes.png')]);
+      await expect(page.getByTestId('shots-error')).toHaveText(NOT_A_SHOT);
+      await expect(rows(page)).toHaveCount(2);
+      // Dropped: added too.
+      await drop(page, pngOf(50, 50), 'dropped.png');
+      await expect(rows(page)).toHaveCount(3);
+      expect(await page.getByTestId('shot-thumb').evaluateAll((l) => l.map((e) => e.getAttribute('data-name')))).toEqual(['image.png', 'second.png', 'dropped.png']);
+      await expect(page.getByTestId('shots-fix')).toHaveText('Fix these 3 screenshots');
+      // Remove: the row goes, and the rest are numbered again.
+      await rows(page).nth(1).getByTestId('shot-remove').click();
+      await expect(rows(page)).toHaveCount(2);
+      expect(await page.getByTestId('shot-thumb').evaluateAll((l) => l.map((e) => `${e.getAttribute('data-shot')} ${e.getAttribute('data-name')}`))).toEqual(['1 image.png', '2 dropped.png']);
+      await expect(rows(page).first().getByTestId('shot-note')).toHaveValue('The chart has no text alternative.');
+      // Guard c, at the server: text named .png is refused with the sentence, and no run starts.
+      const form = new FormData();
+      form.append('shot', new Blob([Buffer.from('These are my notes, not a picture.\n')], { type: 'image/png' }), 'notes.png');
+      form.append('notes', JSON.stringify(['a note']));
+      const raw = await fetch(`${dash.origin}/api/manual/screenshots`, { method: 'POST', headers: { 'X-A11y-508-Secret': dash.secret }, body: form });
+      expect([raw.status, (await raw.json()).error]).toEqual([400, NOT_A_SHOT]);
+      expect((await api(dash, '/api/runs/current')).json).toBeNull();
+      expect(existsSync(join(dash.dirs().work, 'manual')) && readdirSync(join(dash.dirs().work, 'manual')).length).toBeFalsy();
+      // Plain page state: a reload keeps nothing.
+      await page.reload();
+      await expect(page.getByTestId('add-shots')).toBeVisible();
+      await expect(rows(page)).toHaveCount(0);
+    } finally {
+      removeTemp(files);
+      await dash.stop();
+      await app.cleanup();
+    }
+  });
+
+  test('screenshots AC2-5 / guards b, d, e, g: Fix these 2 screenshots uploads them in order with their notes, the run reads them with no parse, and every link says Screenshot N and opens it', async ({ page }) => {
+    test.setTimeout(300_000);
+    const app = await manualApp({ crawlPages: 0 });
+    // Each assistant call takes a moment, so the read's sentence can be seen.
+    const dash = await dashboard({ cwd: app.cwd, env: { FAKE_AGENT_DELAY_MS: '1500' } });
+    const files = tempDir('a11y-508-shots-run-');
+    try {
+      const { pngOf } = await pngs();
+      const b = pngOf(200, 120, [200, 40, 40]);
+      const a = pngOf(200, 120, [40, 40, 200]);
+      writeFileSync(join(files, 'b.png'), b);
+      writeFileSync(join(files, 'a.png'), a);
+      await open(page, dash);
+      await record(page);
+      // Guard g: added as b.png, then a.png: b.png is Screenshot 1.
+      await pick(page, [join(files, 'b.png')]);
+      await expect(rows(page)).toHaveCount(1);
+      await pick(page, [join(files, 'a.png')]);
+      await expect(rows(page)).toHaveCount(2);
+      expect(await page.getByTestId('shot-thumb').evaluateAll((l) => l.map((e) => `${e.getAttribute('data-shot')} ${e.getAttribute('data-name')}`))).toEqual(['1 b.png', '2 a.png']);
+      await rows(page).nth(0).getByTestId('shot-note').fill(NOTE_B);
+      await rows(page).nth(1).getByTestId('shot-note').fill(NOTE_A);
+      await expect(page.getByTestId('shots-fix')).toHaveText('Fix these 2 screenshots');
+      const uploaded = Date.now();
+      await page.getByTestId('shots-fix').click();
+      await expect(go(page)).toHaveText('Stop', { timeout: 60_000 });
+      // The rows are gone once the run has them.
+      await expect(rows(page)).toHaveCount(0);
+      // AC 2: a run of kind manual from screenshots: its record and state.json say so; no PDF.
+      await expect.poll(async () => (await api(dash, '/api/runs/current')).json?.kind, { timeout: 30_000 }).toBe('manual');
+      const run = (await api(dash, '/api/runs/current')).json;
+      expect(run.meta.source).toBe('screenshots');
+      const id = run.meta.manualId;
+      const dir = join(dash.dirs().work, 'manual', id);
+      expect(existsSync(join(dir, 'source.pdf'))).toBe(false);
+      expect(readFileSync(join(dir, 'shots', '01.png')).equals(b)).toBe(true);
+      expect(readFileSync(join(dir, 'shots', '02.png')).equals(a)).toBe(true);
+      expect(readJson(join(dir, 'notes.json')).shots.map((s: any) => [s.file, s.name, s.note])).toEqual([['shots/01.png', 'b.png', NOTE_B], ['shots/02.png', 'a.png', NOTE_A]]);
+      await expect.poll(() => existsSync(join(dir, 'state.json')) && readJson(join(dir, 'state.json')).source, { timeout: 30_000 }).toBe('screenshots');
+      // AC 3 / guards b and g: the parse, one page per screenshot in the order added, the note as its text.
+      const md = readFileSync(join(dir, 'parsed', 'report.md'), 'utf8');
+      expect(md).toContain('2 screenshots, with a note on 2 of them.');
+      expect(md.split('\n## ')[1]).toBe(`Screenshot 1 of 2\nPicture of the page: pages/page-01.png\nNote from the person who took it:\n> ${NOTE_B}\n`);
+      expect(md.split('\n## ')[2]).toContain(`Note from the person who took it:\n> ${NOTE_A}`);
+      // AC 5: the read's sentence, and never the PDF's.
+      await expect.poll(() => seen(page), { timeout: 60_000 }).toContain('Reading 2 screenshots; asking the assistant what each shows.');
+      expect((await seen(page)).filter((t) => /PDF/.test(t))).toEqual([]);
+      await expect(now(page)).toHaveText(REVIEW, { timeout: 120_000 });
+      // Guard d: no parse stage, and the read started within 5 s of the upload.
+      const events = await runEvents(dash);
+      const manualEvents = events.filter((e) => e.type === 'manual');
+      expect(manualEvents.filter((e) => e.stage === 'parse' || e.stage === 'parse-failed')).toEqual([]);
+      const read = manualEvents.find((e) => e.stage === 'read');
+      expect(read, JSON.stringify(manualEvents.map((e) => e.stage))).toBeTruthy();
+      expect(Date.parse(read.at) - uploaded).toBeLessThan(5000);
+      // Guard b: the candidates carry the notes as the quotes, and the describe prompt has them.
+      const cands = readJson(join(dir, 'candidates.json')).candidates;
+      expect(cands.map((c: any) => [c.id, c.page, c.quote, c.status, c.criterion])).toEqual([['F1', 1, NOTE_B, null, null], ['F2', 2, NOTE_A, null, null]]);
+      const prompt = readFileSync(join(dash.dirs().work, 'tasks', `prompt-manual-${id}-describe-1.md`), 'utf8');
+      // AC 4: the prompt knows they are screenshots.
+      expect(prompt).toContain('A person took these screenshots of the application and wrote a note on each; the note is the tester\'s words, the picture is what they saw');
+      expect(prompt).toContain('## F2 — screenshot 2 — (no criterion) — status unknown');
+      expect(prompt).toContain(NOTE_A);
+      expect(prompt).not.toContain('a report, a PDF');
+      // Guard e / AC 5: the plan's links read Screenshot N and open the screenshot.
+      await expect(item(page, 'F2').getByTestId('pdf-page')).toHaveText('Screenshot 2');
+      await expect(item(page, 'F2').getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/parsed/pages/page-02.png`);
+      await expect(item(page, 'F1').getByTestId('pdf-page')).toHaveText('Screenshot 1');
+      const pic = await fetch(`${dash.origin}/api/manual/${id}/parsed/pages/page-02.png`, { headers: { 'X-A11y-508-Secret': dash.secret } });
+      expect([pic.status, pic.headers.get('content-type')]).toEqual([200, 'image/png']);
+      // The parsed report is "The screenshots".
+      await expect(page.getByTestId('show-parsed')).toHaveText('Show the screenshots');
+      await page.getByTestId('show-parsed').click();
+      const pane = page.getByTestId('parsed-panel');
+      await expect(pane.locator('h2')).toHaveText('The screenshots');
+      await expect(pane.getByTestId('parsed-page')).toHaveCount(2);
+      await expect(pane.getByTestId('parsed-page').first().locator('h3')).toHaveText('Screenshot 1 of 2');
+      await expect(pane.getByTestId('parsed-text').first()).toHaveText(NOTE_B);
+      await pane.getByTestId('parsed-close').click();
+      // Approved: fixed, confirmed, Done; its rows and decisions say Screenshot N.
+      await page.getByTestId('approve-plan').click();
+      await expect(now(page)).toHaveText('Done: 2 findings from the screenshots are fixed and confirmed in the deployed site.', { timeout: 240_000 });
+      const done = page.getByTestId('fixed-confirmed');
+      await expect(done.locator('[data-testid="fixed-item"][data-finding="F2"]').getByTestId('pdf-page')).toHaveText('Screenshot 2');
+      await expect(done.locator('[data-testid="fixed-item"][data-finding="F2"]').getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/parsed/pages/page-02.png`);
+      await page.getByTestId('show-decisions').click();
+      const groups = page.getByTestId('decisions-group');
+      await expect(groups.nth(1).getByTestId('pdf-page')).toHaveText('Screenshot 2');
+      await expect(groups.nth(1).getByTestId('pdf-page')).toHaveAttribute('href', `/api/manual/${id}/parsed/pages/page-02.png`);
+      const dm = readFileSync(join(dir, 'decisions.md'), 'utf8');
+      expect(dm).toContain('— [Screenshot 2](parsed/pages/page-02.png)');
+      expect(dm).not.toContain('PDF page');
+      expect(dm).not.toContain('source.pdf');
+    } finally {
+      removeTemp(files);
+      await dash.stop();
+      await app.cleanup();
+    }
+  });
+});

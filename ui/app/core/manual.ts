@@ -106,6 +106,8 @@ export const seenWords = (r: { page: number; seen?: string | null; seenPicture?:
 
 export interface ManualState {
   id: string | null;
+  // Where the findings come from (docs/plans/screenshots-in.md): a PDF, or screenshots.
+  source: 'pdf' | 'screenshots';
   // The latest stage event's stage, and the event itself.
   stage: string | null;
   last: Record<string, any> | null;
@@ -147,7 +149,7 @@ export interface ManualState {
 }
 
 export const emptyManual = (): ManualState => ({
-  id: null, stage: null, last: null, findings: null, alreadyFixed: [], unchecked: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
+  id: null, source: 'pdf', stage: null, last: null, findings: null, alreadyFixed: [], unchecked: [], allGone: false, plan: null, reviewing: false, approveRefused: [], verdicts: [], decisions: [],
   noFindings: null, readFailed: null, readFailedBy: null, parse: null, parsed: null, parseFailed: null, noText: false, readAgain: null, candidates: null, crawl: null, done: null, commits: 0, fix: null, capture: null, deployCheck: null, deployWait: null,
 });
 
@@ -159,6 +161,7 @@ export function applyManual(s: ManualState, ev: Record<string, any>): ManualStat
   switch (st) {
     case 'start':
       n.id = ev['id'] || null;
+      if (ev['source']) n.source = ev['source'] === 'screenshots' ? 'screenshots' : 'pdf';
       break;
     case 'findings':
       n.findings = Number(ev['count']) || 0;
@@ -242,8 +245,12 @@ export function applyManual(s: ManualState, ev: Record<string, any>): ManualStat
 // The path of one of the run's files, as the server serves it (a link or an <img> sends the cookie).
 export const manualFileUrl = (id: string | null, rel: string) => (id ? `/api/manual/${encodeURIComponent(id)}/file/${rel.split('/').map(encodeURIComponent).join('/')}` : '');
 export const pdfPageUrl = (id: string | null, page: number) => `${manualFileUrl(id, 'source.pdf')}#page=${page}`;
+// A finding's page in the run's own words (docs/plans/screenshots-in.md AC 5): "PDF page 3", or
+// "Screenshot 3" opening the screenshot, for a run from screenshots.
+export const pageLabel = (source: string | null | undefined, n: number) => (source === 'screenshots' ? `Screenshot ${n}` : `PDF page ${n}`);
 // One file of the run's parse: report.md, manifest.json or pages/<name>.png.
 export const parsedFileUrl = (id: string | null, rel: string) => (id ? `/api/manual/${encodeURIComponent(id)}/parsed/${rel.split('/').map(encodeURIComponent).join('/')}` : '');
 // One file of the run's own look over the site (docs/plans/manual-crawl-first.md AC 4): report.html or
 // report.json, given as decisionGroups names it ("crawl/report.html").
+export const pageHref = (id: string | null, source: string | null | undefined, n: number) => (source === 'screenshots' ? parsedFileUrl(id, `pages/page-${String(n).padStart(2, '0')}.png`) : pdfPageUrl(id, n));
 export const crawlFileUrl = (id: string | null, rel: string) => (id ? `/api/manual/${encodeURIComponent(id)}/crawl/${encodeURIComponent(rel.replace(/^crawl\//, ''))}` : '');

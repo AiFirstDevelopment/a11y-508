@@ -1,7 +1,7 @@
 import { Component, computed, effect, inject, output, signal, untracked } from '@angular/core';
 import { Api } from '../core/api';
 import { RunStore } from '../core/run.store';
-import { DecisionGroup, ManualComponent, ManualDecision, PlanItem, manualFileUrl, parsedFileUrl, pdfPageUrl, seenWords } from '../core/manual';
+import { DecisionGroup, ManualComponent, ManualDecision, PlanItem, manualFileUrl, pageHref, pageLabel, parsedFileUrl, seenWords } from '../core/manual';
 import { EnvStore } from '../core/env.store';
 import { commitUrl } from '../core/git-links';
 import { ComponentPicker } from '../shared/component-picker';
@@ -28,14 +28,14 @@ interface Draft {
           <ol>
             @for (r of fixedRows(); track r.finding) {
               <li data-testid="fixed-item" [attr.data-finding]="r.finding">
-                <p class="what"><strong>{{ r.finding }}</strong> {{ r.title }} · <a [href]="page(r.page)" target="_blank" rel="noopener" data-testid="pdf-page">PDF page {{ r.page }}</a></p>
+                <p class="what"><strong>{{ r.finding }}</strong> {{ r.title }} · <a [href]="page(r.page)" target="_blank" rel="noopener" data-testid="pdf-page">{{ label(r.page) }}</a></p>
                 @if (r.quote) { <blockquote data-testid="quote">{{ r.quote }}</blockquote> }
                 @if (r.url) { <p data-testid="checked"><span class="label">Checked: </span><a [href]="r.url" target="_blank" rel="noopener">{{ r.url }}</a></p> }
                 <p data-testid="fixed-commits"><span class="label">{{ r.commits.length === 1 ? 'Commit' : 'Commits' }}: </span>@for (c of r.commits; track c.sha; let last = $last) {@if (commitLink(c); as u) {<a [href]="u" target="_blank" rel="noopener" data-testid="fixed-commit">{{ c.short }}</a>} @else {<code data-testid="fixed-commit">{{ c.short }}</code>}@if (!last) {, }}@if (!r.commits.length) {none}</p>
                 <p data-testid="reason"><span class="label">Why it counts as fixed: </span>{{ r.reason || 'no reason was given' }}</p>
                 <div class="pair">
                   @if (r.picture) {
-                    <figure><a [href]="parsed(r.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(r.picture)" [alt]="'PDF page ' + r.page + ', as the tester saw it'" data-testid="page-picture" /></a><figcaption>PDF page {{ r.page }}</figcaption></figure>
+                    <figure><a [href]="parsed(r.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(r.picture)" [alt]=\"label(r.page) + ', as the tester saw it'\" data-testid="page-picture" /></a><figcaption>{{ label(r.page) }}</figcaption></figure>
                   }
                   @for (s of r.shots; track s.path) {
                     <figure><a [href]="file(s.path)" target="_blank" rel="noopener"><img class="thumb" [src]="file(s.path)" [alt]="r.finding + ' ' + s.label.toLowerCase() + ' in the deployed site'" data-testid="fixed-shot" /></a><figcaption>{{ s.label }}</figcaption></figure>
@@ -54,13 +54,13 @@ interface Draft {
           <ol>
             @for (r of m.alreadyFixed; track r.finding) {
               <li data-testid="already-fixed-item" [attr.data-finding]="r.finding">
-                <p class="what"><strong>{{ r.finding }}</strong> {{ r.title }} · <a [href]="page(r.page)" target="_blank" rel="noopener" data-testid="pdf-page">PDF page {{ r.page }}</a></p>
+                <p class="what"><strong>{{ r.finding }}</strong> {{ r.title }} · <a [href]="page(r.page)" target="_blank" rel="noopener" data-testid="pdf-page">{{ label(r.page) }}</a></p>
                 @if (r.quote) { <blockquote data-testid="quote">{{ r.quote }}</blockquote> }
                 @if (r.tester) { <p data-testid="tester-verified">{{ r.tester }}</p> }
                 <p data-testid="checked"><span class="label">Checked: </span><a [href]="r.url" target="_blank" rel="noopener">{{ r.url }}</a> at {{ time(r.checkedAt) }}</p>
                 <p data-testid="reason"><span class="label">Why it counts as fixed: </span>{{ r.reason || 'no reason was given' }}</p>
                 <div class="pair">
-                  @if (r.picture) { <a [href]="parsed(r.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(r.picture)" [alt]="'PDF page ' + r.page + ', as the tester saw it'" data-testid="page-picture" /></a> }
+                  @if (r.picture) { <a [href]="parsed(r.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(r.picture)" [alt]=\"label(r.page) + ', as the tester saw it'\" data-testid="page-picture" /></a> }
                   @if (r.screenshot) { <img class="shot" [src]="file(r.screenshot)" [alt]="r.finding + ' in the deployed site'" data-testid="screenshot" /> }
                 </div>
                 <p class="seen" [attr.data-testid]="r.seenPicture === false ? 'seen-unseen' : 'seen'">{{ seen(r) }}</p>
@@ -77,11 +77,11 @@ interface Draft {
           <ol>
             @for (r of m.unchecked; track r.finding) {
               <li data-testid="unchecked-item" [attr.data-finding]="r.finding">
-                <p class="what"><strong>{{ r.finding }}</strong> {{ r.title }} · <a [href]="page(r.page)" target="_blank" rel="noopener" data-testid="pdf-page">PDF page {{ r.page }}</a></p>
+                <p class="what"><strong>{{ r.finding }}</strong> {{ r.title }} · <a [href]="page(r.page)" target="_blank" rel="noopener" data-testid="pdf-page">{{ label(r.page) }}</a></p>
                 @if (r.quote) { <blockquote data-testid="quote">{{ r.quote }}</blockquote> }
                 <p class="wrong" data-testid="unchecked-line">{{ r.line }}</p>
                 <div class="pair">
-                  @if (r.picture) { <a [href]="parsed(r.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(r.picture)" [alt]="'PDF page ' + r.page + ', as the tester saw it'" data-testid="page-picture" /></a> }
+                  @if (r.picture) { <a [href]="parsed(r.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(r.picture)" [alt]=\"label(r.page) + ', as the tester saw it'\" data-testid="page-picture" /></a> }
                   @if (r.screenshot) { <img class="shot" [src]="file(r.screenshot)" [alt]="'What the tool saw at ' + r.url" data-testid="screenshot" /> }
                 </div>
                 <p class="seen" [attr.data-testid]="r.seenPicture === false ? 'seen-unseen' : 'seen'">{{ seen(r) }}</p>
@@ -99,10 +99,10 @@ interface Draft {
             @for (it of m.plan.items; track it.finding) {
               <li data-testid="plan-item" [attr.data-finding]="it.finding" [class.removed]="draft(it).remove">
                 @if (it.cameBack) { <p class="came-back" data-testid="came-back">{{ it.cameBack }}</p> }
-                <p class="what"><strong>{{ it.finding }}</strong> {{ it.title }} · <a [href]="page(it.page)" target="_blank" rel="noopener" data-testid="pdf-page">PDF page {{ it.page }}</a></p>
+                <p class="what"><strong>{{ it.finding }}</strong> {{ it.title }} · <a [href]="page(it.page)" target="_blank" rel="noopener" data-testid="pdf-page">{{ label(it.page) }}</a></p>
                 @if (it.quote) { <blockquote data-testid="quote">{{ it.quote }}</blockquote> }
                 <div class="pair">
-                  @if (it.picture) { <a [href]="parsed(it.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(it.picture)" [alt]="'PDF page ' + it.page + ', as the tester saw it'" data-testid="page-picture" /></a> }
+                  @if (it.picture) { <a [href]="parsed(it.picture)" target="_blank" rel="noopener"><img class="thumb" [src]="parsed(it.picture)" [alt]=\"label(it.page) + ', as the tester saw it'\" data-testid="page-picture" /></a> }
                   @if (it.screenshot) { <img class="shot" [src]="file(it.screenshot)" [alt]="it.finding + ' in the deployed site before the fix'" data-testid="screenshot" /> }
                 </div>
                 <p class="seen" [attr.data-testid]="it.seenPicture === false ? 'seen-unseen' : 'seen'">{{ seen(it) }}</p>
@@ -144,7 +144,7 @@ interface Draft {
           <ol>
             @for (r of leftOut(); track r.finding) {
               <li data-testid="left-out-item">
-                <p class="what"><strong>{{ r.finding }}</strong> {{ r.title }} · <a [href]="page(r.page)" target="_blank" rel="noopener" data-testid="pdf-page">PDF page {{ r.page }}</a></p>
+                <p class="what"><strong>{{ r.finding }}</strong> {{ r.title }} · <a [href]="page(r.page)" target="_blank" rel="noopener" data-testid="pdf-page">{{ label(r.page) }}</a></p>
                 @if (r.reason) { <p data-testid="left-out-reason"><span class="label">Removed by you; the planned fix was: </span>{{ r.reason }}</p> }
               </li>
             }
@@ -333,7 +333,10 @@ export class ManualPanel {
     return manualFileUrl(this.m()?.id || null, rel);
   }
   page(n: number): string {
-    return pdfPageUrl(this.m()?.id || null, n);
+    return pageHref(this.m()?.id || null, this.m()?.source, n);
+  }
+  label(n: number): string {
+    return pageLabel(this.m()?.source, n);
   }
   parsed(rel: string): string {
     return parsedFileUrl(this.m()?.id || null, rel);

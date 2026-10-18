@@ -209,8 +209,23 @@ export class Driver {
   // file goes to the server, which keeps it and starts the run. The refusal of a file that is not a
   // PDF is the server's one sentence.
   async startManual(file: File): Promise<void> {
+    await this.upload('a PDF', () => ({ path: '/api/manual/pdf', headers: { 'content-type': 'application/pdf' }, body: file }));
+  }
+
+  // Fix from screenshots (docs/plans/screenshots-in.md AC 2): the same preparation, then the images in
+  // the order they were added and their notes, as one multipart upload. Resolves true once the run started.
+  async startScreenshots(shots: { file: Blob; name: string; note: string }[]): Promise<boolean> {
+    return this.upload('screenshots', () => {
+      const form = new FormData();
+      for (const s of shots) form.append('shot', s.file, s.name);
+      form.append('notes', JSON.stringify(shots.map((s) => s.note)));
+      return { path: '/api/manual/screenshots', headers: {}, body: form };
+    });
+  }
+
+  private async upload(what: string, request: () => { path: string; headers: Record<string, string>; body: BodyInit }): Promise<boolean> {
     askToNotify();
-    if (this.starting() || this.store.active()) return;
+    if (this.starting() || this.store.active()) return false;
     this.starting.set(true);
     this.error.set('');
     try {
@@ -218,16 +233,17 @@ export class Driver {
       this.form.rememberUrl();
       if (this.loadedFor !== this.env.cwd()) await this.load();
       await this.ready();
-      if (this.store.active()) return;
+      if (this.store.active()) return false;
       const why = this.whyNoFix();
-      if (why) throw new Error(`Fixing from a PDF needs what fixing needs: ${why}.`);
+      if (why) throw new Error(`Fixing from ${what} needs what fixing needs: ${why}.`);
       if (!this.repoConfig()) {
         const r = await this.api.put<{ config: Record<string, any> }>('/api/config', { config: this.completed() });
         this.cfg.set(r.config);
         this.configExists.set(true);
       }
       await this.api.put('/api/settings', { agent: this.agent() }).catch(() => {});
-      const res = await fetch(`/api/manual/pdf?agent=${encodeURIComponent(this.agent())}`, { method: 'POST', headers: this.api.headers({ 'content-type': 'application/pdf' }), body: file, credentials: 'same-origin' });
+      const r = request();
+      const res = await fetch(`${r.path}?agent=${encodeURIComponent(this.agent())}`, { method: 'POST', headers: this.api.headers(r.headers), body: r.body, credentials: 'same-origin' });
       const text = await res.text();
       let data: any = null;
       try {
@@ -235,8 +251,10 @@ export class Driver {
       } catch {}
       if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
       await this.store.adoptStarted(data);
+      return true;
     } catch (e: any) {
       this.error.set(e?.message || String(e));
+      return false;
     } finally {
       this.starting.set(false);
     }
