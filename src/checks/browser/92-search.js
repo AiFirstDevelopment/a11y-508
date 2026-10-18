@@ -7,6 +7,13 @@
   const SEARCH = /\b(search(es|ing)?|filter(s|ed)?|apply( filters?)?|go|find|refresh|show results|view results|look ?up|query|retrieve|get results)\b/i;
   const DANGER = /\b(save|create|delete|remove|destroy|erase|purge|send|pay|purchase|buy|order|checkout|post|publish|update|upload|import|export|download|sign ?(in|up|out|on)|log ?(in|on|out|off)|register|subscribe|unsubscribe|reset|clear|cancel|approve|reject|transfer|confirm|archive|submit (order|payment|request|application)|add|new|edit|close|accept|decline)\b/i;
   const CONTROL = 'button, input[type="submit"], input[type="button"], input[type="image"], [role="button"]';
+  // A control that opens, closes or folds the search's panel is named with its words too ("Collapse
+  // search panel", "Advanced search", "Show filters"): never the control that runs the search.
+  const TOGGLEY = /\b(collapse|expand|toggle|minimi[sz]e|maximi[sz]e|panel|drawer|sidebar|advanced)\b|\b(show|hide|open|close)\s+(the\s+)?(search|filter|filters|options|criteria)\b/i;
+  // Among the controls named like a search, the one that is the search: a submit, or one whose name
+  // starts with the word (Search, Find, Apply filters), before one that only mentions it.
+  const LEADS = /^(search|find|go|apply|filter|query|look ?up|refresh|retrieve|show results|view results|get results)\b/i;
+  const searchRank = (x) => (x.c.matches('input[type="submit"], button[type="submit"]') || LEADS.test(x.name) ? 0 : 1);
   const FIELD = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="image"]):not([type="reset"]), select, textarea';
   const FROM = /\b(from|start|begin|since|after|min)\b|from|start/i;
   const TO = /\b(to|end|until|through|thru|before|max)\b|end|until/i;
@@ -65,7 +72,7 @@
       // form's default, is left alone (and reported).
       const isDanger = (x) => DANGER.test(x.name) || /^submit$/i.test(x.name);
       const danger = named.find((x) => !x.disabled && isDanger(x));
-      const searchers = named.filter((x) => SEARCH.test(x.name) && !DANGER.test(x.name));
+      const searchers = named.filter((x) => SEARCH.test(x.name) && !DANGER.test(x.name) && !TOGGLEY.test(x.name)).sort((a, b) => searchRank(a) - searchRank(b));
       const go = searchers.find((x) => !x.disabled) || searchers[0] || null;
       // A search box with no button submits with Enter.
       const searchBox = fields.find((f) => f.type === 'search') || (scope.matches('[role="search"]') ? fields[0] : null);

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Verifiable credentials - a11y-508 test site</title>
+<style>
+  [aria-pressed="true"] { background: #003366; color: #fff; }
+  #panel[hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+<h1>Search verifiable credentials</h1>
+<p>A search panel with a collapse toggle beside its Search button, as a component library lays one out: the toggle is named with the panel's words, and folding the panel away hides the fields.</p>
+<form id="collapse-form" aria-label="Search verifiable credentials">
+  <button type="button" id="collapse" aria-label="Collapse search panel" aria-expanded="true">&#9650;</button>
+  <div id="panel">
+    <div role="group" aria-label="Period">
+      <button type="button" aria-pressed="false">Last 7 days</button>
+      <button type="button" aria-pressed="false">Last 90 days</button>
+      <button type="button" aria-pressed="false">Past year</button>
+    </div>
+    <button type="button" id="clear">Clear</button>
+    <button type="button" id="go">Search</button>
+  </div>
+</form>
+<div id="collapse-results" aria-live="polite"></div>
+</main>
+<script>
+  const DAYS = { 'Last 7 days': 7, 'Last 90 days': 90, 'Past year': 365 };
+  let preset = null;
+  const f = document.getElementById('collapse-form');
+  for (const b of f.querySelectorAll('button[aria-pressed]')) b.addEventListener('click', () => {
+    for (const x of f.querySelectorAll('button[aria-pressed]')) x.setAttribute('aria-pressed', String(x === b));
+    preset = b.textContent.trim();
+  });
+  document.getElementById('collapse').addEventListener('click', (e) => {
+    const panel = document.getElementById('panel');
+    panel.hidden = !panel.hidden;
+    e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
+    e.currentTarget.setAttribute('aria-label', panel.hidden ? 'Expand search panel' : 'Collapse search panel');
+  });
+  document.getElementById('clear').addEventListener('click', () => { preset = null; for (const x of f.querySelectorAll('button[aria-pressed]')) x.setAttribute('aria-pressed', 'false'); });
+  document.getElementById('go').addEventListener('click', async () => {
+    const links = await fetch('/api/preset-search?' + new URLSearchParams({ form: 'buttons', preset: preset || '', days: DAYS[preset] || 0, open: '0' }), { headers: { authorization: 'Bearer FIXTURE_TOKEN' } }).then((r) => r.json());
+    document.getElementById('collapse-results').innerHTML = links.length ? '<ul>' + links.map((l, i) => `<li><a href="${l}">Credential ${i + 1}</a></li>`).join('') + '</ul>' : '<p>Nothing found.</p>';
+  });
+</script>
+</body>
+</html>

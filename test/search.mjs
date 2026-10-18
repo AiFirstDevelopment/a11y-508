@@ -24,7 +24,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
-const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless', 'live', 'overlay', 'also', 'sameroute', 'cells', 'onload'];
+const GROUPS = ['search', 'combo', 'combo12', 'widest', 'buttons', 'collapse', 'material', 'presets', 'quick', 'quickload', 'quickoff', 'reset', 'slow', 'reveal', 'disabled', 'nameless', 'live', 'overlay', 'also', 'sameroute', 'cells', 'onload'];
 if (only && !GROUPS.includes(only)) throw new Error(`--only takes one of ${GROUPS.join(', ')}`);
 const want = (group) => !only || only === group;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-508-search-')));
@@ -178,6 +178,18 @@ if (want('buttons')) {
     assert.ok(b.report, b.stderr);
     assert.deepEqual(formsOn(b.report, '/search-buttons.html').map((f) => f.preset).sort(), ['3 months', 'Last 90 days']);
     for (const p of ['/result-41.html', '/result-42.html']) assert.ok(audited(b.report).includes(p), `${p} in ${audited(b.report)}`);
+  });
+}
+// A "Collapse search panel" toggle beside the Search button, as a component library lays a search panel
+// out: its name has the panel's words, and pressing it hides the fields, so a search never runs.
+if (want('collapse')) {
+  const c = await crawl('collapse', ['--quiet', '--json', '--max-pages', '4'], 'search-collapse.html');
+  check('collapse: a "Collapse search panel" toggle beside the Search button is never taken for it; Search is pressed and its results audited', () => {
+    assert.ok(c.report, c.stderr);
+    const forms = formsOn(c.report, '/search-collapse.html');
+    assert.equal(forms.length, 1, JSON.stringify(forms));
+    assert.equal(forms[0].pressed, 'Search', JSON.stringify(forms));
+    assert.ok(audited(c.report).includes('/result-41.html'), `/result-41.html in ${audited(c.report)}`);
   });
 }
 if (want('material')) {
