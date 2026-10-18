@@ -35,6 +35,7 @@ export async function startManualSite({ dir, port = 0 } = {}) {
   let stale = false;
   // held: the deployment has not arrived (the build marker the fixes committed is not served).
   let held = false;
+  let deep = false;
   const PAGES = { '/': '<app-home></app-home>', '/search': '<h1>Search</h1>\n<app-search-bar></app-search-bar>' };
   const server = createServer((req, res) => {
     const path = new URL(req.url, 'http://x').pathname;
@@ -58,7 +59,9 @@ export async function startManualSite({ dir, port = 0 } = {}) {
     if (!page) html = html.replace(/<title>[^<]*<\/title>/, '<title>Not Found</title>');
     if (held) html = html.replace(/<meta name="a11y-508-build"[^>]*>\s*/i, '');
     for (let i = 0; i < 3; i++) html = html.replace(/<(app-[\w-]+)><\/\1>/g, (m, sel) => comps[sel] ?? m);
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    // deep: the server answers every page but the first with HTTP 404 and still serves the app, as some
+    // deployments do for a deep link; the app then shows the real page.
+    res.writeHead(deep && page && path.replace(/\/+$/, '') ? 404 : 200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
     res.end(html);
   });
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
@@ -72,6 +75,9 @@ export async function startManualSite({ dir, port = 0 } = {}) {
     },
     setHeld(on) {
       held = on;
+    },
+    setDeep(on) {
+      deep = on;
     },
     close: () => new Promise((r) => server.close(() => r())),
   };

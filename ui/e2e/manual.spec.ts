@@ -1293,6 +1293,30 @@ test('pictures-and-routes AC7 / guard h: a finding the tester verified fixed who
   }
 });
 
+test('pictures-and-routes AC6, amended: a server that answers deep links with HTTP 404 while serving the app: the real page it renders is evidence, so every finding is checked', async ({ page }) => {
+  test.setTimeout(500_000);
+  const app = await manualApp();
+  app.site.setDeep(true);
+  const dash = await dashboard({ cwd: app.cwd });
+  try {
+    await open(page, dash);
+    await choosePdf(page, DECK);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    const dir = runDir(dash);
+    // Nothing could-not-be-checked: the pages answered 404 but rendered, so the assistant judged each.
+    await expect(page.getByTestId('could-not-check')).toHaveCount(0);
+    await expect(page.getByTestId('already-fixed').locator('summary')).toHaveText('Already fixed in the deployed site (7)');
+    await expect(page.getByTestId('came-back')).toHaveCount(1);
+    const results = readJson(join(dir, 'check.json')).results;
+    expect(results.filter((r: any) => r.verdict === 'unreachable')).toEqual([]);
+    expect(results.every((r: any) => r.said === 'present' || r.said === 'gone')).toBe(true);
+    expect(readJson(join(dir, 'evidence', 'F1', 'before', 'summary.json'))).toMatchObject({ status: 404, loaded: true, notFound: false, error: null });
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});
+
 test('pictures-and-routes review fixes: pictures opened through a read_many_files glob count as opened; a locate route not on the list is the start page; a tester-verified finding the assistant could not judge is planned but not as come back', async ({ page }) => {
   test.setTimeout(300_000);
   const app = await manualApp();

@@ -54,6 +54,13 @@ export function notFoundView({ title = '', heading = '', main = '', mainWords = 
   const says = [title, heading, String(main || '').slice(0, 200)].some((t) => NOT_FOUND_WORDS.test(String(t || '')));
   return says && Number(mainWords) < NOT_FOUND_MAX_WORDS;
 }
+// A server that answers a deep link with HTTP 404 while still serving the application: the app then
+// shows the real page. That page counts as loaded when it is not the Not Found view and has any
+// words in its main region; a bare shell (nothing rendered) does not.
+export const REAL_PAGE_MIN_WORDS = 1;
+export function pageDespite404(about = {}) {
+  return !notFoundView(about) && Number(about.mainWords) >= REAL_PAGE_MIN_WORDS;
+}
 
 const MATCHES = (selectors) => `(() => {
   const out = [];
@@ -68,8 +75,8 @@ const MATCHES = (selectors) => `(() => {
 // One browser for a stage's captures. args: the crawl's options (--state, --cookie, ...), read as
 // the crawl reads them. capture({ url, selectors, dir }) resolves the summary (also written to
 // dir/summary.json): { url, finalUrl, status, loaded, portal, error, at, matched, files, notFound,
-// title, heading, mainWords }. A page is loaded only when it answered below HTTP 400 and is not the
-// application's own Not Found view; the screenshot is kept either way, so the person can see what
+// title, heading, mainWords }. A page is loaded only when it answered below HTTP 400 (or 404 with a
+// real page rendered, see pageDespite404) and is not the application's own Not Found view; the screenshot is kept either way, so the person can see what
 // the tool saw.
 export async function evidenceBrowser({ startUrl, args = [], cwd = process.cwd(), timeout = 45000 }) {
   let opts = await crawlOptions(startUrl, args, cwd);
@@ -98,22 +105,29 @@ export async function evidenceBrowser({ startUrl, args = [], cwd = process.cwd()
           host = new URL(summary.finalUrl).host;
         } catch {}
         summary.portal = r.status === 401 || r.status === 403 || (!!host && host !== new URL(url).host);
-        // Any answer of HTTP 400 or more is a page that is not there, a 404 included: no evidence.
-        summary.error = r.error || (r.timedOut ? 'the page did not finish loading in time' : summary.portal ? `the page asks for a sign-in (${r.status === 401 || r.status === 403 ? `HTTP ${r.status}` : `sent to ${host}`})` : r.status >= 400 ? `HTTP ${r.status}` : null);
+        // Any answer of HTTP 400 or more is a page that is not there: no evidence. A 404 is decided
+        // below, by what the application rendered: some servers answer every deep link with 404 and
+        // still serve the app, which then shows the real page.
+        summary.error = r.error || (r.timedOut ? 'the page did not finish loading in time' : summary.portal ? `the page asks for a sign-in (${r.status === 401 || r.status === 403 ? `HTTP ${r.status}` : `sent to ${host}`})` : r.status >= 400 && r.status !== 404 ? `HTTP ${r.status}` : null);
         summary.loaded = !summary.error;
         if (!r.error) {
           // The application's own Not Found view (an SPA answers HTTP 200 for every path): no evidence either.
+          let about = null;
           try {
-            const about = JSON.parse(await page.evaluate(ABOUT));
+            about = JSON.parse(await page.evaluate(ABOUT));
             summary.title = about.title || null;
             summary.heading = about.heading || null;
             summary.mainWords = Number.isFinite(about.mainWords) ? about.mainWords : null;
-            if (summary.loaded && notFoundView(about)) {
+            if (summary.loaded && r.status !== 404 && notFoundView(about)) {
               summary.notFound = true;
               summary.loaded = false;
               summary.error = 'the application shows its Not Found page';
             }
           } catch {}
+          if (summary.loaded && r.status === 404 && !pageDespite404(about || {})) {
+            summary.loaded = false;
+            summary.error = 'HTTP 404';
+          }
           try {
             const shot = await session.send('Page.captureScreenshot', { format: 'png' });
             writeFileSync(join(dir, 'screenshot.png'), Buffer.from(shot.data, 'base64'));

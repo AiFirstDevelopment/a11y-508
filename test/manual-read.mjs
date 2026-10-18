@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { agentEnvFor, MANUAL_GEMINI_MODEL, streamModel, agentLog } from '../src/agent.mjs';
 import { buildCandidates, countsSentence, describedEnough, foldAnswers, onRouteList, readSentence, seenLine, seenLines, uncheckedLine, unseenPages } from '../src/manual.mjs';
-import { notFoundView } from '../src/evidence.mjs';
+import { notFoundView, pageDespite404 } from '../src/evidence.mjs';
 
 const only = process.argv.includes('-g') ? process.argv[process.argv.indexOf('-g') + 1] : null;
 const tests = [];
@@ -192,6 +192,16 @@ test('pictures-and-routes AC6: the app\'s own Not Found view is told from its ti
   assert.equal(notFoundView({ title: 'Search', heading: 'Results', main: 'No results found for "x". Not found? Try again.', mainWords: 80 }), false);
   assert.equal(notFoundView({ title: 'Welcome', heading: 'Welcome', main: 'Find what you need', mainWords: 4 }), false);
   assert.equal(notFoundView({}), false);
+});
+
+test('pictures-and-routes AC6, amended: a deep link the server answers with HTTP 404 is loaded when the app rendered a real page on it', () => {
+  // The real page: not the Not Found view, and words in its main region.
+  assert.equal(pageDespite404({ title: 'Cargo Traceability', heading: 'Search', main: 'Search verifiable credentials by type, status and date range; the results list every match.', mainWords: 48 }), true);
+  // The app's Not Found view, a bare shell that rendered nothing, and no answer at all.
+  assert.equal(pageDespite404({ title: 'Not Found', heading: '404', main: '', mainWords: 0 }), false);
+  assert.equal(pageDespite404({ title: 'Search', heading: 'Search', main: 'Search', mainWords: 1 }), true);
+  assert.equal(pageDespite404({ title: 'Cargo Traceability', heading: '', main: '', mainWords: 0 }), false);
+  assert.equal(pageDespite404({}), false);
 });
 
 let failed = 0;
