@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PRESETS, QUOTA } from '../src/agent.mjs';
-import { readable, samePath, streamDecoder } from '../src/agent-stream.mjs';
+import { opens, readable, samePath, streamDecoder } from '../src/agent-stream.mjs';
 
 let failures = 0;
 const check = (name, fn) => {
@@ -142,6 +142,26 @@ check('pictures-and-routes AC1: the files the read tools opened are kept as abso
   assert.equal(samePath('page-02.png', 'C:\\Users\\dev\\page-02.png', { cwd: 'C:\\Users\\dev', platform: 'win32' }), true);
   // Nothing opened: an empty list, not a missing one.
   assert.deepEqual(readable('plain words\n', { cwd }).opened, []);
+});
+check('pictures-and-routes AC1: a picture read_many_files opened through a folder, a glob or include counts as opened', () => {
+  const many = jsonl(
+    { type: 'tool_use', timestamp: 't', tool_name: 'read_many_files', tool_id: 'a', parameters: { paths: [join(cwd, 'parsed', 'pages', '*.png')], include: ['shots/**/*.png'] } },
+    { type: 'tool_use', timestamp: 't', tool_name: 'read_many_files', tool_id: 'b', parameters: { paths: ['notes'] } },
+    { type: 'result', timestamp: 't', status: 'success' },
+  );
+  const r = readable(many, { cwd });
+  assert.deepEqual(r.opened, [join(cwd, 'parsed', 'pages', '*.png'), join(cwd, 'shots', '**', '*.png'), join(cwd, 'notes')]);
+  const seen = (f) => r.opened.some((o) => opens(o, f, { cwd }));
+  assert.ok(seen(join(cwd, 'parsed', 'pages', 'page-04.png')));
+  assert.ok(seen('shots/a/b/page-09.png'));
+  assert.ok(seen('notes/page-01.png'));
+  assert.ok(!seen('parsed/pages/page-04.jpg'));
+  assert.ok(!seen('parsed/other/page-04.png'));
+  assert.ok(!seen('notes-old/page-01.png'));
+  // Braces and classes; Windows ignores case and slashes.
+  assert.equal(opens('parsed/**/page-0{3,4}.png', 'parsed/pages/page-04.png', { cwd }), true);
+  assert.equal(opens('parsed/pages/page-0[1-3].png', 'parsed/pages/page-04.png', { cwd }), false);
+  assert.equal(opens('C:\\Dev\\Parsed\\*.PNG', 'c:/dev/parsed/page-01.png', { cwd: 'C:\\Dev', platform: 'win32' }), true);
 });
 check('loop-resilience AC12: the Gemini and Claude presets ask for the stream', () => {
   assert.match(PRESETS.gemini, / --output-format stream-json /);

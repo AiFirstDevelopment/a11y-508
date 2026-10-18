@@ -126,6 +126,8 @@ if (task && /^manual-/.test(task.kind)) {
 // FAKE_MANUAL_SKIP_PICTURE_ALWAYS=F5 (never). FAKE_MANUAL_BAD_ROUTE=F1: F1's route is not one of the
 // known routes. FAKE_MANUAL_ROUTE_DOWN=F2 puts F2 on /gone (HTTP 404) and FAKE_MANUAL_ROUTE_NOT_FOUND=F3
 // on /reports (the app's Not Found view), in the describe and the locate alike.
+// Review fixes: FAKE_MANUAL_PICTURE_GLOB=1 (the describe opens the pictures with read_many_files on a
+// glob), FAKE_MANUAL_LOCATE_BAD_ROUTE=F1 (the locate's route is not a known route).
 // The describe answers each candidate from its page's FINDING line (id | title | route | selectors |
 // element | words): a tag other than the candidate's own id says the page shows that earlier finding
 // (sameAs); a second FINDING line on a page is a second problem (extra); a page with none names no
@@ -167,11 +169,14 @@ function manual(task) {
     // The pictures it opens, as a read tool's events in the stream.
     const reasked = Array.isArray(task.unopened) && task.unopened.length > 0;
     const notOpened = [...ids(process.env.FAKE_MANUAL_SKIP_PICTURE_ALWAYS), ...(reasked ? [] : ids(process.env.FAKE_MANUAL_SKIP_PICTURE))];
+    // FAKE_MANUAL_PICTURE_GLOB=1: they are opened with one read_many_files call on a glob of their folder.
+    const glob = process.env.FAKE_MANUAL_PICTURE_GLOB && task.candidates.some((c) => !notOpened.includes(c.id));
     for (const c of task.candidates) {
       if (notOpened.includes(c.id)) continue;
       readFileSync(c.picture);
-      process.stdout.write(JSON.stringify({ type: 'tool_use', timestamp: new Date().toISOString(), tool_name: 'read_file', tool_id: `pic-${c.id}`, parameters: { absolute_path: c.picture } }) + '\n');
+      if (!glob) process.stdout.write(JSON.stringify({ type: 'tool_use', timestamp: new Date().toISOString(), tool_name: 'read_file', tool_id: `pic-${c.id}`, parameters: { absolute_path: c.picture } }) + '\n');
     }
+    if (glob) process.stdout.write(JSON.stringify({ type: 'tool_use', timestamp: new Date().toISOString(), tool_name: 'read_many_files', tool_id: 'pics', parameters: { paths: [`${dirname(task.candidates[0].picture)}/*.png`] } }) + '\n');
     const skip = second ? [] : ids(process.env.FAKE_MANUAL_DESCRIBE_SKIP);
     const sameAs = Object.fromEntries(ids(process.env.FAKE_MANUAL_SAME_AS).map((p) => p.split(':')));
     const wrong = ids(process.env.FAKE_MANUAL_SELECTORS_WRONG);
@@ -215,6 +220,8 @@ function manual(task) {
       const m = it.lines.map((l) => FINDING.exec(l)).filter(Boolean)[0];
       if (ids(process.env.FAKE_MANUAL_ROUTE_DOWN).includes(it.id)) return { id: it.id, route: '/gone', selectors: ['#not-on-this-page'], reason: 'the page is /gone' };
       if (ids(process.env.FAKE_MANUAL_ROUTE_NOT_FOUND).includes(it.id)) return { id: it.id, route: '/reports', selectors: ['#not-on-this-page'], reason: 'the page is /reports' };
+      // FAKE_MANUAL_LOCATE_BAD_ROUTE=F1: the locate gives the right selectors on a route that is not one of the known routes.
+      if (ids(process.env.FAKE_MANUAL_LOCATE_BAD_ROUTE).includes(it.id)) return { id: it.id, route: '/layout/form-panel', selectors: m ? m[4].split(';').map((x) => x.trim()) : [], reason: 'a made-up route' };
       if (ids(process.env.FAKE_MANUAL_LOCATE_WRONG).includes(it.id)) return { id: it.id, route: m ? m[3] : '/', selectors: ['#still-not-on-this-page'], reason: 'a guess' };
       return m ? { id: it.id, route: m[3], selectors: m[4].split(';').map((x) => x.trim()), notOnThisRoute: false, reason: 'the element is in the deployed page under these selectors' } : { id: it.id, route: '/', selectors: [], reason: 'cannot tell' };
     }) });

@@ -31,7 +31,8 @@ const WRITES = /^(write_file|Write)$/;
 // The tools that open a file: what the assistant read, so the manual flow can tell whether it opened
 // a page's picture before answering for it (docs/plans/pictures-and-routes.md AC 1).
 const READS = /^(read_file|read_many_files|Read|NotebookRead)$/;
-const readPaths = (p) => [p.file_path, p.absolute_path, p.path, p.notebook_path, ...(Array.isArray(p.paths) ? p.paths : [])].map(str).filter(Boolean);
+// read_many_files' paths and include may be folders or globs: they are kept as given (see opens).
+const readPaths = (p) => [p.file_path, p.absolute_path, p.path, p.notebook_path, ...(Array.isArray(p.paths) ? p.paths : []), ...(Array.isArray(p.include) ? p.include : [])].map(str).filter(Boolean);
 
 // Whether two paths name the same file, each resolved against cwd. On Windows the letter case and
 // the direction of the slashes do not matter: C:\Users\dev\r.json is c:/users/dev/r.json.
@@ -45,6 +46,48 @@ export function samePath(a, b, { cwd = process.cwd(), platform = process.platfor
   };
   const x = norm(a);
   return x !== null && x === norm(b);
+}
+
+// A glob as a regular expression over a whole '/'-separated path: ** any folders, * and ? within one
+// name, {a,b} either, [...] a character class.
+function globRegex(glob) {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') {
+      i++;
+      if (glob[i + 1] === '/') (i++, (re += '(?:.*/)?'));
+      else re += '.*';
+    } else if (c === '*') re += '[^/]*';
+    else if (c === '?') re += '[^/]';
+    else if (c === '{') {
+      const end = glob.indexOf('}', i);
+      if (end < 0) re += '\\{';
+      else (re += `(?:${glob.slice(i + 1, end).split(',').map((x) => x.replace(/[.+^$()|\\[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')).join('|')})`), (i = end);
+    } else if (c === '[') {
+      const end = glob.indexOf(']', i + 1);
+      if (end < 0) re += '\\[';
+      else (re += `[${glob.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`), (i = end);
+    } else re += c.replace(/[.+^$()|\\\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${re}$`);
+}
+
+// Whether an entry of opened covers file: the same file, a folder read_many_files read (the file is
+// in it), or a glob it expanded that matches the file. Same rules as samePath for cwd and Windows.
+export function opens(entry, file, { cwd = process.cwd(), platform = process.platform } = {}) {
+  if (samePath(entry, file, { cwd, platform })) return true;
+  const e0 = str(entry);
+  if (!e0 || !str(file)) return false;
+  const p = platform === 'win32' ? win32 : posix;
+  const norm = (x) => {
+    const r = p.resolve(cwd, x).replace(/\\/g, '/');
+    return platform === 'win32' ? r.toLowerCase() : r;
+  };
+  const e = norm(e0);
+  const f = norm(file);
+  if (!/[*?[{]/.test(e0)) return f.startsWith(e.endsWith('/') ? e : `${e}/`);
+  return globRegex(e).test(f);
 }
 
 // A decoder for one call: push(text) as stdout arrives, end() when it has ended. onLine(line) gets

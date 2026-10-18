@@ -1288,3 +1288,33 @@ test('pictures-and-routes AC7 / guard h: a finding the tester verified fixed who
     await app.cleanup();
   }
 });
+
+test('pictures-and-routes review fixes: pictures opened through a read_many_files glob count as opened; a locate route not on the list is the start page; a tester-verified finding the assistant could not judge is planned but not as come back', async ({ page }) => {
+  test.setTimeout(300_000);
+  const app = await manualApp();
+  const dash = await dashboard({ cwd: app.cwd, env: { FAKE_MANUAL_PICTURE_GLOB: '1', FAKE_MANUAL_SELECTORS_WRONG: 'F1', FAKE_MANUAL_LOCATE_BAD_ROUTE: 'F1' } });
+  try {
+    await open(page, dash);
+    await choosePdf(page, DECK);
+    await expect(now(page)).toHaveText(REVIEW, { timeout: 240_000 });
+    const dir = runDir(dash);
+    const id = dir.split(/[\\/]/).pop()!;
+    const base = app.site.base;
+    // The glob covered every picture: all seen, no second ask.
+    const findings = readJson(join(dir, 'findings.json')).findings;
+    expect(findings.map((f: any) => [f.id, f.seenPicture])).toEqual(DECK_FINDINGS.map((f) => [f, true]));
+    expect(readPrompts(dash, id).map(headings)).toEqual([['F1', 'F2', 'F3', 'F4'], ['F5', 'F6', 'F7', 'F8'], ['F9', 'F10', 'F11']]);
+    expect(decisions(dir).filter((d) => d.decision === 'asked again')).toEqual([]);
+    // The locate's made-up route became the start page, said so, and F1 was looked for there.
+    expect(decisions(dir).filter((d) => d.finding === 'F1' && /^took the start page/.test(d.decision)).map((d) => [d.stage, d.by, d.decision, d.reason])).toEqual([['check', 'tool', 'took the start page instead of /layout/form-panel', 'it is not a route of the application']]);
+    expect(findings.find((f: any) => f.id === 'F1')).toMatchObject({ url: base, located: false });
+    // The assistant could not judge F1 (no element matched): treated as present and planned, but it never said the problem is back.
+    expect(readJson(join(dir, 'check.json')).results.find((r: any) => r.finding === 'F1')).toMatchObject({ verdict: 'present', said: 'unreachable' });
+    await expect(item(page, 'F1')).toHaveCount(1);
+    await expect(item(page, 'F1').getByTestId('came-back')).toHaveCount(0);
+    expect(decisions(dir).filter((d) => d.finding === 'F1' && /^Came back: /.test(d.decision))).toEqual([]);
+  } finally {
+    await dash.stop();
+    await app.cleanup();
+  }
+});

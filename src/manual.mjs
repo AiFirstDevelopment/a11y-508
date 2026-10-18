@@ -33,7 +33,7 @@ import { bundleSignature, sameBuild } from './deploy-check.mjs';
 import { sleep } from './page.mjs';
 import { commitWebUrl, remoteWeb } from './git-web.mjs';
 import { parsePdf } from './pdf-parse.mjs';
-import { readable, samePath } from './agent-stream.mjs';
+import { opens, readable } from './agent-stream.mjs';
 
 const TOOL_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 export const MANUAL_DIR = 'manual';
@@ -699,7 +699,7 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
     const batches = (ids) => Array.from({ length: Math.ceil(ids.length / size) }, (_, k) => ids.slice(k * size, k * size + size));
     const pictureFile = (c) => (c.picture ? join(copyDir, PARSED_DIR, c.picture) : null);
     // Whether this call's stream shows the picture opened (true when the page has none to open).
-    const opened = (r, c) => !pictureFile(c) || ((r && r.res && r.res.opened) || []).some((o) => samePath(o, pictureFile(c), { cwd }));
+    const opened = (r, c) => !pictureFile(c) || ((r && r.res && r.res.opened) || []).some((o) => opens(o, pictureFile(c), { cwd }));
     const got = new Map();
     let first = null;
     let last = null;
@@ -915,9 +915,11 @@ export async function runManual({ pdf, config, cwd, log, events = false, stopSig
   for (const r of gone) itemState(r.finding).status = 'already-fixed';
   for (const r of unchecked) itemState(r.finding).status = 'unchecked';
   // The tester's verdict beside the deployed site's (docs/plans/pdf-parse.md AC 7): verified fixed and
-  // gone is confirmed; verified fixed and present came back, and is planned as a return.
+  // gone is confirmed; verified fixed and present came back, and is planned as a return. Came back
+  // needs the assistant to have said present (docs/plans/pictures-and-routes.md AC 7): an
+  // "unreachable" or no verdict is planned, but not as a return (a check.json from before said was kept: as before).
   const verifiedGone = gone.filter((r) => (byId.get(r.finding) || {}).status === 'fixed');
-  const cameBack = present.filter((f) => f.status === 'fixed' && check.results.some((r) => r.finding === f.id && r.verdict === 'present'));
+  const cameBack = present.filter((f) => f.status === 'fixed' && check.results.some((r) => r.finding === f.id && r.verdict === 'present' && (!('said' in r) || r.said === 'present')));
   for (const f of cameBack) {
     f.cameBack = cameBackLine(f);
     if (!state.cameBackLogged || !state.cameBackLogged.includes(f.id)) {
