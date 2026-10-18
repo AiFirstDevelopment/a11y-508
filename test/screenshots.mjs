@@ -116,6 +116,16 @@ test('guard h: manual <folder> parses its screenshots with the notes of notes.tx
   assert.match(e.stdout + e.stderr, /no screenshots/);
 });
 
+test('AC6: the README says how to paste, pick and note screenshots, and how to give the command line a folder', () => {
+  const md = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  const section = md.slice(md.indexOf('#### Fix from a test report (PDF)'), md.indexOf('#### The dashboard runs in its own browser window'));
+  assert.match(section, /\*\*Add screenshots\*\*/);
+  assert.match(section, /Ctrl\+V or Cmd\+V/);
+  assert.match(section, /one line of what is wrong/);
+  assert.match(section, /`a11y-508 manual <folder>`/);
+  assert.match(section, /`notes\.txt`/);
+});
+
 let failed = 0;
 for (const t of tests) {
   if (only && !t.name.includes(only)) continue;

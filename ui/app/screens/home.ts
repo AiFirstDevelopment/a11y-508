@@ -13,6 +13,7 @@ import { clockOf, countsParts, hostOf, lowerFirst, plural, span, upperFirst, typ
 import { ManualPanel } from './manual-panel';
 import { DecisionsPane } from '../shared/decisions-pane';
 import { ParsedReportPane } from '../shared/parsed-report-pane';
+import { ScreenshotsIn } from '../shared/screenshots-in';
 
 // A finding's words, cut at a word once they are long.
 function short(text: string, max = 72): string {
@@ -24,18 +25,18 @@ function short(text: string, max = 72): string {
 
 // Where a PDF run was when the dashboard was closed, from the stage its own files saved.
 const PDF_STAGES: Record<string, string> = {
-  read: 'while reading the PDF', check: 'while checking the deployed site', review: 'at the plan review', fix: 'while fixing', deploy: 'while waiting for the deployment', verify: 'while verifying',
+  read: 'while reading', check: 'while checking the deployed site', review: 'at the plan review', fix: 'while fixing', deploy: 'while waiting for the deployment', verify: 'while verifying',
 };
-function continuingPdf(stage: unknown): string {
+function continuingPdf(stage: unknown, shots = false): string {
   const at = PDF_STAGES[String(stage || '')];
-  return `The dashboard was closed during the PDF run${at ? ` (${at})` : ''}; continuing from there.`;
+  return `The dashboard was closed during the ${shots ? 'screenshots' : 'PDF'} run${at ? ` (${at === 'while reading' ? `while reading the ${shots ? 'screenshots' : 'PDF'}` : at})` : ''}; continuing from there.`;
 }
 
 // The one screen (docs/plans/simple-screen.md): the folder and URL, one sentence of what is happening
 // now, one line of numbers, one button (Start, or Stop while anything runs), and Diagnostics.
 @Component({
   selector: 'app-home-screen',
-  imports: [RouterLink, ManualPanel, DecisionsPane, ParsedReportPane],
+  imports: [RouterLink, ManualPanel, DecisionsPane, ParsedReportPane, ScreenshotsIn],
   template: `
     <h1 class="app-name">a11y-508@if (env.env()?.revision; as rev) {{{ ' ' }}<span class="build" data-testid="build-revision" title="The commit this dashboard runs">build {{ rev }}</span> }</h1>
     @if (env.env(); as e) {
@@ -64,11 +65,14 @@ function continuingPdf(stage: unknown): string {
       <!-- The second way in (docs/plans/manual-findings.md): a tester's PDF, chosen with the system's file chooser. -->
       @if (!running()) {
         <button type="button" class="secondary" data-testid="manual-pdf" (click)="pdfInput.click()" [disabled]="!driver.url()">{{ manualEnded() ? 'Choose a PDF' : 'Fix from a test report (PDF)' }}</button>
+        <!-- Or screenshots alone (docs/plans/screenshots-in.md): picked, dropped or pasted, each with a note. -->
+        <button type="button" class="secondary" data-testid="add-shots" (click)="shotsIn.pick()" [disabled]="!driver.url()">Add screenshots</button>
       }
       <input #pdfInput type="file" accept="application/pdf" hidden data-testid="manual-pdf-input" (change)="onPdf($event)" />
     </div>
+    <app-screenshots-in #shotsIn [enabled]="!running() && !!driver.url()" />
     @if (store.kind() === 'manual' || lastManual()) {
-      <p class="manual-links">@if (decisionsFor(); as id) {<a href="#decisions" data-testid="show-decisions" (click)="openDecisions($event, id)">{{ store.kind() === 'manual' ? 'Show decisions' : 'Show decisions from the last PDF run' }}</a>}@if (parsedFor(); as id) {@if (decisionsFor()) {<span aria-hidden="true"> · </span>}<a href="#parsed-report" data-testid="show-parsed" (click)="openParsed($event, id)">Show the parsed report</a>}</p>
+      <p class="manual-links">@if (decisionsFor(); as id) {<a href="#decisions" data-testid="show-decisions" (click)="openDecisions($event, id)">{{ store.kind() === 'manual' ? 'Show decisions' : 'Show decisions from the last PDF run' }}</a>}@if (parsedFor(); as id) {@if (decisionsFor()) {<span aria-hidden="true"> · </span>}<a href="#parsed-report" data-testid="show-parsed" (click)="openParsed($event, id)">{{ store.manual().source === 'screenshots' ? 'Show the screenshots' : 'Show the parsed report' }}</a>}</p>
     }
     <app-manual-panel />
     <app-decisions-pane #decisions />
@@ -244,7 +248,7 @@ export class HomeScreen implements OnDestroy {
   });
   openParsed(ev: Event, id: string): void {
     ev.preventDefault();
-    void this.parsedPane().open(id);
+    void this.parsedPane().open(id, this.store.manual().source);
   }
   // A PDF run that has ended: how.
   readonly manualEnded = computed(() => {
@@ -536,13 +540,18 @@ export class HomeScreen implements OnDestroy {
     const who = this.assistant();
     const ev = m.last || {};
     const n = (k: string) => Number(ev[k]) || 0;
+    // A run from screenshots (docs/plans/screenshots-in.md AC 5) says so where a PDF run says "the PDF".
+    const shots = m.source === 'screenshots';
+    const theSource = shots ? 'the screenshots' : 'the PDF';
     // Taken up again after the dashboard was closed: said until the run is back at its own stage.
     const o = this.store.origin();
-    if (o && o.type === 'rerun' && [null, 'start', 'parsed', 'findings', 'already-fixed'].includes(m.stage)) return continuingPdf(o['stage']);
+    if (o && o.type === 'rerun' && [null, 'start', 'parsed', 'findings', 'already-fixed'].includes(m.stage)) return continuingPdf(o['stage'], shots);
+    if (shots && m.stage === 'read' && m.candidates) return `Reading ${plural(m.candidates.pages, 'screenshot')}; asking the assistant what each shows.`;
+    if (shots && m.stage === 'parsed' && m.parsed) return `Reading ${plural(m.parsed.pages, 'screenshot')}.`;
     switch (m.stage) {
       case null:
       case 'start':
-        return 'Reading the PDF';
+        return shots ? 'Reading the screenshots' : 'Reading the PDF';
       // The parse (docs/plans/pdf-parse.md AC 8/9): the first pass's count, then the assistant reads the parse.
       case 'parse':
       case 'parsed': {
@@ -562,17 +571,17 @@ export class HomeScreen implements OnDestroy {
         const why = m.readAgain || '';
         if (ev['unopened']) return `The assistant ${why.slice(3)}; asking it again to look at ${(ev['missing'] || []).length === 1 ? 'that picture' : 'those pictures'}.`;
         if (/^it did not answer for /.test(why)) return `The assistant ${why.slice(3)}; asking it again for ${(ev['missing'] || []).length === 1 ? 'that page' : 'those pages'}.`;
-        return !why || why === 'its answer had no list of findings' ? "The assistant's answer had no list of findings; asking it again." : `The assistant could not read the PDF (${why}); asking it again.`;
+        return !why || why === 'its answer had no list of findings' ? "The assistant's answer had no list of findings; asking it again." : `The assistant could not read ${theSource} (${why}); asking it again.`;
       }
       case 'locate':
         return `The tool could not find ${plural(n('count'), 'element')} on the deployed site; asking ${who} where ${n('count') === 1 ? 'it is' : 'they are'}`;
       case 'findings':
         if (ev['message']) return String(ev['message']);
-        return `Checking the deployed site for ${plural(m.findings || 0, 'finding')} from the PDF`;
+        return `Checking the deployed site for ${plural(m.findings || 0, 'finding')} from ${theSource}`;
       case 'check':
-        return `Checking the deployed site for ${plural(m.findings || 0, 'finding')} from the PDF`;
+        return `Checking the deployed site for ${plural(m.findings || 0, 'finding')} from ${theSource}`;
       case 'capture':
-        return ev['label'] === 'before' ? `Checking the deployed site for ${plural(m.findings || n('m'), 'finding')} from the PDF (${n('n')} of ${n('m')})` : `Checking the deployed site for ${plural(n('m'), 'fix', 'fixes')} (${n('n')} of ${n('m')})`;
+        return ev['label'] === 'before' ? `Checking the deployed site for ${plural(m.findings || n('m'), 'finding')} from ${theSource} (${n('n')} of ${n('m')})` : `Checking the deployed site for ${plural(n('m'), 'fix', 'fixes')} (${n('n')} of ${n('m')})`;
       case 'judge':
         return `Asking ${who} which findings the deployed site still has`;
       case 'already-fixed':
@@ -615,7 +624,7 @@ export class HomeScreen implements OnDestroy {
       case 'replanning':
         return `Writing a revised plan with ${who} for ${plural(n('count'), 'fix', 'fixes')} that did not hold`;
       default:
-        return `Working on the PDF with ${who}`;
+        return `Working on ${theSource} with ${who}`;
     }
   }
 
@@ -626,14 +635,14 @@ export class HomeScreen implements OnDestroy {
       const m = s.manual();
       if (m.done) return m.done.message;
       if (m.noFindings) return m.noFindings;
-      if ((d['rerun'] && !s.rerunWithdrawn()) || d['outcome'] === 'interrupted') return continuingPdf((d['rerun'] as Record<string, unknown> | undefined)?.['stage']);
+      if ((d['rerun'] && !s.rerunWithdrawn()) || d['outcome'] === 'interrupted') return continuingPdf((d['rerun'] as Record<string, unknown> | undefined)?.['stage'], m.source === 'screenshots');
       if (d['outcome'] === 'stopped') return 'Stopped.';
       if (m.readFailed) return m.readFailed;
       if (m.parseFailed) return m.parseFailed;
       const errors = s.notices().filter((x) => x.level === 'error' && !/^The run failed( \(exit code|: )/.test(x.message)).map((x) => x.message);
       const pre = s.precondition();
       if (pre) return `Could not start: ${String(pre['message'] || '')}. ${String(pre['remedy'] || '')}`;
-      return `Stopped: ${lowerFirst(plainReason(errors[errors.length - 1] || String(d['reason'] || `the PDF run ended with exit code ${d['code']}`)).replace(/\.$/, ''))}`;
+      return `Stopped: ${lowerFirst(plainReason(errors[errors.length - 1] || String(d['reason'] || `the ${m.source === 'screenshots' ? 'screenshots' : 'PDF'} run ended with exit code ${d['code']}`)).replace(/\.$/, ''))}`;
     }
     const r = s.retry();
     const now = this.tick();

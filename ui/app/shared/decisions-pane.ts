@@ -1,6 +1,6 @@
 import { Component, ElementRef, inject, signal, viewChild } from '@angular/core';
 import { Api } from '../core/api';
-import { DecisionGroup as Group, ManualDecision, crawlFileUrl, manualFileUrl, pdfPageUrl, seenWords } from '../core/manual';
+import { DecisionGroup as Group, ManualDecision, crawlFileUrl, manualFileUrl, pageHref, pageLabel, parsedFileUrl, seenWords } from '../core/manual';
 
 // Show decisions (docs/plans/manual-findings.md AC 9): a PDF run's decision log, grouped by finding,
 // each headed by its title and its PDF page, then its decisions in order, its commits and its
@@ -15,14 +15,14 @@ import { DecisionGroup as Group, ManualDecision, crawlFileUrl, manualFileUrl, pd
           <button type="button" class="secondary" data-testid="decisions-close" (click)="close()">Close</button>
         </div>
         @if (error()) { <p class="notice error" role="alert">{{ error() }}</p> }
-        <p>From the tester's PDF: <a [href]="file('source.pdf')" target="_blank" rel="noopener" data-testid="decisions-pdf">the PDF</a> · <a [href]="file('decisions.md')" target="_blank" rel="noopener">decisions.md</a>@if (crawl(); as c) { · <a [href]="crawlFile(c)" target="_blank" rel="noopener" data-testid="decisions-crawl">the site as the tool saw it</a>}</p>
+        <p>@if (source() === 'screenshots') {From the screenshots: <a [href]="parsed('report.md')" target="_blank" rel="noopener" data-testid="decisions-pdf">the screenshots and their notes</a>} @else {From the tester's PDF: <a [href]="file('source.pdf')" target="_blank" rel="noopener" data-testid="decisions-pdf">the PDF</a>} · <a [href]="file('decisions.md')" target="_blank" rel="noopener">decisions.md</a>@if (crawl(); as c) { · <a [href]="crawlFile(c)" target="_blank" rel="noopener" data-testid="decisions-crawl">the site as the tool saw it</a>}</p>
         @if (general().length) {
           <h3>The run</h3>
           <ul>@for (d of general(); track $index) { <li data-testid="decision">{{ line(d) }}</li> }</ul>
         }
         @for (g of groups(); track g.finding) {
           <section data-testid="decisions-group">
-            <h3>{{ g.finding }}: {{ g.title }} — <a [href]="page(g.page)" target="_blank" rel="noopener" data-testid="pdf-page">PDF page {{ g.page }}</a></h3>
+            <h3>{{ g.finding }}: {{ g.title }} — <a [href]="page(g.page)" target="_blank" rel="noopener" data-testid="pdf-page">{{ label(g.page) }}</a></h3>
             <p class="seen" [attr.data-testid]="g.seenPicture === false ? 'seen-unseen' : 'seen'">{{ seen(g) }}</p>
             @for (x of g.seenMore || []; track x.page) { <p class="seen" data-testid="seen-more">{{ seen(x) }}</p> }
             @if (g.quote) { <blockquote>{{ g.quote }}</blockquote> }
@@ -64,6 +64,8 @@ export class DecisionsPane {
   // The run's own look over the site, when it has one: "crawl/report.html" (docs/plans/manual-crawl-first.md AC 4).
   readonly crawl = signal<string | null>(null);
   readonly error = signal('');
+  // Where the run's findings came from (docs/plans/screenshots-in.md AC 5).
+  readonly source = signal<string | null>(null);
 
   async open(id: string): Promise<void> {
     this.id.set(id);
@@ -72,7 +74,8 @@ export class DecisionsPane {
     const d = this.pane().nativeElement;
     if (!d.open) d.showModal();
     try {
-      const r = await this.api.get<{ groups: Group[]; general: ManualDecision[]; crawl?: string | null }>(`/api/manual/${encodeURIComponent(id)}/decisions`);
+      const r = await this.api.get<{ groups: Group[]; general: ManualDecision[]; crawl?: string | null; source?: string | null }>(`/api/manual/${encodeURIComponent(id)}/decisions`);
+      this.source.set(r.source || null);
       this.groups.set(r.groups || []);
       this.general.set(r.general || []);
       this.crawl.set(r.crawl || null);
@@ -94,7 +97,13 @@ export class DecisionsPane {
     return crawlFileUrl(this.id(), rel);
   }
   page(n: number): string {
-    return pdfPageUrl(this.id(), n);
+    return pageHref(this.id(), this.source(), n);
+  }
+  label(n: number): string {
+    return pageLabel(this.source(), n);
+  }
+  parsed(rel: string): string {
+    return parsedFileUrl(this.id(), rel);
   }
   seen(g: { page: number; seen?: string | null; seenPicture?: boolean | null }): string {
     return seenWords(g);

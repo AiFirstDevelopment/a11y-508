@@ -1,6 +1,6 @@
 import { Component, ElementRef, inject, signal, viewChild } from '@angular/core';
 import { Api } from '../core/api';
-import { parsedFileUrl, pdfPageUrl } from '../core/manual';
+import { pageHref, pageLabel, parsedFileUrl } from '../core/manual';
 
 interface ParsedPage {
   heading: string;
@@ -22,7 +22,7 @@ export function parseReport(md: string): { head: string[]; pages: ParsedPage[] }
   const pages = rest.map((block) => {
     const lines = block.split('\n');
     const heading = lines[0].trim();
-    const p: ParsedPage = { heading, n: Number((/^Page (\d+)/.exec(heading) || [])[1]) || 0, facts: [], text: [], none: null, picture: null, images: [] };
+    const p: ParsedPage = { heading, n: Number((/^(?:Page|Screenshot) (\d+)/.exec(heading) || [])[1]) || 0, facts: [], text: [], none: null, picture: null, images: [] };
     for (const l of lines.slice(1)) {
       if (l.startsWith('> ')) p.text.push(l.slice(2));
       // A section divider is its words alone: its picture is two words on an empty page.
@@ -30,7 +30,9 @@ export function parseReport(md: string): { head: string[]; pages: ParsedPage[] }
       else if (l.startsWith('Pictures on the page: ')) {
         for (const m of l.slice('Pictures on the page: '.length).matchAll(/(pages\/[\w-]+\.png) \(([^)]*)\)/g)) p.images.push({ file: m[1], label: m[2] });
       } else if (l.startsWith('Text: ')) p.none = l.slice('Text: '.length);
-      else if (l.trim() && l !== 'Text, in reading order:') p.facts.push(l);
+      // A screenshot's note (docs/plans/screenshots-in.md AC 3) reads as its text.
+      else if (l.startsWith('Note: ')) p.none = l.slice('Note: '.length);
+      else if (l.trim() && l !== 'Text, in reading order:' && l !== 'Note from the person who took it:') p.facts.push(l);
     }
     // A section divider: its words as a short band, in place of a full-page picture of them.
     if (p.facts.some((f) => f.endsWith('(a section divider)'))) {
@@ -48,24 +50,24 @@ export function parseReport(md: string): { head: string[]; pages: ParsedPage[] }
     <dialog #pane class="pane" id="parsed-report" aria-labelledby="parsed-title" data-testid="parsed-panel" (close)="opened.set(false)">
       @if (opened()) {
         <div class="pane-head">
-          <h2 id="parsed-title">The parsed report</h2>
+          <h2 id="parsed-title">{{ shots() ? 'The screenshots' : 'The parsed report' }}</h2>
           <button type="button" class="secondary" data-testid="parsed-close" (click)="close()">Close</button>
         </div>
         @if (error()) { <p class="notice error" role="alert">{{ error() }}</p> }
-        <p>What the assistant read instead of the PDF: <a [href]="file('report.md')" target="_blank" rel="noopener" data-testid="parsed-md">report.md</a> · <a [href]="file('manifest.json')" target="_blank" rel="noopener">manifest.json</a></p>
+        <p>{{ shots() ? 'What the assistant read: the screenshots and their notes,' : 'What the assistant read instead of the PDF:' }} <a [href]="file('report.md')" target="_blank" rel="noopener" data-testid="parsed-md">report.md</a> · <a [href]="file('manifest.json')" target="_blank" rel="noopener">manifest.json</a></p>
         @for (l of head(); track $index) { <p class="head" data-testid="parsed-head">{{ l }}</p> }
         @for (p of pages(); track p.heading) {
           <section data-testid="parsed-page" [attr.data-page]="p.n">
             @if (p.divider) {
               <p class="divider" data-testid="parsed-divider"><a [href]="pdfPage(p.n)" target="_blank" rel="noopener">{{ p.divider }}</a></p>
             } @else {
-            <h3>{{ p.heading }} · <a [href]="pdfPage(p.n)" target="_blank" rel="noopener">PDF page {{ p.n }}</a></h3>
+            <h3>{{ p.heading }}@if (!shots()) { · <a [href]="pdfPage(p.n)" target="_blank" rel="noopener">{{ label(p.n) }}</a>}</h3>
             @for (f of p.facts; track $index) { <p class="fact" data-testid="parsed-fact">{{ f }}</p> }
             @if (p.text.length) {
               <blockquote data-testid="parsed-text">@for (t of p.text; track $index) {<span>{{ t }}</span>}</blockquote>
-            } @else if (p.none) { <p class="muted">Text: {{ p.none }}</p> }
+            } @else if (p.none) { <p class="muted">{{ shots() ? 'Note' : 'Text' }}: {{ p.none }}</p> }
             @if (p.picture) {
-              <a [href]="file(p.picture)" target="_blank" rel="noopener"><img class="page" [src]="file(p.picture)" [alt]="'Page ' + p.n + ' of the PDF'" data-testid="parsed-picture" /></a>
+              <a [href]="file(p.picture)" target="_blank" rel="noopener"><img class="page" [src]="file(p.picture)" [alt]="shots() ? 'Screenshot ' + p.n : 'Page ' + p.n + ' of the PDF'" data-testid="parsed-picture" /></a>
             }
             @if (p.images.length) {
               <div class="thumbs">
@@ -107,9 +109,12 @@ export class ParsedReportPane {
   readonly head = signal<string[]>([]);
   readonly pages = signal<ParsedPage[]>([]);
   readonly error = signal('');
+  // A run from screenshots (docs/plans/screenshots-in.md AC 5): "The screenshots".
+  readonly shots = signal(false);
 
-  async open(id: string): Promise<void> {
+  async open(id: string, source: string | null = null): Promise<void> {
     this.id.set(id);
+    this.shots.set(source === 'screenshots');
     this.error.set('');
     this.opened.set(true);
     const d = this.pane().nativeElement;
@@ -134,6 +139,9 @@ export class ParsedReportPane {
     return parsedFileUrl(this.id(), rel);
   }
   pdfPage(n: number): string {
-    return pdfPageUrl(this.id(), n);
+    return pageHref(this.id(), this.shots() ? 'screenshots' : 'pdf', n);
+  }
+  label(n: number): string {
+    return pageLabel(this.shots() ? 'screenshots' : 'pdf', n);
   }
 }

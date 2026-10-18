@@ -252,6 +252,8 @@ export class RunStore {
         this.reset();
         this.run.set(ev);
         this.startedAt.set(Date.parse(String(ev['at'])) || Date.now());
+        // A run from screenshots says so from its first sentence (docs/plans/screenshots-in.md AC 5).
+        if (ev['source'] === 'screenshots') this.manual.update((m) => ({ ...m, source: 'screenshots' }));
         break;
       case 'raw':
         this.raw.update((r) => [...r, `${ev['stream'] === 'stderr' ? '! ' : ''}${ev['line']}`]);
@@ -578,10 +580,11 @@ export class RunStore {
   }
 
   // A run the server has just started (POST /api/runs, or a PDF's upload): this page's from now on.
-  async adoptStarted(r: { id?: string; kind?: string; status?: string } | null): Promise<void> {
+  async adoptStarted(r: { id?: string; kind?: string; status?: string; meta?: Record<string, unknown> } | null): Promise<void> {
     if (r && r.id && r.status === 'running' && this.run()?.['id'] !== r.id) {
       this.reset();
       this.run.set({ type: 'run', seq: -1, id: r.id, kind: r.kind });
+      if (r.meta?.['source'] === 'screenshots') this.manual.update((m) => ({ ...m, source: 'screenshots' }));
       this.startedAt.set(Date.now());
     }
     void this.connect();
