@@ -159,10 +159,13 @@ test('one screen AC2, AC3, AC7, AC8, AC9, AC10, AC11, guards a b c: one Start cr
     expect(spawnSync('git', ['rev-parse', '--verify', 'a11y-508'], { cwd: a.origin }).status, 'pushed to origin').toBe(0);
     await expect(page.getByTestId('counts')).toHaveText(/^\d+ found · \d+ awaiting your deployment( · \d+ could not be fixed)?$/);
     // AC11: the fixes are a link to a panel of each fix: what, where, the element and its commit.
+    const pendingN = (await page.getByTestId('pending-link').innerText()).match(/^\d+/)![0];
     await page.getByTestId('pending-link').click();
     const fixes = page.getByTestId('fixes-panel');
     await expect(fixes).toBeVisible();
     await expect(fixes.getByRole('heading', { level: 2 })).toHaveText(/^\d+ fix(es)?$/);
+    // Each link opens only its own group: the panel counts what the link did.
+    await expect(fixes.getByTestId('fixes-item')).toHaveCount(Number(pendingN));
     await expect(fixes.getByTestId('fixes-item').first().getByTestId('fixes-state')).toHaveText(/waiting for your deployment/);
     await expect(fixes.getByTestId('fixes-commit').first()).toHaveText(/^Commit: [0-9a-f]{7} \(round \d+\) · site\//);
     await expect(fixes.getByTestId('fixes-where').first().getByRole('link').first()).toHaveAttribute('href', new RegExp(`^${a.base.replace(/[.*+?^$()|[\]\\]/g, '\\$&')}`));

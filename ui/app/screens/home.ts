@@ -53,7 +53,7 @@ function continuingPdf(stage: unknown, shots = false): string {
       <p data-testid="read-failed-said"><a routerLink="/diagnostics" fragment="assistant-calls" data-testid="see-what-said">See what {{ who }} said</a></p>
     }
     @if (counts().length) {
-      <p data-testid="counts">@for (c of counts(); track c.key) {@if (!$first) {<span aria-hidden="true"> · </span>}@if (c.key === 'unfixed') {<a href="#could-not-be-fixed" data-testid="unfixed-link" (click)="openUnfixed($event)">{{ c.text }}</a>} @else if (c.key === 'verified' || c.key === 'pending') {<a href="#fixes" [attr.data-testid]="c.key + '-link'" (click)="openFixes($event)">{{ c.text }}</a>} @else {<span>{{ c.text }}</span>}}</p>
+      <p data-testid="counts">@for (c of counts(); track c.key) {@if (!$first) {<span aria-hidden="true"> · </span>}@if (c.key === 'unfixed') {<a href="#could-not-be-fixed" data-testid="unfixed-link" (click)="openUnfixed($event)">{{ c.text }}</a>} @else if (c.key === 'verified' || c.key === 'pending') {<a href="#fixes" [attr.data-testid]="c.key + '-link'" (click)="openFixes($event, c.key)">{{ c.text }}</a>} @else {<span>{{ c.text }}</span>}}</p>
     }
     <div class="actions">
       @if (running()) {
@@ -264,18 +264,23 @@ export class HomeScreen implements OnDestroy {
   });
   readonly pagesOpen = signal(false);
   readonly fixesOpen = signal(false);
+  // Which group the link opened: the verified fixes, or those awaiting the deployment.
+  private fixesGroup = signal<'verified' | 'pending'>('verified');
   private fixesPanel = viewChild.required<ElementRef<HTMLDialogElement>>('fixesPanel');
-  // Waiting for the deployment first, then verified.
+  // The group the opened link counts.
   readonly fixed = computed(() => {
     const l = this.driver.ledger()?.lists;
     if (!l) return [];
-    return [...(l['pending'] || []).map((e) => ({ ...e, state: 'committed and pushed; waiting for your deployment to verify it' })), ...(l['verified'] || []).map((e) => ({ ...e, state: 'verified: gone on a later crawl' }))];
+    const pending = (l['pending'] || []).map((e) => ({ ...e, state: 'committed and pushed; waiting for your deployment to verify it' }));
+    const verified = (l['verified'] || []).map((e) => ({ ...e, state: 'verified: gone on a later crawl' }));
+    return this.fixesGroup() === 'pending' ? pending : verified;
   });
   commitLink(sha: string): string | null {
     return commitUrl(this.env.env()?.remoteWeb, sha);
   }
-  openFixes(ev?: Event): void {
+  openFixes(ev?: Event, group: string = 'verified'): void {
     ev?.preventDefault();
+    this.fixesGroup.set(group === 'pending' ? 'pending' : 'verified');
     void this.driver.loadLedger();
     this.fixesOpen.set(true);
     const d = this.fixesPanel().nativeElement;
