@@ -44,6 +44,8 @@ function continuingPdf(stage: unknown, shots = false): string {
         <span data-testid="folder" [attr.title]="e.cwd"><span class="visually-hidden">Folder: </span>{{ e.cwd }}</span>
         <span aria-hidden="true"> · </span>
         <span data-testid="url"><span class="visually-hidden">URL: </span>{{ driver.url() || 'no URL yet' }}</span>
+        <span aria-hidden="true"> · </span>
+        <button type="button" class="secondary small" data-testid="edit-setup" (click)="starter.openSetup()" [disabled]="running()">Edit<span class="visually-hidden"> the repository folder and start URL</span></button>
       </p>
     }
     <p class="big-status" role="status" data-testid="now">@for (seg of nowParts(); track $index) {@if (seg.link) {<a [href]="seg.link === 'output-link' ? '#assistant-output' : '#pages-so-far'" [attr.data-testid]="seg.link" (click)="seg.link === 'output-link' ? openOutput($event) : openPages($event)">{{ seg.text }}</a>} @else {{{ seg.text }}}}</p>
@@ -195,7 +197,7 @@ export class HomeScreen implements OnDestroy {
   readonly store = inject(RunStore);
   readonly driver = inject(Driver);
   private api = inject(Api);
-  private starter = inject(Starter);
+  readonly starter = inject(Starter);
   readonly missed = signal('');
   readonly unfixedOpen = signal(false);
   readonly resetError = signal('');
