@@ -805,6 +805,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     branch: (ledger.deploy && ledger.deploy.branch) || git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out || 'the current branch',
     remote: ledger.deploy ? ledger.deploy.remote : null, pushed: !!(ledger.deploy && ledger.deploy.pushed), host: hostOf(cfg.url),
     pushedAt: (ledger.deploy && ledger.deploy.pushedAt) || null,
+    // Fixes committed while this deployment is awaited: they go out with the next push.
+    held: byStatus(ledger, 'held').length,
   });
   // deployTimeout 0 (the dashboard's): the wait has no limit, a start against the old build waits
   // instead of ending, and whatever is still open is fixed from the ledger while the build is awaited.
@@ -1071,6 +1073,68 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
 
   // When this run last pushed (the dashboard says "pushed to origin at 3:28 PM").
   let pushedAt = null;
+  // The push of a round's fixes and the held ones (fixed while the deployment before was awaited),
+  // with one build marker: a meta tag in the app's index.html, committed with the round, so the wait
+  // knows the build it sees is the one made from this push (not one the pipeline finished late from
+  // an earlier push). An app with no index.html under its source folders goes without: the bundles'
+  // change decides, as before. The held fixes then await verification like the round's own.
+  // { ok, marker, carried }: carried, how many held commits went out; ok false when the push failed (said).
+  const pushFixes = (round, committed, held) => {
+    const carried = new Set(held.map((e) => (e.attempts[e.attempts.length - 1] || {}).commitFull).filter(Boolean)).size;
+    let marker = null;
+    if (cfg.deployed === 'bundle-change') {
+      const indexFile = findIndexHtml(cwd, sourceDirs);
+      if (!indexFile) log.info('no index.html under the source folders: the wait goes by the bundles changing');
+      else {
+        const token = `r${round}-${Date.now().toString(36)}`;
+        let stamped = false;
+        try {
+          stamped = stampBuildMarker(cwd, indexFile, token);
+        } catch (e) {
+          log.warn(`could not write the build marker into ${indexFile}: ${e.message}`);
+        }
+        if (stamped) {
+          git(cwd, ['add', '--', indexFile]);
+          const c = git(cwd, ['commit', '-q', '-m', `a11y-508: build marker ${token}\n\nThe fix loop verifies this round's fixes against a build that serves this marker, so a build made from an earlier push is not mistaken for it.`]);
+          if (c.code === 0) {
+            marker = token;
+            log.info(`build marker ${token} committed in ${indexFile}: the fixes are verified against a build that serves it`);
+            ev('marker', { round, token, file: indexFile });
+          } else log.warn(`could not commit the build marker: ${c.err}`);
+        }
+      }
+    }
+    if (cfg.push) {
+      const branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
+      log.info(`pushing ${committed + carried} commit(s) to origin/${branch}${carried ? `, ${carried} of them held while the deployment was awaited` : ''}`);
+      ev('step', { round, step: 'push', committed: committed + carried, ...(carried ? { held: carried } : {}) });
+      const p = git(cwd, ['push', '-u', 'origin', branch]);
+      if (p.code !== 0) {
+        log.error(`push failed: ${p.err}`);
+        return { ok: false, marker, carried };
+      }
+      pushedAt = new Date().toISOString();
+    }
+    for (const e of held) e.status = 'pending';
+    if (held.length) save();
+    return { ok: true, marker, carried };
+  };
+  // What the fixes wait for (deployed: bundle-change), kept in the ledger so a later run knows: the
+  // bundles from before the first of them (an earlier wait's, while the site has not changed since),
+  // the branch, the push and its marker. A round that did not push (its fixes are held) leaves the
+  // awaited push's record as it is: the wait goes on for that push's build.
+  const recordDeploy = (round, pushing, marker, signatureBefore) => {
+    const branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
+    const before = ledger.deploy;
+    ledger.deploy = {
+      // A build on record stays; one never read (null) is replaced by this round's, so the check can work next time.
+      round, signature: before && before.signature != null ? before.signature : signatureBefore, branch, remote: cfg.push ? 'origin' : null,
+      pushed: !!cfg.push && (pushing || !!(before && before.pushed)), host: hostOf(cfg.url), since: before ? before.since : new Date().toISOString(),
+      pushedAt: (pushing && pushedAt) || (before && before.pushedAt) || null,
+      // The marker the right build serves: this round's when it pushed, else the one still awaited.
+      marker: pushing ? marker : (before && before.marker) || null,
+    };
+  };
   // --max-rounds 0 (the dashboard's): no cap; the loop ends when nothing is left to do, or is stopped.
   const lastRound = maxRounds > 0 ? startRound + maxRounds : Infinity;
   for (let round = startRound; round < lastRound; round++) {
@@ -1081,6 +1145,11 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     const meanwhile = fromTheLedger && meanwhileNext;
     noCrawlNext = false;
     meanwhileNext = false;
+    // One push per deployment: a round that fixes while a deployment is awaited (no limit on the wait)
+    // holds its fixes, committed and not pushed, with no build marker; they go out with the next push,
+    // after the awaited build has arrived and been verified. A round continued after an interruption
+    // while a deployment is awaited holds too.
+    const holding = cfg.deployed === 'bundle-change' && forever && (meanwhile || (resumed && awaitingDeploy()));
     let signatureBefore = null;
     if (resumed) {
       signatureBefore = cfg.deployed === 'bundle-change' ? (awaitingDeploy() && ledger.deploy.signature != null ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
@@ -1089,11 +1158,11 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     } else if (fromTheLedger) {
       // A round with no crawl: the ledger's open findings, fixed while the earlier fixes still wait
       // for their deployment (they stay pending). Recorded as a round so its attempts are its own.
-      // Fixing meanwhile (no limit on the wait): the build live now, which this round's fixes are not in;
-      // once they are pushed the wait compares with it, so a build of only the earlier push is not taken for theirs.
-      signatureBefore = cfg.deployed === 'bundle-change' ? (meanwhile ? await bundleSignature(cfg.url) : awaitingDeploy() && ledger.deploy.signature != null ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
+      // Fixing meanwhile (no limit on the wait): its fixes are held, not pushed, so the wait goes on for
+      // the earlier push's build as it was recorded.
+      signatureBefore = cfg.deployed === 'bundle-change' ? (awaitingDeploy() && ledger.deploy.signature != null ? ledger.deploy.signature : await bundleSignature(cfg.url)) : null;
       const prev = ledger.rounds[ledger.rounds.length - 1] || {};
-      ledger.rounds.push({ round, at: new Date().toISOString(), source: 'ledger', pages: prev.pages || 0, audited: prev.audited || 0, violations: prev.violations || 0, reviews: prev.reviews || 0, coverage: null, diff: { new: 0, still: 0, failed: 0, verified: 0, gone: 0, reopened: 0, unchecked: 0, gaveUp: 0 } });
+      ledger.rounds.push({ round, at: new Date().toISOString(), source: 'ledger', ...(meanwhile ? { meanwhile: true } : {}), pages: prev.pages || 0, audited: prev.audited || 0, violations: prev.violations || 0, reviews: prev.reviews || 0, coverage: null, diff: { new: 0, still: 0, failed: 0, verified: 0, gone: 0, reopened: 0, unchecked: 0, gaveUp: 0 } });
       save();
       log.info(`=== round ${round}: fixing the remaining findings from the ledger (no crawl) ===`);
       ev('round', { round, fromLedger: true });
@@ -1291,29 +1360,52 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       // after an interruption its uncommitted changes are known to be the loop's (the dashboard's Continue).
       // The fallback assistant, once the first has failed twice on this finding (no change, an edit that
       // broke the build, a call that ran out of time): a different model may see what the first did not.
-      const failedBefore = entry.attempts.filter((a) => a.outcome && a.outcome !== 'pending' && !a.commit).length;
-      const useFallback = !!fallbackCommand && failedBefore >= 2;
-      const attempt = { round, startedAt: new Date().toISOString(), ...(useFallback ? { assistant: cfg.fallback } : {}) };
-      if (useFallback) {
-        log.info(`  ${fallbackName} this time: ${(PRESET_INFO[cfg.agent] && PRESET_INFO[cfg.agent].label) || 'the assistant'} made no fix that held in ${failedBefore} tries`);
-        ev('fallback', { round, n: n + 1, m: tasks.length, assistant: cfg.fallback, after: failedBefore });
+      let attempt;
+      let res;
+      let changed;
+      let note;
+      // A call that gave no usable answer (it ran out of time, ended without a result file, or wrote
+      // one that is not JSON) is run once more in this round, before the round commits and pushes, so
+      // it does not become a leftover that costs a push of its own. An answer (fixed: false with a
+      // reason) is not asked again, nor a call refused for quota (it has had its retries). The second
+      // call is an attempt of its own, toward maxAttempts.
+      for (let tries = 1; ; tries++) {
+        const failedBefore = entry.attempts.filter((a) => a.outcome && a.outcome !== 'pending' && !a.commit).length;
+        const useFallback = !!fallbackCommand && failedBefore >= 2;
+        attempt = { round, startedAt: new Date().toISOString(), ...(useFallback ? { assistant: cfg.fallback } : {}) };
+        if (useFallback) {
+          log.info(`  ${fallbackName} this time: ${(PRESET_INFO[cfg.agent] && PRESET_INFO[cfg.agent].label) || 'the assistant'} made no fix that held in ${failedBefore} tries`);
+          ev('fallback', { round, n: n + 1, m: tasks.length, assistant: cfg.fallback, after: failedBefore });
+        }
+        // Every finding of the task gets the attempt (and so the same outcome and commit).
+        for (const e of members(entry)) e.attempts.push(attempt);
+        save();
+        const at = new Date().toISOString();
+        res = await withOutput(`r${round}-fix-${n}`, { command: useFallback ? fallbackCommand : agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout }, round, n + 1, 'fix');
+        calls.push(res);
+        // A second call's log replaces the first's (agent-calls.log keeps both calls' lines).
+        writeFileSync(join(work, `agent-r${round}-fix-${n}.log`), agentLog(res, { at, assistant: agentLabel(useFallback ? cfg.fallback : cfg.agent) }));
+        changed = gitChanged(cwd, sourceDirs);
+        const strayChanges = gitChanged(cwd).filter((f) => !changed.includes(f));
+        if (strayChanges.length) {
+          log.warn(`  agent changed files outside ${sourceDirs.join(', ')}; reverting them: ${strayChanges.join(', ')}`);
+          git(cwd, ['checkout', '--', ...strayChanges]);
+          git(cwd, ['clean', '-fdq', '--', ...strayChanges]);
+        }
+        note = res.result && res.result.note ? String(res.result.note).slice(0, 300) : res.timedOut ? 'agent timed out' : res.circled ? 'the assistant repeated the same failing step over and over, so its call was ended' : res.quota ? `the assistant's provider refused the call for quota or rate limit (after ${res.quotaRetries} retries)` : `agent exit ${res.code}, no result file`;
+        Object.assign(attempt, { n: n + 1, files: changed, note, outcome: 'pending', agentMs: res.durationMs ?? null });
+        const noAnswer = !res.result && !res.quota;
+        if (tries === 1 && noAnswer && !stopped() && entry.attempts.length < cfg.maxAttempts) {
+          attempt.outcome = 'no-change';
+          attempt.retried = true;
+          log.info(`  ${note}; asking once more in this round`);
+          attemptEvent(n + 1, entry, attempt, note === 'agent timed out' ? 'timed-out' : 'no-change');
+          save();
+          ev('task', { round, n: n + 1, m: tasks.length, test: entry.test, name: entry.name, impact: entry.impact, message: entry.message, elements: members(entry).length, state: 'start', timeoutMs: cfg.agentTimeout, quietMs: cfg.quietAfter, again: true });
+          continue;
+        }
+        break;
       }
-      // Every finding of the task gets the attempt (and so the same outcome and commit).
-      for (const e of members(entry)) e.attempts.push(attempt);
-      save();
-      const at = new Date().toISOString();
-      const res = await withOutput(`r${round}-fix-${n}`, { command: useFallback ? fallbackCommand : agentCommand, promptFile, resultFile, cwd, tasksDir: taskFolder, timeout: cfg.agentTimeout }, round, n + 1, 'fix');
-      calls.push(res);
-      writeFileSync(join(work, `agent-r${round}-fix-${n}.log`), agentLog(res, { at, assistant: agentLabel(useFallback ? cfg.fallback : cfg.agent) }));
-      const changed = gitChanged(cwd, sourceDirs);
-      const strayChanges = gitChanged(cwd).filter((f) => !changed.includes(f));
-      if (strayChanges.length) {
-        log.warn(`  agent changed files outside ${sourceDirs.join(', ')}; reverting them: ${strayChanges.join(', ')}`);
-        git(cwd, ['checkout', '--', ...strayChanges]);
-        git(cwd, ['clean', '-fdq', '--', ...strayChanges]);
-      }
-      const note = res.result && res.result.note ? String(res.result.note).slice(0, 300) : res.timedOut ? 'agent timed out' : res.circled ? 'the assistant repeated the same failing step over and over, so its call was ended' : res.quota ? `the assistant's provider refused the call for quota or rate limit (after ${res.quotaRetries} retries)` : `agent exit ${res.code}, no result file`;
-      Object.assign(attempt, { n: n + 1, files: changed, note, outcome: 'pending', agentMs: res.durationMs ?? null });
       if (changed.length) ev('changes', { round, n: n + 1, m: tasks.length, files: changed });
       if (!changed.length) {
         attempt.outcome = 'no-change';
@@ -1366,7 +1458,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       attempt.commit = git(cwd, ['rev-parse', '--short', 'HEAD']).out;
       attempt.commitFull = git(cwd, ['rev-parse', 'HEAD']).out;
       ev('commit', { round, n: n + 1, m: tasks.length, commit: attempt.commit, files: changed });
-      for (const e of members(entry)) e.status = 'pending';
+      for (const e of members(entry)) e.status = holding ? 'held' : 'pending';
       committed++;
       roundFixed.push(entry);
       log.info(`  committed ${attempt.commit}: ${changed.join(', ')}`);
@@ -1444,7 +1536,11 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       }
     }
 
-    if (!committed) {
+    // Fixes held while the deployment before this round was awaited go out with this round's push,
+    // whether or not the round committed anything of its own: one push, one marker.
+    const held = holding ? [] : byStatus(ledger, 'held');
+    const pushing = !holding && (committed > 0 || held.length > 0);
+    if (!committed && !held.length) {
       log.info(`round ${round}: nothing was fixed. ${summaryLine(ledger)}`);
       // Earlier fixes still wait for their deployment: the loop waits for it rather than stopping.
       const stillPending = byStatus(ledger, 'pending').length;
@@ -1478,53 +1574,27 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       }
     }
 
-    // The round's build marker: a meta tag in the app's index.html, committed with the round, so the
-    // wait knows the build it sees is the one made from this push (not one the pipeline finished late
-    // from an earlier push). An app with no index.html under its source folders goes without: the
-    // bundles' change decides, as before.
-    let marker = null;
-    if (committed && cfg.deployed === 'bundle-change') {
-      const indexFile = findIndexHtml(cwd, sourceDirs);
-      if (!indexFile) log.info('no index.html under the source folders: the wait goes by the bundles changing');
-      else {
-        const token = `r${round}-${Date.now().toString(36)}`;
-        let stamped = false;
-        try {
-          stamped = stampBuildMarker(cwd, indexFile, token);
-        } catch (e) {
-          log.warn(`could not write the build marker into ${indexFile}: ${e.message}`);
-        }
-        if (stamped) {
-          git(cwd, ['add', '--', indexFile]);
-          const c = git(cwd, ['commit', '-q', '-m', `a11y-508: build marker ${token}\n\nThe fix loop verifies this round's fixes against a build that serves this marker, so a build made from an earlier push is not mistaken for it.`]);
-          if (c.code === 0) {
-            marker = token;
-            log.info(`build marker ${token} committed in ${indexFile}: the fixes are verified against a build that serves it`);
-            ev('marker', { round, token, file: indexFile });
-          } else log.warn(`could not commit the build marker: ${c.err}`);
-        }
-      }
+    if (holding && committed) {
+      log.info(`Fixed ${committed} more while your deployment is awaited; ${committed === 1 ? 'it goes' : 'they go'} out with the next push`);
+      ev('step', { round, step: 'hold', committed, held: byStatus(ledger, 'held').length });
     }
-    if (committed && cfg.push) {
-      const branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
-      log.info(`pushing ${committed} commit(s) to origin/${branch}`);
-      ev('step', { round, step: 'push', committed });
-      const p = git(cwd, ['push', '-u', 'origin', branch]);
-      if (p.code !== 0) {
-        log.error(`push failed: ${p.err}`);
-        save();
-        return 2;
-      }
-      pushedAt = new Date().toISOString();
+    const out = pushing ? pushFixes(round, committed, held) : { ok: true, marker: null, carried: 0 };
+    if (!out.ok) {
+      save();
+      return 2;
     }
+    const marker = out.marker;
 
     // What the round committed, where: the dashboard's "Where you are" reads it from the ledger.
     const roundEntry = ledger.rounds.find((r) => r.round === round);
-    if (committed && roundEntry) {
+    if ((committed || out.carried) && roundEntry) {
       roundEntry.committed = (roundEntry.committed || 0) + committed;
       roundEntry.branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
-      roundEntry.pushed = !!cfg.push;
-      roundEntry.remote = cfg.push ? 'origin' : null;
+      roundEntry.pushed = !!cfg.push && !holding;
+      roundEntry.remote = cfg.push && !holding ? 'origin' : null;
+      // Held: committed while a deployment was awaited; carried: held commits this round's push took out.
+      if (holding) roundEntry.held = (roundEntry.held || 0) + committed;
+      if (out.carried) roundEntry.carried = out.carried;
     }
     // What the round leaves: open findings and fixes awaiting verification, as a running count.
     if (roundEntry) {
@@ -1532,9 +1602,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       roundEntry.pendingAfter = byStatus(ledger, 'pending').length;
       save();
     }
-    // Earlier fixes still waiting for a deployment (fix the remaining without waiting) wait again.
-    const waitAgain = !committed && awaitingDeploy();
-    if (committed || waitAgain) {
+    // Earlier fixes still waiting for a deployment (fix the remaining without waiting, or fixes held
+    // meanwhile) wait again.
+    const waitAgain = !pushing && awaitingDeploy();
+    if (pushing || waitAgain) {
       ev('step', { round, step: cfg.deployed === 'enter' ? 'await-deploy' : 'deploy', deployed: cfg.deployed, committed });
       if (cfg.deployed === 'command') {
         log.info(`deploying: ${cfg.deploy}`);
@@ -1545,23 +1616,11 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
           return 2;
         }
       } else if (cfg.deployed === 'bundle-change') {
-        // What the fixes wait for, kept in the ledger so a later run knows: the bundles from before the
-        // first of them (an earlier wait's, while the site has not changed since), the branch, the push.
-        const branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
-        const before = ledger.deploy;
-        ledger.deploy = {
-          // A build on record stays; one never read (null) is replaced by this round's, so the check can work next time.
-          // A meanwhile round that committed waits for a build after its own push (see signatureBefore above).
-          round, signature: meanwhile && committed > 0 && signatureBefore != null ? signatureBefore : before && before.signature != null ? before.signature : signatureBefore, branch, remote: cfg.push ? 'origin' : null,
-          pushed: !!cfg.push && (committed > 0 || !!(before && before.pushed)), host: hostOf(cfg.url), since: before ? before.since : new Date().toISOString(),
-          pushedAt: (committed > 0 && pushedAt) || (before && before.pushedAt) || null,
-          // The marker the right build serves: this round's when it pushed, else the one still awaited.
-          marker: committed > 0 ? marker : (before && before.marker) || null,
-        };
+        recordDeploy(round, pushing, marker, signatureBefore);
         save();
         // No limit on the wait: what is still open is fixed first, from the ledger with no crawl, while
-        // the new build is awaited (one such round, then the wait).
-        if (forever && !fromTheLedger && openFindings(ledger).length) {
+        // the new build is awaited (one such round, then the wait); its fixes are held for the next push.
+        if (forever && !fromTheLedger && !holding && openFindings(ledger).length) {
           log.info(`fixing the remaining ${openFindings(ledger).length} from the ledger while the new build is awaited`);
           noCrawlNext = true;
           meanwhileNext = true;
@@ -1593,6 +1652,26 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
     log.info(`round ${round} done. ${summaryLine(ledger)}`);
     ledgerEvent();
   }
+  // A run never ends with fixes held: at the round limit they are pushed, and their deployment awaited,
+  // first. Stopped, they stay committed and held, and the next run pushes them.
+  if (!stopped() && byStatus(ledger, 'held').length) {
+    const round = ledger.rounds.length ? ledger.rounds[ledger.rounds.length - 1].round : 0;
+    const held = byStatus(ledger, 'held');
+    log.info(`pushing the ${held.length} held fix(es) before the loop ends`);
+    const signatureBefore = cfg.deployed === 'bundle-change' ? await bundleSignature(cfg.url) : null;
+    const out = pushFixes(round, 0, held);
+    if (!out.ok) {
+      save();
+      return 2;
+    }
+    if (cfg.deployed === 'bundle-change') {
+      recordDeploy(round, true, out.marker, signatureBefore);
+      save();
+      ev('step', { round, step: 'deploy', deployed: cfg.deployed, committed: 0 });
+      const w = await waitForDeploy(round);
+      if (w === 'timeout' || w === 'unreachable' || w === 'stop-waiting') return endAwaiting(w === 'stop-waiting' ? 'stopped-waiting' : w, round);
+    }
+  }
   if (stopped()) log.warn(`stopped. ${summaryLine(ledger)} Rerun the same command to resume.`);
   else log.warn(`reached --max-rounds. ${summaryLine(ledger)} Rerun to continue.`);
   save();
@@ -1602,7 +1681,7 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
 export function summaryLine(ledger) {
   const c = statusCounts(ledger);
   const part = (k, label) => (c[k] ? `${c[k]} ${label}` : null);
-  return [part('open', 'open'), part('review', 'undecided'), part('pending', 'fixed, awaiting verification'), part('verified', 'verified fixed'), part('adequate', 'judged fine'), part('gone', 'gone')].filter(Boolean).join(', ') + '.';
+  return [part('open', 'open'), part('review', 'undecided'), part('pending', 'fixed, awaiting verification'), part('held', 'fixed, held for the next push'), part('verified', 'verified fixed'), part('adequate', 'judged fine'), part('gone', 'gone')].filter(Boolean).join(', ') + '.';
 }
 
 export function printStatus(cwd, out) {
@@ -1616,7 +1695,7 @@ export function printStatus(cwd, out) {
   out(`a11y-508 loop status: ${ledger.rounds.length} round(s). ${summaryLine(ledger)}`);
   out(`  the tool's files for this repository: ${dirname(workDir(cwd))}`);
   for (const r of ledger.rounds.slice(-5)) out(`  round ${r.round} ${r.at || ''}: ${r.audited}/${r.pages} pages audited, ${r.violations} violations, ${r.reviews} review; +${r.diff.new} new, ${r.diff.verified} verified, ${r.diff.failed} did not hold${r.coverage && !r.coverage.complete ? ', coverage incomplete' : ''}`);
-  const groups = [['open', 'OPEN'], ['pending', 'FIXED, AWAITING VERIFICATION'], ['review', 'AWAITING TRIAGE'], ['skipped', 'SKIPPED (THE ASSISTANT COULD NOT FIX THESE)']];
+  const groups = [['open', 'OPEN'], ['pending', 'FIXED, AWAITING VERIFICATION'], ['held', 'FIXED, HELD FOR THE NEXT PUSH'], ['review', 'AWAITING TRIAGE'], ['skipped', 'SKIPPED (THE ASSISTANT COULD NOT FIX THESE)']];
   for (const [status, title] of groups) {
     const list = byStatus(ledger, status);
     if (!list.length) continue;

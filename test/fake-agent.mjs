@@ -67,6 +67,15 @@ if (task && /^manual-/.test(task.kind)) {
   write({ ok: true });
 } else if (task.kind === 'triage') {
   write(task.items.map((it) => ({ id: it.id, decision: it.test === '13.B' ? 'inadequate' : 'adequate', reason: 'fake agent' })));
+} else if (process.env.FAKE_AGENT_HANG_ONCE && task.finding.test === '7.A' && !existsSync(process.env.FAKE_AGENT_HANG_ONCE)) {
+  // FAKE_AGENT_HANG_ONCE=<file>: the first image fix never answers (the loop's time limit ends it), as a
+  // real assistant that runs out of time does; the next call answers (docs/plans/fewer-pushes.md AC 5).
+  writeFileSync(process.env.FAKE_AGENT_HANG_ONCE, 'hung');
+  await new Promise((r) => setTimeout(r, 10 * 60 * 1000));
+} else if (process.env.FAKE_AGENT_DECLINE_FIRST && task.finding.test === '13.C' && !existsSync(process.env.FAKE_AGENT_DECLINE_FIRST)) {
+  // FAKE_AGENT_DECLINE_FIRST=<file>: the first contrast fix is an honest "no" with a reason; a later round's call fixes it.
+  writeFileSync(process.env.FAKE_AGENT_DECLINE_FIRST, 'declined');
+  write({ fixed: false, files: [], note: 'the text is rendered by a library' });
 } else {
   const f = task.finding;
   const edit = (rel, from, to) => {

@@ -100,7 +100,9 @@ export function narrate(events) {
       case 'step':
         if (ev.step === 'triage') add(ev, `Round ${ev.round}: asked the assistant to judge ${n(ev.count || 0, 'review item')}`);
         else if (ev.step === 'fix') add(ev, `Round ${ev.round}: fixing ${n(ev.findings || ev.count || 0, 'finding')}${ev.findings && ev.count && ev.findings !== ev.count ? ` as ${n(ev.count, 'task')}` : ''}`);
-        else if (ev.step === 'push') add(ev, `Round ${ev.round}: pushed ${n(ev.committed || 0, 'commit')}`);
+        else if (ev.step === 'push') add(ev, `Round ${ev.round}: pushed ${n(ev.committed || 0, 'commit')}${ev.held ? `, ${ev.held} of them held while the deployment was awaited` : ''}`);
+        // Fixed while a deployment was awaited: committed, and kept for the next push (one push per deployment).
+        else if (ev.step === 'hold') add(ev, `Round ${ev.round}: held ${n(ev.committed || 0, 'commit')} for the next push (a deployment is awaited)`);
         break;
       case 'attempt': {
         const what = `${ev.test} ${String(ev.message || '').slice(0, 90)}`;

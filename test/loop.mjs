@@ -9,7 +9,7 @@ import { join, dirname, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { applyReport, loadLedger } from '../src/ledger.mjs';
+import { applyReport, isDone, loadLedger } from '../src/ledger.mjs';
 import { agentEnv, fixPrompt, manualFixPrompt, runAgent, triagePrompt } from '../src/agent.mjs';
 import { findIndexHtml, frameworkLine, likelyFiles, normalizeConfig, sessionArgs, splitCheck, stampBuildMarker } from '../src/loop.mjs';
 import { bundleSignature, sameBuild } from '../src/deploy-check.mjs';
@@ -93,6 +93,22 @@ const check = (name, fn) => {
     applyReport(l2, report([page('/a', [f('7.A', 'img', 'no alt')])]), r + 1, { maxAttempts: 3 });
   }
   check('ledger: gives up after maxAttempts fixes that did not hold', () => assert.equal(e.status, 'skipped'));
+  // docs/plans/fewer-pushes.md AC 2: a held fix (committed, not pushed) is not in the build a crawl sees.
+  const lh = { version: 1, rounds: [], findings: {} };
+  applyReport(lh, report([page('/a', [f('7.A', 'img', 'no alt'), f('13.C', 'p', 'contrast')])]), 1);
+  for (const k of ['7.A|img|no alt', '13.C|p|contrast']) {
+    lh.findings[k].status = 'held';
+    lh.findings[k].attempts.push({ round: 1, outcome: 'pending', commit: 'abc' });
+  }
+  const dh = applyReport(lh, report([page('/a', [f('13.C', 'p', 'contrast')])]), 2, { maxAttempts: 1 });
+  check('fewer-pushes AC2: a crawl leaves held fixes alone, seen or not: never did not hold, reopened, verified or gone', () => {
+    for (const k of ['7.A|img|no alt', '13.C|p|contrast']) {
+      assert.equal(lh.findings[k].status, 'held');
+      assert.deepEqual(lh.findings[k].attempts.map((a) => a.outcome), ['pending']);
+    }
+    assert.deepEqual([dh.failed.length, dh.verified.length, dh.gone.length, dh.reopened.length, dh.gaveUp.length], [0, 0, 0, 0, 0]);
+    assert.equal(isDone(lh), false);
+  });
 }
 
 // ---- unit: prompts never carry secrets, env strips the token
@@ -1213,7 +1229,9 @@ rmSync(repo2, { recursive: true, force: true });
     const { dir, g } = appRepo('a11y-508-assistant-', {});
     const site = await serve(dir);
     const url = `http://127.0.0.1:${site.address().port}/`;
-    const setConfig = (more) => writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', maxAttempts: 3, url, ...more }, null, 2));
+    // maxAttempts 6: a call with no answer is asked again in its round (docs/plans/fewer-pushes.md AC 5),
+    // so the assistant that never runs uses two attempts per finding, and the later runs still have findings to fix.
+    const setConfig = (more) => writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', maxAttempts: 6, url, ...more }, null, 2));
     setConfig({ agent: 'a11y-508-no-such-assistant {promptFile}' });
     const missing = await loopIn(dir, ['--max-rounds', '1', '--events']);
     const m = parseEvents(missing.stdout);

@@ -56,7 +56,7 @@ function continuingPdf(stage: unknown, shots = false): string {
       <p data-testid="read-failed-said"><a routerLink="/diagnostics" fragment="assistant-calls" data-testid="see-what-said">See what {{ who }} said</a></p>
     }
     @if (counts().length) {
-      <p data-testid="counts">@for (c of counts(); track c.key) {@if (!$first) {<span aria-hidden="true"> · </span>}@if (c.key === 'unfixed') {<a href="#could-not-be-fixed" data-testid="unfixed-link" (click)="openUnfixed($event)">{{ c.text }}</a>} @else if (c.key === 'verified' || c.key === 'pending') {<a href="#fixes" [attr.data-testid]="c.key + '-link'" (click)="openFixes($event, c.key)">{{ c.text }}</a>} @else {<span>{{ c.text }}</span>}}</p>
+      <p data-testid="counts">@for (c of counts(); track c.key) {@if (!$first) {<span aria-hidden="true"> · </span>}@if (c.key === 'unfixed') {<a href="#could-not-be-fixed" data-testid="unfixed-link" (click)="openUnfixed($event)">{{ c.text }}</a>} @else if (c.key === 'verified' || c.key === 'pending' || c.key === 'held') {<a href="#fixes" [attr.data-testid]="c.key + '-link'" (click)="openFixes($event, c.key)">{{ c.text }}</a>} @else {<span>{{ c.text }}</span>}}</p>
     }
     <div class="actions">
       @if (running()) {
@@ -267,8 +267,8 @@ export class HomeScreen implements OnDestroy {
   });
   readonly pagesOpen = signal(false);
   readonly fixesOpen = signal(false);
-  // Which group the link opened: the verified fixes, or those awaiting the deployment.
-  private fixesGroup = signal<'verified' | 'pending'>('verified');
+  // Which group the link opened: the verified fixes, those awaiting the deployment, or those held for the next push.
+  private fixesGroup = signal<'verified' | 'pending' | 'held'>('verified');
   private fixesPanel = viewChild.required<ElementRef<HTMLDialogElement>>('fixesPanel');
   // The group the opened link counts.
   readonly fixed = computed(() => {
@@ -276,14 +276,16 @@ export class HomeScreen implements OnDestroy {
     if (!l) return [];
     const pending = (l['pending'] || []).map((e) => ({ ...e, state: 'committed and pushed; waiting for your deployment to verify it' }));
     const verified = (l['verified'] || []).map((e) => ({ ...e, state: 'verified: gone on a later crawl' }));
-    return this.fixesGroup() === 'pending' ? pending : verified;
+    const held = (l['held'] || []).map((e) => ({ ...e, state: 'committed; goes out with the next push' }));
+    const g = this.fixesGroup();
+    return g === 'pending' ? pending : g === 'held' ? held : verified;
   });
   commitLink(sha: string): string | null {
     return commitUrl(this.env.env()?.remoteWeb, sha);
   }
   openFixes(ev?: Event, group: string = 'verified'): void {
     ev?.preventDefault();
-    this.fixesGroup.set(group === 'pending' ? 'pending' : 'verified');
+    this.fixesGroup.set(group === 'pending' || group === 'held' ? group : 'verified');
     void this.driver.loadLedger();
     this.fixesOpen.set(true);
     const d = this.fixesPanel().nativeElement;
@@ -536,7 +538,8 @@ export class HomeScreen implements OnDestroy {
     return String(w['branch'] || this.driver.ledger()?.deploy?.branch || this.driver.cfg()['branch'] || this.driver.defaults()?.effective.branch || 'the branch');
   }
 
-  // "Pushed 3 fixes to a11y-508; waiting for your deployment (pushed 11:51 AM, checked 2:31 PM: still the old build)"
+  // "Pushed 3 fixes to a11y-508; waiting for your deployment (pushed 11:51 AM, checked 2:31 PM: still the old build)",
+  // and while fixes are held for the next push: "…; 2 more fixes are ready and go out with the next push".
   private waiting(): string {
     const w: Record<string, any> = this.store.deployWait() || {};
     const d = this.driver.ledger()?.deploy;
@@ -551,7 +554,9 @@ export class HomeScreen implements OnDestroy {
       checked = `checked ${clockOf(check['at']) || 'just now'}: ${what}`;
     }
     const when = [pushed && at ? `pushed ${at}` : '', checked].filter(Boolean).join(', ');
-    return `${pushed ? 'Pushed' : 'Committed'} ${plural(n, 'fix', 'fixes')} ${pushed ? 'to' : 'on'} ${this.branch()}; waiting for your deployment (${when})`;
+    const held = Number(this.ledgerCounts()['held'] || 0);
+    const more = held ? `; ${held} more ${held === 1 ? 'fix is ready and goes' : 'fixes are ready and go'} out with the next push` : '';
+    return `${pushed ? 'Pushed' : 'Committed'} ${plural(n, 'fix', 'fixes')} ${pushed ? 'to' : 'on'} ${this.branch()}; waiting for your deployment (${when})${more}`;
   }
 
   // A PDF run, as it goes (docs/plans/manual-findings.md).

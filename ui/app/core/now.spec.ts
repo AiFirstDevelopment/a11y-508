@@ -20,6 +20,12 @@ describe("the one screen's line of numbers", () => {
       { key: 'unfixed', n: 15, text: '15 could not be fixed' },
     ]);
     expect(countsParts({ open: 2 }, true).map((p) => p.key)).toEqual(['found', 'unfixed']);
+    // Fixes held while a deployment is awaited: a group of their own, never "awaiting your deployment".
+    expect(countsParts({ open: 1, pending: 3, held: 2 })).toEqual([
+      { key: 'found', n: 6, text: '6 found' },
+      { key: 'pending', n: 3, text: '3 awaiting your deployment' },
+      { key: 'held', n: 2, text: '2 ready for the next push' },
+    ]);
     expect(countsParts(null)).toEqual([]);
   });
   it('says a time span in minutes once it is one', () => {

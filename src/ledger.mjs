@@ -5,7 +5,9 @@
 //
 // Statuses: review (awaiting triage), adequate (triage closed it), open (to be
 // fixed), pending (fixed, waiting for a crawl after deployment to confirm),
-// verified (confirmed gone after a fix), gone (disappeared without a fix),
+// held (fixed and committed while a deployment was awaited, not pushed yet: it goes out with the
+// next push, and no crawl verifies it before then), verified (confirmed gone after a fix), gone
+// (disappeared without a fix),
 // skipped (the assistant could not fix it: attempts used up, the gate kept failing, or triage was
 // unsure; the loop no longer tries it, and the dashboard does not show it), wont-fix (an older
 // ledger's). A ledger written before "skipped" says needs-human; it is read as skipped.
@@ -14,7 +16,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export const fingerprint = (f) => `${f.test}|${f.selector || ''}|${f.message}`;
-export const ACTIVE = new Set(['review', 'open', 'pending']);
+export const ACTIVE = new Set(['review', 'open', 'pending', 'held']);
 
 export function loadLedger(file) {
   if (!existsSync(file)) return { version: 1, rounds: [], findings: {} };
@@ -100,6 +102,8 @@ export function applyReport(ledger, report, round, { maxAttempts = 3 } = {}) {
       diff.unchecked.push(entry);
       continue;
     }
+    // A held fix is not in the build this crawl saw: what it shows says nothing about it.
+    if (entry.status === 'held') continue;
     if (entry.status === 'pending') {
       const last = entry.attempts[entry.attempts.length - 1];
       if (last) last.outcome = 'verified';

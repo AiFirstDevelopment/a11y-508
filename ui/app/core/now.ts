@@ -1,11 +1,12 @@
 // The one screen's words (docs/plans/simple-screen.md): the line of numbers, and the small helpers
 // the sentence is made of. Shared with Diagnostics.
 
-// "25 found · 1 verified fixed · 4 awaiting your deployment · 15 could not be fixed": the ledger's
-// counts, only the parts that are not zero. found: every finding the ledger knows.
+// "25 found · 1 verified fixed · 4 awaiting your deployment · 2 ready for the next push · 15 could not
+// be fixed": the ledger's counts, only the parts that are not zero (held: fixed while a deployment was
+// awaited, going out with the next push). found: every finding the ledger knows.
 // ended: the loop has finished, so what is still open or undecided could not be fixed either.
 export interface CountsPart {
-  key: 'found' | 'verified' | 'pending' | 'unfixed';
+  key: 'found' | 'verified' | 'pending' | 'held' | 'unfixed';
   n: number;
   text: string;
 }
@@ -18,6 +19,7 @@ export function countsParts(c: Record<string, number | undefined> | null | undef
     ['found', found, 'found'],
     ['verified', c['verified'] || 0, 'verified fixed'],
     ['pending', c['pending'] || 0, 'awaiting your deployment'],
+    ['held', c['held'] || 0, 'ready for the next push'],
     ['unfixed', (c['skipped'] || 0) + (ended ? (c['open'] || 0) + (c['review'] || 0) : 0), 'could not be fixed'],
   ];
   return parts.filter(([, n]) => n > 0).map(([key, n, w]) => ({ key, n, text: `${n} ${w}` }));
