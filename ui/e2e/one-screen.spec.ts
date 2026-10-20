@@ -104,7 +104,8 @@ test('one screen AC1, guard d: the name and build, the folder and URL, one sente
     await asksNothing(page);
     // Nothing else: none of the wizard's parts.
     for (const id of ['steps', 'where-you-are', 'tally', 'details', 'changes', 'copy-summary', 'check-now', 'picker', 'run-again', 'loop-start', 'assistant-line', 'ledger']) await expect(page.getByTestId(id), id).toHaveCount(0);
-    await expect(page.locator('main a')).toHaveCount(2);
+    // The app URL, Diagnostics and Start over.
+    await expect(page.locator('main a')).toHaveCount(3);
     await expect(page.getByTestId('start-over')).toHaveText('Start over');
     // Guard d: every old route, and anything under it, is the one screen.
     for (const path of ['/run', '/run/advanced', '/live', '/report', '/report/latest', '/fix-loop', '/fix-loop/settings', '/history', '/troubleshoot', '/sign-in']) {
@@ -176,6 +177,14 @@ test('one screen AC2, AC3, AC7, AC8, AC9, AC10, AC11, guards a b c: one Start cr
     await expect(now(page)).toHaveText(DONE, { timeout: 300_000 });
     await expect(go(page)).toHaveText('Start');
     expect(Object.values<any>(a.ledger().findings).some((e) => e.status === 'verified')).toBe(true);
+    // The verified link opens only the verified fixes, as many as it says.
+    const verifiedN = Number(((await page.getByTestId('verified-link').innerText()).match(/^\d+/) || [])[0]);
+    expect(verifiedN).toBeGreaterThan(0);
+    await page.getByTestId('verified-link').click();
+    const vfixes = page.getByTestId('fixes-panel');
+    await expect(vfixes.getByTestId('fixes-item')).toHaveCount(verifiedN);
+    for (const st of await vfixes.getByTestId('fixes-state').allInnerTexts()) expect(st).toMatch(/verified/);
+    await page.getByTestId('fixes-close').click();
     // Guard c: each state was said in its own words, with its numbers.
     const texts = await seen(page);
     for (const shape of [CRAWLING, FIXING, CHECKING, WAITING, ARRIVED, DONE]) expect(texts.some((t) => shape.test(t)), `${shape}\n${texts.join('\n')}`).toBe(true);

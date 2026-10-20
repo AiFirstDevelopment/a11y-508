@@ -64,6 +64,13 @@ test('Show the sign-in tab: POST /api/sign-in/show activates the sign-in tab and
     const { windowId } = await conn.cdp.send('Browser.getWindowForTarget', { targetId });
     const { bounds } = await conn.cdp.send('Browser.getWindowBounds', { windowId });
     assert.equal(bounds.windowState, 'normal');
+
+    // The person closes the sign-in tab; the run opens it again, and the button, pressed at once,
+    // finds the new tab (a second try) instead of failing on the closed one.
+    await conn.cdp.send('Target.closeTarget', { targetId });
+    const afterClose = await s.call('POST', '/api/sign-in/show');
+    assert.equal(afterClose.status, 200, afterClose.text);
+    assert.notEqual(afterClose.json.calls[0].params.targetId, targetId, 'the new tab, not the closed one');
   } finally {
     if (conn) await conn.close().catch(() => {});
     await s.call('POST', '/api/runs/current/stop').catch(() => {});

@@ -43,7 +43,10 @@ function continuingPdf(stage: unknown, shots = false): string {
       <p class="place" data-testid="where">
         <span data-testid="folder" [attr.title]="e.cwd"><span class="visually-hidden">Folder: </span>{{ e.cwd }}</span>
         <span aria-hidden="true"> · </span>
-        <span data-testid="url"><span class="visually-hidden">URL: </span>{{ driver.url() || 'no URL yet' }}</span>
+        <span data-testid="url"><span class="visually-hidden">URL: </span>@if (driver.url()) {<a [href]="driver.url()" target="_blank" rel="noopener" data-testid="url-link">{{ driver.url() }}</a>} @else {no URL yet}</span>
+        @if (driver.url()) {
+          <button type="button" class="secondary small" data-testid="copy-url" (click)="copyUrl()">{{ copied() ? 'Copied' : 'Copy' }}<span class="visually-hidden"> the app URL to the clipboard</span></button>
+        }
         <span aria-hidden="true"> · </span>
         <button type="button" class="secondary small" data-testid="edit-setup" (click)="starter.openSetup()" [disabled]="running()">Edit<span class="visually-hidden"> the repository folder and start URL</span></button>
       </p>
@@ -336,6 +339,16 @@ export class HomeScreen implements OnDestroy {
     return s.active() || s.retryPending() || (!!d && (d['outcome'] === 'interrupted' || (!!d['rerun'] && !s.rerunWithdrawn()) || (!!r && !!r.firedAt && !r.cancelled))) || this.driver.starting();
   });
   readonly signingIn = computed(() => this.store.loginWaiting() && this.store.active());
+
+  // The start URL onto the clipboard ("Copied" for a moment); a browser that refuses leaves the link to copy by hand.
+  readonly copied = signal(false);
+  async copyUrl(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(this.driver.url());
+      this.copied.set(true);
+      setTimeout(() => this.copied.set(false), 2000);
+    } catch {}
+  }
 
   async showSignIn(): Promise<void> {
     this.missed.set('');

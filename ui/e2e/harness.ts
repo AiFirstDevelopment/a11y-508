@@ -284,7 +284,7 @@ export async function record(page: Page, testids: string[] = ['now']): Promise<v
         const visible = (b: Element) => !!((b as HTMLElement).offsetWidth || (b as HTMLElement).offsetHeight || (b as HTMLElement).getClientRects().length);
         // The PDF and screenshots buttons beside Start are the second way in (docs/plans/manual-findings.md,
         // docs/plans/screenshots-in.md), not a question.
-        const buttons = [...document.querySelectorAll('main button')].filter(visible).filter((b) => !b.closest('dialog')).filter((b) => !['show-sign-in-tab', 'manual-pdf', 'add-shots'].includes((b as HTMLElement).dataset['testid'] || '')).map((b) => b.textContent!.trim());
+        const buttons = [...document.querySelectorAll('main button')].filter(visible).filter((b) => !b.closest('dialog')).filter((b) => !['show-sign-in-tab', 'manual-pdf', 'add-shots', 'edit-setup', 'copy-url'].includes((b as HTMLElement).dataset['testid'] || '')).map((b) => b.textContent!.trim());
         const last = w.__buttons[w.__buttons.length - 1];
         const t = n.textContent!.trim();
         if (!last || last.now !== t || last.buttons.join('|') !== buttons.join('|')) w.__buttons.push({ now: t, buttons });
@@ -354,7 +354,7 @@ export async function asksNothing(page: Page): Promise<void> {
   await expect(go(page)).toBeVisible();
   // Besides Start or Stop: Show the sign-in tab, and the PDF and screenshots buttons beside Start
   // (docs/plans/manual-findings.md, docs/plans/screenshots-in.md).
-  const buttons = page.locator('main button:visible:not([data-testid="show-sign-in-tab"]):not([data-testid="manual-pdf"]):not([data-testid="add-shots"]):not(dialog button)');
+  const buttons = page.locator('main button:visible:not([data-testid="show-sign-in-tab"]):not([data-testid="manual-pdf"]):not([data-testid="add-shots"]):not([data-testid="edit-setup"]):not([data-testid="copy-url"]):not(dialog button)');
   expect(await buttons.count(), (await buttons.allTextContents()).join(' | ')).toBe(1);
   await expect(go(page)).toHaveText(/^(Start|Stop)$/);
 }

@@ -131,6 +131,29 @@ test('AC 1: the one screen names the folder; Set up (Change folder or URL) shows
   await expect(change(page)).toBeFocused();
 });
 
+test('The one screen has an Edit button beside the folder and URL: it opens Set up with both fields editable', async ({ page }) => {
+  const dash = await start();
+  await open(page, dash, '/', { url: URL0 });
+  // The URL is a link to the app, and Copy puts it on the clipboard.
+  await expect(page.getByTestId('url-link')).toHaveAttribute('href', URL0);
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.getByTestId('copy-url').click();
+  await expect(page.getByTestId('copy-url')).toContainText('Copied');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(URL0);
+  const edit = page.getByTestId('edit-setup');
+  await expect(edit).toBeEnabled();
+  await edit.click();
+  await expect(setup(page)).toBeVisible();
+  await expect(setup(page).getByTestId('setup-folder')).toHaveValue(dash.cwd);
+  const url = setup(page).getByLabel('Start URL');
+  await expect(url).toHaveValue(URL0);
+  await url.fill('http://127.0.0.1:9/other');
+  await expect(url).toHaveValue('http://127.0.0.1:9/other');
+  await setup(page).getByTestId('setup-folder').fill(`${dash.cwd}-elsewhere`);
+  await expect(setup(page).getByTestId('setup-folder')).toHaveValue(`${dash.cwd}-elsewhere`);
+  await closeSetup(page);
+});
+
 test('AC 2: the dialog lists subdirectories by name, no files, hidden ones only on request, each with its facts', async ({ page }) => {
   const launch = dir('a11y-508-pick-launch-');
   for (const d of ['gamma', 'beta', 'Alpha', '.secret']) mkdirSync(join(launch, d));
