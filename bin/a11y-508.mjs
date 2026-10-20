@@ -8,6 +8,9 @@ process.stdout.on('error', (e) => {
 main(process.argv.slice(2)).then(
   (code) => {
     process.exitCode = code;
+    // The command is over: a handle left open (a browser connection, a timer) must not keep the process
+    // alive, or the dashboard shows the run as still running. Unref'd, so a clean exit is not delayed.
+    setTimeout(() => process.exit(code), 3000).unref();
   },
   (err) => {
     process.stderr.write(`error: ${err && err.stack ? err.stack : err}\n`);
