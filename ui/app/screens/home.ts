@@ -648,8 +648,16 @@ export class HomeScreen implements OnDestroy {
         return `${plural(n('count'), 'fix', 'fixes')} did not hold in the deployed site; fixing ${n('count') === 1 ? 'it' : 'them'} again`;
       case 'replanning':
         return `Writing a revised plan with ${who} for ${plural(n('count'), 'fix', 'fixes')} that did not hold`;
+      // The run's last word, said while its process ends (a run that has finished says its done line).
+      case 'done':
+      case 'no-findings':
+        return String(ev['message'] || `Done with ${theSource}`);
+      case 'parse-failed':
+      case 'read-failed':
+        return `Could not read ${theSource}${ev['reason'] ? `: ${String(ev['reason'])}` : ''}`;
       default:
-        return `Working on ${theSource} with ${who}`;
+        // A step with no words of its own: its message when it has one, never a sentence that says nothing.
+        return ev['message'] ? String(ev['message']) : `Working on ${theSource} with ${who}`;
     }
   }
 

@@ -247,3 +247,34 @@ test('resume AC6, turnkey AC4: an interrupted crawl runs again from its own requ
     removeTemp(cwd);
   }
 });
+
+test('a PDF run that has said done shows its done line, not a sentence that says nothing, while its process ends', async ({ page }) => {
+  const cwd = tempDir('a11y-508-manualdone-');
+  gitRepo(cwd);
+  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'app' }));
+  // A process that is still alive: the run is shown live, as when the dashboard reopens on it.
+  const live = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 600000)'], { stdio: 'ignore' });
+  const id = '33333333-4444-4555-8666-888888888888';
+  const runs = join(cwd, 'a11y-508-work', 'runs');
+  mkdirSync(runs, { recursive: true });
+  const startedAt = new Date(Date.now() - 600_000).toISOString();
+  const url = 'http://127.0.0.1:9/app';
+  const line = 'Done: 4 findings from the PDF are fixed and confirmed in the deployed site.';
+  writeFileSync(join(runs, `${id}.run.json`), JSON.stringify({ id, kind: 'manual', pid: live.pid, startedAt, cwd, url, args: [], meta: { url }, request: { kind: 'manual', url } }));
+  const evs = [
+    { type: 'run', id, kind: 'manual', at: startedAt, url },
+    { type: 'manual', stage: 'start', id: 'm1', source: 'pdf', at: startedAt },
+    { type: 'manual', stage: 'done', all: false, fixed: 4, message: line, at: startedAt },
+  ];
+  writeFileSync(join(runs, `${id}.events.ndjson`), evs.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const dash: Dash = await dashboard({ cwd });
+  try {
+    await page.goto(`${dash.origin}/#secret=${dash.secret}`);
+    await expect(now(page)).toHaveText(line, { timeout: 60_000 });
+    await expect(now(page)).not.toHaveText(/^Working on /);
+  } finally {
+    live.kill();
+    await dash.stop();
+    removeTemp(cwd);
+  }
+});
