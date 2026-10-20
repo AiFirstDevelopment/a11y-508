@@ -97,3 +97,8 @@ dialog.setup::backdrop { background: rgba(0, 0, 0, 0.35); }
 .inline input { flex: 1 1 260px; }
 .plain { list-style: none; padding: 0; margin: 4px 0; }
 .bottom-links ul { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+
+/* The Copy button beside the app URL: clear of the link. */
+.copy-url {
+  margin-left: 0.5rem;
+}

@@ -404,6 +404,18 @@ const block = (obj) => '```json\n' + JSON.stringify(obj, null, 2) + '\n```';
 // What keeps the assistant on the app's source and off the tool's own bookkeeping.
 export const FOCUS = "Everything you need is in this prompt. Do not read, search or edit anything outside the source folders listed above; in particular leave the tool's own folders alone.";
 
+// After the edit: every part of the app the change can break is built, so a fix that does not compile
+// is caught by the assistant that made it, not by the deployment.
+export const REBUILD = `## Rebuild before you finish
+
+After your change, build the application to check that it still compiles, and fix any error your change caused. Build every part that serves the page, not just the one you edited. Reading the build files to find how (package.json, pom.xml, build.gradle, mvnw, gradlew), wherever they are in the repository, is allowed:
+
+- The single-page app (Angular, React, Vue): its package.json build script, run in its folder (for example \`npm run build\`; \`npx ng build\` for Angular when there is no script).
+- The application that launches or serves it (Spring Boot, or another server): its build wrapper in the repository, skipping tests (for example \`./mvnw -q -DskipTests package\` or \`mvnw.cmd -q -DskipTests package\` on Windows, \`./gradlew build -x test\`; plain \`mvn\` or \`gradle\` when there is no wrapper). When it builds the single-page app too, that one build covers both.
+
+Do not start the application or run its tests. If a build cannot run at all (a tool or dependency is missing, the network is needed and unavailable), do not try to install anything: say so in the note and go on. Leave no build output behind that git would see as new or changed (for example a dist/ or target/ folder that is not ignored): restore or remove it. Say in the note which builds you ran and whether they passed.
+`;
+
 // hints: { framework, files } -- what the app is built with, and the source files that mention the
 // element (most matches first), so the assistant starts in the right place.
 export function fixPrompt({ finding, group = null, sourceDirs, protectedDirs, resultFile, condition, hints = null }) {
@@ -448,6 +460,7 @@ ${hints.files.map((f) => `- ${f}`).join('\n')}
 ` : ''}
 Search the source folders for the class names, ids, attribute values, text and tag names in the rendered HTML. Framework templates (Angular, React, Vue) usually contain the same literals. If the HTML is generated from data, fix the component that renders it.
 
+${REBUILD}
 ## When you are done
 
 Write a JSON file at ${resultFile} with exactly this shape and nothing else:
@@ -803,6 +816,7 @@ Files to start with: ${(item.files || []).join(', ') || '(none)'}
 
 ${evidenceText(evidence)}
 ${prior ? `\n## The attempt before this one did not hold\n\nWhat was done: ${prior.note || prior.fix}\nWhy it is still not fixed in the deployed site: ${prior.reason}\n\n${evidenceText(prior.evidence)}\n\nTry a different approach within the same component.\n` : ''}
+${REBUILD}
 ## When you are done
 
 Write a JSON file at ${resultFile} with exactly this shape and nothing else:

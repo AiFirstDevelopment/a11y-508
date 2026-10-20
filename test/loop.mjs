@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { applyReport, loadLedger } from '../src/ledger.mjs';
-import { agentEnv, fixPrompt, runAgent, triagePrompt } from '../src/agent.mjs';
+import { agentEnv, fixPrompt, manualFixPrompt, runAgent, triagePrompt } from '../src/agent.mjs';
 import { findIndexHtml, frameworkLine, likelyFiles, normalizeConfig, sessionArgs, splitCheck, stampBuildMarker } from '../src/loop.mjs';
 import { bundleSignature, sameBuild } from '../src/deploy-check.mjs';
 import { splitLoopArgs } from '../src/cli.mjs';
@@ -112,6 +112,20 @@ check('prompts contain the finding and the result path, and no token', () => {
   assert.ok(h.includes('Likely files (the source files that mention this element\'s ids, class names or text, most matches first):\n\n- src/app/x.component.html\n- src/app/x.component.ts\n'), h);
   const t = triagePrompt({ items: [{ id: 'r1-0', test: '6.A', name: 'n', wcag: 'w', condition: 'c', message: 'm', selector: 'a', html: '<a>', pages: ['/a'] }], resultFile: '/t.json' });
   assert.ok(t.includes('r1-0') && t.includes('/t.json'));
+});
+// Both fix prompts have the assistant rebuild the single-page app and the application that serves it
+// (Spring Boot), so a fix that does not compile is caught before it is committed.
+check('the fix prompts ask for a rebuild of the SPA and the launching application, before the result', () => {
+  const finding = { test: '7.A', name: 'n', wcag: '1.1.1', impact: 'serious', message: 'no alt', selector: 'img', html: '<img>', pages: ['/a'], attempts: [] };
+  const auto = fixPrompt({ finding, sourceDirs: ['src'], protectedDirs: [], resultFile: '/r.json', condition: 'c' });
+  const manual = manualFixPrompt({ finding: { id: 'f1', title: 't', selectors: ['img'] }, item: { fix: 'add alt', component: null, files: [] }, evidence: null, sourceDirs: ['src'], protectedDirs: [], framework: null, resultFile: '/r.json' });
+  for (const [name, p] of [['fixPrompt', auto], ['manualFixPrompt', manual]]) {
+    assert.ok(p.includes('## Rebuild before you finish'), `${name} has the rebuild section`);
+    assert.ok(p.includes('single-page app') && p.includes('npm run build'), `${name} names the SPA build`);
+    assert.ok(p.includes('Spring Boot') && p.includes('mvnw') && p.includes('gradlew'), `${name} names the launching application's build`);
+    assert.ok(p.includes('Do not start the application or run its tests'), name);
+    assert.ok(p.indexOf('## Rebuild before you finish') < p.indexOf('## When you are done'), `${name}: the rebuild comes before the result`);
+  }
 });
 // docs/plans/checks-shadow-frames.md AC 11: a finding inside a web component in a same-origin frame
 // reaches the fixing assistant with its whole selector path and the frame it is in.

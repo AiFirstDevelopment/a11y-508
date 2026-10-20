@@ -45,7 +45,7 @@ function continuingPdf(stage: unknown, shots = false): string {
         <span aria-hidden="true"> · </span>
         <span data-testid="url"><span class="visually-hidden">URL: </span>@if (driver.url()) {<a [href]="driver.url()" target="_blank" rel="noopener" data-testid="url-link">{{ driver.url() }}</a>} @else {no URL yet}</span>
         @if (driver.url()) {
-          <button type="button" class="secondary small" data-testid="copy-url" (click)="copyUrl()">{{ copied() ? 'Copied' : 'Copy' }}<span class="visually-hidden"> the app URL to the clipboard</span></button>
+          <button type="button" class="secondary small copy-url" data-testid="copy-url" (click)="copyUrl()">{{ copied() ? 'Copied' : 'Copy' }}<span class="visually-hidden"> the app URL to the clipboard</span></button>
         }
         <span aria-hidden="true"> · </span>
         <button type="button" class="secondary small" data-testid="edit-setup" (click)="starter.openSetup()" [disabled]="running()">Edit<span class="visually-hidden"> the repository folder and start URL</span></button>
