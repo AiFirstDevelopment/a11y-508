@@ -342,7 +342,7 @@ export class HomeScreen implements OnDestroy {
     try {
       await this.api.post('/api/sign-in/show');
     } catch {
-      this.missed.set('The sign-in tab could not be brought forward. Look for it in your Chrome windows.');
+      this.missed.set('The sign-in tab could not be brought forward. Look for it in your open browser windows.');
     }
   }
 

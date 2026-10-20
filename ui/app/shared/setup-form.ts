@@ -30,7 +30,7 @@ import { Router } from '@angular/router';
       <input [id]="ids + 'url'" name="url" type="url" required [value]="form.url()" (input)="form.url.set(val($event))" (blur)="form.rememberUrl()" placeholder="https://app.example.gov" />
     </div>
     @if (env.env()?.signIn === 'separate-window') {
-      <p class="hint" data-testid="separate-window">Sign-in opens a separate browser window (Chrome was not found for the dashboard's own window).</p>
+      <p class="hint" data-testid="separate-window">Sign-in opens a separate browser window (Chrome or Edge was not found for the dashboard's own window).</p>
     }
     @if (error()) {
       <div class="notice error" role="alert" data-notice="setup-error">{{ error() }}</div>

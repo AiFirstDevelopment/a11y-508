@@ -128,11 +128,20 @@ export function createDashboard({ cwd: startDir = process.cwd(), launchDir = sta
       if (where) signInTab = { runId: runs.current.id, ...where };
     }
     if (!signInTab || !runs.active || runs.current.id !== signInTab.runId) throw new BadRequest('no sign-in is waiting', 409);
-    try {
-      return { ...(await bringToFront({ port: signInTab.port, targetId: signInTab.targetId })), port: signInTab.port };
-    } catch (e) {
-      throw new BadRequest(`could not reach the sign-in tab: ${e.message}`, 409);
+    // A tab the person closed is opened again within a second or two (a new login-waiting event moves
+    // signInTab), so a miss is tried once more against wherever the tab is by then.
+    let failure = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt) await new Promise((r) => setTimeout(r, 2500));
+      const at = signInTab;
+      if (!at || !runs.active || runs.current.id !== at.runId) break;
+      try {
+        return { ...(await bringToFront({ port: at.port, targetId: at.targetId })), port: at.port };
+      } catch (e) {
+        failure = e;
+      }
     }
+    throw new BadRequest(`could not reach the sign-in tab: ${failure ? failure.message : 'no sign-in is waiting'}`, 409);
   }
   const build = freshness(uiDir);
   // The dashboard's own files for the working directory (state-dir.mjs).
