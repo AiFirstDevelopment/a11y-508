@@ -1665,6 +1665,9 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
       return 2;
     }
     if (cfg.deployed === 'bundle-change') {
+      // The build live now (the earlier push's, arrived) is what this push's build replaces: with no
+      // marker, the wait compares with it, not with the build from before the earlier push.
+      if (ledger.deploy && signatureBefore != null) ledger.deploy.signature = signatureBefore;
       recordDeploy(round, true, out.marker, signatureBefore);
       save();
       ev('step', { round, step: 'deploy', deployed: cfg.deployed, committed: 0 });
