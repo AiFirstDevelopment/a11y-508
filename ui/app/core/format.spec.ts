@@ -59,5 +59,8 @@ describe('format', () => {
     expect(fixedLine({ open: 20, skipped: 4 }, 8)).toBe('0 fixed · 20 remaining, in 8 fixes this round');
     expect(fixedLine({ open: 3 }, 1)).toBe('0 fixed · 3 remaining, in 1 fix this round');
     expect(fixedLine({ open: 20, skipped: 4 })).toBe('0 fixed · 20 remaining');
+    // Held fixes (fixed while a deployment was awaited) count as fixed.
+    expect(fixedLine({ held: 2, open: 1 })).toBe('2 fixed, ready for the next push · 1 remaining');
+    expect(fixedLine({ verified: 3, pending: 1, held: 2, open: 0 })).toBe('3 verified fixed · 1 fixed, awaiting verification · 2 fixed, ready for the next push · 0 remaining');
   });
 });

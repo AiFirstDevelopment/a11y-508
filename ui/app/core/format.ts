@@ -201,10 +201,12 @@ export function spoken(ms: number, minutes = false): string {
 export function fixedLine(c: Record<string, number | undefined>, tasks: number | null = null): string {
   const v = c['verified'] || 0;
   const p = c['pending'] || 0;
+  const h = c['held'] || 0;
   const parts: string[] = [];
   if (v) parts.push(`${v} verified fixed`);
   if (p) parts.push(`${p} fixed, awaiting verification`);
-  if (!v && !p) parts.push('0 fixed');
+  if (h) parts.push(`${h} fixed, ready for the next push`);
+  if (!v && !p && !h) parts.push('0 fixed');
   const open = c['open'] || 0;
   const grouped = typeof tasks === 'number' && tasks > 0;
   parts.push(`${open} remaining${grouped ? `, in ${tasks} fix${tasks === 1 ? '' : 'es'} this round` : ''}`);

@@ -17,6 +17,9 @@ describe('the tally', () => {
     expect(tallyLine(t, Date.parse('2026-10-15T14:11:00.000Z'), true)).toBe('12 rounds in 2 h 41 min · 15 found · 1 verified fixed · 4 awaiting verification · 2 open · 8 could not be fixed · 31 assistant calls, 4 min each on average · 10 fixes did not hold after a deployment');
     expect(tallyLine(t, Date.parse('2026-10-15T14:11:00.000Z'), false)).toMatch(/^12 rounds in 2 h 30 min · /);
   });
+  it('counts fixes held for the next push', () => {
+    expect(tallyLine({ ...t, held: 2 }, Date.parse('2026-10-15T14:11:00.000Z'), true)).toContain(' · 4 awaiting verification · 2 ready for the next push · ');
+  });
   it('names the branch the builds seem to leave out when fixes keep not holding, and keeps quiet otherwise', () => {
     expect(notHoldingLine(t)).toBe('10 fixes counted as not holding after your deployments, and 1 verified. Either the builds that arrived were made before those pushes (a pipeline that lags the loop), the site\'s builds do not include branch a11y-508, or the fixes did not take. Each such fix is tried again, up to its attempts.');
     expect(notHoldingLine({ ...t, didNotHold: 1 })).toBeNull();

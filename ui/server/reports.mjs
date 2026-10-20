@@ -214,7 +214,7 @@ export function loopTimeline(ledger, counts) {
   const allCommits = new Set(every.flatMap((e) => (e.attempts || []).filter((a) => a && a.commit).map((a) => a.commit)));
   const tally = {
     rounds: rounds.length, startedAt: ledger.rounds[0].at || null, lastAt: ledger.rounds[ledger.rounds.length - 1].at || null,
-    found: every.length, verified: fixed, pending: counts.pending || 0, open: remaining, skipped: counts.skipped || 0, adequate: counts.adequate || 0, gone: counts.gone || 0, review: counts.review || 0,
+    found: every.length, verified: fixed, pending: counts.pending || 0, held: counts.held || 0, open: remaining, skipped: counts.skipped || 0, adequate: counts.adequate || 0, gone: counts.gone || 0, review: counts.review || 0,
     commits: allCommits.size, calls: calls.length, agentMs: calls.reduce((a, x) => a + x.agentMs, 0),
     didNotHold: ledger.rounds.reduce((a, r) => a + ((r.diff && r.diff.failed) || 0), 0), verifiedTotal: ledger.rounds.reduce((a, r) => a + ((r.diff && r.diff.verified) || 0), 0),
     branch: (ledger.deploy && ledger.deploy.branch) || [...ledger.rounds].reverse().map((r) => r.branch).find(Boolean) || null,

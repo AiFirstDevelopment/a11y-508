@@ -11,7 +11,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { applyReport, isDone, loadLedger } from '../src/ledger.mjs';
 import { agentEnv, fixPrompt, manualFixPrompt, runAgent, triagePrompt } from '../src/agent.mjs';
-import { findIndexHtml, frameworkLine, likelyFiles, normalizeConfig, sessionArgs, splitCheck, stampBuildMarker } from '../src/loop.mjs';
+import { findIndexHtml, frameworkLine, likelyFiles, neverRan, normalizeConfig, sessionArgs, splitCheck, stampBuildMarker } from '../src/loop.mjs';
 import { bundleSignature, sameBuild } from '../src/deploy-check.mjs';
 import { splitLoopArgs } from '../src/cli.mjs';
 import { statusCounts } from '../src/ledger.mjs';
@@ -110,6 +110,19 @@ const check = (name, fn) => {
     assert.equal(isDone(lh), false);
   });
 }
+
+// ---- unit: which calls show the assistant never ran (not retried), and which are worth one more try
+check('neverRan: not installed or not signed in, yes; a timeout, a mid-way API error or a bad answer, no', () => {
+  assert.equal(neverRan({ code: 127, stdout: '', stderr: 'sh: gemini: command not found' }), true);
+  assert.equal(neverRan({ code: 1, stdout: '', stderr: "'gemini' is not recognized as an internal or external command," }), true);
+  assert.equal(neverRan({ code: 1, stdout: '', stderr: 'Please log in: run `gemini auth login`' }), true);
+  assert.equal(neverRan({ code: 1, stdout: '', stderr: 'Error: not logged in' }), true);
+  assert.equal(neverRan({ code: null, timedOut: true, stdout: '', stderr: '' }), false);
+  assert.equal(neverRan({ code: 1, stdout: 'edited src/app.ts', stderr: 'API error 400: invalid request' }), false);
+  assert.equal(neverRan({ code: 0, stdout: '', stderr: '' }), false);
+  assert.equal(neverRan({ code: 1, stdout: 'command not found: ng (quoted from a build the assistant ran)', stderr: 'API error 400' }), false);
+  assert.equal(neverRan({ code: 1, quota: true, stdout: '', stderr: '' }), false);
+});
 
 // ---- unit: prompts never carry secrets, env strips the token
 check('agent env strips TOKEN but keeps provider keys', () => {
@@ -1229,9 +1242,9 @@ rmSync(repo2, { recursive: true, force: true });
     const { dir, g } = appRepo('a11y-508-assistant-', {});
     const site = await serve(dir);
     const url = `http://127.0.0.1:${site.address().port}/`;
-    // maxAttempts 6: a call with no answer is asked again in its round (docs/plans/fewer-pushes.md AC 5),
-    // so the assistant that never runs uses two attempts per finding, and the later runs still have findings to fix.
-    const setConfig = (more) => writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', maxAttempts: 6, url, ...more }, null, 2));
+    // A call with no answer is asked again in its round (docs/plans/fewer-pushes.md AC 5), but not when the
+    // assistant never ran: that would only spend attempts, and the later runs here still have findings to fix.
+    const setConfig = (more) => writeFileSync(join(dir, 'a11y-508.config.json'), JSON.stringify({ args: quick, agent: fake, source: ['site'], push: false, deployed: 'none', url, ...more }, null, 2));
     setConfig({ agent: 'a11y-508-no-such-assistant {promptFile}' });
     const missing = await loopIn(dir, ['--max-rounds', '1', '--events']);
     const m = parseEvents(missing.stdout);
@@ -1241,6 +1254,14 @@ rmSync(repo2, { recursive: true, force: true });
       assert.equal(errors.length, 1, missing.out);
       assert.match(errors[0], /^The assistant did not run: all \d+ calls this round ended without an answer \(last exit code \d+\)\. Check that it is installed and signed in/);
       assert.equal(missing.status, 1);
+    });
+    check('an assistant that never runs is not asked twice in a round: one attempt per finding, one call per task', () => {
+      const ledger = loadLedger(join(workDir(dir), 'ledger.json'));
+      const tried = Object.values(ledger.findings).filter((e) => e.attempts.length);
+      assert.ok(tried.length, missing.out);
+      for (const e of tried) assert.equal(e.attempts.length, 1, JSON.stringify(e.attempts));
+      const starts = m.events.filter((e) => e.type === 'task' && e.state === 'start');
+      assert.ok(starts.length && !starts.some((e) => e.again), JSON.stringify(starts));
     });
     const refusedOnce = join(mkTemp('a11y-508-429-'), 'refused');
     setConfig({ quotaDelays: [300] });

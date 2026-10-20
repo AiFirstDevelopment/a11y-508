@@ -1258,6 +1258,8 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
 
     // Every assistant call this round: when none of them ran at all, the loop says so as an error.
     const calls = [];
+    // Set once a call shows the assistant never ran; no task of this round is then asked twice.
+    let assistantNeverRan = false;
     // Review items ("confirm each label describes its input") are reminders, not problems: ignored by
     // default (a person who meets one reports it), never triaged, fixed or counted. Ones an earlier
     // run opened or gave up on are ignored too; a committed fix stays as it is.
@@ -1395,7 +1397,10 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
         note = res.result && res.result.note ? String(res.result.note).slice(0, 300) : res.timedOut ? 'agent timed out' : res.circled ? 'the assistant repeated the same failing step over and over, so its call was ended' : res.quota ? `the assistant's provider refused the call for quota or rate limit (after ${res.quotaRetries} retries)` : `agent exit ${res.code}, no result file`;
         Object.assign(attempt, { n: n + 1, files: changed, note, outcome: 'pending', agentMs: res.durationMs ?? null });
         const noAnswer = !res.result && !res.quota;
-        if (tries === 1 && noAnswer && !stopped() && entry.attempts.length < cfg.maxAttempts) {
+        // An assistant that never ran (not installed, not signed in) is not asked again: the retry would
+        // only spend another attempt. Said once, it holds for the rest of the run's tasks.
+        if (noAnswer && neverRan(res)) assistantNeverRan = true;
+        if (tries === 1 && noAnswer && !assistantNeverRan && !stopped() && entry.attempts.length < cfg.maxAttempts) {
           attempt.outcome = 'no-change';
           attempt.retried = true;
           log.info(`  ${note}; asking once more in this round`);
@@ -1679,6 +1684,17 @@ export async function runLoop({ config, cwd, log, maxRounds = 20, dryRun = false
   else log.warn(`reached --max-rounds. ${summaryLine(ledger)} Rerun to continue.`);
   save();
   return isDone(ledger) ? 0 : 1;
+}
+
+// A call in which the assistant never got to work: it could not be started, or it stopped at once
+// asking for a sign-in. A timeout, a crash mid-way (an API error after some work) or a bad answer file
+// are not this: those are worth one more try.
+// Read from stderr only: the assistant's own output (stdout) can quote any error from the work it did.
+const NOT_RUNNING = /command not found|is not recognized as an internal or external command|spawn \S+ ENOENT|not (logged|signed) in|please (log|sign) in|authentication (is )?required|api key (is )?(missing|not set)/i;
+export function neverRan(res) {
+  if (!res || res.result || res.timedOut || res.quota || res.code === 0) return false;
+  if (res.code === 127 || res.code === 9009) return true;
+  return NOT_RUNNING.test(String(res.stderr || ''));
 }
 
 export function summaryLine(ledger) {

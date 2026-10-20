@@ -704,7 +704,7 @@ export class HomeScreen implements OnDestroy {
     }
     if (d['outcome'] === 'error' || errors.length) return `Stopped: ${lowerFirst(plainReason(reason || `the loop ended with exit code ${d['code']}`).replace(/\.$/, ''))}`;
     const c = this.ledgerCounts();
-    const fixed = (c['verified'] || 0) + (c['pending'] || 0);
+    const fixed = (c['verified'] || 0) + (c['pending'] || 0) + (c['held'] || 0);
     const left = (c['open'] || 0) + (c['skipped'] || 0) + (c['review'] || 0);
     if (!fixed && !left) return 'Done: nothing to fix';
     return `Done: ${fixed} fixed${left ? `, ${left} could not be fixed` : ''}`;

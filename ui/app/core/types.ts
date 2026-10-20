@@ -276,6 +276,8 @@ export interface Tally {
   found: number;
   verified: number;
   pending: number;
+  // Fixed while a deployment was awaited, going out with the next push.
+  held?: number;
   open: number;
   skipped: number;
   adequate: number;

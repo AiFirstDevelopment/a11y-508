@@ -41,6 +41,7 @@ export function tallyLine(t: Tally, now: number, live: boolean): string {
   const time = Number.isFinite(start) && Number.isFinite(end) && end > start ? ` in ${span(end - start)}` : '';
   const parts = [`${t.rounds} round${t.rounds === 1 ? '' : 's'}${time}`, `${t.found} found`, `${t.verified} verified fixed`];
   if (t.pending) parts.push(`${t.pending} awaiting verification`);
+  if (t.held) parts.push(`${t.held} ready for the next push`);
   if (t.open) parts.push(`${t.open} open`);
   if (t.skipped) parts.push(`${t.skipped} could not be fixed`);
   if (t.adequate) parts.push(`${t.adequate} judged fine`);
